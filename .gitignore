@@ -7,7 +7,3 @@
 /.gradle-build/
 /app/build/
 local.properties
-
-# Provisioning payloads (embed a LAN address, a signing checksum): regenerated per
-# session by scripts/make-provisioning-qr.sh, never committed.
-/provisioning/
