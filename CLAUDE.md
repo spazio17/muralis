@@ -19,6 +19,11 @@ re-verify before any submission) on stock Android. A separate, privileged refere
 elsewhere as a working proof of what a fully-privileged build can do; this app is the deliberately
 constrained, publishable version of the same idea, not a port of that build's plumbing.
 
+`applicationId`/package is `org.spazio17.muralis`; "Muralis" is the Play display name. Internal
+Java class names (`KioskActivity`, `KioskService`, `KioskCommandDispatcher`, ...) still carry the
+old `Kiosk` prefix on purpose — a deliberate scope decision, not an oversight: they're not
+product-facing, and renaming them touches every file for a purely cosmetic gain.
+
 ## Core architecture
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
@@ -70,7 +75,23 @@ constrained, publishable version of the same idea, not a port of that build's pl
 - **The escape hatch** (a fixed-count tap gesture) releases lock task and launches the OEM
   launcher resolved at runtime via an explicit `setPackage` intent — never a hardcoded launcher
   package, since the default launcher varies by OEM. `addPersistentPreferredActivity` re-pins this
-  app as the HOME activity once it's device owner, so HOME reliably returns to it.
+  app as the HOME activity once it's device owner, so HOME reliably returns to it. It must keep
+  working from *every* screen, including the configuration screen itself — `dispatchTouchEvent`
+  once gated corner-tap handling behind `!configurationVisible`, which meant the one way out went
+  dead exactly when someone was stuck in settings. Don't reintroduce a screen-specific guard on it.
+- **Instant-apply fields don't route through the aggregate "Open dashboard" save.** Brightness, the
+  auto-brightness checkbox, and the HTTP admin password (on focus loss) all apply themselves the
+  moment they're touched/left, and are deliberately absent from the big save handler's field list —
+  reading a field there that already applied itself just means restarting the affected controller
+  twice. Any future field with this shape should follow the same split, not add another special
+  case inline in the save handler.
+- **A `LayerDrawable` layer with a transparent fill does not mask what's beneath it.** Layers draw
+  in sequence, not as stencils, so stacking a genuinely-transparent-fill drawable over a solid one
+  (tried once, to give outlined buttons a coloured "raised edge" like the web admin's CSS
+  `box-shadow` trick) makes the *whole* transparent interior show the solid layer's colour, not
+  just the exposed strip. `KioskTheme.raisedButton()`/`outlinedButton(..., fill)` use an opaque fill
+  matching whatever the button actually sits on (`theme.surface`, since every one is inside a
+  `card()`) instead of true transparency, specifically to route around this.
 
 ## Platform constraints that shape the code
 
@@ -106,18 +127,27 @@ physical device), then `scripts/build-app.sh`.
 
 ## Status
 
-Verified on physical hardware (an API 26 tablet, enrolled as device owner): the kiosk lock and its
-escape hatch, dashboard self-recovery across several distinct failure shapes (HTTP errors, a
-hanging connection, a refused connection, a network outage), the full MQTT command/telemetry
-contract against a real broker, the brightness/auto-brightness model, the nightly recycle, and
-device-owner provisioning via QR code during setup.
+Verified on physical hardware (an API 26 tablet): the kiosk lock and its escape hatch (from every
+screen, including configuration), dashboard self-recovery across several distinct failure shapes
+(HTTP errors, a hanging connection, a refused connection, a network outage), the full MQTT
+command/telemetry contract against a real broker, the brightness/auto-brightness model, the
+nightly recycle, and device-owner provisioning via QR code during setup — including a full
+factory-reset-and-re-enroll cycle done *after* the rename, confirming the new `applicationId`
+provisions and pins itself as HOME the same way the old one did.
 
-Built and passing host tests, but not yet installed/verified on hardware: telemetry-interval
-presets, on-change telemetry publishing (for fields like battery and thermal status that change
-rarely), an MQTT "Connected"/"disconnected" entity backed by the broker's Last Will (so it reflects
-the tablet being gone even when nothing is left running to publish `false`), and a heuristic
-frozen-page detector (the page loaded successfully but has stopped changing, most likely from a
-dead websocket/poll loop inside the dashboard itself).
+Built and passing host tests, running on the tablet, but not specifically re-watched against a
+live broker/Home Assistant session since being built: telemetry-interval presets, on-change
+telemetry publishing (for fields like battery and thermal status that change rarely), the MQTT
+"Connected"/"disconnected" entity backed by the broker's Last Will, and the heuristic frozen-page
+detector.
+
+Also done: a `LICENSE` (all-rights-reserved placeholder), an About-screen Credits card (Eclipse
+Paho, Catppuccin), a Play Store listing icon (`store-assets/icon-512.png`) and a proper vector
+notification icon, both rendered from the app's real launcher glyph rather than mocked up. Web
+admin gained `/privacy` and `/terms` pages linked as buttons (parity with the tablet's own About
+screen), and its Behaviour box had a real layout bug — a stray `<label>` was flex-wrapping three
+unrelated controls onto one row on narrow/mobile widths — which is fixed.
 
 Not started: a release signing config (debug keystore only), Play Console listing requirements
-(privacy policy, data-safety declaration, content rating), and any in-app trial/billing gate.
+(privacy policy at a public URL, data-safety declaration, content rating), and any in-app
+trial/billing gate.
