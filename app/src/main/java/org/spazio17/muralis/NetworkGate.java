@@ -132,6 +132,15 @@ final class NetworkGate {
         });
     }
 
+    /**
+     * True while the work has neither run nor been cancelled, i.e. this gate is still waiting for a
+     * network. Note {@link #whenOnline} never returns null and fires inline when the panel is
+     * already online, so a non-null gate says nothing on its own about whether the work has run.
+     */
+    boolean isPending() {
+        return !spent;
+    }
+
     /** Stops waiting, without running the work. Safe to call more than once. */
     void cancel() {
         onHandlerThread(() -> {
