@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,7 +13,7 @@ import java.util.Locale;
  * A user-defined corner-tap combination that unlocks the kiosk: the "magic escape sequence".
  *
  * <p>The fixed nine-taps-in-one-corner gesture it replaces is strong only while nobody knows it.
- * Once somebody has watched it being used it is worthless, and it is the same on every KiOSk
+ * Once somebody has watched it being used it is worthless, and it is the same on every Muralis
  * install, so a published app would ship one universally-known way out of every kiosk. A sequence
  * the owner records themselves (say bottom-left twice, bottom-right once, bottom-left three times)
  * is unguessable by a bystander and different on every device.

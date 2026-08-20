@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * did, the service's sampler records what the kernel counters said, and the HTTP admin threads and
  * MQTT telemetry read both.
  *
- * <p>Static state is the right shape here rather than a shortcut. KiOSk is a single-process
- * persistent app, activity, service and HTTP workers all run in {@code org.kiosk.launcher}, so
+ * <p>Static state is the right shape here rather than a shortcut. Muralis is a single-process
+ * persistent app, activity, service and HTTP workers all run in {@code org.spazio17.muralis}, so
  * there is no IPC boundary to cross, and the alternative (binding to the service from the activity
  * purely to read counters) would add lifecycle risk to the process that must never die.
  *

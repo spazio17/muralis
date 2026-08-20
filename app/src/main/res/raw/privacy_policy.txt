@@ -1,18 +1,18 @@
-KiOSk is a kiosk launcher that displays a web dashboard you choose, on a device you own.
+Muralis is a kiosk launcher that displays a web dashboard you choose, on a device you own.
 
 WHAT THE APP SENDS TO US
 
-Nothing. KiOSk has no analytics, no crash reporting, no advertising identifiers and no developer-controlled server. The developer receives no data from your device at any time.
+Nothing. Muralis has no analytics, no crash reporting, no advertising identifiers and no developer-controlled server. The developer receives no data from your device at any time.
 
 WHAT THE APP SENDS, AND WHERE
 
 Only to destinations you configure yourself, and only after you configure them. Both remote surfaces are disabled until you set a credential:
 
-• MQTT. If you enter a broker address, KiOSk publishes a status snapshot roughly every 30 seconds to that broker. Verified against the live payload, that snapshot contains:
+• MQTT. If you enter a broker address, Muralis publishes a status snapshot roughly every 30 seconds to that broker. Verified against the live payload, that snapshot contains:
 
 - how long the device has been running
 - battery percentage, charge state, health, temperature, voltage, and the charge and current counters the hardware exposes
-- memory and swap in use and available, and how much memory KiOSk itself is using
+- memory and swap in use and available, and how much memory Muralis itself is using
 - storage in use and available
 - whether the network is connected, whether it is metered, whether it is Wi-Fi or Ethernet, the Wi-Fi signal strength, link speed and radio frequency
 - the device IP address
@@ -26,15 +26,15 @@ The MQTT connection is not encrypted, and neither is the local web administratio
 
 Note that the list above includes the dashboard address. If the address of your dashboard is itself something you would not want on your broker, do not enable MQTT.
 
-KiOSk also publishes an online/offline availability value, the result of any command it receives, and a Home Assistant discovery message describing the device: its identifier, the manufacturer and model reported by the hardware, and the KiOSk version.
+Muralis also publishes an online/offline availability value, the result of any command it receives, and a Home Assistant discovery message describing the device: its identifier, the manufacturer and model reported by the hardware, and the Muralis version.
 
-• Local web administration. If you set an administration password, KiOSk listens on your local network and serves the same snapshot, plus a settings page, to anyone who supplies that password.
+• Local web administration. If you set an administration password, Muralis listens on your local network and serves the same snapshot, plus a settings page, to anyone who supplies that password.
 
 WHAT THE APP STORES ON THE DEVICE
 
-Your dashboard address, a device identifier that KiOSk generates itself, and your display and behaviour preferences. Your broker credentials and administration password are stored encrypted through the Android keystore. The dashboard view stores whatever cookies or sessions your dashboard sets, in the same way a browser would.
+Your dashboard address, a device identifier that Muralis generates itself, and your display and behaviour preferences. Your broker credentials and administration password are stored encrypted through the Android keystore. The dashboard view stores whatever cookies or sessions your dashboard sets, in the same way a browser would.
 
-KiOSk does not read your contacts, location, photos, files, messages, call history or microphone, and requests no permission that would allow it to.
+Muralis does not read your contacts, location, photos, files, messages, call history or microphone, and requests no permission that would allow it to.
 
 WHAT LEAVES YOUR CONTROL
 
@@ -46,7 +46,7 @@ Uninstalling the app, or clearing its data, removes everything it has stored, in
 
 CHILDREN
 
-KiOSk is not directed at children and collects nothing about anyone.
+Muralis is not directed at children and collects nothing about anyone.
 
 CONTACT
 

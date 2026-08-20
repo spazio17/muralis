@@ -38,4 +38,4 @@ podman run --rm \
     bash -lc "yes | sdkmanager --sdk_root=/sdk --licenses >/dev/null \
         && sdkmanager --sdk_root=/sdk ${sdk_packages[*]@Q}"
 
-printf 'KiOSk Android builder ready: %s\n' "${image_name}"
+printf 'Muralis Android builder ready: %s\n' "${image_name}"

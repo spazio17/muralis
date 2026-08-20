@@ -1,12 +1,12 @@
-Draft terms for KiOSk, a kiosk launcher for displaying a web dashboard on hardware you own.
+Draft terms for Muralis, a kiosk launcher for displaying a web dashboard on hardware you own.
 
 WHAT YOU MAY DO
 
-Install and run KiOSk on devices you own or administer, for personal or commercial purposes.
+Install and run Muralis on devices you own or administer, for personal or commercial purposes.
 
 WHAT THE APP DOES TO THE DEVICE
 
-KiOSk is designed to take over a device. When granted device-owner status it will: become the home application, hold the screen on a single task so other applications cannot be reached, disable the notification shade and status bar, disable the lock screen, keep the display awake while charging, and make the back gesture inert.
+Muralis is designed to take over a device. When granted device-owner status it will: become the home application, hold the screen on a single task so other applications cannot be reached, disable the notification shade and status bar, disable the lock screen, keep the display awake while charging, and make the back gesture inert.
 
 This is the intended behaviour of a kiosk, and you should understand it before provisioning a device you rely on for anything else.
 
@@ -20,9 +20,9 @@ Device-owner status cannot be granted to an already-configured device, and remov
 
 WHAT IS NOT PROMISED
 
-KiOSk is provided as is, without warranty of any kind. It is not suitable for any purpose where failure to display information could cause harm to people or property. Do not use it as the sole interface to safety equipment, medical devices, alarms, or anything that must be operable in an emergency.
+Muralis is provided as is, without warranty of any kind. It is not suitable for any purpose where failure to display information could cause harm to people or property. Do not use it as the sole interface to safety equipment, medical devices, alarms, or anything that must be operable in an emergency.
 
-The dashboard it displays is not part of KiOSk. Its availability, correctness and security are yours or its provider's responsibility.
+The dashboard it displays is not part of Muralis. Its availability, correctness and security are yours or its provider's responsibility.
 
 REMOTE CONTROL
 

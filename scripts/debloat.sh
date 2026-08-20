@@ -37,7 +37,7 @@ ashell() { "${adb}" shell "$@" </dev/null 2>/dev/null | tr -d '\r' | grep -v '^\
 ashell getprop ro.serialno | grep -q . \
     || { printf 'No device over adb.\n' >&2; exit 1; }
 
-# Never remove these, whatever a list says. The launcher and Settings are the escape hatch KiOSk
+# Never remove these, whatever a list says. The launcher and Settings are the escape hatch Muralis
 # releases lock task for; losing either turns a recoverable kiosk into a tablet that can only be
 # fixed by another factory reset.
 protected='^(com\.huawei\.android\.launcher|com\.android\.settings|com\.android\.vending|org\.kiosk\.launcher|com\.google\.android\.gms|com\.android\.systemui)$'

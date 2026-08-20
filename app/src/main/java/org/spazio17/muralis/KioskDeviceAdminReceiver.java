@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.app.admin.DeviceAdminReceiver;
 import android.app.admin.DevicePolicyManager;
@@ -26,11 +26,11 @@ import android.util.Log;
  * the bars needs {@code policy_control=immersive.full}, and making a revealed one harmless needs an
  * inert {@code onBackPressed}. See KioskActivity.
  *
- * <p>Provisioned out of band, not by the app: see docs/kiosk-device-owner.md. KiOSk degrades to its
+ * <p>Provisioned out of band, not by the app: see docs/kiosk-device-owner.md. Muralis degrades to its
  * previous behaviour when it is not the device owner, so an un-provisioned tablet still works.
  */
 public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
-    private static final String TAG = "KiOSkAdmin";
+    private static final String TAG = "MuralisAdmin";
 
     static ComponentName componentName(Context context) {
         return new ComponentName(context, KioskDeviceAdminReceiver.class);
@@ -38,13 +38,13 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
 
     @Override
     public void onEnabled(Context context, android.content.Intent intent) {
-        Log.i(TAG, "KiOSk device admin enabled");
+        Log.i(TAG, "Muralis device admin enabled");
         // Runs during QR enrolment, which is the earliest possible moment to claim HOME.
         pinAsHomeActivity(context);
     }
 
     /**
-     * Makes KiOSk the persistent HOME activity, as device owner.
+     * Makes Muralis the persistent HOME activity, as device owner.
      *
      * <p><b>Declaring the HOME intent filter is not enough, measured on the MediaPad 2026-08-19.</b>
      * After QR enrolment the app was device owner and lock task engaged, but
@@ -73,11 +73,11 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
         try {
             policy.addPersistentPreferredActivity(componentName(context), home,
                     new ComponentName(context, KioskActivity.class));
-            Log.i(TAG, "KiOSk pinned as the persistent HOME activity");
+            Log.i(TAG, "Muralis pinned as the persistent HOME activity");
         } catch (SecurityException | IllegalArgumentException refused) {
             // Fail soft, as everywhere else: the dashboard still runs, it just is not the launcher,
             // so a reboot would land on the OEM launcher instead of the panel.
-            Log.w(TAG, "Could not pin KiOSk as HOME; a reboot will land on the OEM launcher",
+            Log.w(TAG, "Could not pin Muralis as HOME; a reboot will land on the OEM launcher",
                     refused);
         }
     }
@@ -90,6 +90,6 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     @Override
     public void onDisabled(Context context, android.content.Intent intent) {
         // Worth a loud log: without device-owner powers the system bars come back on edge swipe.
-        Log.w(TAG, "KiOSk device admin disabled, kiosk lock-task hardening is now unavailable");
+        Log.w(TAG, "Muralis device admin disabled, kiosk lock-task hardening is now unavailable");
     }
 }

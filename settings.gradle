@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = 'KiOSk'
+rootProject.name = 'muralis'
 include ':app'

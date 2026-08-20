@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -22,7 +22,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 final class SecretStore {
-    private static final String TAG = "KiOSkSecrets";
+    private static final String TAG = "MuralisSecrets";
     private static final String KEYSTORE = "AndroidKeyStore";
     private static final String KEY_ALIAS = "kiosk-config-aes-v1";
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";

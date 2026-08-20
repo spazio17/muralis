@@ -17,4 +17,4 @@ fi
 printf 'APK: %s (%s bytes)\n' "${apk}" "$(stat -c %s "${apk}")"
 printf 'Install and provision as device owner with:\n'
 printf '  adb install -r %s\n' "${apk}"
-printf '  adb shell dpm set-device-owner org.kiosk.launcher/.KioskDeviceAdminReceiver\n'
+printf '  adb shell dpm set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver\n'
