@@ -8,9 +8,6 @@
 /app/build/
 local.properties
 
-# Device-specific / environment-specific artifacts (provisioning payloads, package
-# inventories from a specific physical device). Regenerate per device rather than
-# committing: they embed a LAN address, a signing checksum, and a device serial.
+# Provisioning payloads (embed a LAN address, a signing checksum): regenerated per
+# session by scripts/make-provisioning-qr.sh, never committed.
 /provisioning/
-/device-baseline/
-/device-baseline-after-reset/
