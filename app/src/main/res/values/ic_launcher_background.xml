@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Catppuccin Mocha base, the same ground KioskTheme uses for every surface in the app, so the
+         launcher icon and the app itself read as one product. -->
+    <color name="ic_launcher_background">#1E1E2E</color>
+</resources>

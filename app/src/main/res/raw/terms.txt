@@ -1,0 +1,41 @@
+Draft terms for KiOSk, a kiosk launcher for displaying a web dashboard on hardware you own.
+
+WHAT YOU MAY DO
+
+Install and run KiOSk on devices you own or administer, for personal or commercial purposes.
+
+WHAT THE APP DOES TO THE DEVICE
+
+KiOSk is designed to take over a device. When granted device-owner status it will: become the home application, hold the screen on a single task so other applications cannot be reached, disable the notification shade and status bar, disable the lock screen, keep the display awake while charging, and make the back gesture inert.
+
+This is the intended behaviour of a kiosk, and you should understand it before provisioning a device you rely on for anything else.
+
+GETTING BACK OUT
+
+There is always an escape route, and it does not require a cable: a configurable series of corner taps releases the kiosk and returns the system launcher. The default combinations are shown on the configuration screen. Change them, and remember what you changed them to.
+
+REMOVING DEVICE-OWNER STATUS
+
+Device-owner status cannot be granted to an already-configured device, and removing it may require a factory reset. Provision deliberately.
+
+WHAT IS NOT PROMISED
+
+KiOSk is provided as is, without warranty of any kind. It is not suitable for any purpose where failure to display information could cause harm to people or property. Do not use it as the sole interface to safety equipment, medical devices, alarms, or anything that must be operable in an emergency.
+
+The dashboard it displays is not part of KiOSk. Its availability, correctness and security are yours or its provider's responsibility.
+
+REMOTE CONTROL
+
+The remote control surfaces are authenticated by the credential you set, over your own network. Both of them, MQTT and the local web administration, are UNENCRYPTED, and there is no option to encrypt either. Your broker username and password travel in clear text, so do not reuse a password you use anywhere else. Run these surfaces only on a network you trust, and reach them over a VPN rather than exposing a port. If you set a weak password, or expose these surfaces to the internet, anyone who reaches them can change what the device displays and restart it.
+
+LIABILITY
+
+To the maximum extent permitted by law, the developer is not liable for any loss arising from use of this software, including loss of data, loss of use, or any indirect or consequential loss.
+
+CHANGES
+
+These terms may change with new versions of the app. The version they apply to is shown on the About screen.
+
+GOVERNING LAW
+
+Replace this section with the appropriate jurisdiction before distribution.

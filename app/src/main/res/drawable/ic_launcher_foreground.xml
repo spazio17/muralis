@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive-icon foreground, drawn as vector so the app carries no bitmap assets at all: minSdk is
+     26, which is exactly where adaptive icons arrived, so every supported device can render this and
+     there is no need for a mipmap ladder of PNGs.
+
+     The 108x108dp canvas is mandated; only the middle 72x72 is guaranteed visible, because the
+     launcher may mask, crop and parallax the rest. Everything meaningful therefore sits between 18
+     and 90. The glyph is a wall panel showing a dashboard: an outlined screen with three tiles, which
+     is what this app actually is, rather than a letter or a house. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Panel bezel. Stroked rather than filled so the tiles inside stay legible when a launcher
+         shrinks the icon to a status-bar size. -->
+    <path
+        android:pathData="M30,30 L78,30 A4,4 0 0 1 82,34 L82,70 A4,4 0 0 1 78,74 L30,74 A4,4 0 0 1 26,70 L26,34 A4,4 0 0 1 30,30 Z"
+        android:strokeColor="#CBA6F7"
+        android:strokeWidth="4"
+        android:fillColor="#00000000" />
+
+    <!-- Dashboard tiles: one wide, two narrow, echoing a Home Assistant card layout. -->
+    <path android:pathData="M34,38 L58,38 L58,50 L34,50 Z" android:fillColor="#CBA6F7" />
+    <path android:pathData="M62,38 L74,38 L74,50 L62,50 Z" android:fillColor="#7F5AF0" />
+    <path android:pathData="M34,54 L48,54 L48,66 L34,66 Z" android:fillColor="#7F5AF0" />
+    <path android:pathData="M52,54 L74,54 L74,66 L52,66 Z" android:fillColor="#CBA6F7" />
+
+    <!-- Wall mount, so the icon reads as a fixed panel rather than a tablet or a TV. -->
+    <path android:pathData="M50,74 L58,74 L58,82 L50,82 Z" android:fillColor="#CBA6F7" />
+    <path android:pathData="M40,82 L68,82 A2,2 0 0 1 68,86 L40,86 A2,2 0 0 1 40,82 Z"
+        android:fillColor="#CBA6F7" />
+</vector>

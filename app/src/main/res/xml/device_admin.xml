@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal policy set. KiOSk needs device-owner status for lock-task and status-bar control, not for
+  password or wipe policy, so nothing broader is declared.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>

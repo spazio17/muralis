@@ -1,0 +1,60 @@
+# Build environment for the KiOSk app: a normal Gradle/AGP Android build.
+#
+# Deliberately NOT the sibling ROM project's image
+# (../wall-kiosk-rom/build/Containerfile.lineage17): that one is Ubuntu 18.04 +
+# JDK 8 + python2 for a Soong build of the Lineage 17.1 tree, which is the wrong
+# tool entirely for AGP. Both images coexist; neither replaces the other.
+#
+# Split of responsibilities, which is why ANDROID_SDK_ROOT is NOT inside the
+# image: the image carries the fixed, versioned tooling (JDK, Gradle,
+# cmdline-tools), while the SDK packages and Gradle caches live on bind mounts
+# so they survive between runs and rebuilding the image stays cheap. Putting the
+# SDK in the image would both bloat it and get shadowed by the mount.
+FROM docker.io/library/ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+
+# JDK 21: AGP 8.13 requires JDK 17+, and 21 is the current LTS that Gradle 8.14
+# fully supports. The host happens to carry JDK 25, which AGP does not accept
+# yet -- another reason this build is containerized rather than run on the host.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openjdk-21-jdk-headless \
+        ca-certificates curl unzip zip git \
+        file less procps \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+
+# Pinned Gradle rather than a project wrapper, so a fresh clone can build
+# without first trusting a checked-in wrapper jar. AGP 8.13.2 needs Gradle
+# 8.13+; 8.14.5 is the last 8.x, chosen over Gradle 9.x to avoid its breaking
+# changes on a build that has no reason to need them yet.
+ARG GRADLE_VERSION=8.14.5
+RUN curl -fsSL -o /tmp/gradle.zip \
+        "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && mv "/opt/gradle-${GRADLE_VERSION}" /opt/gradle \
+    && rm /tmp/gradle.zip
+ENV PATH="/opt/gradle/bin:${PATH}"
+
+# cmdline-tools pinned by build number, the only versioning Google offers for
+# it. sdkmanager insists on living at <root>/cmdline-tools/<channel>/, hence the
+# nested layout; it is pointed at the mounted SDK root via --sdk_root at call
+# time, so nothing it installs lands in the image.
+ARG CMDLINE_TOOLS_BUILD=15859902
+RUN curl -fsSL -o /tmp/cmdline-tools.zip \
+        "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_BUILD}_latest.zip" \
+    && mkdir -p /opt/android/cmdline-tools \
+    && unzip -q /tmp/cmdline-tools.zip -d /opt/android/cmdline-tools \
+    && mv /opt/android/cmdline-tools/cmdline-tools /opt/android/cmdline-tools/latest \
+    && rm /tmp/cmdline-tools.zip
+ENV PATH="/opt/android/cmdline-tools/latest/bin:/sdk/platform-tools:${PATH}"
+
+# Both are bind mounts supplied by scripts/gradle.sh. HOME points at the Gradle
+# mount because --userns=keep-id runs this as a uid with no /etc/passwd entry
+# and therefore no writable home of its own, which several tools trip over.
+ENV ANDROID_SDK_ROOT=/sdk ANDROID_HOME=/sdk \
+    GRADLE_USER_HOME=/gradle HOME=/gradle
+
+WORKDIR /src
+CMD ["/bin/bash"]
