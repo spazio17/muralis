@@ -2234,8 +2234,8 @@ public final class KioskActivity extends Activity {
             button.setTextColor(theme.base);
         } else {
             button.setBackground(theme.raisedButton(
-                    theme.outlinedButton(dp(12), dp(1), theme.accentAlt), theme.accentAlt,
-                    dp(12), dp(2)));
+                    theme.outlinedButton(dp(12), dp(1), theme.accentAlt, theme.surface),
+                    theme.accentAlt, dp(12), dp(2)));
             button.setTextColor(theme.accentAlt);
         }
     }
@@ -2247,8 +2247,8 @@ public final class KioskActivity extends Activity {
         button.setTextSize(15);
         button.setTextColor(theme.accentAlt);
         button.setBackground(theme.raisedButton(
-                theme.outlinedButton(dp(12), dp(1), theme.accentAlt), theme.accentAlt, dp(12),
-                dp(2)));
+                theme.outlinedButton(dp(12), dp(1), theme.accentAlt, theme.surface),
+                theme.accentAlt, dp(12), dp(2)));
         button.setPadding(dp(20), dp(12), dp(20), dp(12));
         // Less than the primary button's, so the hierarchy between them still reads at a glance.
         raiseSlightly(button, dp(2));
