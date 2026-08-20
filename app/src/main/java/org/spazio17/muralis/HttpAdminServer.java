@@ -953,12 +953,10 @@ final class HttpAdminServer {
                 .append("<fieldset><legend>System stats</legend>")
                 .append("<pre id=\"stats\">loading...</pre></fieldset>")
 
-                .append("<fieldset><legend>Legal</legend>")
-                .append("<p class=\"hint\"><a href=\"/privacy\">")
-                .append(escapeHtml(context.getString(R.string.privacy_policy_title)))
-                .append("</a> &middot; <a href=\"/terms\">")
-                .append(escapeHtml(context.getString(R.string.terms_title)))
-                .append("</a></p></fieldset>")
+                .append("<fieldset><legend>Legal</legend><div class=\"actions\">")
+                .append(navButton("/privacy", context.getString(R.string.privacy_policy_title)))
+                .append(navButton("/terms", context.getString(R.string.terms_title)))
+                .append("</div></fieldset>")
 
                 .append("</div>");
 
@@ -987,7 +985,7 @@ final class HttpAdminServer {
                 .append("main{max-width:640px}h2{color:var(--accent);font-size:1rem;"
                         + "letter-spacing:.04em;margin:1.6rem 0 .4rem}"
                         + "p.doc{margin:.2rem 0}</style></head><body><main>")
-                .append("<p class=\"hint\"><a href=\"/\">&larr; Back</a></p>")
+                .append(navButton("/", "← Back"))
                 .append("<h1>").append(escapeHtml(title)).append("</h1>")
                 .append("<p class=\"notice\">")
                 .append(escapeHtml(context.getString(R.string.legal_draft_warning)))
@@ -1199,6 +1197,12 @@ final class HttpAdminServer {
     private static String quickAction(String command, String label) {
         return "<form class=\"cmd\" method=\"get\" action=\"/api/command\" style=\"display:inline\">"
                 + "<input type=\"hidden\" name=\"cmnd\" value=\"" + command + "\">"
+                + "<button type=\"submit\">" + escapeHtml(label) + "</button></form>";
+    }
+
+    /** A plain navigation, styled as a button rather than a hyperlink, matching quickAction(). */
+    private static String navButton(String path, String label) {
+        return "<form method=\"get\" action=\"" + path + "\" style=\"display:inline\">"
                 + "<button type=\"submit\">" + escapeHtml(label) + "</button></form>";
     }
 
