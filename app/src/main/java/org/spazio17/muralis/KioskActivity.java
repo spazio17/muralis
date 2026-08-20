@@ -2210,7 +2210,19 @@ public final class KioskActivity extends Activity {
         button.setTextColor(theme.onAccent());
         button.setBackground(theme.filledButton(theme.accent, dp(12)));
         button.setPadding(dp(20), dp(14), dp(20), dp(14));
+        raiseSlightly(button, dp(3));
         return button;
+    }
+
+    /**
+     * A small, constant elevation, so every button reads as slightly raised off its card rather
+     * than printed flat onto it. {@code setStateListAnimator(null)} matters: the platform Button
+     * style otherwise animates elevation on press, which would fight a fixed value and make it
+     * flicker back to flat mid-tap.
+     */
+    private void raiseSlightly(Button button, float elevationPx) {
+        button.setStateListAnimator(null);
+        button.setElevation(elevationPx);
     }
 
     /** Toggles one of the four interval-preset buttons between its filled and outlined look. */
@@ -2232,6 +2244,8 @@ public final class KioskActivity extends Activity {
         button.setTextColor(theme.accentAlt);
         button.setBackground(theme.outlinedButton(dp(12), dp(1), theme.accentAlt));
         button.setPadding(dp(20), dp(12), dp(20), dp(12));
+        // Less than the primary button's, so the hierarchy between them still reads at a glance.
+        raiseSlightly(button, dp(2));
         return button;
     }
 

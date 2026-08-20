@@ -318,8 +318,11 @@ final class HttpAdminServer {
             + "font-variant-numeric:tabular-nums}"
             + ".themepick{display:flex;gap:.25rem;background:var(--surface);padding:.25rem;"
             + "border-radius:999px;border:1px solid var(--border)}"
+            // Excluded from the 3D button treatment below: a segmented pill picker, not a
+            // discrete action, and a shadowed edge on each pill would look like clutter.
             + ".themepick button{margin:0;padding:.35rem .85rem;border:0;border-radius:999px;"
-            + "background:transparent;color:var(--subtext);font-size:.85rem;cursor:pointer}"
+            + "background:transparent;color:var(--subtext);font-size:.85rem;cursor:pointer;"
+            + "box-shadow:none;transition:none}"
             + ".themepick button[aria-pressed=true]{background:var(--accent);color:var(--base);"
             + "font-weight:600}"
             // The sections layout: as many columns as fit, each at least 300px.
@@ -339,12 +342,22 @@ final class HttpAdminServer {
             + "label.check{display:flex;align-items:center;color:var(--text);font-size:.9rem;"
             + "margin-top:.7rem}"
             + ".hint{color:var(--subtext);font-size:.78rem;margin:.5rem 0 0}"
+            // A slight 3D lift: a coloured "bottom edge" plus a soft shadow, both gone on
+            // :active and the button nudged down a pixel, so pressing one reads as pressing
+            // something solid rather than just a colour change.
             + "button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;"
             + "border:1px solid var(--accent-alt);background:transparent;color:var(--accent-alt);"
-            + "font-size:.9rem;cursor:pointer}"
+            + "font-size:.9rem;cursor:pointer;"
+            + "box-shadow:0 2px 0 0 var(--accent-alt),0 2px 4px rgba(0,0,0,.18);"
+            + "transition:transform .08s ease,box-shadow .08s ease}"
             + "button:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}"
+            + "button:active{transform:translateY(2px);"
+            + "box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}"
             + "button.primary{background:var(--accent);border-color:var(--accent);"
-            + "color:var(--base);font-weight:600}"
+            + "color:var(--base);font-weight:600;"
+            + "box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent) 70%,black 20%),"
+            + "0 2px 4px rgba(0,0,0,.22)}"
+            + "button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}"
             + ".actions{display:flex;flex-wrap:wrap;gap:.4rem}"
             + ".actions form{display:inline}"
             + ".slider{display:flex;align-items:center;gap:.75rem;margin-top:.6rem}"
