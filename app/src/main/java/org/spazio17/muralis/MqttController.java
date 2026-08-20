@@ -58,7 +58,12 @@ final class MqttController implements MqttCallbackExtended {
      * disappear on a running device, and the controller is rebuilt whenever configuration reloads.
      */
     private final boolean hasLightSensor;
-    private MqttAsyncClient client;
+    /**
+     * Volatile because Paho's callback thread reads it ({@code connectComplete}, {@code publish})
+     * while the main thread replaces it in {@link #start}/{@link #stop}. Without it a reader can
+     * see a stale non-null reference to an already-closed client.
+     */
+    private volatile MqttAsyncClient client;
 
     MqttController(Context context, CommandListener commandListener) {
         config = KioskConfig.load(context);
@@ -138,19 +143,35 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     void stop() {
-        if (client == null) {
+        MqttAsyncClient stopping = client;
+        if (stopping == null) {
             return;
         }
+        // Null the field first: connectComplete runs on Paho's own thread and would otherwise see
+        // a client we are in the middle of tearing down.
+        client = null;
         try {
-            if (client.isConnected()) {
+            if (stopping.isConnected()) {
                 publish(topicPrefix + "availability", "offline", 1, true);
-                client.disconnectForcibly(1_000L, 1_000L);
             }
-            client.close();
+            // Unconditionally, not just when connected. A client caught mid-CONNECT is neither
+            // connected nor idle, and close() refuses to tear one down in that state
+            // (MqttException 32110/32100), which used to leave the old client, its socket and its
+            // automatic-reconnect timer running with nobody holding a reference to stop them.
+            // startControllersNow then built a second client with the *same* client id and a clean
+            // session, so once the broker returned the two evicted each other in a permanent flap,
+            // and every later reload added one more. Forcing the disconnect first makes close()
+            // legal from any state.
+            stopping.disconnectForcibly(1_000L, 1_000L);
         } catch (MqttException exception) {
-            Log.w(TAG, "Error while stopping MQTT client", exception);
-        } finally {
-            client = null;
+            Log.w(TAG, "Error while disconnecting MQTT client", exception);
+        }
+        try {
+            // The forcing overload: it stops the reconnect cycle as well, which the no-argument
+            // close() does not, and is what actually releases the client's threads.
+            stopping.close(true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "Error while closing MQTT client", exception);
         }
     }
 
@@ -174,10 +195,17 @@ final class MqttController implements MqttCallbackExtended {
     @Override
     public void connectComplete(boolean reconnect, String serverUri) {
         Log.i(TAG, reconnect ? "MQTT reconnected" : "MQTT connected");
+        // Copied to a local, the way publish() already does. This runs on Paho's thread while
+        // stop() can be nulling the field from the main thread, so a configuration reload landing
+        // exactly as the broker connection completes used to NPE here and kill the process.
+        MqttAsyncClient active = client;
+        if (active == null) {
+            return;
+        }
         try {
             publish(topicPrefix + "availability", "online", 1, true);
-            client.subscribe(topicPrefix + "command", 1);
-            client.subscribe("homeassistant/status", 0);
+            active.subscribe(topicPrefix + "command", 1);
+            active.subscribe("homeassistant/status", 0);
             publishDiscovery();
         } catch (MqttException exception) {
             Log.e(TAG, "Unable to initialize MQTT session", exception);

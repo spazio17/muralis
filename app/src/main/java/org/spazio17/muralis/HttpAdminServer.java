@@ -46,6 +46,8 @@ final class HttpAdminServer {
     private static final int MAX_HEADER_LINES = 40;
     private static final int MAX_BODY_BYTES = 16_384;
     private static final int WORKER_THREADS = 4;
+    /** Backoff after a failed {@code accept()}; see the comment at that call site. */
+    private static final long ACCEPT_RETRY_DELAY_MS = 250L;
 
     /**
      * Sends every command form in the background and reports the JSON result inline. Without this
@@ -464,6 +466,17 @@ final class HttpAdminServer {
             } catch (IOException exception) {
                 if (running) {
                     Log.w(TAG, "HTTP admin accept failed", exception);
+                    // Back off before retrying. accept() failing usually means the process is out
+                    // of file descriptors, and that condition persists: retrying immediately spun
+                    // this thread at 100% CPU with a log line per iteration, on a panel that is
+                    // supposed to sit on a wall for months. A short sleep costs nothing on the
+                    // one-off failures and turns the pathological case into a slow retry.
+                    try {
+                        Thread.sleep(ACCEPT_RETRY_DELAY_MS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
                 continue;
             }
@@ -519,6 +532,25 @@ final class HttpAdminServer {
             route(method, target, headers, body, output);
         } catch (IOException exception) {
             Log.w(TAG, "HTTP admin connection error", exception);
+        } catch (RuntimeException unexpected) {
+            // The barrier that keeps a bad request from killing the panel.
+            //
+            // These run on an ExecutorService worker, so an escaping RuntimeException reaches
+            // Android's default uncaught handler and takes the whole process down with it: the
+            // dashboard blinks out and every uptime counter resets. That is unacceptable here for
+            // any input, and it was reachable from a single malformed query string -- URLDecoder
+            // throws IllegalArgumentException on a truncated escape like "100%", which the
+            // documented `?cmnd=kiosk.set_url&url=...` workflow makes easy to send by accident.
+            //
+            // Fail soft like the rest of the app: log it, answer 500, keep serving.
+            Log.w(TAG, "HTTP admin request failed", unexpected);
+            try {
+                writeResponse(socket.getOutputStream(), 500, "text/plain",
+                        bytes("Internal Server Error"));
+            } catch (IOException | RuntimeException ignored) {
+                // The socket is already unusable, or the response was partly written. Nothing left
+                // to say to this client; the point was to survive, and we have.
+            }
         } finally {
             liveSockets.remove(socket);
             closeQuietly(socket);
@@ -815,6 +847,13 @@ final class HttpAdminServer {
     }
 
     private boolean isAuthorized(String authorizationHeader) {
+        // Explicit, not merely implied by start() refusing to bind without a password. Left to the
+        // comparison below, an empty expected password matched an empty supplied one and
+        // authorized everyone — unreachable today, but only by an invariant enforced in a
+        // different method, which is one refactor away from an authentication bypass.
+        if (boundAdminPassword.isEmpty()) {
+            return false;
+        }
         if (authorizationHeader == null || !authorizationHeader.startsWith("Basic ")) {
             return false;
         }
@@ -1245,13 +1284,34 @@ final class HttpAdminServer {
             int equals = pair.indexOf('=');
             String key = equals >= 0 ? pair.substring(0, equals) : pair;
             String value = equals >= 0 ? pair.substring(equals + 1) : "";
-            try {
-                result.put(URLDecoder.decode(key, "UTF-8"), URLDecoder.decode(value, "UTF-8"));
-            } catch (java.io.UnsupportedEncodingException impossible) {
-                throw new IllegalStateException(impossible);
+            String decodedKey = decodeOrNull(key);
+            String decodedValue = decodeOrNull(value);
+            if (decodedKey != null && decodedValue != null) {
+                result.put(decodedKey, decodedValue);
             }
+            // A pair that will not decode is dropped rather than failing the whole request: the
+            // command handlers already reject a missing argument with a useful message, which is a
+            // better answer than a blanket 500 for one bad field among several.
         }
         return result;
+    }
+
+    /**
+     * Percent-decodes one field, or returns null if it is malformed.
+     *
+     * <p>{@code URLDecoder.decode} throws {@link IllegalArgumentException} on a truncated or
+     * non-hex escape — {@code "100%"}, {@code "%zz"}, {@code "abc%2"}. That used to travel all the
+     * way out of the worker thread and kill the process, which a documented curl one-liner could
+     * trigger just by passing a URL containing a bare {@code %}.
+     */
+    private static String decodeOrNull(String raw) {
+        try {
+            return URLDecoder.decode(raw, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException impossible) {
+            throw new IllegalStateException(impossible);
+        } catch (IllegalArgumentException malformed) {
+            return null;
+        }
     }
 
     private static Map<String, String> parseFormBody(Map<String, String> headers, byte[] body) {

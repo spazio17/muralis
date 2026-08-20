@@ -284,13 +284,19 @@ final class TelemetryCollector {
             network.put("ethernet", capabilities.hasTransport(
                     NetworkCapabilities.TRANSPORT_ETHERNET));
             if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                WifiInfo wifi = context.getSystemService(WifiManager.class)
-                        .getConnectionInfo();
-                network.put("wifi_rssi_dbm", wifi.getRssi());
-                network.put("wifi_signal_level",
-                        WifiManager.calculateSignalLevel(wifi.getRssi(), 5));
-                network.put("wifi_link_speed_mbps", wifi.getLinkSpeed());
-                network.put("wifi_frequency_mhz", wifi.getFrequency());
+                // Both the manager and the info can be null; KioskService.collectRuntimeFacts
+                // already null-checks the same call. Unchecked here, an NPE escaped snapshot()
+                // into the telemetry thread or an HTTP worker and killed the process. The Wi-Fi
+                // figures are simply omitted instead, which the contract already allows.
+                WifiManager wifiManager = context.getSystemService(WifiManager.class);
+                WifiInfo wifi = wifiManager == null ? null : wifiManager.getConnectionInfo();
+                if (wifi != null) {
+                    network.put("wifi_rssi_dbm", wifi.getRssi());
+                    network.put("wifi_signal_level",
+                            WifiManager.calculateSignalLevel(wifi.getRssi(), 5));
+                    network.put("wifi_link_speed_mbps", wifi.getLinkSpeed());
+                    network.put("wifi_frequency_mhz", wifi.getFrequency());
+                }
             }
         }
         return network;
