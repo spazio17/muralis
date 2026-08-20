@@ -2109,7 +2109,9 @@ public final class KioskActivity extends Activity {
     private LinearLayout card(KioskTheme theme, String title) {
         LinearLayout group = new LinearLayout(this);
         group.setOrientation(LinearLayout.VERTICAL);
-        group.setBackground(theme.outlinedPanel(theme.surface, dp(16), dp(1)));
+        // Trying the accent colour for card borders in place of the neutral one, at the user's
+        // request, to see whether it reads better than grey from across a room.
+        group.setBackground(theme.outlinedPanel(theme.surface, dp(16), dp(1), theme.accent));
         int pad = dp(18);
         group.setPadding(pad, pad, pad, pad);
         // An empty title adds no view at all. Passing "" used to leave a blank heading TextView

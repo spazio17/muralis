@@ -325,7 +325,7 @@ final class HttpAdminServer {
             // The sections layout: as many columns as fit, each at least 300px.
             + ".grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));"
             + "align-items:start}"
-            + "fieldset{border:1px solid var(--border);background:var(--surface);margin:0;"
+            + "fieldset{border:1px solid var(--accent);background:var(--surface);margin:0;"
             + "border-radius:var(--radius);padding:1rem 1.1rem 1.2rem}"
             + "legend{padding:0 .4rem;font-weight:600;font-size:.95rem}"
             + "label{display:block;margin-top:.7rem;color:var(--subtext);font-size:.8rem}"
