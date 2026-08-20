@@ -2208,7 +2208,8 @@ public final class KioskActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(16);
         button.setTextColor(theme.onAccent());
-        button.setBackground(theme.filledButton(theme.accent, dp(12)));
+        button.setBackground(theme.raisedButton(theme.filledButton(theme.accent, dp(12)),
+                KioskTheme.darken(theme.accent, 0.72f), dp(12), dp(3)));
         button.setPadding(dp(20), dp(14), dp(20), dp(14));
         raiseSlightly(button, dp(3));
         return button;
@@ -2228,10 +2229,13 @@ public final class KioskActivity extends Activity {
     /** Toggles one of the four interval-preset buttons between its filled and outlined look. */
     private void markIntervalButtonSelected(KioskTheme theme, Button button, boolean selected) {
         if (selected) {
-            button.setBackground(theme.filledButton(theme.accent, dp(12)));
+            button.setBackground(theme.raisedButton(theme.filledButton(theme.accent, dp(12)),
+                    KioskTheme.darken(theme.accent, 0.72f), dp(12), dp(2)));
             button.setTextColor(theme.base);
         } else {
-            button.setBackground(theme.outlinedButton(dp(12), dp(1), theme.accentAlt));
+            button.setBackground(theme.raisedButton(
+                    theme.outlinedButton(dp(12), dp(1), theme.accentAlt), theme.accentAlt,
+                    dp(12), dp(2)));
             button.setTextColor(theme.accentAlt);
         }
     }
@@ -2242,7 +2246,9 @@ public final class KioskActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(15);
         button.setTextColor(theme.accentAlt);
-        button.setBackground(theme.outlinedButton(dp(12), dp(1), theme.accentAlt));
+        button.setBackground(theme.raisedButton(
+                theme.outlinedButton(dp(12), dp(1), theme.accentAlt), theme.accentAlt, dp(12),
+                dp(2)));
         button.setPadding(dp(20), dp(12), dp(20), dp(12));
         // Less than the primary button's, so the hierarchy between them still reads at a glance.
         raiseSlightly(button, dp(2));
