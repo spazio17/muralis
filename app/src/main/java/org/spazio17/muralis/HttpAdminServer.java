@@ -332,11 +332,11 @@ final class HttpAdminServer {
             + "border-radius:var(--radius);padding:1rem 1.1rem 1.2rem}"
             + "legend{padding:0 .4rem;font-weight:600;font-size:.95rem}"
             + "label{display:block;margin-top:.7rem;color:var(--subtext);font-size:.8rem}"
-            + "input[type=text],input[type=password],input[type=number]{width:100%;"
+            + "input[type=text],input[type=password],input[type=number],select{width:100%;"
             + "margin-top:.25rem;padding:.5rem .65rem;border-radius:10px;"
             + "border:1px solid var(--border);background:var(--surface-alt);color:var(--text);"
             + "font-size:.95rem}"
-            + "input:focus{outline:none;border-color:var(--accent-alt);"
+            + "input:focus,select:focus{outline:none;border-color:var(--accent-alt);"
             + "box-shadow:0 0 0 2px color-mix(in srgb,var(--accent-alt) 30%,transparent)}"
             + "input[type=checkbox]{width:auto;margin-right:.5rem;accent-color:var(--accent)}"
             + "label.check{display:flex;align-items:center;color:var(--text);font-size:.9rem;"
@@ -901,11 +901,11 @@ final class HttpAdminServer {
                 // counts its own start as one. Without saying so, a schedule that declines looks
                 // broken: the clock matches and nothing happens.
                 .append("<p class=\"hint\">Skipped unless the dashboard has been up 12 hours.</p>")
-                .append("<label class=\"inline\">MQTT update interval")
                 .append("<label class=\"check\"><input type=\"checkbox\" ")
                 .append("data-setting=\"detect_frozen_page\" id=\"detect-frozen-page\"")
                 .append(config.detectFrozenPage ? " checked" : "")
                 .append("> Reload the dashboard if it stops changing for 15 minutes</label>")
+                .append("<label>MQTT update interval")
                 .append("<select data-setting=\"telemetry_interval_seconds\" ")
                 .append("id=\"telemetry-interval\">")
                 .append(telemetryIntervalOption(10, "10 seconds", config.telemetryIntervalSeconds))
