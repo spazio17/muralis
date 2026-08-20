@@ -147,7 +147,19 @@ final class KioskTheme {
 
     /** Outlined button for secondary actions, so the primary action stays obvious. */
     GradientDrawable outlinedButton(float cornerRadiusPx, int strokePx, int strokeColor) {
-        GradientDrawable shape = panel(Color.TRANSPARENT, cornerRadiusPx);
+        return outlinedButton(cornerRadiusPx, strokePx, strokeColor, Color.TRANSPARENT);
+    }
+
+    /**
+     * Same, with the fill chosen explicitly rather than true transparency. Needed for
+     * {@link #raisedButton}: a genuinely transparent fill lets whatever is layered underneath show
+     * through the entire interior, not just the exposed edge, since a LayerDrawable's layers do not
+     * mask each other, they only draw in sequence. An opaque fill matching the surface the button
+     * actually sits on (every caller here is inside a {@code card()}, so {@link #surface}) looks
+     * identical to true transparency in practice while behaving correctly when layered.
+     */
+    GradientDrawable outlinedButton(float cornerRadiusPx, int strokePx, int strokeColor, int fill) {
+        GradientDrawable shape = panel(fill, cornerRadiusPx);
         shape.setStroke(strokePx, strokeColor);
         return shape;
     }
