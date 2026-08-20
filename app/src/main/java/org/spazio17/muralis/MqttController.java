@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.content.Context;
 import android.util.Log;
@@ -41,7 +41,7 @@ final class MqttController implements MqttCallbackExtended {
         void onCommand(String id, String command, JSONObject arguments);
     }
 
-    private static final String TAG = "KiOSkMqtt";
+    private static final String TAG = "MuralisMqtt";
     private static final Pattern BROKER_HOST = Pattern.compile("[A-Za-z0-9.-]{1,253}");
     private static final Pattern DEVICE_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private static final Pattern SAFE_COMMAND = Pattern.compile("[A-Za-z0-9._:-]{1,96}");
@@ -286,18 +286,18 @@ final class MqttController implements MqttCallbackExtended {
             JSONObject discovery = new JSONObject();
             JSONObject device = new JSONObject();
             device.put("ids", new JSONArray().put(config.deviceId));
-            device.put("name", "KiOSk " + config.deviceId);
+            device.put("name", "Muralis " + config.deviceId);
             // Read from the device, not hardcoded. These were "Lenovo" and "TB-X505F", the ROM
             // project's tablet, so every panel announced itself to Home Assistant as a Lenovo
             // TB-X505F regardless of what it actually was. Found on the Huawei MediaPad 2026-08-19,
             // where the discovery payload was confidently wrong about the hardware.
             device.put("mf", deviceManufacturer);
             device.put("mdl", deviceModel);
-            device.put("sw", "KiOSk " + appVersion);
+            device.put("sw", "Muralis " + appVersion);
             discovery.put("dev", device);
 
             JSONObject origin = new JSONObject();
-            origin.put("name", "KiOSk");
+            origin.put("name", "Muralis");
             origin.put("sw", appVersion);
             discovery.put("o", origin);
             discovery.put("state_topic", topicPrefix + "state");

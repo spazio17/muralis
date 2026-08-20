@@ -3,7 +3,7 @@
      MediaPad's level, so it is qualified here rather than guarded in the base theme. Everything
      else about the theme is inherited from values/styles.xml unchanged. -->
 <resources>
-    <style name="Theme.KiOSk" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.Muralis" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#000000</item>

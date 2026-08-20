@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 /**
  * Works out whether this install can actually be a kiosk, and what to tell the operator if not.
@@ -11,7 +11,7 @@ package org.kiosk.launcher;
  * status is what stands in for every privileged permission the ROM build had, and it <b>cannot be
  * granted after the fact by installing from the Play Store</b>: Android only accepts a device owner
  * on a device with no configured accounts, which in practice means during out-of-box setup or over
- * adb on a freshly wiped device. So the common failure is entirely silent, someone installs KiOSk
+ * adb on a freshly wiped device. So the common failure is entirely silent, someone installs Muralis
  * from Play, it runs, and none of the kiosk hardening is in force. Nothing crashes and nothing
  * explains why the status bar still works.
  *

@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace 'org.kiosk.launcher'
+    namespace 'org.spazio17.muralis'
 
     signingConfigs {
         debug {
@@ -30,7 +30,7 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId 'org.kiosk.launcher'
+        applicationId 'org.spazio17.muralis'
 
         // 26 is not a guess: the interim kiosk device is a Huawei MediaPad on
         // Android 8.0. This is the whole reason the codebase needs

@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">KiOSk</string>
-    <string name="service_channel_name">KiOSk runtime</string>
-    <string name="service_notification_title">KiOSk is active</string>
-    <string name="device_admin_label">KiOSk kiosk policy</string>
-    <string name="device_admin_description">Allows KiOSk to hold the screen in kiosk mode and hide the system bars.</string>
+    <string name="app_name">Muralis</string>
+    <string name="service_channel_name">Muralis runtime</string>
+    <string name="service_notification_title">Muralis is active</string>
+    <string name="device_admin_label">Muralis kiosk policy</string>
+    <string name="device_admin_description">Allows Muralis to hold the screen in kiosk mode and hide the system bars.</string>
     <string name="device_admin_disable_warning">Disabling this returns the system status and navigation bars to the dashboard.</string>
-    <string name="admin_escape_opened">System launcher opened; use the KiOSk icon or notification to return</string>
+    <string name="admin_escape_opened">System launcher opened; use the Muralis icon or notification to return</string>
     <string name="admin_escape_unavailable">System launcher is unavailable</string>
-    <string name="configuration_escape_opened">KiOSk configuration opened</string>
-    <string name="auto_brightness_needs_permission">Automatic brightness needs the "Modify system settings" permission. Grant it to KiOSk, then set the switch again.</string>
-    <string name="provisioning_warning">KiOSk is not the device owner, so kiosk lock-down is inactive. The dashboard works, but the screen cannot be fully locked until KiOSk is provisioned as device owner.</string>
-    <string name="set_default_launcher">Set KiOSk as the default launcher</string>
-    <string name="set_default_launcher_unavailable">Open Settings and set KiOSk as the Home app.</string>
+    <string name="configuration_escape_opened">Muralis configuration opened</string>
+    <string name="auto_brightness_needs_permission">Automatic brightness needs the "Modify system settings" permission. Grant it to Muralis, then set the switch again.</string>
+    <string name="provisioning_warning">Muralis is not the device owner, so kiosk lock-down is inactive. The dashboard works, but the screen cannot be fully locked until Muralis is provisioned as device owner.</string>
+    <string name="set_default_launcher">Set Muralis as the default launcher</string>
+    <string name="set_default_launcher_unavailable">Open Settings and set Muralis as the Home app.</string>
 </resources>

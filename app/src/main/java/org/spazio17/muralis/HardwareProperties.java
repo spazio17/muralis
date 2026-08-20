@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.content.Context;
 import android.os.Build;
@@ -32,7 +32,7 @@ import android.util.Log;
  */
 final class HardwareProperties {
 
-    private static final String TAG = "KiOSkHwProps";
+    private static final String TAG = "MuralisHwProps";
 
     private final HardwarePropertiesManager manager;
 

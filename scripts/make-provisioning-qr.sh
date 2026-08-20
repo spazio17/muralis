@@ -54,7 +54,7 @@ import json, sys
 out, url, checksum = sys.argv[1], sys.argv[2], sys.argv[3]
 payload = {
     "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME":
-        "org.kiosk.launcher/.KioskDeviceAdminReceiver",
+        "org.spazio17.muralis/.KioskDeviceAdminReceiver",
     "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": url,
     "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM": checksum,
     "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED": True,

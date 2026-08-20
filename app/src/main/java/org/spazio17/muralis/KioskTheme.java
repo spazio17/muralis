@@ -1,14 +1,14 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 
 /**
- * Catppuccin palette for every KiOSk surface, the on-device configuration screens, the escape
+ * Catppuccin palette for every Muralis surface, the on-device configuration screens, the escape
  * recorder, the stats overlay and the HTTP admin page all take their colours from here so the app
  * and the web page look like one product.
  *

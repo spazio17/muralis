@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -29,11 +29,11 @@ import android.os.SystemClock;
 import android.util.Log;
 
 public final class KioskService extends Service implements KioskCommandDispatcher.Executor {
-    private static final String TAG = "KiOSkService";
+    private static final String TAG = "MuralisService";
     private static final String ACTION_RELOAD_CONFIGURATION =
-            "org.kiosk.launcher.action.RELOAD_CONFIGURATION";
+            "org.spazio17.muralis.action.RELOAD_CONFIGURATION";
     private static final String ACTION_PUBLISH_TELEMETRY_SOON =
-            "org.kiosk.launcher.action.PUBLISH_TELEMETRY_SOON";
+            "org.spazio17.muralis.action.PUBLISH_TELEMETRY_SOON";
     private static final String CHANNEL_ID = "kiosk_runtime";
     private static final int NOTIFICATION_ID = 505;
     private static final long REMOTE_POWER_DELAY_MS = 2_000L;
@@ -295,7 +295,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (policy == null || !policy.isDeviceOwnerApp(getPackageName())) {
             Log.w(TAG, "Not device owner: running at ordinary app priority with no resource "
                     + "guarantees. Provision with `adb shell dpm set-device-owner "
-                    + "org.kiosk.launcher/.KioskDeviceAdminReceiver` (see docs/provisioning).");
+                    + "org.spazio17.muralis/.KioskDeviceAdminReceiver` (see docs/provisioning).");
             return;
         }
         android.content.ComponentName admin = KioskDeviceAdminReceiver.componentName(this);
@@ -369,12 +369,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     private void acquireRuntimeLocks() {
         PowerManager power = getSystemService(PowerManager.class);
-        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KiOSk:runtime");
+        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Muralis:runtime");
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire();
 
         WifiManager wifi = getSystemService(WifiManager.class);
-        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "KiOSk:wifi");
+        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Muralis:wifi");
         wifiLock.setReferenceCounted(false);
         wifiLock.acquire();
         Log.i(TAG, "Runtime wake and Wi-Fi locks acquired");
@@ -390,7 +390,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void startTelemetry() {
-        telemetryThread = new HandlerThread("KiOSkTelemetry");
+        telemetryThread = new HandlerThread("MuralisTelemetry");
         telemetryThread.start();
         telemetryHandler = new Handler(telemetryThread.getLooper());
         telemetryCollector = new TelemetryCollector(this);
@@ -426,7 +426,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * Brings the remote surfaces up, but only once the panel actually has a network.
      *
-     * <p>KiOSk is running within a couple of seconds of boot, well before Wi-Fi has associated, so
+     * <p>Muralis is running within a couple of seconds of boot, well before Wi-Fi has associated, so
      * both controllers used to start against no network at all: MQTT logged a connection failure it
      * then had to back off from, and the admin server bound a socket on a device with no address to
      * reach it at. Neither was fatal, and neither had to happen. {@link NetworkGate} gives up after
@@ -585,9 +585,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * <ul>
      *   <li><b>auto</b>: automatic mode is on. Android writes the sensor-driven result back into
      *       {@code Settings.System.SCREEN_BRIGHTNESS} on this hardware, verified by covering the
-     *       sensor and watching it fall to 4, so that value is the truth and KiOSk holds no override.
+     *       sensor and watching it fall to 4, so that value is the truth and Muralis holds no override.
      *   <li><b>kiosk</b>: {@code display.brightness} has set a per-window override, which outranks the
-     *       system value for this app's window. That percentage is exact, since KiOSk chose it.
+     *       system value for this app's window. That percentage is exact, since Muralis chose it.
      *   <li><b>system</b>: manual mode with no override, so the system value is the truth.
      * </ul>
      *
@@ -833,7 +833,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Hands brightness to the ambient-light sensor, or takes it back.
      *
      * <p>Two halves, and both are needed: the system-wide
-     * {@code SCREEN_BRIGHTNESS_MODE} decides whether Android tracks the sensor at all, and KiOSk's
+     * {@code SCREEN_BRIGHTNESS_MODE} decides whether Android tracks the sensor at all, and Muralis's
      * own per-window brightness override outranks it, so leaving a manual override in place would
      * silently defeat automatic mode. Enabling therefore clears the override; disabling restores the
      * last level the user asked for.

@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -55,7 +55,7 @@ import android.widget.Toast;
 import java.util.List;
 
 public final class KioskActivity extends Activity {
-    private static final String TAG = "KiOSkActivity";
+    private static final String TAG = "MuralisActivity";
     /**
      * How long to wait before retrying an unreachable dashboard.
      *
@@ -116,7 +116,7 @@ public final class KioskActivity extends Activity {
     /** Grace for the lock-task pin to actually land before the status-bar policy is judged. */
     private static final long LOCK_TASK_SETTLE_MS = 750L;
     /**
-     * Apps allowed to run while lock-task mode is on. KiOSk itself plus the two escape hatches, so
+     * Apps allowed to run while lock-task mode is on. Muralis itself plus the two escape hatches, so
      * a locked-down tablet is still recoverable by hand at the glass.
      */
     /**
@@ -147,9 +147,9 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The package that actually handles HOME, excluding KiOSk itself.
+     * The package that actually handles HOME, excluding Muralis itself.
      *
-     * <p>Once KiOSk is the default HOME it wins this resolution, so a match on our own package means
+     * <p>Once Muralis is the default HOME it wins this resolution, so a match on our own package means
      * "ask the package manager for every HOME handler and take the other one" instead.
      */
     private String systemLauncherPackage() {
@@ -452,10 +452,10 @@ public final class KioskActivity extends Activity {
         userInterfaceInitialized = true;
         // No setup-wizard handoff here, deliberately. The privileged build checked
         // DEVICE_PROVISIONED plus USER_SETUP_COMPLETE and launched Lineage's SetupWizard, because on
-        // a freshly wiped tablet HOME could resolve to KiOSk before the wizard was available. None
+        // a freshly wiped tablet HOME could resolve to Muralis before the wizard was available. None
         // of that transfers: there is no LineageOS SetupWizard on stock Android to hand off to, and
         // Settings.Secure.USER_SETUP_COMPLETE is not public API. More importantly the situation
-        // cannot arise, because an app-build KiOSk only becomes HOME once it is already installed
+        // cannot arise, because an app-build Muralis only becomes HOME once it is already installed
         // and provisioned, which is necessarily after setup has finished.
         KioskConfig config = KioskConfig.load(this);
         if (config.dashboardUrl.isEmpty()) {
@@ -485,18 +485,18 @@ public final class KioskActivity extends Activity {
         boolean deviceOwner = policy != null && policy.isDeviceOwnerApp(getPackageName());
         Log.i(TAG, "Display stays awake via FLAG_KEEP_SCREEN_ON"
                 + (deviceOwner ? " plus device-owner stay-on-while-plugged-in"
-                        : "; NOT device owner, so the panel will sleep whenever KiOSk is not in "
+                        : "; NOT device owner, so the panel will sleep whenever Muralis is not in "
                                 + "front"));
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        // Every KiOSk screen is fullscreen, including configuration: a kiosk should never show a
+        // Every Muralis screen is fullscreen, including configuration: a kiosk should never show a
         // system bar, and the settings screen used to keep the navigation bar for the keyboard's
         // dismiss key, which also handed anyone standing at the panel a Back button.
         enterImmersiveMode();
-        // Lock task is held on every KiOSk screen, so re-apply it here too: coming back from
+        // Lock task is held on every Muralis screen, so re-apply it here too: coming back from
         // another app (Settings, the launcher) otherwise leaves the policy released.
         applyKioskPolicy();
         if (webView != null) {
@@ -537,7 +537,7 @@ public final class KioskActivity extends Activity {
      * so it holds in an app-only build too.
      *
      * <p>It used to call {@code webView.goBack()}, which let anyone standing at the panel walk the
-     * dashboard's history backwards. Every KiOSk screen that needs to go back has an explicit
+     * dashboard's history backwards. Every Muralis screen that needs to go back has an explicit
      * button for it ("Back to configuration", "Cancel"), so nothing is unreachable.
      */
     // GestureBackNavigation suppressed with cause: lint's advice is to migrate to AndroidX's
@@ -574,7 +574,7 @@ public final class KioskActivity extends Activity {
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                 () -> {
-                    // Deliberately empty: swallow the gesture. Every KiOSk screen that needs to go
+                    // Deliberately empty: swallow the gesture. Every Muralis screen that needs to go
                     // back has an explicit button, so nothing becomes unreachable.
                 });
     }
@@ -716,7 +716,7 @@ public final class KioskActivity extends Activity {
         // hatch fail exactly when someone needs it to work.
         String launcherPackage = systemLauncherPackage();
         if (launcherPackage == null) {
-            // KiOSk is the only HOME handler on the device. Releasing lock task is still the right
+            // Muralis is the only HOME handler on the device. Releasing lock task is still the right
             // thing, so the configuration screen and Settings remain reachable, but there is no
             // other launcher to hand the screen to.
             Toast.makeText(this, R.string.admin_escape_unavailable, Toast.LENGTH_LONG).show();
@@ -780,7 +780,7 @@ public final class KioskActivity extends Activity {
 
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
-        page.addView(pageHeading(theme, "KiOSk", "Configuration"), matchWrap());
+        page.addView(pageHeading(theme, "Muralis", "Configuration"), matchWrap());
         View provisioningNotice = provisioningNotice(theme);
         if (provisioningNotice != null) {
             page.addView(provisioningNotice, matchWrap());
@@ -1017,7 +1017,7 @@ public final class KioskActivity extends Activity {
         // KioskService counts its own start as one. A schedule that silently declines is worse than
         // no schedule, so it is stated where the time is set.
         TextView recycleNote = new TextView(this);
-        // Just the rule, not the mechanism behind it. "Starting KiOSk counts as a rebuild" was
+        // Just the rule, not the mechanism behind it. "Starting Muralis counts as a rebuild" was
         // there for one revision and cut: the sentence above already reads as time since the
         // dashboard opened, which is exactly what it is, and naming the internal event only asks
         // the reader to hold a second concept.
@@ -1169,7 +1169,7 @@ public final class KioskActivity extends Activity {
         page.addView(explain, matchWrap());
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
-                sequenceCard(theme, "Open KiOSk settings", config.settingsSequence, false),
+                sequenceCard(theme, "Open Muralis settings", config.settingsSequence, false),
                 sequenceCard(theme, "Exit to the system launcher", config.launcherSequence, true))),
                 matchWrap());
 
@@ -1226,7 +1226,7 @@ public final class KioskActivity extends Activity {
         panel.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText(forLauncher ? "Exit to the system launcher" : "Open KiOSk settings");
+        title.setText(forLauncher ? "Exit to the system launcher" : "Open Muralis settings");
         title.setTextColor(theme.text);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
@@ -1371,7 +1371,7 @@ public final class KioskActivity extends Activity {
      * Reports the software keyboard's height whenever it changes.
      *
      * <p><b>Why measuring is necessary at all:</b> Android ignores {@code SOFT_INPUT_ADJUST_RESIZE} on
-     * a window carrying {@link WindowManager.LayoutParams#FLAG_FULLSCREEN}, which every KiOSk screen
+     * a window carrying {@link WindowManager.LayoutParams#FLAG_FULLSCREEN}, which every Muralis screen
      * does, because a kiosk has no business showing a status bar. The window therefore never shrinks
      * and the keyboard is simply drawn on top of it. The IME does still reduce the window's visible
      * display frame, though, so the gap between the decor height and that frame's bottom is the
@@ -1422,7 +1422,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Keeps the focused field visible on KiOSk's own forms when the keyboard opens.
+     * Keeps the focused field visible on Muralis's own forms when the keyboard opens.
      *
      * <p>Turns the measured keyboard height into bottom padding, which restores the scrollable range
      * {@code adjustResize} would have produced, then scrolls the focused field into it. The focus
@@ -1518,7 +1518,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * A warning banner shown when KiOSk is not the device owner, or null when it is.
+     * A warning banner shown when Muralis is not the device owner, or null when it is.
      *
      * <p>Deliberately a banner and not a hard failure: an un-provisioned install still works as a
      * dashboard, so refusing to start would take away a working panel to punish a setup mistake. It
@@ -1542,9 +1542,9 @@ public final class KioskActivity extends Activity {
                         + "fixed in place: Android only accepts a device owner while no accounts are "
                         + "signed in. Factory reset, then enrol during setup by QR, or run "
                         + "`adb shell dpm set-device-owner "
-                        + "org.kiosk.launcher/.KioskDeviceAdminReceiver` before signing in."
+                        + "org.spazio17.muralis/.KioskDeviceAdminReceiver` before signing in."
                 : "Not device owner (installer=" + installer + "). Fix with `adb shell dpm "
-                        + "set-device-owner org.kiosk.launcher/.KioskDeviceAdminReceiver`, which "
+                        + "set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`, which "
                         + "requires that no accounts are signed in on the device.");
 
         TextView notice = new TextView(this);
@@ -1564,10 +1564,10 @@ public final class KioskActivity extends Activity {
      * <p>Two paths, because only one of them is available at a time. As device owner, HOME is claimed
      * silently in {@link KioskDeviceAdminReceiver#pinAsHomeActivity(Context)} and no button is shown
      * at all, which is what a wall panel wants: nobody is standing there to answer a prompt.
-     * Without device owner that API is unavailable, so KiOSk does what every third-party launcher
+     * Without device owner that API is unavailable, so Muralis does what every third-party launcher
      * does and sends the user to Android's own home-app picker.
      *
-     * <p>Hidden once KiOSk actually is HOME, so the configuration screen does not carry a permanent
+     * <p>Hidden once Muralis actually is HOME, so the configuration screen does not carry a permanent
      * button for something already done.
      */
     private View defaultLauncherPrompt(KioskTheme theme) {
@@ -1626,7 +1626,7 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** True when KiOSk holds device-owner status. Never throws; false when it cannot be determined. */
+    /** True when Muralis holds device-owner status. Never throws; false when it cannot be determined. */
     private boolean isDeviceOwner() {
         try {
             DevicePolicyManager policy = getSystemService(DevicePolicyManager.class);
@@ -1668,7 +1668,7 @@ public final class KioskActivity extends Activity {
      * changes, and none of this is changeable. Built from the same helpers, so it picks up the palette,
      * the card treatment and the keyboard-aware scroll container without restating any of them.
      *
-     * <p>Stays inside lock task like every other KiOSk screen; {@code applyKioskPolicy} is what keeps
+     * <p>Stays inside lock task like every other Muralis screen; {@code applyKioskPolicy} is what keeps
      * the status bar suppressed here.
      */
     private void showAbout() {
@@ -1894,7 +1894,7 @@ public final class KioskActivity extends Activity {
         parent.addView(row, rowParams);
     }
 
-    /** "KiOSk 0.1.0-staging (build 1)", for headings and the configuration card. */
+    /** "Muralis 0.1.0-staging (build 1)", for headings and the configuration card. */
     private String appVersionSummary() {
         return getString(R.string.app_name) + " " + appVersionName()
                 + " (build " + appVersionCode() + ")";
@@ -2223,7 +2223,7 @@ public final class KioskActivity extends Activity {
         // WebView rastered and is documented to increase memory use. The kiosk WebView is always
         // the visible surface, so it bought nothing and cost RAM on a device where the renderer is
         // already the largest process and gets killed for memory.
-        settings.setUserAgentString(settings.getUserAgentString() + " KiOSk/0.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " Muralis/0.1");
 
         // On a userdebug/eng ROM, expose the renderer to chrome://inspect over adb. A blank or
         // half-rendered Home Assistant dashboard is otherwise almost unfalsifiable from outside the
@@ -2278,7 +2278,7 @@ public final class KioskActivity extends Activity {
     /**
      * Loads the dashboard once the panel has a network, rather than immediately after boot.
      *
-     * <p>KiOSk is on screen a couple of seconds after boot, which is the behaviour a wall panel
+     * <p>Muralis is on screen a couple of seconds after boot, which is the behaviour a wall panel
      * wants and is also earlier than Wi-Fi associates. The first load therefore failed with
      * {@code ERR_NAME_NOT_RESOLVED}, and until the ten-second retry came round the panel showed a
      * Chromium error page: a booting panel looked like a broken one. Waiting costs nothing, because
@@ -2772,7 +2772,7 @@ public final class KioskActivity extends Activity {
      * The notification {@link KioskService} posts needs a runtime grant from API 33.
      *
      * <p>A denial is survivable and must stay that way: the foreground service still runs, the
-     * notification is just not shown, which costs the "return to KiOSk" tap target the escape-hatch
+     * notification is just not shown, which costs the "return to Muralis" tap target the escape-hatch
      * toast mentions. Not asked for below API 33, where the permission does not exist.
      */
     private void requestNotificationPermissionIfNeeded() {
@@ -2841,7 +2841,7 @@ public final class KioskActivity extends Activity {
      * the bars being drawn at all), and an inert {@link #onBackPressed} (works everywhere, including
      * an app-only build).
      *
-     * <p>Silently does nothing unless KiOSk has been provisioned as device owner, so an
+     * <p>Silently does nothing unless Muralis has been provisioned as device owner, so an
      * un-provisioned tablet keeps working exactly as before.
      */
     private void applyKioskPolicy() {
@@ -2911,7 +2911,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Keeps one invariant: the status bar is disabled if and only if KiOSk holds the lock-task pin.
+     * Keeps one invariant: the status bar is disabled if and only if Muralis holds the lock-task pin.
      * Called again shortly after {@code startLockTask()} because the pin is not always in place by
      * the time that call returns.
      */
@@ -2923,7 +2923,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Disables the status bar as device-owner policy. Applied on every KiOSk screen, not just the
+     * Disables the status bar as device-owner policy. Applied on every Muralis screen, not just the
      * dashboard: the configuration screen used to release it, which left a fully working shade,
      * toggles, notifications and a route into Android Settings, one swipe from a kiosk.
      */

@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.content.Context;
 import android.net.ConnectivityManager;
@@ -15,7 +15,7 @@ import android.util.Log;
 /**
  * Runs one piece of work as soon as the panel has a network, and not before.
  *
- * <p>KiOSk starts within a couple of seconds of boot, which is exactly what a wall panel wants and
+ * <p>Muralis starts within a couple of seconds of boot, which is exactly what a wall panel wants and
  * is also early enough that Wi-Fi has usually not associated yet. Without this gate the dashboard's
  * very first load fails with {@code ERR_NAME_NOT_RESOLVED} and the panel shows a Chromium error page
  * until the retry backoff comes round, and MQTT logs a connection failure it did not need to make.
@@ -39,7 +39,7 @@ import android.util.Log;
  * </ul>
  */
 final class NetworkGate {
-    private static final String TAG = "KiOSkNetwork";
+    private static final String TAG = "MuralisNetwork";
 
     /** Long enough for Wi-Fi to associate and DHCP to finish from cold; short enough to notice. */
     static final long MAX_WAIT_MS = 60_000L;

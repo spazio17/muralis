@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 import android.content.Context;
 import android.util.Log;
@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
  * socket is bound unless an admin password has been configured locally on the device first.
  */
 final class HttpAdminServer {
-    private static final String TAG = "KiOSkHttp";
+    private static final String TAG = "MuralisHttp";
     private static final int MIN_ADMIN_PASSWORD_LENGTH = 8;
     private static final int SOCKET_TIMEOUT_MS = 10_000;
     /** Long enough for a socket close to land, short enough that a reload never looks like a hang. */
@@ -66,8 +66,8 @@ final class HttpAdminServer {
             // something an operator adjusting a wall panel needs to read. Removed at the user's
             // request 2026-08-19. Logged to the browser console instead, so a rejection is still
             // diagnosable rather than silently vanishing.
-            + "function show(text,ok){if(!ok&&window.console){console.warn('KiOSk: '+text);}"
-            + "else if(window.console){console.log('KiOSk: '+text);}}\n"
+            + "function show(text,ok){if(!ok&&window.console){console.warn('Muralis: '+text);}"
+            + "else if(window.console){console.log('Muralis: '+text);}}\n"
             + "function encode(form){var parts=[];\n"
             + "Array.prototype.forEach.call(form.elements,function(el){\n"
             + "if(el.name){parts.push(encodeURIComponent(el.name)+'='+encodeURIComponent(el.value));}"
@@ -139,9 +139,9 @@ final class HttpAdminServer {
             + ".then(function(r){return r.text();})\n"
             // Console, not the page: a wall-panel operator has no use for a running log of saves,
             // and a rejection still has to be diagnosable.
-            + ".then(function(text){if(window.console){console.log('KiOSk: '"
+            + ".then(function(text){if(window.console){console.log('Muralis: '"
             + "+el.dataset.setting+': '+text);}})\n"
-            + ".catch(function(){if(window.console){console.warn('KiOSk: '+el.dataset.setting"
+            + ".catch(function(){if(window.console){console.warn('Muralis: '+el.dataset.setting"
             + "+': no response. The device may be rebooting or off the network');}})\n"
             + ".then(function(){setTimeout(function(){delete el.dataset.pending;},1500);});}\n"
             + "Array.prototype.forEach.call(document.querySelectorAll('[data-setting]'),"
@@ -401,7 +401,7 @@ final class HttpAdminServer {
         boundAdminPassword = config.httpAdminPassword;
         workers = Executors.newFixedThreadPool(WORKER_THREADS);
         running = true;
-        acceptThread = new Thread(this::acceptLoop, "KiOSkHttpAccept");
+        acceptThread = new Thread(this::acceptLoop, "MuralisHttpAccept");
         acceptThread.start();
         KioskRuntimeState.publishHttpAdminState(true, config.httpPort);
         Log.i(TAG, "HTTP admin listening on port " + config.httpPort);
@@ -498,7 +498,7 @@ final class HttpAdminServer {
 
             if (!isAuthorized(headers.get("authorization"))) {
                 Map<String, String> extra = new HashMap<>();
-                extra.put("WWW-Authenticate", "Basic realm=\"KiOSk\"");
+                extra.put("WWW-Authenticate", "Basic realm=\"Muralis\"");
                 writeResponse(output, 401, "text/plain", bytes("Unauthorized"), extra);
                 return;
             }
@@ -814,10 +814,10 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder();
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
                 .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-                .append("<title>KiOSk admin</title><style>")
+                .append("<title>Muralis admin</title><style>")
                 .append(PAGE_CSS)
                 .append("</style></head><body><main>")
-                .append("<header><div><h1>KiOSk</h1><p class=\"sub\">")
+                .append("<header><div><h1>Muralis</h1><p class=\"sub\">")
                 .append(escapeHtml(config.deviceId)).append("</p></div>")
                 .append(statusChip())
                 .append("</header>")
@@ -857,7 +857,7 @@ final class HttpAdminServer {
                 .append("<p class=\"hint\">At least ").append(MIN_ADMIN_PASSWORD_LENGTH)
                 .append(" characters, and it is the entire credential for this page: there is no ")
                 .append("username and no rate limit, so prefer something long. Clearing it ")
-                .append("switches the web admin off, and KiOSk then binds no socket at all.</p>")
+                .append("switches the web admin off, and Muralis then binds no socket at all.</p>")
                 .append(sectionFormEnd("Save"))
 
                 // No form and no Save button: every control here stands alone and applies itself,
@@ -904,7 +904,7 @@ final class HttpAdminServer {
                 .append("commas. Between ").append(EscapeSequence.MIN_LENGTH).append(" and ")
                 .append(EscapeSequence.MAX_LENGTH).append(" taps. Recording them on the tablet ")
                 .append("is easier than typing them here.</p>")
-                .append(field("text", "settings_sequence", "Open KiOSk settings",
+                .append(field("text", "settings_sequence", "Open Muralis settings",
                         config.settingsSequence))
                 .append(field("text", "launcher_sequence", "Exit to the system launcher",
                         config.launcherSequence))

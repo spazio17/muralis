@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Make KiOSk the device owner over adb. The route that always works, and the fallback for when QR
+# Make Muralis the device owner over adb. The route that always works, and the fallback for when QR
 # enrolment during out-of-box setup is unavailable (Huawei's EMUI may not carry Google's six-tap
 # gesture on its welcome screen).
 #
@@ -21,7 +21,7 @@ set -euo pipefail
 
 project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 adb="${project_dir}/scripts/adb.sh"
-component=org.kiosk.launcher/.KioskDeviceAdminReceiver
+component=org.spazio17.muralis/.KioskDeviceAdminReceiver
 
 step() { printf '\n== %s\n' "$1"; }
 fail() { printf '\nFAILED: %s\n' "$1" >&2; exit 1; }
@@ -36,13 +36,13 @@ printf 'serial %s, Android %s (API %s)\n' "${serial}" \
     "$(ashell getprop ro.build.version.release | tail -1)" \
     "$(ashell getprop ro.build.version.sdk | tail -1)"
 
-step "Is KiOSk installed?"
-if ! ashell pm list packages | grep -qx 'package:org.kiosk.launcher'; then
+step "Is Muralis installed?"
+if ! ashell pm list packages | grep -qx 'package:org.spazio17.muralis'; then
     printf 'not installed; installing\n'
     "${adb}" install -r "${project_dir}/provisioning/kiosk.apk" >/dev/null \
         || fail "could not install the APK"
 fi
-printf 'org.kiosk.launcher present\n'
+printf 'org.spazio17.muralis present\n'
 
 step "Precondition: no accounts configured"
 accounts=$(ashell dumpsys account | grep -cE '^[[:space:]]+Account \{' || true)
@@ -101,9 +101,9 @@ restore_flags
 step "Verification"
 if ashell dumpsys device_policy | grep -qE 'Device Owner:'; then
     ashell dumpsys device_policy | grep -A4 -E 'Device Owner:' || true
-    printf '\nKiOSk is now device owner. Restart it so the policy is applied:\n'
-    printf '  scripts/adb.sh shell am force-stop org.kiosk.launcher\n'
-    printf '  scripts/adb.sh shell am start -n org.kiosk.launcher/.KioskActivity\n'
+    printf '\nMuralis is now device owner. Restart it so the policy is applied:\n'
+    printf '  scripts/adb.sh shell am force-stop org.spazio17.muralis\n'
+    printf '  scripts/adb.sh shell am start -n org.spazio17.muralis/.KioskActivity\n'
     printf '\nThen confirm the hardening actually engaged:\n'
     printf '  scripts/adb.sh shell dumpsys activity | grep -A3 LockTaskController\n'
 else

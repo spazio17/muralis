@@ -26,7 +26,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or
-         `adb shell appops set org.kiosk.launcher WRITE_SETTINGS allow`. Needed only for
+         `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`. Needed only for
          display.auto_brightness, which writes Settings.System.SCREEN_BRIGHTNESS_MODE; there is no
          device-owner setter for the System namespace. The interim MediaPad does have a light sensor
          (als-bh1745), so unlike the ROM's tablet this path is live and testable here. -->
@@ -34,7 +34,7 @@
 
     <!-- Package visibility, required from API 30 (targetSdk 30+). Without this, the escape hatch
          breaks on any modern device: queryIntentActivities/resolveActivity return a FILTERED list, so
-         KiOSk cannot find the OEM launcher to hand the screen to, and lockTaskPackages() would omit
+         Muralis cannot find the OEM launcher to hand the screen to, and lockTaskPackages() would omit
          it. Not a problem on the API 26 MediaPad, which predates filtering, which is exactly why it
          would have gone unnoticed until the first newer panel.
 
@@ -62,11 +62,11 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.KiOSk"
+        android:theme="@style/Theme.Muralis"
         android:usesCleartextTraffic="true">
 
         <!-- Device-owner component, provisioned with
-             `adb shell dpm set-device-owner org.kiosk.launcher/.KioskDeviceAdminReceiver`.
+             `adb shell dpm set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`.
              Device-owner status is the single thing standing in for the lost
              privileged permissions: it is what makes lock task suppress SystemUI
              rather than merely making the bars inert. -->
@@ -95,7 +95,7 @@
             android:windowSoftInputMode="adjustResize">
             <!-- No android:priority here, unlike the ROM build: priority on a HOME filter only
                  works for a platform-signed app in the system image, and there is no Lineage
-                 SetupWizard to outrank anyway. This filter alone does NOT make KiOSk the launcher,
+                 SetupWizard to outrank anyway. This filter alone does NOT make Muralis the launcher,
                  verified on the MediaPad where com.huawei.android.launcher kept winning; HOME is
                  claimed at runtime by KioskDeviceAdminReceiver.pinAsHomeActivity() via the
                  device-owner addPersistentPreferredActivity API. -->

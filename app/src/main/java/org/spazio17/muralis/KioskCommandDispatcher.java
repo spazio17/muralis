@@ -1,8 +1,8 @@
 /*
- * Copyright 2026 KiOSk contributors
+ * Copyright 2026 Muralis contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-package org.kiosk.launcher;
+package org.spazio17.muralis;
 
 /**
  * Command handling shared by every transport (MQTT, HTTP). Transports parse their own
@@ -182,7 +182,7 @@ final class KioskCommandDispatcher {
             case "system.reboot":
                 if (!executor.reboot()) {
                     return new Result("unsupported",
-                            "reboot needs device-owner status; provision KiOSk as device owner");
+                            "reboot needs device-owner status; provision Muralis as device owner");
                 }
                 return new Result("accepted", "rebooting");
             default:

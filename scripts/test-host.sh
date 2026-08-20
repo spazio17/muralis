@@ -60,8 +60,8 @@ done < <(grep -rn 'setLockTaskFeatures\|WindowInsetsController\|setDecorFitsSyst
     | grep -vE ':[[:space:]]*(\*|//|/\*)' || true)
 
 # Pure-Java sources must not drag in Android, or they stop being host-testable.
-pure_java_dir=${project_dir}/app/src/main/java/org/kiosk/launcher
-host_test_dir=${project_dir}/app/src/test-host/java/org/kiosk/launcher
+pure_java_dir=${project_dir}/app/src/main/java/org/spazio17/muralis
+host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy EscapeSequence KioskRuntimeState \
             Provisioning TelemetryInterval; do
     source_file=${pure_java_dir}/${name}.java
@@ -82,13 +82,13 @@ mkdir -p "${test_dir}/dispatcher" "${test_dir}/stats"
 javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/KioskCommandDispatcher.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
-java -cp "${test_dir}/dispatcher" org.kiosk.launcher.KioskCommandDispatcherTest
+java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
 
 mkdir -p "${test_dir}/provisioning"
 javac -d "${test_dir}/provisioning" \
     "${pure_java_dir}/Provisioning.java" \
     "${host_test_dir}/ProvisioningTest.java"
-java -cp "${test_dir}/provisioning" org.kiosk.launcher.ProvisioningTest
+java -cp "${test_dir}/provisioning" org.spazio17.muralis.ProvisioningTest
 
 javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \
@@ -99,9 +99,9 @@ javac -d "${test_dir}/stats" \
     "${host_test_dir}/RecyclePolicyTest.java" \
     "${host_test_dir}/EscapeSequenceTest.java" \
     "${host_test_dir}/TelemetryIntervalTest.java"
-java -cp "${test_dir}/stats" org.kiosk.launcher.SystemStatsTest
-java -cp "${test_dir}/stats" org.kiosk.launcher.RecyclePolicyTest
-java -cp "${test_dir}/stats" org.kiosk.launcher.EscapeSequenceTest
-java -cp "${test_dir}/stats" org.kiosk.launcher.TelemetryIntervalTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.SystemStatsTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.RecyclePolicyTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.EscapeSequenceTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.TelemetryIntervalTest
 
-printf 'KiOSk app host validation passed\n'
+printf 'Muralis app host validation passed\n'
