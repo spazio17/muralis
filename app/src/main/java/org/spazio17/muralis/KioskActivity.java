@@ -1084,6 +1084,12 @@ public final class KioskActivity extends Activity {
         Button manageSequences = secondaryButton(theme, "Manage escape sequences");
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(manageSequences, matchWrap());
+        // Whoever is already in settings does not need to remember or perform the corner-tap
+        // combination just to reach the same exit; this calls the identical path the launcher
+        // escape sequence itself calls, so the two can never drift apart.
+        Button exitNow = secondaryButton(theme, "Exit to system launcher now");
+        exitNow.setOnClickListener(view -> openSystemLauncher());
+        escapeCard.addView(exitNow, matchWrap());
 
 
         LinearLayout aboutCard = card(theme, "About");
