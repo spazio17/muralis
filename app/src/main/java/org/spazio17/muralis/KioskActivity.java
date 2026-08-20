@@ -614,7 +614,10 @@ public final class KioskActivity extends Activity {
                 // Swallow every touch while recording so the sequence is captured cleanly.
                 return super.dispatchTouchEvent(event);
             }
-            if (zone != null && !configurationVisible && handleEscapeTap(zone, event.getEventTime())) {
+            // Deliberately not gated on configurationVisible: an escape hatch that stops working
+            // the moment you are inside settings is not an escape hatch. This is exactly the
+            // situation an operator stuck on the configuration screen needs it for.
+            if (zone != null && handleEscapeTap(zone, event.getEventTime())) {
                 return true;
             }
             if (configurationVisible) {
@@ -1084,13 +1087,6 @@ public final class KioskActivity extends Activity {
         Button manageSequences = secondaryButton(theme, "Manage escape sequences");
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(manageSequences, matchWrap());
-        // Whoever is already in settings does not need to remember or perform the corner-tap
-        // combination just to reach the same exit; this calls the identical path the launcher
-        // escape sequence itself calls, so the two can never drift apart.
-        Button exitNow = secondaryButton(theme, "Exit to system launcher now");
-        exitNow.setOnClickListener(view -> openSystemLauncher());
-        escapeCard.addView(exitNow, matchWrap());
-
 
         LinearLayout aboutCard = card(theme, "About");
         TextView buildLine = new TextView(this);
