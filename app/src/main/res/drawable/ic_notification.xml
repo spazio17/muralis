@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Foreground-service notification icon. A status-bar icon must be a plain white-on-transparent
+     silhouette: Android discards colour and keeps only alpha, so drawing in colour here would be
+     misleading in a preview without changing what actually renders. Reuses just the four dashboard
+     tiles from ic_launcher_foreground, without the bezel or wall mount, because both add fine detail
+     that does not survive being rendered at notification size (typically ~24dp); the tiles alone are
+     already a recognisable "dashboard" glyph on their own, in the spirit of Android's own Material
+     dashboard/grid icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M34,36 L58,36 L58,50 L34,50 Z" android:fillColor="#FFFFFF" />
+    <path android:pathData="M62,36 L74,36 L74,50 L62,50 Z" android:fillColor="#FFFFFF" />
+    <path android:pathData="M34,54 L48,54 L48,68 L34,68 Z" android:fillColor="#FFFFFF" />
+    <path android:pathData="M52,54 L74,54 L74,68 L52,68 Z" android:fillColor="#FFFFFF" />
+</vector>

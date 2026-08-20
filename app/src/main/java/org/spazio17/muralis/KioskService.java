@@ -262,7 +262,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle(getString(R.string.service_notification_title))
-                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(openKiosk)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
