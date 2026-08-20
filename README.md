@@ -30,5 +30,7 @@ kept elsewhere as a frozen reference) to an unprivileged, Play-Store-installable
 
 ## License
 
-Not yet decided. Built on [Eclipse Paho](https://www.eclipse.org/paho/) MQTT
-(`org.eclipse.paho.client.mqttv3`, EPL/EDL) and the [Catppuccin](https://catppuccin.com/) palette.
+All rights reserved for now — see [`LICENSE`](LICENSE); a placeholder pending a final licensing
+decision, not an open-source license. Built on [Eclipse Paho](https://www.eclipse.org/paho/) MQTT
+(`org.eclipse.paho.client.mqttv3`, EPL/EDL) and the [Catppuccin](https://catppuccin.com/) palette,
+both credited on the app's own About screen.

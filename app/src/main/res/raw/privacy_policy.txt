@@ -8,7 +8,7 @@ WHAT THE APP SENDS, AND WHERE
 
 Only to destinations you configure yourself, and only after you configure them. Both remote surfaces are disabled until you set a credential:
 
-• MQTT. If you enter a broker address, Muralis publishes a status snapshot roughly every 30 seconds to that broker. Verified against the live payload, that snapshot contains:
+• MQTT. If you enter a broker address, Muralis publishes a status snapshot to that broker on an interval you choose (10, 30, 60 or 300 seconds; 30 by default), and a little sooner than that when your battery level, charging state, memory pressure or thermal status changes, so Home Assistant does not show a stale value for the rest of the interval. Verified against the live payload, that snapshot contains:
 
 - how long the device has been running
 - battery percentage, charge state, health, temperature, voltage, and the charge and current counters the hardware exposes

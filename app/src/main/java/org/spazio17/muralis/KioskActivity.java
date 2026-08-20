@@ -1696,6 +1696,10 @@ public final class KioskActivity extends Activity {
         addAboutRow(deviceCard, theme, "Rendering engine", engine == null ? "unknown" : engine);
         addAboutRow(deviceCard, theme, "Device owner", isDeviceOwner() ? "yes" : "no");
 
+        LinearLayout creditsCard = card(theme, "Credits");
+        addAboutRow(creditsCard, theme, "Eclipse Paho", "MQTT client (EPL/EDL)");
+        addAboutRow(creditsCard, theme, "Catppuccin", "Colour palette (MIT)");
+
         LinearLayout legalCard = card(theme, "Legal");
         TextView legalIntro = new TextView(this);
         legalIntro.setTextColor(theme.subtext);
@@ -1714,8 +1718,8 @@ public final class KioskActivity extends Activity {
 
         // Order chosen for cardGrid's round-robin: the two short cards share a lane, the taller
         // device card takes the other.
-        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(appCard, deviceCard, legalCard)),
-                matchWrap());
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
+                appCard, deviceCard, creditsCard, legalCard)), matchWrap());
 
         Button back = primaryButton(theme, "Back to configuration");
         back.setOnClickListener(view -> showConfiguration(KioskConfig.load(this)));

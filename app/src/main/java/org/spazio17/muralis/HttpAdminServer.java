@@ -541,6 +541,12 @@ final class HttpAdminServer {
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
+        } else if (path.equals("/privacy") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
+                    context.getString(R.string.privacy_policy_title), R.raw.privacy_policy)));
+        } else if (path.equals("/terms") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
+                    context.getString(R.string.terms_title), R.raw.terms)));
         } else {
             writeResponse(output, 404, "text/plain", bytes("Not Found"));
         }
@@ -934,6 +940,13 @@ final class HttpAdminServer {
                 .append("<fieldset><legend>System stats</legend>")
                 .append("<pre id=\"stats\">loading...</pre></fieldset>")
 
+                .append("<fieldset><legend>Legal</legend>")
+                .append("<p class=\"hint\"><a href=\"/privacy\">")
+                .append(escapeHtml(context.getString(R.string.privacy_policy_title)))
+                .append("</a> &middot; <a href=\"/terms\">")
+                .append(escapeHtml(context.getString(R.string.terms_title)))
+                .append("</a></p></fieldset>")
+
                 .append("</div>");
 
         html.append(COMMAND_SCRIPT);
@@ -942,6 +955,59 @@ final class HttpAdminServer {
         html.append(THEME_SCRIPT);
         html.append("</main></body></html>");
         return html.toString();
+    }
+
+    /**
+     * Renders one legal document ({@code res/raw/privacy_policy.txt} or {@code terms.txt}) as a
+     * standalone page, for parity with the tablet's own About screen. Behind the same Basic Auth as
+     * everything else on this server: whoever reaches this page already reached the rest of it.
+     *
+     * <p>Blocks are separated by blank lines; an ALL-CAPS block is a heading, matching the format
+     * {@code KioskActivity#addDocumentBlocks} renders on the tablet.
+     */
+    private String renderLegalPage(String title, int rawRes) {
+        StringBuilder html = new StringBuilder();
+        html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
+                .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+                .append("<title>").append(escapeHtml(title)).append(" &middot; Muralis</title>")
+                .append("<style>").append(PAGE_CSS)
+                .append("main{max-width:640px}h2{color:var(--accent);font-size:1rem;"
+                        + "letter-spacing:.04em;margin:1.6rem 0 .4rem}"
+                        + "p.doc{margin:.2rem 0}</style></head><body><main>")
+                .append("<p class=\"hint\"><a href=\"/\">&larr; Back</a></p>")
+                .append("<h1>").append(escapeHtml(title)).append("</h1>")
+                .append("<p class=\"notice\">")
+                .append(escapeHtml(context.getString(R.string.legal_draft_warning)))
+                .append("</p>");
+        for (String block : readRawText(rawRes).trim().split("\n\\s*\n")) {
+            String content = block.trim();
+            if (content.isEmpty()) {
+                continue;
+            }
+            boolean heading = content.equals(content.toUpperCase(Locale.ROOT))
+                    && content.chars().anyMatch(Character::isLetter);
+            html.append(heading ? "<h2>" : "<p class=\"doc\">")
+                    .append(escapeHtml(content))
+                    .append(heading ? "</h2>" : "</p>");
+        }
+        html.append("</main></body></html>");
+        return html.toString();
+    }
+
+    /** Reads a {@code res/raw} text file in full, mirroring {@code KioskActivity#readRawText}. */
+    private String readRawText(int rawRes) {
+        try (InputStream in = context.getResources().openRawResource(rawRes);
+                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException unavailable) {
+            Log.w(TAG, "Could not read document resource", unavailable);
+            return "This document could not be loaded.";
+        }
     }
 
     /**
