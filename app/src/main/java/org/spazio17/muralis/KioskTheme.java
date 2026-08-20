@@ -5,7 +5,9 @@
 package org.spazio17.muralis;
 
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 
 /**
  * Catppuccin palette for every Muralis surface, the on-device configuration screens, the escape
@@ -116,6 +118,31 @@ final class KioskTheme {
     /** Solid accent button. */
     GradientDrawable filledButton(int fill, float cornerRadiusPx) {
         return panel(fill, cornerRadiusPx);
+    }
+
+    /**
+     * {@code face} over a solid colour peeking out along the bottom edge, the same offset the web
+     * admin's buttons use ({@code box-shadow: 0 2px 0 0 <colour>}). Needed on this device: a plain
+     * {@code View.setElevation} shadow is an ambient/spot *shadow*, essentially black, and is barely
+     * visible against Mocha's near-black base. A solid coloured edge is visible regardless of the
+     * background it sits on.
+     */
+    Drawable raisedButton(GradientDrawable face, int edgeColor, float cornerRadiusPx, int edgePx) {
+        GradientDrawable edge = new GradientDrawable();
+        edge.setShape(GradientDrawable.RECTANGLE);
+        edge.setColor(edgeColor);
+        edge.setCornerRadius(cornerRadiusPx);
+        LayerDrawable layered = new LayerDrawable(new Drawable[]{edge, face});
+        layered.setLayerInset(1, 0, 0, 0, edgePx);
+        return layered;
+    }
+
+    /** The same colour, scaled darker by {@code factor} (0-1), for a bevel-style bottom edge. */
+    static int darken(int color, float factor) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        hsv[2] *= factor;
+        return Color.HSVToColor(Color.alpha(color), hsv);
     }
 
     /** Outlined button for secondary actions, so the primary action stays obvious. */
