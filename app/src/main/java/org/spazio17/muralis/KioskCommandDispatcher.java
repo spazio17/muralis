@@ -205,13 +205,22 @@ final class KioskCommandDispatcher {
         if (value == null) {
             return null;
         }
-        String[] parts = value.trim().split(":");
+        // -1 keeps trailing empty fields, which the default split() discards: without it "12:30:"
+        // parsed as a well-formed two-part time rather than the malformed input it is.
+        String[] parts = value.trim().split(":", -1);
         if (parts.length != 2 && parts.length != 3) {
             return null;
         }
         int hour;
         int minute;
         try {
+            // Integer.parseInt accepts a leading sign, so "+1:+2" would otherwise arrive as 01:02.
+            // A clock time has no sign; anything but digits is malformed.
+            for (String part : parts) {
+                if (!isAllDigits(part)) {
+                    return null;
+                }
+            }
             hour = Integer.parseInt(parts[0]);
             minute = Integer.parseInt(parts[1]);
             if (parts.length == 3) {
@@ -224,6 +233,19 @@ final class KioskCommandDispatcher {
             return null;
         }
         return new int[] {hour, minute};
+    }
+
+    /** True for a non-empty run of ASCII digits, with no sign, space or separator. */
+    private static boolean isAllDigits(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) < '0' || value.charAt(i) > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Returns null when {@code url} is an acceptable dashboard URL, an error message otherwise. */

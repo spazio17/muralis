@@ -436,14 +436,19 @@ public final class KioskActivity extends Activity {
         enterImmersiveMode();
         requestNotificationPermissionIfNeeded();
         keepBackInert();
-        // KioskService sends this package-scoped, so the receiver is process-local in practice.
-        // From API 34 Android requires that to be stated explicitly rather than inferred, and
-        // throws if neither flag is passed. RECEIVER_NOT_EXPORTED is API 33, hence the branch.
+        // KioskService sends this package-scoped, but package-scoping constrains the *sender*, not
+        // who may reach the receiver. A context-registered receiver was implicitly EXPORTED before
+        // Android 14, and RECEIVER_NOT_EXPORTED is only API 33 — so on the API 26 hardware this app
+        // targets, the unflagged branch left any installed app able to broadcast UI_CONTROL and
+        // repoint, blank or dim the kiosk. Both branches therefore also require a signature-level
+        // permission, which works on every version; the flag stays because from API 34 Android
+        // demands the export intent be stated explicitly and throws if neither flag is passed.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(controlReceiver, new IntentFilter(KioskActions.UI_CONTROL),
-                    Context.RECEIVER_NOT_EXPORTED);
+                    KioskActions.PERMISSION_UI_CONTROL, null, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            registerReceiver(controlReceiver, new IntentFilter(KioskActions.UI_CONTROL));
+            registerReceiver(controlReceiver, new IntentFilter(KioskActions.UI_CONTROL),
+                    KioskActions.PERMISSION_UI_CONTROL, null);
         }
         KioskService.start(this);
 
@@ -2570,6 +2575,17 @@ public final class KioskActivity extends Activity {
         networkWaitLabel = null;
         if (webView != null) {
             webView.stopLoading();
+            // Detach before destroying. Android's contract is that destroy() must follow removal
+            // from the view hierarchy; destroying in place leaves the old tree to deliver
+            // onDetachedFromWindow to a dead WebView, which crashes or leaks depending on the
+            // provider — and the provider here is updated by Play, so "fine today" is not durable.
+            // onRenderProcessGone already does it in this order. This path runs on every nightly
+            // recycle, every memory-pressure recycle and every kiosk.restart.
+            ViewGroup parent = webView.getParent() instanceof ViewGroup
+                    ? (ViewGroup) webView.getParent() : null;
+            if (parent != null) {
+                parent.removeView(webView);
+            }
             webView.destroy();
             webView = null;
         }

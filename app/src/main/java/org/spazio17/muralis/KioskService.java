@@ -536,7 +536,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private org.json.JSONObject buildStats(boolean includeAdminDetail) {
-        org.json.JSONObject stats = telemetryCollector.snapshot();
+        // The collector is created by startTelemetry(), which runs *after* startControllers() in
+        // onCreate, and NetworkGate runs its work inline when a network is already up — the normal
+        // case. So the HTTP accept thread is live and serving before this field is assigned, and a
+        // browser polling /api/stats every five seconds will eventually land in that window. It
+        // used to NPE on a worker thread and take the process down; the config block below needs no
+        // collector, so report what is knowable and omit the rest for the fraction of a second it
+        // takes the sampler to come up.
+        TelemetryCollector collector = telemetryCollector;
+        org.json.JSONObject stats =
+                collector == null ? new org.json.JSONObject() : collector.snapshot();
         try {
             // What is actually applied on the device, so a page open in a browser can show the
             // truth rather than whatever was current when it was loaded. Secrets are excluded:
@@ -1017,7 +1026,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (url != null) {
             intent.putExtra(KioskActions.EXTRA_URL, url);
         }
-        sendBroadcast(intent);
+        // With the permission, so the receiver may demand it; see KioskActions.PERMISSION_UI_CONTROL
+        // for why package-scoping alone was not enough on API 26.
+        sendBroadcast(intent, KioskActions.PERMISSION_UI_CONTROL);
     }
 
     /**

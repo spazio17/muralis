@@ -54,7 +54,12 @@ final class SecretStore {
             preferences.edit().putString(name,
                     Base64.encodeToString(envelope.array(), Base64.NO_WRAP)).apply();
         } catch (GeneralSecurityException exception) {
-            throw new IllegalStateException("Unable to encrypt kiosk configuration", exception);
+            // Fail soft, like everywhere else here. This used to throw, and since a settings save
+            // runs on an HTTP worker thread, an unavailable Keystore took the whole process down.
+            // The old value is deliberately left in place: overwriting it with nothing would turn a
+            // transient encryption failure into a lost credential.
+            Log.e(TAG, "Unable to encrypt configuration value; leaving the stored one unchanged",
+                    exception);
         }
     }
 
@@ -66,12 +71,15 @@ final class SecretStore {
 
         try {
             ByteBuffer envelope = ByteBuffer.wrap(Base64.decode(encoded, Base64.NO_WRAP));
+            // IllegalArgumentException, not GeneralSecurityException: these two describe stored
+            // bytes that are definitively malformed, so they belong in the "discard it" branch
+            // below rather than the "the Keystore was busy, try again later" one.
             if (envelope.get() != FORMAT_VERSION) {
-                throw new GeneralSecurityException("Unsupported secret format");
+                throw new IllegalArgumentException("Unsupported secret format");
             }
             int ivLength = Byte.toUnsignedInt(envelope.get());
             if (ivLength < 12 || ivLength > 32 || envelope.remaining() <= ivLength) {
-                throw new GeneralSecurityException("Invalid secret envelope");
+                throw new IllegalArgumentException("Invalid secret envelope");
             }
             byte[] iv = new byte[ivLength];
             envelope.get(iv);
@@ -82,9 +90,24 @@ final class SecretStore {
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(128, iv));
             cipher.updateAAD(name.getBytes(StandardCharsets.UTF_8));
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
-        } catch (GeneralSecurityException | IllegalArgumentException exception) {
-            Log.e(TAG, "Discarding an unreadable encrypted configuration value", exception);
+        } catch (javax.crypto.BadPaddingException | javax.crypto.IllegalBlockSizeException
+                | IllegalArgumentException | java.nio.BufferUnderflowException corrupt) {
+            // The stored bytes really are unreadable: a failed GCM tag, a truncated envelope, an
+            // envelope too short to even read its header, or Base64 that will not decode. Nothing
+            // will ever recover this value, so drop it rather than re-failing on it forever.
+            Log.e(TAG, "Discarding an unreadable encrypted configuration value", corrupt);
             preferences.edit().remove(name).apply();
+            return "";
+        } catch (GeneralSecurityException environmental) {
+            // The Keystore itself was unavailable, not the data. Deleting here was a real hazard:
+            // a transient failure — notably the direct-boot path, where BootReceiver starts
+            // KioskService before the user has unlocked — would permanently wipe the admin password
+            // and the broker credentials. The web admin then fails closed and the panel is
+            // unreachable except at the glass, which is the one stuck state this product cannot
+            // afford. Report empty for this read and leave the ciphertext alone so the next read,
+            // once the Keystore is back, returns the real value.
+            Log.e(TAG, "Could not decrypt configuration value; keeping it for a later attempt",
+                    environmental);
             return "";
         }
     }

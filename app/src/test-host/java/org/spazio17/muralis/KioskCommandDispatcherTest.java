@@ -161,8 +161,12 @@ public final class KioskCommandDispatcherTest {
         require(executor.lastRecycleHour == 4 && executor.lastRecycleMinute == 5,
                 "short recycle time not forwarded");
 
-        // Every one of these must be refused, not quietly turned into something valid.
-        String[] rubbish = {null, "", "25:00", "12:60", "-1:00", "midnight", "12", "12:30:00:00"};
+        // Every one of these must be refused, not quietly turned into something valid. The last
+        // four were all accepted once: "12:30:" and "12:" because split() discards trailing empty
+        // fields, and the signed pair because Integer.parseInt takes a leading sign, so "+1:+2"
+        // silently became 01:02.
+        String[] rubbish = {null, "", "25:00", "12:60", "-1:00", "midnight", "12", "12:30:00:00",
+            "12:30:", "12:", "+1:+2", "1 2:30"};
         for (String value : rubbish) {
             executor.calls.clear();
             KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(

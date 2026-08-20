@@ -15,6 +15,17 @@
        SetupFinishedReceiver        so there is nothing to hand off from. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Guards the internal UI_CONTROL broadcast KioskService sends to KioskActivity.
+         signature protection level, so only a build signed with the same key can hold it,
+         i.e. only this app. Needed because a context-registered receiver was implicitly
+         EXPORTED before Android 14 and RECEIVER_NOT_EXPORTED is only API 33: without this,
+         on the API 26 hardware this app targets, any installed app could broadcast the
+         action and repoint, blank or dim the kiosk. -->
+    <permission
+        android:name="org.spazio17.muralis.permission.UI_CONTROL"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="org.spazio17.muralis.permission.UI_CONTROL" />
+
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

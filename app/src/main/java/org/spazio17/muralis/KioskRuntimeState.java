@@ -42,7 +42,18 @@ final class KioskRuntimeState {
     private KioskRuntimeState() {
     }
 
-    /** Monotonic milliseconds; only ever meaningful as a difference against another reading. */
+    /**
+     * Monotonic milliseconds; only ever meaningful as a difference against another reading.
+     *
+     * <p>{@code System.nanoTime} rather than {@code SystemClock.elapsedRealtime} so this class stays
+     * free of Android imports and host-testable, which {@code scripts/test-host.sh} enforces. The
+     * difference matters in one case: {@code nanoTime} does not advance while the device is
+     * suspended, so every elapsed figure here — including the twelve-hour window
+     * {@link RecyclePolicy} checks — would under-report across a suspend. A wall panel holds a wake
+     * lock and is configured to stay on while charging, so it does not suspend in the deployment
+     * this is built for. If that ever stops being true, this is the line to change, and it will
+     * cost this class its host tests.
+     */
     static long nowMs() {
         return System.nanoTime() / 1_000_000L;
     }
