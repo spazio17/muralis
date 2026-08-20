@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * SPDX-License-Identifier: Apache-2.0
+ * All rights reserved. See LICENSE at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -26,7 +26,7 @@ import android.util.Log;
  * the bars needs {@code policy_control=immersive.full}, and making a revealed one harmless needs an
  * inert {@code onBackPressed}. See KioskActivity.
  *
- * <p>Provisioned out of band, not by the app: see docs/kiosk-device-owner.md. Muralis degrades to its
+ * <p>Provisioned out of band, not by the app, over adb or by QR during out-of-box setup. Muralis degrades to its
  * previous behaviour when it is not the device owner, so an un-provisioned tablet still works.
  */
 public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * SPDX-License-Identifier: Apache-2.0
+ * All rights reserved. See LICENSE at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -301,7 +301,23 @@ final class TelemetryCollector {
         return value == Long.MIN_VALUE ? JSONObject.NULL : value;
     }
 
+    /**
+     * Consecutive {@code /proc/loadavg} failures before it is abandoned for the life of the process.
+     *
+     * <p>Mirrors {@code SystemStats.MAX_READ_FAILURES} and exists for exactly the same reason: on a
+     * stock, unprivileged install SELinux denies this read permanently, and every denial writes a
+     * kernel audit record. This one is reached from the periodic snapshot rather than the
+     * two-second sampler, so it accumulates more slowly than the reads {@code SystemStats} latches,
+     * but it accumulates forever on a panel that is meant to run for months. More than one attempt,
+     * because a procfs entry genuinely can vanish mid-read.
+     */
+    private static final int MAX_LOAD_AVERAGE_FAILURES = 3;
+    private static int loadAverageFailures;
+
     private static Object readLoadAverage() {
+        if (loadAverageFailures >= MAX_LOAD_AVERAGE_FAILURES) {
+            return JSONObject.NULL;
+        }
         try (BufferedReader reader = new BufferedReader(new FileReader("/proc/loadavg"))) {
             String line = reader.readLine();
             if (line != null) {
@@ -311,6 +327,9 @@ final class TelemetryCollector {
                     load.put(number(Double.parseDouble(fields[0])));
                     load.put(number(Double.parseDouble(fields[1])));
                     load.put(number(Double.parseDouble(fields[2])));
+                    // A single success clears the count, so a transient failure costs nothing
+                    // permanently.
+                    loadAverageFailures = 0;
                     return load;
                 }
             }
@@ -319,6 +338,7 @@ final class TelemetryCollector {
             // JSONException is deliberately absent: since every value goes through number(), the
             // puts here cannot throw it, and listing it would not compile.
         }
+        loadAverageFailures++;
         return JSONObject.NULL;
     }
 }

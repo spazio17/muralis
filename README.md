@@ -5,7 +5,7 @@ dashboard, controllable over MQTT and HTTP.
 
 Targets the public Android SDK only (no platform signature, no privileged permissions), so it
 installs as an ordinary APK on stock Android, from API 26 up. See [`CLAUDE.md`](CLAUDE.md) for the
-architecture and the current state of the project.
+architecture and the decisions behind it.
 
 ## Building
 
@@ -24,9 +24,7 @@ inside the same container.
 
 ## Status
 
-Staging MVP in progress: porting a working, privileged reference build (a custom-ROM kiosk app,
-kept elsewhere as a frozen reference) to an unprivileged, Play-Store-installable APK. See
-`CLAUDE.md` for what's verified on hardware versus what's built but not yet installed.
+Pre-release. Runs on real hardware; not yet published, and there is no release signing config.
 
 ## License
 

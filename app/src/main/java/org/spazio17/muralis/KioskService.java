@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * SPDX-License-Identifier: Apache-2.0
+ * All rights reserved. See LICENSE at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -145,9 +145,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             // Read live rather than cached, the same way statsOverlayEnabled and autoRecycleEnabled
             // already are, so a changed preset takes effect on this task's own next tick with no
-            // restart of the telemetry thread.
-            int seconds = TelemetryInterval.clampOrDefault(
-                    KioskConfig.load(KioskService.this).telemetryIntervalSeconds);
+            // restart of the telemetry thread. Via the narrow reader, not load(), which would
+            // decrypt every SecretStore entry on each tick just to reach one int.
+            int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskService.this);
             telemetryHandler.postDelayed(this, seconds * 1000L);
         }
     };
@@ -295,7 +295,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (policy == null || !policy.isDeviceOwnerApp(getPackageName())) {
             Log.w(TAG, "Not device owner: running at ordinary app priority with no resource "
                     + "guarantees. Provision with `adb shell dpm set-device-owner "
-                    + "org.spazio17.muralis/.KioskDeviceAdminReceiver` (see docs/provisioning).");
+                    + "org.spazio17.muralis/.KioskDeviceAdminReceiver`.");
             return;
         }
         android.content.ComponentName admin = KioskDeviceAdminReceiver.componentName(this);

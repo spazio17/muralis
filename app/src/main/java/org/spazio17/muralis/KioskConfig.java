@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * SPDX-License-Identifier: Apache-2.0
+ * All rights reserved. See LICENSE at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -83,7 +83,15 @@ final class KioskConfig {
         config.dashboardUrl = preferences.getString(DASHBOARD_URL, "").trim();
         config.deviceId = preferences.getString(DEVICE_ID, "").trim();
         if (config.deviceId.isEmpty()) {
+            // Persisted at once, not just returned. This identifier is the MQTT topic prefix and
+            // the unique_id of every Home Assistant entity, and load() is called independently by
+            // MqttController, the stats builder and the admin page: minting it per-call without
+            // storing it gave each of them a *different* id, so the topics being published to and
+            // the id being reported did not match, and every restart created a fresh Home
+            // Assistant device. commit() rather than apply() because MqttController reads it back
+            // immediately to build its topic prefix.
             config.deviceId = "kiosk-" + UUID.randomUUID().toString().substring(0, 8);
+            preferences.edit().putString(DEVICE_ID, config.deviceId).commit();
         }
         config.mqttHost = preferences.getString(MQTT_HOST, "").trim();
         config.mqttPort = preferences.getInt(MQTT_PORT, 1883);
@@ -174,6 +182,20 @@ final class KioskConfig {
         return RecyclePolicy.clampMinute(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getInt(RECYCLE_MINUTE, RecyclePolicy.DEFAULT_QUIET_MINUTE));
+    }
+
+    /** Polled by the configuration screen to follow changes made from another surface. */
+    static boolean detectFrozenPageEnabled(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(DETECT_FROZEN_PAGE, true);
+    }
+
+    /** Read on every telemetry tick, so it skips {@link #load} and its SecretStore decryption. */
+    static int telemetryIntervalSecondsOf(Context context) {
+        return TelemetryInterval.clampOrDefault(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(TELEMETRY_INTERVAL_SECONDS, TelemetryInterval.DEFAULT_SECONDS));
     }
 
     private static Context storageContext(Context context) {

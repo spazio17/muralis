@@ -38,19 +38,27 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing — a remote caller (e.g. a Home Assistant automation) would
   otherwise believe a panel is off when it is still fully powered and rendering.
-- **Both remote surfaces fail closed.** No default credential ships with either transport; each
-  stays inactive until a secret is configured locally (an admin password for HTTP, broker
-  credentials for MQTT). Any new remote-control surface should follow the same rule.
+- **Both remote surfaces fail closed, but not identically.** Neither ships a default credential and
+  neither activates until configured. HTTP is the stricter of the two: it binds no socket at all
+  until an admin password of at least 8 characters exists. MQTT starts as soon as a broker *address*
+  is set, because broker username and password are optional — plenty of home brokers accept
+  anonymous connections, and refusing to work against one would be inventing a requirement the
+  protocol does not have. Authentication of individual MQTT commands is therefore the broker's job,
+  not this app's. Any new remote-control surface should be off until deliberately configured.
 - **Fail soft everywhere else.** A missing permission or capability logs a warning and continues
   rather than crashing. This app runs across a much wider spread of Android versions and device
   policies than a build for one fixed piece of hardware would, so this matters more here, not less.
-- **A rejected command is never silent.** Malformed input, an unknown command name, or a retained
+- **A refused command is never silent.** Malformed input, an unusable command name, or a retained
   MQTT command (structurally indistinguishable from a fresh one at the protocol level; MQTT strips
   `RETAIN` on delivery to an established subscription, so the app can only refuse it on reconnect
-  and clear it) all publish a `rejected` result with a reason. A caller must be able to tell
-  "rejected" from "device is gone."
-- **Secrets are never in plaintext.** `SecretStore`/`KioskConfig` hold credentials via Android
-  Keystore, not shared preferences. MQTT has no TLS option, by design: an earlier TLS checkbox was
+  and clear it) all publish a result with a reason. A caller must be able to tell a refusal from a
+  dead device. Note the status is `rejected` for bad arguments and `unsupported` for a command name
+  this build does not implement — two different answers on purpose. The single deliberate silence is
+  an **empty** payload, because clearing a retained command is itself an empty retained publish, and
+  replying would make the cleanup trigger its own refusal.
+- **Secrets are never stored in plaintext.** `SecretStore` keeps credentials as AES-GCM ciphertext in
+  its own shared-preferences file, under a key that never leaves the Android Keystore and with the
+  field name bound in as additional authenticated data. MQTT has no TLS option, by design: an earlier TLS checkbox was
   removed because it was never actually backed by trust-material handling and could only ever work
   against a publicly-trusted certificate on a matching hostname — useless for the home-broker
   audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
@@ -78,17 +86,29 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   that change rarely enough for an early publish not to spam the broker. A "Connected"/
   "disconnected" entity is backed directly by the broker's Last Will rather than by a periodic
   field, so it reflects the tablet being gone even when nothing is left running to publish `false`.
-- **The escape hatch** (a fixed-count tap gesture, independently configurable for "open settings"
-  vs. "exit to the system launcher") works from every screen the app shows, including its own
-  configuration screen — it is the one way out of the kiosk and has no screen-specific exceptions.
-  It releases lock task and launches the OEM launcher resolved at runtime via an explicit
-  `setPackage` intent, never a hardcoded launcher package, since the default launcher varies by
-  OEM. `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device
-  owner, so HOME reliably returns to it.
-- **Most configuration fields apply on the aggregate "Open dashboard" save; a few apply
-  immediately instead** (brightness, the auto-brightness checkbox, the HTTP admin password on
-  focus loss) — whichever a field's own effect is cheap and safe to apply the moment it's touched,
-  rather than batched with everything else.
+- **The escape hatch** is a user-recorded corner-tap sequence — three to twelve taps across the four
+  screen corners, tail-matched with a maximum gap between taps, and recorded separately for "open
+  settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture
+  is worthless once someone has watched it being used, and a hardcoded one is identical on every
+  panel. It works from every screen the app shows, including its own configuration screen: it is the
+  one way out of the kiosk and has no screen-specific exceptions. Exiting releases lock task and
+  launches the OEM launcher resolved at runtime via an explicit `setPackage` intent, never a
+  hardcoded launcher package, since the default launcher varies by OEM.
+  `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device owner, so
+  HOME reliably returns to it.
+- **A setting changed on any surface must be visible on all of them, quickly.** Three surfaces can
+  write the same settings, so the rules are: every Behaviour control, the brightness pair and the
+  admin password apply the moment they are touched, on the tablet and in the web admin alike; only
+  the connection fields (dashboard URL, device id, broker, ports) wait for a save button, because
+  applying those per keystroke would rebind sockets and restart the MQTT client. Anything applied
+  outside `KioskCommandDispatcher` must also call `KioskService.publishTelemetrySoon`, since only
+  the dispatcher republishes automatically, and without it Home Assistant keeps showing the old
+  value for up to a full publish interval. Both UIs poll storage on a timer so a change made
+  elsewhere appears rather than leaving two surfaces disagreeing. And a writer must never save a
+  whole `KioskConfig` snapshot taken when a screen was built — `save()` writes every field, so a
+  stale snapshot silently reverts whatever another surface changed meanwhile; load fresh, set the
+  one field, save. That bug has been introduced three separate times, which is why
+  `saveEscapeSequences` exists as a partial write.
 - **Legal documents and app/device facts are shown in-app, not linked externally.** The About
   screen (tablet) and a matching page (web admin) render the bundled privacy policy and terms
   directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately

@@ -1,4 +1,4 @@
-# Build environment for the KiOSk app: a normal Gradle/AGP Android build.
+# Build environment for the Muralis app: a normal Gradle/AGP Android build.
 #
 # Deliberately NOT the sibling ROM project's image
 # (../wall-kiosk-rom/build/Containerfile.lineage17): that one is Ubuntu 18.04 +

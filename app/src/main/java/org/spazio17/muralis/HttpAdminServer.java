@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * SPDX-License-Identifier: Apache-2.0
+ * All rights reserved. See LICENSE at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * A local HTTP control/admin surface mirroring the authenticated MQTT command set, the same way
  * Tasmota or WLED let HTTP and MQTT drive identical commands. Plaintext HTTP only, intended for a
- * trusted LAN exactly like the plain-TCP MQTT option in docs/mqtt-contract.md. Fails closed: no
+ * trusted LAN exactly like the plain-TCP MQTT transport. Fails closed: no
  * socket is bound unless an admin password has been configured locally on the device first.
  */
 final class HttpAdminServer {
@@ -656,6 +656,14 @@ final class HttpAdminServer {
             return;
         }
         String refusal = saveSettings(form);
+        if (refusal == null) {
+            // The mirror of what KioskService.dispatch does after an accepted command, and needed
+            // for the same reason: these controls bypass the dispatcher, so without this the change
+            // reaches storage and the tablet but not Home Assistant, whose switch then disagrees
+            // with the panel until the next telemetry tick, up to five minutes at the longest
+            // interval preset.
+            KioskService.publishTelemetrySoon(context);
+        }
         JSONObject response = new JSONObject();
         try {
             response.put("status", refusal == null ? "accepted" : "rejected");

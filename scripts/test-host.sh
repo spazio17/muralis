@@ -5,9 +5,9 @@
 # pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
-# Grow the javac blocks below as those files are ported. Right now only the
-# skeleton exists, so there is nothing to compile here yet and this script
-# checks the build plumbing instead of pretending to test logic it does not have.
+# Grow the javac blocks below as more logic becomes host-testable. They currently
+# compile and run six suites: dispatcher, provisioning, system stats, recycle
+# policy, escape sequence and telemetry interval.
 
 set -euo pipefail
 

@@ -26,7 +26,7 @@ The dashboard it displays is not part of Muralis. Its availability, correctness 
 
 REMOTE CONTROL
 
-The remote control surfaces are authenticated by the credential you set, over your own network. Both of them, MQTT and the local web administration, are UNENCRYPTED, and there is no option to encrypt either. Your broker username and password travel in clear text, so do not reuse a password you use anywhere else. Run these surfaces only on a network you trust, and reach them over a VPN rather than exposing a port. If you set a weak password, or expose these surfaces to the internet, anyone who reaches them can change what the device displays and restart it.
+The local web administration is authenticated by the password you set. MQTT is authenticated by your broker, using whatever credentials it requires, which may be none: Muralis itself does not authenticate individual commands, so anyone who can publish to your broker can control the panel. Both surfaces are UNENCRYPTED, and there is no option to encrypt either. Your broker username and password travel in clear text, so do not reuse a password you use anywhere else. Run these surfaces only on a network you trust, and reach them over a VPN rather than exposing a port. If you set a weak password, or expose these surfaces to the internet, anyone who reaches them can change what the device displays and restart it.
 
 LIABILITY
 

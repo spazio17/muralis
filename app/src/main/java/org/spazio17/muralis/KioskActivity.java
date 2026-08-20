@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * SPDX-License-Identifier: Apache-2.0
+ * All rights reserved. See LICENSE at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -101,6 +101,11 @@ public final class KioskActivity extends Activity {
      */
     private static final int FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER = 3;
     private static final long OVERLAY_REFRESH_MS = 1_000L;
+    /**
+     * How often the configuration screen re-reads its Behaviour controls from storage, so a change
+     * made over MQTT or from the web admin is reflected here. Matches the web admin's own poll.
+     */
+    private static final long BEHAVIOUR_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
     private static final int ADMIN_ESCAPE_TAPS = 9;
     private static final long ADMIN_ESCAPE_WINDOW_MS = 5_000L;
@@ -198,6 +203,15 @@ public final class KioskActivity extends Activity {
     private boolean userInterfaceInitialized;
     private boolean unlockReceiverRegistered;
     private boolean configurationVisible;
+    /**
+     * Set while {@link #behaviourSyncTask} is writing a control's state back from storage, so the
+     * change listener that would normally save it recognises the write as its own echo. Without
+     * this, following an external change would immediately re-save it, and a value being changed
+     * from two surfaces at once could ping-pong.
+     */
+    private boolean syncingBehaviourControls;
+    /** Re-reads the Behaviour settings so a change from MQTT or the web admin shows up here too. */
+    private Runnable behaviourSyncTask;
     private final java.util.List<EscapeSequence.Tap> escapeTaps = new java.util.ArrayList<>();
     private boolean recorderVisible;
     private boolean recordingForLauncher;
@@ -787,6 +801,40 @@ public final class KioskActivity extends Activity {
                 Toast.LENGTH_SHORT).show();
     }
 
+    /**
+     * Applies one Behaviour-card setting immediately, the way the web admin's equivalent controls
+     * already do, and tells Home Assistant about it without waiting for the next telemetry tick.
+     *
+     * <p>Three things here are load-bearing. It loads a **fresh** {@link KioskConfig} instead of
+     * mutating the snapshot the screen was built from, so a concurrent change from another surface
+     * survives. It needs no controller restart, because every one of these settings is read live by
+     * whoever consumes it ({@code maybeRecycleDashboard} on each sample, the overlay ticker, the
+     * telemetry loop). And it calls {@link KioskService#publishTelemetrySoon} so the MQTT switch in
+     * Home Assistant reflects the new value in under a second rather than up to a full interval
+     * later — the same reason {@code KioskService.dispatch} republishes after an accepted command.
+     */
+    private void applyBehaviourSetting(java.util.function.Consumer<KioskConfig> change) {
+        if (syncingBehaviourControls) {
+            // Our own write, echoed back by behaviourSyncTask. Saving it again would be harmless
+            // but pointless, and would republish state for a change nobody made.
+            return;
+        }
+        KioskConfig fresh = KioskConfig.load(this);
+        change.accept(fresh);
+        fresh.save(this);
+        KioskService.publishTelemetrySoon(this);
+    }
+
+    /**
+     * Sets a checkbox only when it actually differs, so following an external change never fires a
+     * listener for a value that was already correct.
+     */
+    private static void setCheckedIfChanged(CheckBox box, boolean value) {
+        if (box.isChecked() != value) {
+            box.setChecked(value);
+        }
+    }
+
     private KioskTheme currentTheme() {
         return KioskTheme.of(getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
                 .getBoolean(LIGHT_CONFIGURATION_THEME, false));
@@ -1017,15 +1065,27 @@ public final class KioskActivity extends Activity {
             showConfiguration(config);
         });
         behaviourCard.addView(lightThemeInput, matchWrap());
+        // These three apply the moment they are touched, and are deliberately absent from the
+        // "Open dashboard" save below. They are standalone settings read live by whoever uses them,
+        // exactly like their counterparts in the web admin's Behaviour box, which has no Save
+        // button for the same reason. Leaving them to the aggregate save was a real bug: the whole
+        // KioskConfig snapshot this screen was built from got written back, so a value changed over
+        // MQTT or HTTP while the screen sat open was silently reverted on save.
         CheckBox statsOverlayInput = themedCheckBox(theme,
                 "Show system stats on the dashboard", config.statsOverlay);
+        statsOverlayInput.setOnCheckedChangeListener(
+                (button, checked) -> applyBehaviourSetting(fresh -> fresh.statsOverlay = checked));
         behaviourCard.addView(statsOverlayInput, matchWrap());
         CheckBox autoRecycleInput = themedCheckBox(theme,
                 "Recycle the dashboard nightly and under memory pressure", config.autoRecycle);
+        autoRecycleInput.setOnCheckedChangeListener(
+                (button, checked) -> applyBehaviourSetting(fresh -> fresh.autoRecycle = checked));
         behaviourCard.addView(autoRecycleInput, matchWrap());
         CheckBox detectFrozenPageInput = themedCheckBox(theme,
                 "Reload the dashboard if it stops changing for 15 minutes",
                 config.detectFrozenPage);
+        detectFrozenPageInput.setOnCheckedChangeListener((button, checked) ->
+                applyBehaviourSetting(fresh -> fresh.detectFrozenPage = checked));
         behaviourCard.addView(detectFrozenPageInput, matchWrap());
         TextView recycleCaption = new TextView(this);
         recycleCaption.setText("Nightly recycle time");
@@ -1046,6 +1106,12 @@ public final class KioskActivity extends Activity {
                     recycleTime[0] = hour;
                     recycleTime[1] = minute;
                     recycleTimeButton.setText(RecyclePolicy.formatTime(hour, minute));
+                    // Applied here, not on save, for the same reason the checkboxes above are:
+                    // dismissing the picker is already a deliberate choice.
+                    applyBehaviourSetting(fresh -> {
+                        fresh.recycleHour = RecyclePolicy.clampHour(hour);
+                        fresh.recycleMinute = RecyclePolicy.clampMinute(minute);
+                    });
                 }, recycleTime[0], recycleTime[1], false).show());
         LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
                 dp(150), ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1098,6 +1164,7 @@ public final class KioskActivity extends Activity {
             Button intervalButton = secondaryButton(theme, intervalLabels[i]);
             intervalButton.setOnClickListener(view -> {
                 telemetryIntervalSeconds[0] = seconds;
+                applyBehaviourSetting(fresh -> fresh.telemetryIntervalSeconds = seconds);
                 for (int j = 0; j < intervalButtons.length; j++) {
                     markIntervalButtonSelected(theme, intervalButtons[j],
                             TelemetryInterval.OPTIONS[j] == seconds);
@@ -1111,6 +1178,58 @@ public final class KioskActivity extends Activity {
             markIntervalButtonSelected(theme, intervalButton,
                     seconds == telemetryIntervalSeconds[0]);
         }
+
+        // Follow these controls while the screen sits open, so a change made over MQTT or from the
+        // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
+        // done this from the start via its five-second /api/stats poll; this is the tablet's
+        // equivalent. Only the Behaviour card is followed: the text fields above it are things the
+        // operator may be part-way through typing, and snatching those back would be hostile.
+        if (behaviourSyncTask != null) {
+            mainHandler.removeCallbacks(behaviourSyncTask);
+        }
+        behaviourSyncTask = new Runnable() {
+            @Override
+            public void run() {
+                // Stops itself rather than needing every other screen to remember to cancel it.
+                // The attachment test is the load-bearing half: About, the legal pages and the
+                // escape-sequence screen all leave configurationVisible true while replacing the
+                // content view, so without it this would keep polling and holding a detached
+                // view tree for as long as the panel stayed up.
+                if (!configurationVisible || !statsOverlayInput.isAttachedToWindow()) {
+                    return;
+                }
+                syncingBehaviourControls = true;
+                try {
+                    setCheckedIfChanged(statsOverlayInput,
+                            KioskConfig.statsOverlayEnabled(KioskActivity.this));
+                    setCheckedIfChanged(autoRecycleInput,
+                            KioskConfig.autoRecycleEnabled(KioskActivity.this));
+                    setCheckedIfChanged(detectFrozenPageInput,
+                            KioskConfig.detectFrozenPageEnabled(KioskActivity.this));
+
+                    int hour = KioskConfig.recycleHourOf(KioskActivity.this);
+                    int minute = KioskConfig.recycleMinuteOf(KioskActivity.this);
+                    if (hour != recycleTime[0] || minute != recycleTime[1]) {
+                        recycleTime[0] = hour;
+                        recycleTime[1] = minute;
+                        recycleTimeButton.setText(RecyclePolicy.formatTime(hour, minute));
+                    }
+
+                    int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskActivity.this);
+                    if (seconds != telemetryIntervalSeconds[0]) {
+                        telemetryIntervalSeconds[0] = seconds;
+                        for (int j = 0; j < intervalButtons.length; j++) {
+                            markIntervalButtonSelected(theme, intervalButtons[j],
+                                    TelemetryInterval.OPTIONS[j] == seconds);
+                        }
+                    }
+                } finally {
+                    syncingBehaviourControls = false;
+                }
+                mainHandler.postDelayed(this, BEHAVIOUR_SYNC_INTERVAL_MS);
+            }
+        };
+        mainHandler.postDelayed(behaviourSyncTask, BEHAVIOUR_SYNC_INTERVAL_MS);
 
         LinearLayout escapeCard = card(theme, "Escape sequences");
         TextView escapeSummary = new TextView(this);
@@ -1144,27 +1263,23 @@ public final class KioskActivity extends Activity {
         open.setOnClickListener(view -> {
             String url = normalizeUrl(urlInput.getText().toString());
             if (!url.isEmpty()) {
-                config.dashboardUrl = url;
-                config.deviceId = deviceIdInput.getText().toString().trim();
-                config.mqttHost = brokerInput.getText().toString().trim();
-                config.mqttPort = parsePort(portInput.getText().toString(), 1883);
-                config.mqttUsername = usernameInput.getText().toString();
-                config.mqttPassword = passwordInput.getText().toString();
-                config.httpPort = parsePort(
+                // Loaded fresh rather than reusing the snapshot this screen was built from:
+                // KioskConfig.save() writes every field, so saving the stale object would revert
+                // anything MQTT or the web admin changed while the screen sat open.
+                //
+                // Only the fields with a text box on this screen are taken from the form. Every
+                // Behaviour control, the brightness pair and the admin password already applied
+                // themselves when touched, so they must be left at whatever the fresh load holds.
+                KioskConfig saving = KioskConfig.load(this);
+                saving.dashboardUrl = url;
+                saving.deviceId = deviceIdInput.getText().toString().trim();
+                saving.mqttHost = brokerInput.getText().toString().trim();
+                saving.mqttPort = parsePort(portInput.getText().toString(), 1883);
+                saving.mqttUsername = usernameInput.getText().toString();
+                saving.mqttPassword = passwordInput.getText().toString();
+                saving.httpPort = parsePort(
                         httpPortInput.getText().toString(), KioskConfig.DEFAULT_HTTP_PORT);
-                // Nothing to do for the admin password here: it applies itself on focus loss, the
-                // same reason brightness is absent from this block.
-                config.statsOverlay = statsOverlayInput.isChecked();
-                config.autoRecycle = autoRecycleInput.isChecked();
-                config.detectFrozenPage = detectFrozenPageInput.isChecked();
-                // Nothing to do for brightness here: both the checkbox and the slider apply
-                // themselves the moment they are touched, so by the time Save is pressed the panel
-                // is already showing what the screen says.
-                config.recycleHour = RecyclePolicy.clampHour(recycleTime[0]);
-                config.recycleMinute = RecyclePolicy.clampMinute(recycleTime[1]);
-                config.telemetryIntervalSeconds = TelemetryInterval.clampOrDefault(
-                        telemetryIntervalSeconds[0]);
-                config.save(this);
+                saving.save(this);
                 KioskService.reloadConfiguration(this);
                 showDashboard(url);
             }

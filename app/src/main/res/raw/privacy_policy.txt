@@ -6,19 +6,23 @@ Nothing. Muralis has no analytics, no crash reporting, no advertising identifier
 
 WHAT THE APP SENDS, AND WHERE
 
-Only to destinations you configure yourself, and only after you configure them. Both remote surfaces are disabled until you set a credential:
+Only to destinations you configure yourself, and only after you configure them. Neither surface does anything until you configure it: MQTT stays off until you enter a broker address, and the local web administration stays off until you set a password. Note that a broker address alone is enough to start publishing; a broker username and password are optional, because some brokers accept anonymous connections.
 
-• MQTT. If you enter a broker address, Muralis publishes a status snapshot to that broker on an interval you choose (10, 30, 60 or 300 seconds; 30 by default), and a little sooner than that when your battery level, charging state, memory pressure or thermal status changes, so Home Assistant does not show a stale value for the rest of the interval. Verified against the live payload, that snapshot contains:
+• MQTT. If you enter a broker address, Muralis publishes a status snapshot to that broker on an interval you choose (10, 30, 60 or 300 seconds; 30 by default). It also publishes ahead of that interval when something worth knowing changes: your battery level, charging state, memory pressure or thermal status; any command it accepts; a dashboard reload, crash or recycle; and any change you make to its settings. That snapshot contains:
 
 - how long the device has been running
-- battery percentage, charge state, health, temperature, voltage, and the charge and current counters the hardware exposes
-- memory and swap in use and available, and how much memory Muralis itself is using
+- battery percentage, charge state, health, temperature, voltage, and the charge, current and energy counters the hardware exposes
+- memory and swap in use and available, how much memory Muralis itself is using, whether the system is low on memory, and the level at which it considers itself low
 - storage in use and available
-- whether the network is connected, whether it is metered, whether it is Wi-Fi or Ethernet, the Wi-Fi signal strength, link speed and radio frequency
+- whether the network is connected, whether the system considers it validated, whether it is metered, whether it is Wi-Fi or Ethernet, the Wi-Fi signal strength, link speed and radio frequency
 - the device IP address
-- CPU load, maximum CPU frequency, and CPU and GPU temperatures
+- CPU load, the system load average, maximum CPU frequency, CPU and GPU temperatures, and the operating system's thermal status
 - the dashboard address currently loaded, when it last loaded, and any load error
-- how many times the dashboard view has crashed or been rebuilt
+- how many times the dashboard view has crashed or been rebuilt, and how long ago
+- the current screen brightness, whether the light sensor is setting it, and whether this device has one
+- the panel's own settings: its device identifier, the stats overlay switch, the nightly-recycle switch and time, the frozen-page-reload switch, and the publish interval
+
+Muralis publishes its status snapshot as a retained message, which means your broker keeps a copy of the most recent one and hands it to anything that subscribes later, including after the panel is switched off or removed.
 
 The Wi-Fi network name is deliberately never read or transmitted. Reading it would require a location permission, which a wall-mounted panel should not need.
 
@@ -28,7 +32,7 @@ Note that the list above includes the dashboard address. If the address of your 
 
 Muralis also publishes an online/offline availability value, the result of any command it receives, and a Home Assistant discovery message describing the device: its identifier, the manufacturer and model reported by the hardware, and the Muralis version.
 
-• Local web administration. If you set an administration password, Muralis listens on your local network and serves the same snapshot, plus a settings page, to anyone who supplies that password.
+• Local web administration. If you set an administration password, Muralis listens on your local network and serves that snapshot, plus a settings page, to anyone who supplies that password. Over this surface the snapshot also carries the panel's administration details, which are deliberately never sent to the broker: the corner-tap combinations that unlock the kiosk, the port it listens on, and the broker address, port and username. Treat the administration password accordingly, since it is what protects the way out of the kiosk.
 
 WHAT THE APP STORES ON THE DEVICE
 

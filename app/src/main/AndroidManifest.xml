@@ -3,9 +3,11 @@
      with every privileged capability removed, per that repo's
      docs/play-store-viability.md and the decisions in its
      docs/resume-checkpoint.md. Deliberately absent, and not to be re-added:
-       DEVICE_POWER / REBOOT      - signature-only; system.shutdown becomes a
-                                    logged no-op, reboot goes through the
-                                    device-owner DevicePolicyManager.reboot().
+       DEVICE_POWER / REBOOT      - signature-only; system.shutdown is deleted
+                                    outright and falls through to "unsupported",
+                                    NOT re-added as a no-op, and reboot goes
+                                    through DevicePolicyManager.reboot() as
+                                    device owner.
        STATUS_BAR                 - signature-only; lock task does this job.
        WRITE_SECURE_SETTINGS      - signature-only; no policy_control equivalent.
        android:persistent         - system-app-only attribute.
