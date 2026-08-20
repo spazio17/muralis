@@ -1,0 +1,80 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.kiosk.launcher'
+
+    signingConfigs {
+        debug {
+            // Pinned to the .gradle bind mount instead of letting AGP place it.
+            //
+            // Not cosmetic: the container runs under --userns=keep-id as a uid with no
+            // /etc/passwd entry, so the JVM cannot resolve user.home and AGP's default
+            // "~/.android/debug.keystore" landed somewhere ephemeral. It was therefore
+            // regenerated on every run, every rebuild produced a differently-signed APK, and
+            // `adb install -r` failed with INSTALL_FAILED_UPDATE_INCOMPATIBLE until the app was
+            // uninstalled, losing its configuration each time. Observed 2026-08-19.
+            //
+            // scripts/gradle.sh creates this file with keytool if it is missing. The passwords are
+            // Android's well-known debug defaults and are not secrets; a release build must use a
+            // real keystore that is not in this repo.
+            storeFile file("${rootDir}/.gradle/kiosk-debug.keystore")
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    // 36 is Google Play's floor for new apps and updates from 2026-08-31.
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'org.kiosk.launcher'
+
+        // 26 is not a guess: the interim kiosk device is a Huawei MediaPad on
+        // Android 8.0. This is the whole reason the codebase needs
+        // Build.VERSION.SDK_INT branches for setLockTaskFeatures (API 28) and
+        // for WindowInsetsController vs SYSTEM_UI_FLAG_* immersive mode (API 30).
+        minSdk 26
+        targetSdk 36
+
+        versionCode 1
+        versionName '0.1.0-staging'
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+        release {
+            // The ROM build shrank with proguard.flags; carry that over when the
+            // real sources land, not before, so early failures stay legible.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // Host-runnable unit tests for the pure-Java logic
+    // (KioskCommandDispatcher, SystemStats, RecyclePolicy, EscapeSequence),
+    // matching ../wall-kiosk-rom/scripts/test-host.sh. These must not need a
+    // device or an emulator.
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    // The ROM vendored Paho under third_party/ because Soong has no dependency
+    // resolver. A Gradle build has one, so take the published artifact instead
+    // of copying sources across.
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+
+    testImplementation 'junit:junit:4.13.2'
+}

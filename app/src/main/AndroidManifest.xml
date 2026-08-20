@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ported from ../wall-kiosk-rom/packages/apps/KiOSkLauncher/AndroidManifest.xml
+     with every privileged capability removed, per that repo's
+     docs/play-store-viability.md and the decisions in its
+     docs/resume-checkpoint.md. Deliberately absent, and not to be re-added:
+       DEVICE_POWER / REBOOT      - signature-only; system.shutdown becomes a
+                                    logged no-op, reboot goes through the
+                                    device-owner DevicePolicyManager.reboot().
+       STATUS_BAR                 - signature-only; lock task does this job.
+       WRITE_SECURE_SETTINGS      - signature-only; no policy_control equivalent.
+       android:persistent         - system-app-only attribute.
+       lineageos.permission.*     - no LineageOS SetupWizard on stock Android,
+       SetupFinishedReceiver        so there is nothing to hand off from. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required from API 34 in addition to FOREGROUND_SERVICE, matched to the
+         android:foregroundServiceType on KioskService below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Runtime permission from API 33 for the notification KioskService must
+         post to stay alive. Ask for it at runtime; a denial must not be fatal. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or
+         `adb shell appops set org.kiosk.launcher WRITE_SETTINGS allow`. Needed only for
+         display.auto_brightness, which writes Settings.System.SCREEN_BRIGHTNESS_MODE; there is no
+         device-owner setter for the System namespace. The interim MediaPad does have a light sensor
+         (als-bh1745), so unlike the ROM's tablet this path is live and testable here. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+    <!-- Package visibility, required from API 30 (targetSdk 30+). Without this, the escape hatch
+         breaks on any modern device: queryIntentActivities/resolveActivity return a FILTERED list, so
+         KiOSk cannot find the OEM launcher to hand the screen to, and lockTaskPackages() would omit
+         it. Not a problem on the API 26 MediaPad, which predates filtering, which is exactly why it
+         would have gone unnoticed until the first newer panel.
+
+         Declared as specific intents rather than QUERY_ALL_PACKAGES on purpose: the broad permission
+         is one Google requires a separate declaration and justification for, and this app only ever
+         needs to find two things, a launcher and Settings. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.SETTINGS" />
+        </intent>
+    </queries>
+
+    <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
+    <uses-feature android:name="android.software.webview" android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:directBootAware="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.KiOSk"
+        android:usesCleartextTraffic="true">
+
+        <!-- Device-owner component, provisioned with
+             `adb shell dpm set-device-owner org.kiosk.launcher/.KioskDeviceAdminReceiver`.
+             Device-owner status is the single thing standing in for the lost
+             privileged permissions: it is what makes lock task suppress SystemUI
+             rather than merely making the bars inert. -->
+        <receiver
+            android:name=".KioskDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:label="@string/device_admin_label"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:name=".KioskActivity"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:directBootAware="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize">
+            <!-- No android:priority here, unlike the ROM build: priority on a HOME filter only
+                 works for a platform-signed app in the system image, and there is no Lineage
+                 SetupWizard to outrank anyway. This filter alone does NOT make KiOSk the launcher,
+                 verified on the MediaPad where com.huawei.android.launcher kept winning; HOME is
+                 claimed at runtime by KioskDeviceAdminReceiver.pinAsHomeActivity() via the
+                 device-owner addPersistentPreferredActivity API. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:directBootAware="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- foregroundServiceType is mandatory from Android 10 and enforced
+             strictly at targetSdk 34+. "specialUse" is the honest category for a
+             kiosk supervisor: it is not media, location, or sync. A Play
+             submission using specialUse must justify it in the console. -->
+        <service
+            android:name=".KioskService"
+            android:directBootAware="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent single-purpose kiosk launcher supervising a Home Assistant dashboard on wall-mounted hardware." />
+        </service>
+    </application>
+</manifest>

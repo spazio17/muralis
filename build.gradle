@@ -1,0 +1,12 @@
+// AGP is pinned here rather than floating: this project's whole premise is a
+// build that still works months later on hardware that is left running
+// unattended, so a surprise plugin upgrade is a liability, not a feature.
+plugins {
+    id 'com.android.application' version '8.13.2' apply false
+}
+
+// build/ holds this project's Containerfile, following the sibling ROM repo's
+// convention, so Gradle's root-project output is moved out of the way rather
+// than left to interleave with checked-in files. Only the root project collides;
+// app/build/ is unambiguous and stays put.
+layout.buildDirectory = layout.projectDirectory.dir('.gradle-build')

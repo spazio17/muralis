@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 27+ only. android:windowLightNavigationBar does not exist on API 26, which is the interim
+     MediaPad's level, so it is qualified here rather than guarded in the base theme. Everything
+     else about the theme is inherited from values/styles.xml unchanged. -->
+<resources>
+    <style name="Theme.KiOSk" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorAccent">#03A9F4</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

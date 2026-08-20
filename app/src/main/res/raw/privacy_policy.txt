@@ -1,0 +1,53 @@
+KiOSk is a kiosk launcher that displays a web dashboard you choose, on a device you own.
+
+WHAT THE APP SENDS TO US
+
+Nothing. KiOSk has no analytics, no crash reporting, no advertising identifiers and no developer-controlled server. The developer receives no data from your device at any time.
+
+WHAT THE APP SENDS, AND WHERE
+
+Only to destinations you configure yourself, and only after you configure them. Both remote surfaces are disabled until you set a credential:
+
+• MQTT. If you enter a broker address, KiOSk publishes a status snapshot roughly every 30 seconds to that broker. Verified against the live payload, that snapshot contains:
+
+- how long the device has been running
+- battery percentage, charge state, health, temperature, voltage, and the charge and current counters the hardware exposes
+- memory and swap in use and available, and how much memory KiOSk itself is using
+- storage in use and available
+- whether the network is connected, whether it is metered, whether it is Wi-Fi or Ethernet, the Wi-Fi signal strength, link speed and radio frequency
+- the device IP address
+- CPU load, maximum CPU frequency, and CPU and GPU temperatures
+- the dashboard address currently loaded, when it last loaded, and any load error
+- how many times the dashboard view has crashed or been rebuilt
+
+The Wi-Fi network name is deliberately never read or transmitted. Reading it would require a location permission, which a wall-mounted panel should not need.
+
+The MQTT connection is not encrypted, and neither is the local web administration. Everything described above, and the credentials used to authenticate, travel in clear text over your network.
+
+Note that the list above includes the dashboard address. If the address of your dashboard is itself something you would not want on your broker, do not enable MQTT.
+
+KiOSk also publishes an online/offline availability value, the result of any command it receives, and a Home Assistant discovery message describing the device: its identifier, the manufacturer and model reported by the hardware, and the KiOSk version.
+
+• Local web administration. If you set an administration password, KiOSk listens on your local network and serves the same snapshot, plus a settings page, to anyone who supplies that password.
+
+WHAT THE APP STORES ON THE DEVICE
+
+Your dashboard address, a device identifier that KiOSk generates itself, and your display and behaviour preferences. Your broker credentials and administration password are stored encrypted through the Android keystore. The dashboard view stores whatever cookies or sessions your dashboard sets, in the same way a browser would.
+
+KiOSk does not read your contacts, location, photos, files, messages, call history or microphone, and requests no permission that would allow it to.
+
+WHAT LEAVES YOUR CONTROL
+
+Nothing, unless you point it somewhere you do not control. If you configure a broker on the public internet, or expose the local web administration beyond your own network, the data described above travels there. Both are off by default for that reason.
+
+DELETION
+
+Uninstalling the app, or clearing its data, removes everything it has stored, including the encrypted credentials.
+
+CHILDREN
+
+KiOSk is not directed at children and collects nothing about anyone.
+
+CONTACT
+
+Replace this section with a working contact address before distribution.

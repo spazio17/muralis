@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Titles and the draft banner only. The document bodies live in res/raw/privacy_policy.txt and
+  res/raw/terms.txt.
+
+  Why not string resources: aapt collapses literal newlines in a <string>, so the first version of
+  these rendered as one unbroken wall of text with the headings absorbed mid-sentence. Escaping every
+  break as \n would work but makes a long document unreadable in source and unpleasant to hand to
+  anyone for review. res/raw preserves the file byte for byte, needs no XML escaping (no apostrophe
+  traps either), and means the replacement text can be dropped in as a plain .txt file.
+
+  Format the renderer expects: blocks separated by blank lines; a block in ALL CAPS is a heading.
+-->
+<resources>
+    <string name="legal_draft_warning">Draft placeholder. This text has not been reviewed and must be replaced before the app is distributed.</string>
+    <string name="privacy_policy_title">Privacy policy</string>
+    <string name="terms_title">Terms and conditions</string>
+</resources>
