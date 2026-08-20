@@ -759,6 +759,34 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * Applies a freshly typed web admin password the moment the field loses focus.
+     *
+     * <p>Loads a fresh {@link KioskConfig} rather than reusing the one the screen was built with,
+     * so this cannot clobber some other field changed since. A value equal to what is already
+     * stored is a no-op, so merely tabbing through the field without editing it does not restart
+     * the admin server for nothing.
+     */
+    private void applyHttpAdminPassword(String typed) {
+        KioskConfig config = KioskConfig.load(this);
+        if (typed.equals(config.httpAdminPassword)) {
+            return;
+        }
+        if (!typed.isEmpty() && typed.length() < MIN_HTTP_ADMIN_PASSWORD_LENGTH) {
+            Toast.makeText(this, "The web admin password must be at least "
+                    + MIN_HTTP_ADMIN_PASSWORD_LENGTH
+                    + " characters, or blank to switch the web admin off",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        config.httpAdminPassword = typed;
+        config.save(this);
+        KioskService.reloadConfiguration(this);
+        Toast.makeText(this,
+                typed.isEmpty() ? "Web admin switched off" : "Web admin password updated",
+                Toast.LENGTH_SHORT).show();
+    }
+
     private KioskTheme currentTheme() {
         return KioskTheme.of(getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
                 .getBoolean(LIGHT_CONFIGURATION_THEME, false));
@@ -830,6 +858,15 @@ public final class KioskActivity extends Activity {
         EditText httpAdminPasswordInput = themedInput(theme, config.httpAdminPassword, true);
         addField(httpCard, theme, "Admin password (blank disables the web admin)",
                 httpAdminPasswordInput);
+        // Applied on blur, not on the aggregate Save: waiting for "Open dashboard" meant the web
+        // admin stayed dark, or kept an old password, until the operator happened to leave the
+        // screen for an unrelated reason. Same shape as the auto-brightness checkbox above: a
+        // field losing focus is as much a deliberate action as a click is.
+        httpAdminPasswordInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                applyHttpAdminPassword(httpAdminPasswordInput.getText().toString());
+            }
+        });
         // Whether the surface actually holds a socket, and at which address. It fails closed by
         // design, so without this the difference between "listening" and "silently off because the
         // password is too short" was one line in logcat, invisible from the panel itself.
@@ -1115,16 +1152,8 @@ public final class KioskActivity extends Activity {
                 config.mqttPassword = passwordInput.getText().toString();
                 config.httpPort = parsePort(
                         httpPortInput.getText().toString(), KioskConfig.DEFAULT_HTTP_PORT);
-                String typedAdminPassword = httpAdminPasswordInput.getText().toString();
-                if (!typedAdminPassword.isEmpty()
-                        && typedAdminPassword.length() < MIN_HTTP_ADMIN_PASSWORD_LENGTH) {
-                    Toast.makeText(this, "The web admin password must be at least "
-                            + MIN_HTTP_ADMIN_PASSWORD_LENGTH
-                            + " characters, or blank to switch the web admin off",
-                            Toast.LENGTH_LONG).show();
-                    return;
-                }
-                config.httpAdminPassword = typedAdminPassword;
+                // Nothing to do for the admin password here: it applies itself on focus loss, the
+                // same reason brightness is absent from this block.
                 config.statsOverlay = statsOverlayInput.isChecked();
                 config.autoRecycle = autoRecycleInput.isChecked();
                 config.detectFrozenPage = detectFrozenPageInput.isChecked();
