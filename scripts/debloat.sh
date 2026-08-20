@@ -40,7 +40,7 @@ ashell getprop ro.serialno | grep -q . \
 # Never remove these, whatever a list says. The launcher and Settings are the escape hatch Muralis
 # releases lock task for; losing either turns a recoverable kiosk into a tablet that can only be
 # fixed by another factory reset.
-protected='^(com\.huawei\.android\.launcher|com\.android\.settings|com\.android\.vending|org\.kiosk\.launcher|com\.google\.android\.gms|com\.android\.systemui)$'
+protected='^(com\.huawei\.android\.launcher|com\.android\.settings|com\.android\.vending|org\.spazio17\.muralis|com\.google\.android\.gms|com\.android\.systemui)$'
 
 # Plus the keyboard actually in use, resolved rather than hardcoded. Removing the active input method
 # leaves a kiosk that cannot be configured at all: every field on the settings screen needs typing, and
