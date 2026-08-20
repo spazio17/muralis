@@ -103,8 +103,13 @@ final class KioskTheme {
 
     /** Rounded panel with a hairline border, so surfaces separate without heavy dividers. */
     GradientDrawable outlinedPanel(int fill, float cornerRadiusPx, int strokePx) {
+        return outlinedPanel(fill, cornerRadiusPx, strokePx, border);
+    }
+
+    /** Same, with the stroke colour chosen explicitly rather than defaulting to {@link #border}. */
+    GradientDrawable outlinedPanel(int fill, float cornerRadiusPx, int strokePx, int strokeColor) {
         GradientDrawable shape = panel(fill, cornerRadiusPx);
-        shape.setStroke(strokePx, border);
+        shape.setStroke(strokePx, strokeColor);
         return shape;
     }
 
