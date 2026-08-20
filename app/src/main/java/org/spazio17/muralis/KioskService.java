@@ -71,6 +71,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private HttpAdminServer httpAdminServer;
     private SystemStats systemStats;
     private NetworkGate startupGate;
+    /**
+     * The configuration each controller was last built from; see {@link #restartControllers}, which
+     * compares against these so a save that changed neither leaves both running untouched.
+     */
+    private String mqttInputs;
+    private String httpInputs;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private HardwareProperties hardwareProperties;
     private long lastRecycleAtMs;
@@ -440,10 +446,29 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void startControllersNow() {
+        KioskConfig config = KioskConfig.load(this);
+        mqttInputs = mqttInputsOf(config);
+        httpInputs = httpInputsOf(config);
         mqttController = new MqttController(this, this::handleMqttCommand);
         mqttController.start();
         httpAdminServer = new HttpAdminServer(this, this);
         httpAdminServer.start();
+    }
+
+    /**
+     * The configuration a controller is actually built from, so a reload can tell whether that
+     * controller needs rebuilding at all.
+     *
+     * <p>Not a hash: a collision would mean silently failing to restart on a real change, and these
+     * are short enough that exact comparison costs nothing. Never logged.
+     */
+    private static String mqttInputsOf(KioskConfig config) {
+        return config.mqttHost + " " + config.mqttPort + " " + config.mqttUsername
+                + " " + config.mqttPassword + " " + config.deviceId;
+    }
+
+    private static String httpInputsOf(KioskConfig config) {
+        return config.httpPort + " " + config.httpAdminPassword;
     }
 
     private void cancelStartupGate() {
@@ -453,10 +478,50 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
     }
 
+    /**
+     * Rebuilds only the controllers whose own configuration actually changed.
+     *
+     * <p>This used to stop and start both unconditionally. Stopping the MQTT client publishes a
+     * retained {@code availability: offline}, so *every* settings save — including ones with
+     * nothing to do with MQTT, like the escape sequences or the dashboard URL — made every Home
+     * Assistant entity for the panel drop to unavailable and the "Connected" sensor read
+     * disconnected, then recover a second or two later. On a panel whose whole job is to look
+     * dependable, a save should not make it briefly look dead.
+     *
+     * <p>A gate still waiting counts as "not started yet", so anything pending is left alone to
+     * come up with the current configuration on its own.
+     */
     private void restartControllers() {
-        stopControllers();
-        startControllers();
-        Log.i(TAG, "Kiosk control configuration reloaded");
+        // Still waiting for a network: the gate will start both with the current configuration when
+        // it fires, so there is nothing to restart. Tested with isPending() rather than for a null
+        // gate, because whenOnline never returns null and fires inline when already online — a
+        // non-null gate is the normal running state, not evidence that anything is pending.
+        if (startupGate != null && startupGate.isPending()) {
+            return;
+        }
+        KioskConfig config = KioskConfig.load(this);
+        String mqttNow = mqttInputsOf(config);
+        String httpNow = httpInputsOf(config);
+
+        if (!mqttNow.equals(mqttInputs) || mqttController == null) {
+            if (mqttController != null) {
+                mqttController.stop();
+            }
+            mqttInputs = mqttNow;
+            mqttController = new MqttController(this, this::handleMqttCommand);
+            mqttController.start();
+            Log.i(TAG, "MQTT configuration changed, client restarted");
+        }
+
+        if (!httpNow.equals(httpInputs) || httpAdminServer == null) {
+            if (httpAdminServer != null) {
+                httpAdminServer.stop();
+            }
+            httpInputs = httpNow;
+            httpAdminServer = new HttpAdminServer(this, this);
+            httpAdminServer.start();
+            Log.i(TAG, "Web admin configuration changed, server restarted");
+        }
     }
 
     private void stopControllers() {
