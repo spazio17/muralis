@@ -134,8 +134,9 @@ final class HttpAdminServer {
             + "return parts.join('&');}\n"
             + "function send(query,label){\n"
             + "show(label+': sending...',true);\n"
-            + "return fetch('/api/command?'+query,{credentials:'same-origin',"
-            + "headers:{'Accept':'application/json'}})\n"
+            + "return fetch('/api/command',{method:'POST',credentials:'same-origin',"
+            + "headers:{'Content-Type':'application/x-www-form-urlencoded',"
+            + "'Accept':'application/json'},body:query})\n"
             + ".then(function(r){return r.text();})\n"
             + ".then(function(text){var detail=text,ok=true;\n"
             + "try{var parsed=JSON.parse(text);\n"
@@ -688,6 +689,18 @@ final class HttpAdminServer {
             query = target.substring(questionMark + 1);
         }
 
+        // Every state-changing route below is POST, deliberately, so this one check covers all of
+        // them. Placed before routing rather than inside each handler because the failure mode of
+        // forgetting it in a new handler is silent.
+        if (method.equals("POST")) {
+            String crossSite = crossSiteRefusal(headers);
+            if (crossSite != null) {
+                Log.w(TAG, "Refused a state-changing request: " + crossSite);
+                writeResponse(output, 403, "text/plain", bytes("Forbidden: " + crossSite));
+                return;
+            }
+        }
+
         if (path.equals("/") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage()));
         } else if (path.equals("/") && method.equals("POST")) {
@@ -701,8 +714,23 @@ final class HttpAdminServer {
             }
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
-        } else if (path.equals("/api/command") && (method.equals("GET") || method.equals("POST"))) {
+        } else if (path.equals("/api/command") && method.equals("POST")) {
             handleCommand(method, query, headers, body, output);
+        } else if (path.equals("/api/command") && method.equals("GET")) {
+            // GET used to be accepted here and it was the worst hole in this surface. Commands
+            // change state, Basic-auth credentials are attached by the browser automatically, and a
+            // browser sends neither Origin nor a usable Referer for a subresource load, so
+            // <img src="http://panel:8080/api/command?cmnd=kiosk.restart"> on any page the operator
+            // happened to visit fired a real command with their credentials. No token scheme fixes
+            // that while the verb stays GET, because the request never carries anything the page
+            // could have put in it. So the verb is gone.
+            //
+            // Answered explicitly rather than 404, because the alternative is an automation that
+            // silently stops working with no clue why. The query string is still accepted on POST,
+            // so the fix for a caller is to add -X POST and nothing else.
+            writeResponse(output, 405, "application/json", bytes(
+                    "{\"status\":\"rejected\",\"detail\":\"use POST; GET cannot change state\"}"),
+                    java.util.Collections.singletonMap("Allow", "POST"));
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
@@ -715,6 +743,20 @@ final class HttpAdminServer {
         } else {
             writeResponse(output, 404, "text/plain", bytes("Not Found"));
         }
+    }
+
+    /**
+     * Refuses a state-changing request that a browser was tricked into sending from another site.
+     *
+     * <p>The decision itself lives in {@link RequestOrigin}, which is free of Android imports so
+     * {@code scripts/test-host.sh} can exercise every case. This method only pulls the three headers
+     * it needs out of the request.
+     */
+    private static String crossSiteRefusal(Map<String, String> headers) {
+        return RequestOrigin.crossSiteRefusal(
+                headers.get("sec-fetch-site"),
+                headers.get("origin"),
+                headers.getOrDefault("host", ""));
     }
 
     private void handleCommand(
@@ -744,7 +786,15 @@ final class HttpAdminServer {
                 return;
             }
         } else {
-            Map<String, String> params = parseQuery(query);
+            // Query first, then the form body on top. Both are accepted so that dropping GET costs
+            // a scripted caller exactly one flag: `curl -X POST 'http://panel:8080/api/command?
+            // cmnd=kiosk.reload'` still works untouched, while the page's own forms and fetch send
+            // the same names in a urlencoded body.
+            Map<String, String> params = new java.util.HashMap<>(parseQuery(query));
+            String formType = headers.getOrDefault("content-type", "");
+            if (formType.contains("application/x-www-form-urlencoded") && body.length > 0) {
+                params.putAll(parseFormBody(headers, body));
+            }
             command = params.getOrDefault("cmnd", "");
             if (params.containsKey("percent")) {
                 try {
@@ -1076,7 +1126,7 @@ final class HttpAdminServer {
                 .append("</fieldset>")
 
                 .append("<fieldset><legend>Open a URL now</legend>")
-                .append("<form class=\"cmd\" method=\"get\" action=\"/api/command\">")
+                .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
                 .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.set_url\">")
                 .append("<input type=\"text\" name=\"url\" ")
                 .append("placeholder=\"http://homeassistant.local:8123/\">")
@@ -1327,7 +1377,7 @@ final class HttpAdminServer {
     }
 
     private static String quickAction(String command, String label) {
-        return "<form class=\"cmd\" method=\"get\" action=\"/api/command\" style=\"display:inline\">"
+        return "<form class=\"cmd\" method=\"post\" action=\"/api/command\" style=\"display:inline\">"
                 + "<input type=\"hidden\" name=\"cmnd\" value=\"" + command + "\">"
                 + "<button type=\"submit\">" + escapeHtml(label) + "</button></form>";
     }

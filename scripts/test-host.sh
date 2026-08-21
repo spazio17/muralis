@@ -6,8 +6,8 @@
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
 # Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run six suites: dispatcher, provisioning, system stats, recycle
-# policy, escape sequence and telemetry interval.
+# compile and run seven suites: dispatcher, provisioning, request origin,
+# system stats, recycle policy, escape sequence and telemetry interval.
 
 set -euo pipefail
 
@@ -63,7 +63,7 @@ done < <(grep -rn 'setLockTaskFeatures\|WindowInsetsController\|setDecorFitsSyst
 pure_java_dir=${project_dir}/app/src/main/java/org/spazio17/muralis
 host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy EscapeSequence \
-            KioskRuntimeState Provisioning TelemetryInterval; do
+            KioskRuntimeState Provisioning TelemetryInterval RequestOrigin; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -89,6 +89,12 @@ javac -d "${test_dir}/provisioning" \
     "${pure_java_dir}/Provisioning.java" \
     "${host_test_dir}/ProvisioningTest.java"
 java -cp "${test_dir}/provisioning" org.spazio17.muralis.ProvisioningTest
+
+mkdir -p "${test_dir}/origin"
+javac -d "${test_dir}/origin" \
+    "${pure_java_dir}/RequestOrigin.java" \
+    "${host_test_dir}/RequestOriginTest.java"
+java -cp "${test_dir}/origin" org.spazio17.muralis.RequestOriginTest
 
 javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \
