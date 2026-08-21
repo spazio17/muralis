@@ -901,9 +901,7 @@ final class HttpAdminServer {
                 .append(field("password", "http_admin_password",
                         "Admin password (blank keeps the current one)", ""))
                 .append("<p class=\"hint\">At least ").append(MIN_ADMIN_PASSWORD_LENGTH)
-                .append(" characters, and it is the entire credential for this page: there is no ")
-                .append("username and no rate limit, so prefer something long. Clearing it ")
-                .append("switches the web admin off, and Muralis then binds no socket at all.</p>")
+                .append(" characters. No username.</p>")
                 .append(sectionFormEnd("Save"))
 
                 // No form and no Save button: every control here stands alone and applies itself,
@@ -1119,7 +1117,7 @@ final class HttpAdminServer {
         }
         boolean on = KioskService.isAutoBrightnessOn(context);
         return "<label class=\"check\"><input type=\"checkbox\" id=\"auto-brightness\""
-                + (on ? " checked" : "") + "> Adjust brightness automatically (light sensor)</label>";
+                + (on ? " checked" : "") + "> Adjust brightness automatically</label>";
     }
 
     /**
