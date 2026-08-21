@@ -45,7 +45,64 @@ final class HttpAdminServer {
     private static final int MAX_REQUEST_LINE_LENGTH = 4_096;
     private static final int MAX_HEADER_LINES = 40;
     private static final int MAX_BODY_BYTES = 16_384;
-    private static final int WORKER_THREADS = 4;
+    /**
+     * Eight rather than four, so one misbehaving host cannot own every worker.
+     *
+     * <p>Raised together with {@link #PER_HOST_CONNECTIONS}: the two numbers only mean anything as a
+     * pair. Six held by one host out of eight workers leaves two free for everyone else, which is
+     * the difference between an admin server that is slow during an attack and one that is simply
+     * absent. Threads that spend their lives blocked on a socket cost a stack and nothing else, and
+     * measured on the panel the whole server answers a request in 13 to 47 ms, so these are idle
+     * essentially all the time.
+     */
+    private static final int WORKER_THREADS = 8;
+    /**
+     * Concurrent connections allowed from a single remote address.
+     *
+     * <p>Bounding the total (see {@link #ACCEPT_QUEUE_DEPTH}) stops the panel being bricked, but on
+     * its own it does not keep the admin server reachable: measured against the panel, 300 sockets
+     * from one host left exactly {@code WORKER_THREADS + ACCEPT_QUEUE_DEPTH} held and every
+     * legitimate request refused, because the flooding host held all of them. A per-host cap is what
+     * makes the difference, and on a home LAN it is effective, because the attacker is a device on
+     * that LAN rather than a botnet with a thousand source addresses.
+     *
+     * <p>Six because that is also the per-host limit browsers use, and every response here sets
+     * {@code Connection: close} with all CSS and JS inlined, so one operator page load plus its
+     * polling XHRs stays under it. A refused poll is retried on the next tick and costs nothing.
+     */
+    private static final int PER_HOST_CONNECTIONS = 6;
+    /**
+     * How many accepted connections may wait for a worker before the next one is refused.
+     *
+     * <p>This number is the whole fix for an unauthenticated denial of service, so it is worth
+     * saying why it exists rather than only what it is. {@code Executors.newFixedThreadPool} pairs
+     * its threads with an <b>unbounded</b> queue, so every accepted socket was queued no matter how
+     * many were already waiting, and each one holds a file descriptor. Anyone on the LAN could open
+     * connections until the process ran out of descriptors, at which point {@code accept()} fails
+     * permanently, the web admin is gone, and every other socket this app needs, MQTT included,
+     * fails to open too. No credentials required, because this happens before a byte is read.
+     *
+     * <p>With a bounded queue the server holds at most {@code WORKER_THREADS + ACCEPT_QUEUE_DEPTH}
+     * descriptors and refuses the rest immediately, which the {@code RejectedExecutionException}
+     * branch in {@link #acceptLoop()} already handled correctly and could never previously reach.
+     * Refusing a connection during a flood is the right trade: the alternative is a panel that
+     * needs a power cycle.
+     */
+    private static final int ACCEPT_QUEUE_DEPTH = 8;
+    /**
+     * Longest a single request may spend being read, headers and body together.
+     *
+     * <p>Separate from {@link #SOCKET_TIMEOUT_MS}, which is a per-read timeout and cannot catch the
+     * attack it looks like it should. A client that sends one byte every nine seconds resets that
+     * timeout on every read and holds its worker for as long as it likes; four such clients own all
+     * four workers and the admin server is unreachable indefinitely. Slowloris, and it costs the
+     * attacker nothing. A deadline measured across the whole request cannot be reset by dribbling.
+     *
+     * <p>Eight seconds is far longer than a LAN request to a page this small needs, measured at 13
+     * to 47 ms on the panel, and it also sets how fast a worker held by an attacker comes back. The
+     * cost of being wrong is one refused request from a client on a genuinely awful link.
+     */
+    private static final int REQUEST_DEADLINE_MS = 8_000;
     /** Backoff after a failed {@code accept()}; see the comment at that call site. */
     private static final long ACCEPT_RETRY_DELAY_MS = 250L;
 
@@ -381,6 +438,14 @@ final class HttpAdminServer {
      */
     private final java.util.Set<Socket> liveSockets =
             Collections.synchronizedSet(new java.util.HashSet<>());
+    /**
+     * Live connections per remote address, for {@link #PER_HOST_CONNECTIONS}.
+     *
+     * <p>Counted from {@code accept()} rather than from the worker, because a connection waiting in
+     * the queue is holding a descriptor just as firmly as one being served, and a cap that ignored
+     * the queue would be a cap on nothing.
+     */
+    private final Map<String, Integer> hostConnections = new java.util.HashMap<>();
     private ExecutorService workers;
     private Thread acceptThread;
     private volatile boolean running;
@@ -409,7 +474,12 @@ final class HttpAdminServer {
             return;
         }
         boundAdminPassword = config.httpAdminPassword;
-        workers = Executors.newFixedThreadPool(WORKER_THREADS);
+        // Deliberately not Executors.newFixedThreadPool: that helper's queue is unbounded. See
+        // ACCEPT_QUEUE_DEPTH. Core and max are equal, so the queue is what absorbs a burst and
+        // rejection is what stops a flood.
+        workers = new java.util.concurrent.ThreadPoolExecutor(
+                WORKER_THREADS, WORKER_THREADS, 0L, TimeUnit.MILLISECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(ACCEPT_QUEUE_DEPTH));
         running = true;
         acceptThread = new Thread(this::acceptLoop, "MuralisHttpAccept");
         acceptThread.start();
@@ -475,10 +545,63 @@ final class HttpAdminServer {
                 }
                 continue;
             }
-            try {
-                workers.execute(() -> handleConnection(socket));
-            } catch (RejectedExecutionException busy) {
+            String host = remoteHostOf(socket);
+            if (!reserveHostSlot(host)) {
+                // Silently, and without reading a byte. Logging here would hand an attacker a way
+                // to fill the panel's log by connecting, and there is nothing an operator could do
+                // with one line per refused socket anyway.
                 closeQuietly(socket);
+                continue;
+            }
+            try {
+                workers.execute(() -> {
+                    try {
+                        handleConnection(socket);
+                    } finally {
+                        releaseHostSlot(host);
+                    }
+                });
+            } catch (RejectedExecutionException busy) {
+                releaseHostSlot(host);
+                closeQuietly(socket);
+            }
+        }
+    }
+
+    /** Remote address as a bare string, or a constant when it cannot be determined. */
+    private static String remoteHostOf(Socket socket) {
+        java.net.InetAddress address = socket.getInetAddress();
+        return address == null ? "unknown" : address.getHostAddress();
+    }
+
+    /**
+     * Claims one of {@link #PER_HOST_CONNECTIONS} for this address.
+     *
+     * @return false when the address already holds its share, in which case nothing was claimed and
+     *     the caller must close the socket.
+     */
+    private boolean reserveHostSlot(String host) {
+        synchronized (hostConnections) {
+            int held = hostConnections.containsKey(host) ? hostConnections.get(host) : 0;
+            if (held >= PER_HOST_CONNECTIONS) {
+                return false;
+            }
+            hostConnections.put(host, held + 1);
+            return true;
+        }
+    }
+
+    /** Releases a slot, and drops the entry entirely at zero so the map cannot grow without bound. */
+    private void releaseHostSlot(String host) {
+        synchronized (hostConnections) {
+            Integer held = hostConnections.get(host);
+            if (held == null) {
+                return;
+            }
+            if (held <= 1) {
+                hostConnections.remove(host);
+            } else {
+                hostConnections.put(host, held - 1);
             }
         }
     }
@@ -487,7 +610,9 @@ final class HttpAdminServer {
         liveSockets.add(socket);
         try {
             socket.setSoTimeout(SOCKET_TIMEOUT_MS);
-            InputStream input = socket.getInputStream();
+            // Wrapped, so both readLine and readBody inherit the whole-request deadline without
+            // either of them having to know about it. See REQUEST_DEADLINE_MS.
+            InputStream input = new DeadlineInputStream(socket.getInputStream(), REQUEST_DEADLINE_MS);
             OutputStream output = socket.getOutputStream();
 
             String requestLine = readLine(input, MAX_REQUEST_LINE_LENGTH);
@@ -1301,6 +1426,40 @@ final class HttpAdminServer {
             return Collections.emptyMap();
         }
         return parseQuery(new String(body, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Enforces a deadline across a whole request, however slowly the bytes arrive.
+     *
+     * <p>Uses {@code elapsedRealtime} rather than {@code nanoTime} or wall clock: it advances during
+     * suspend, unlike the former, and cannot jump when the clock is set, unlike the latter. A
+     * deadline that moves under either condition is one an attacker can wait out.
+     */
+    private static final class DeadlineInputStream extends java.io.FilterInputStream {
+        private final long deadlineAtMs;
+
+        DeadlineInputStream(InputStream wrapped, int budgetMs) {
+            super(wrapped);
+            this.deadlineAtMs = android.os.SystemClock.elapsedRealtime() + budgetMs;
+        }
+
+        private void checkDeadline() throws IOException {
+            if (android.os.SystemClock.elapsedRealtime() > deadlineAtMs) {
+                throw new IOException("request exceeded its deadline");
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            checkDeadline();
+            return super.read();
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            checkDeadline();
+            return super.read(buffer, offset, length);
+        }
     }
 
     private static String readLine(InputStream input, int maxLength) throws IOException {
