@@ -417,6 +417,11 @@ final class MqttController implements MqttCallbackExtended {
 
             // A bare command name is a valid payload, which MqttController accepts deliberately so
             // that `mosquitto_pub -m kiosk.reload` works, so a button needs nothing more than this.
+            components.put("portrait", toggle(
+                    "Portrait mode",
+                    "{\"command\":\"display.portrait\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"display.portrait\",\"args\":{\"enabled\":false}}",
+                    "{{ 'ON' if value_json.config.portrait else 'OFF' }}"));
             components.put("reload", button("Reload dashboard", "kiosk.reload"));
             components.put("restart", button("Restart kiosk", "kiosk.restart"));
             components.put("wake", button("Wake display", "display.wake"));

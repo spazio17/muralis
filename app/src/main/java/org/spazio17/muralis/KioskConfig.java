@@ -20,6 +20,7 @@ final class KioskConfig {
     private static final String HTTP_PORT = "http_port";
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     private static final String STATS_OVERLAY = "stats_overlay";
+    private static final String PORTRAIT = "portrait";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
@@ -57,6 +58,14 @@ final class KioskConfig {
      * so turning it off later needs no reflash.
      */
     boolean statsOverlay = true;
+    /**
+     * Whether the panel is mounted upright. Landscape by default, because that is how a wall
+     * dashboard is normally hung and it matches the manifest's own {@code sensorLandscape}.
+     *
+     * <p>Both states are the *sensor* variants rather than fixed ones, so a panel screwed to the
+     * wall the other way up still renders the right way round without a second setting for it.
+     */
+    boolean portrait = false;
     /** How often MQTT state is published. One of {@link TelemetryInterval#OPTIONS}. */
     int telemetryIntervalSeconds = TelemetryInterval.DEFAULT_SECONDS;
     /** Corner-tap combination that opens this configuration screen. */
@@ -96,6 +105,7 @@ final class KioskConfig {
         config.httpAdminPasswordReadable = storedAdminPassword != null;
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.statsOverlay = statsOverlayEnabled(context);
+        config.portrait = portraitEnabled(context);
         config.settingsSequence = preferences.getString(
                 SETTINGS_SEQUENCE, DEFAULT_SETTINGS_SEQUENCE);
         config.launcherSequence = preferences.getString(
@@ -116,6 +126,7 @@ final class KioskConfig {
                 .putInt(MQTT_PORT, mqttPort)
                 .putInt(HTTP_PORT, httpPort)
                 .putBoolean(STATS_OVERLAY, statsOverlay)
+                .putBoolean(PORTRAIT, portrait)
                 .putInt(TELEMETRY_INTERVAL_SECONDS,
                         TelemetryInterval.clampOrDefault(telemetryIntervalSeconds))
                 .apply();
@@ -151,6 +162,16 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(STATS_OVERLAY, true);
+    }
+
+    /**
+     * Narrow reader for the orientation, so callers that only need this one flag do not load and
+     * risk re-saving a whole snapshot. Same reasoning as {@link #statsOverlayEnabled}.
+     */
+    static boolean portraitEnabled(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(PORTRAIT, false);
     }
 
     /**

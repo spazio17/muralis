@@ -236,6 +236,11 @@ public final class KioskCommandDispatcherTest {
         }
 
         @Override
+        public void setPortrait(boolean enabled) {
+            calls.add("setPortrait:" + enabled);
+        }
+
+        @Override
         public void setDashboardUrl(String url) {
             calls.add("setDashboardUrl");
             lastUrl = url;

@@ -159,6 +159,13 @@ final class HttpAdminServer {
             + "'display.auto_brightness')\n"
             + ".then(function(){setTimeout(function(){delete auto.dataset.pending;},1500);});"
             + "});}\n"
+            + "var portrait=document.getElementById('portrait');\n"
+            + "if(portrait){portrait.addEventListener('change',function(){\n"
+            + "portrait.dataset.pending='1';\n"
+            + "send('cmnd=display.portrait&enabled='+(portrait.checked?'1':'0'),"
+            + "'display.portrait')\n"
+            + ".then(function(){setTimeout(function(){delete portrait.dataset.pending;},1500);});"
+            + "});}\n"
             + "var slider=document.getElementById('brightness');\n"
             + "if(slider){var label=document.getElementById('brightness-value'),timer=null;\n"
             + "slider.addEventListener('input',function(){\n"
@@ -250,6 +257,7 @@ final class HttpAdminServer {
             + "if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){"
             + "el.value=value;}}\n"
             + "follow('stats-overlay',cfg.stats_overlay);\n"
+            + "follow('portrait',cfg.portrait);\n"
             + "if(cfg.telemetry_interval_seconds!=null){"
             + "follow('telemetry-interval',String(cfg.telemetry_interval_seconds));}\n"
             // The slider follows the real backlight, except while the operator is actually dragging it.
@@ -1156,6 +1164,7 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append(brightnessControl())
                 .append(autoBrightnessControl())
+                .append(portraitControl())
                 .append("</fieldset>")
 
                 .append("<fieldset><legend>Open a URL now</legend>")
@@ -1319,6 +1328,17 @@ final class HttpAdminServer {
      * notification shade: {@code Settings.System.SCREEN_BRIGHTNESS_MODE}, system-wide, not an
      * app-local preference.
      */
+    /**
+     * The orientation toggle. A command rather than a {@code data-setting}, deliberately: a setting
+     * post only persists, while this has to turn the panel now, and the command path already carries
+     * the change through KioskService to the activity that owns the window.
+     */
+    private String portraitControl() {
+        return "<label class=\"check\"><input type=\"checkbox\" id=\"portrait\""
+                + (KioskConfig.portraitEnabled(context) ? " checked" : "")
+                + "> Use portrait mode</label>";
+    }
+
     private String autoBrightnessControl() {
         if (!KioskService.hasLightSensor(context)) {
             return "";

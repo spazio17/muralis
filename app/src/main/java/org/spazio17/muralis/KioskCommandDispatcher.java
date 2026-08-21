@@ -75,6 +75,14 @@ final class KioskCommandDispatcher {
          */
         boolean setAutoBrightness(boolean enabled);
 
+        /**
+         * Mounts the dashboard upright or on its side.
+         *
+         * <p>No return value, unlike the brightness pair: every Android device can be asked to
+         * change orientation, so there is no failure to report.
+         */
+        void setPortrait(boolean enabled);
+
         void setDashboardUrl(String url);
 
         void publishTelemetry();
@@ -148,6 +156,12 @@ final class KioskCommandDispatcher {
             // turn a panel's self-healing off, and the schedule is derived per device rather than
             // chosen. Both fall through to "unsupported", which is the honest answer for a control
             // this build does not have. See RecyclePolicy.
+            case "display.portrait":
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                executor.setPortrait(args.enabled);
+                return accepted();
             case "telemetry.publish":
                 executor.publishTelemetry();
                 return accepted();

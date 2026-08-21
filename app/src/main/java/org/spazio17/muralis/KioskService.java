@@ -732,6 +732,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("launcher_sequence", config.launcherSequence);
             }
             applied.put("stats_overlay", config.statsOverlay);
+            applied.put("portrait", config.portrait);
             // Live system state rather than a stored preference, so the web admin's checkbox tracks
             // the tablet's own auto-brightness toggle however it was changed.
             applied.put("has_light_sensor", hasLightSensor(this));
@@ -1004,6 +1005,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
         config.dashboardUrl = url;
         config.save(this);
         sendUiCommand("kiosk.set_url", -1, url);
+    }
+
+    /**
+     * Stores the orientation and tells the activity to turn.
+     *
+     * <p>Loaded fresh and saved with one field changed, never a snapshot taken earlier: {@code save}
+     * writes every field, so a stale one silently reverts whatever another surface changed meanwhile.
+     *
+     * <p>The activity owns the window, so it has to be told. Telemetry is republished immediately
+     * because this is applied outside the dispatcher's own republish path, and without it Home
+     * Assistant would show the old value for up to a full publish interval.
+     */
+    @Override
+    public void setPortrait(boolean enabled) {
+        KioskConfig config = KioskConfig.load(this);
+        config.portrait = enabled;
+        config.save(this);
+        sendUiCommand(enabled ? "display.portrait_on" : "display.portrait_off", -1, null);
+        publishTelemetrySoon(this);
     }
 
     /**

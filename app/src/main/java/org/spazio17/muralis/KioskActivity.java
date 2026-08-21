@@ -472,6 +472,7 @@ public final class KioskActivity extends Activity {
         // Home and Overview, setStatusBarDisabled removes the shade, and onBackPressed is inert, so
         // a revealed bar has nothing working on it. Known, measured regression, not an oversight.
         enterImmersiveMode();
+        applyOrientation();
         requestNotificationPermissionIfNeeded();
         keepBackInert();
         // KioskService sends this package-scoped, but package-scoping constrains the *sender*, not
@@ -1181,6 +1182,14 @@ public final class KioskActivity extends Activity {
         statsOverlayInput.setOnCheckedChangeListener(
                 (button, checked) -> applyBehaviourSetting(fresh -> fresh.statsOverlay = checked));
         behaviourCard.addView(statsOverlayInput, matchWrap());
+        CheckBox portraitInput = themedCheckBox(theme, "Use portrait mode", config.portrait);
+        portraitInput.setOnCheckedChangeListener((button, checked) -> {
+            applyBehaviourSetting(fresh -> fresh.portrait = checked);
+            // Applied here as well as saved, because this screen is the one surface that does not go
+            // through KioskService and so never receives the broadcast that turns the window.
+            applyOrientation();
+        });
+        behaviourCard.addView(portraitInput, matchWrap());
         TextView intervalCaption = new TextView(this);
         intervalCaption.setText("MQTT update interval");
         intervalCaption.setTextColor(theme.subtext);
@@ -1248,6 +1257,8 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(statsOverlayInput,
                             KioskConfig.statsOverlayEnabled(KioskActivity.this));
+                    setCheckedIfChanged(portraitInput,
+                            KioskConfig.portraitEnabled(KioskActivity.this));
                     int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskActivity.this);
                     if (seconds != telemetryIntervalSeconds[0]) {
                         telemetryIntervalSeconds[0] = seconds;
@@ -2677,6 +2688,13 @@ public final class KioskActivity extends Activity {
                 // restoring a remembered level: which level is correct is the system's business now.
                 setWindowBrightness(-1);
                 break;
+            case "display.portrait_on":
+            case "display.portrait_off":
+                // Both directions call the same method, which reads the setting KioskService has
+                // already stored, so there is one source of truth rather than a boolean carried in
+                // the broadcast that could disagree with what was saved.
+                applyOrientation();
+                break;
             case "display.auto_brightness_on":
             case "display.auto_brightness_off":
                 // Both directions do the same thing: drop any window override so the system setting,
@@ -2978,6 +2996,28 @@ public final class KioskActivity extends Activity {
      * with lock-task mode blanking the status bar. FLAG_FULLSCREEN removes the status bar at the
      * window level, so there is nothing left to reveal.
      */
+    /**
+     * Turns the panel upright or on its side, from the stored setting.
+     *
+     * <p>Applies unconditionally, not behind the device-owner gate the immersive chrome sits behind:
+     * a wall panel is mounted one way whether or not it is provisioned, and an operator who ticks
+     * "use portrait mode" means it on any install.
+     *
+     * <p>The *sensor* variants rather than the fixed ones, matching the manifest's own
+     * {@code sensorLandscape}: a panel screwed to the wall the other way up then still renders the
+     * right way round, and neither variant lets the dashboard flip between landscape and portrait on
+     * its own, which is the behaviour a wall mount actually wants.
+     *
+     * <p>Cheap to call repeatedly. Android ignores a request for the orientation already in force,
+     * and {@code configChanges} in the manifest already covers {@code orientation|screenSize}, so a
+     * change rotates the window without recreating the activity or reloading the dashboard.
+     */
+    private void applyOrientation() {
+        setRequestedOrientation(KioskConfig.portraitEnabled(this)
+                ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
+
     private void setDashboardFullscreen(boolean fullscreen) {
         // Same gate as enterImmersiveMode, and needed separately: FLAG_FULLSCREEN removes the status
         // bar at the window level, so leaving it set would keep the bar gone on an ordinary install
