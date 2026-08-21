@@ -407,21 +407,13 @@ final class MqttController implements MqttCallbackExtended {
                         "{{ 'ON' if value_json.config.auto_brightness else 'OFF' }}"));
             }
 
-            // The nightly recycle, both halves of it. The stats overlay is deliberately not here:
-            // it changes what is drawn on the panel's own glass, which is a decision for whoever is
-            // standing at it or holding the admin page, not something a broker subscriber needs.
-            components.put("auto_recycle", toggle(
-                    "Auto recycle",
-                    "{\"command\":\"kiosk.auto_recycle\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"kiosk.auto_recycle\",\"args\":{\"enabled\":false}}",
-                    "{{ 'ON' if value_json.config.auto_recycle else 'OFF' }}"));
-            // Home Assistant's time platform sends and expects ISO "HH:MM:SS", so the state is
-            // padded to seconds even though the panel only schedules to the minute.
-            components.put("recycle_time", time(
-                    "Recycle time",
-                    "{\"command\":\"kiosk.recycle_time\",\"args\":{\"time\":\"{{ value }}\"}}",
-                    "{{ '%02d:%02d:00' | format(value_json.config.recycle_hour,"
-                            + " value_json.config.recycle_minute) }}"));
+            // No recycle controls. The panel used to announce an "Auto recycle" switch and a
+            // "Recycle time" clock; both are gone, along with the commands behind them, because
+            // recycling is a recovery mechanism rather than a preference and its schedule is now
+            // derived per device. They are withdrawn below rather than merely omitted. The stats
+            // overlay is deliberately absent for a different reason: it changes what is drawn on
+            // the panel's own glass, which is a decision for whoever is standing at it or holding
+            // the admin page, not something a broker subscriber needs.
 
             // A bare command name is a valid payload, which MqttController accepts deliberately so
             // that `mosquitto_pub -m kiosk.reload` works, so a button needs nothing more than this.
@@ -438,25 +430,32 @@ final class MqttController implements MqttCallbackExtended {
             publishConnectedEntity(device, origin);
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
+
+            // Simply leaving a component out does NOT remove an entity that was announced before,
+            // which is how a panel updated in place ends up with a stranded "unavailable" entity
+            // forever. Home Assistant documents a two-step removal: publish the component with an
+            // empty config, keeping only the required platform key, then publish the whole
+            // configuration again with it omitted. Both payloads are otherwise identical and
+            // complete, so nothing else flickers.
+            //
+            // Done on every discovery run rather than once. It is idempotent, it costs one extra
+            // publish on a topic that is written when the panel connects and when Home Assistant
+            // restarts, and it self-heals a panel moved to a fresh Home Assistant.
+            //
+            // thermal_status is conditional: it is withdrawn only on hardware that cannot report
+            // it. The two recycle controls are unconditional, because this build no longer has them
+            // at all — anything upgraded from a build that did would otherwise keep a switch and a
+            // clock that answer nothing.
+            JSONObject stale = new JSONObject(components.toString());
             if (!thermalSupported) {
-                // Simply leaving a component out does NOT remove an entity that was announced
-                // before, which is how a panel updated in place ends up with a stranded "unknown"
-                // sensor. Home Assistant documents a two-step removal: publish the component with
-                // an empty config, keeping only the required platform key, then publish the whole
-                // configuration again with it omitted. Both payloads are otherwise identical and
-                // complete, so nothing else flickers.
-                //
-                // Done on every discovery run rather than once. It is idempotent, it costs one
-                // extra publish on a topic that is written when the panel connects and when Home
-                // Assistant restarts, and it self-heals a panel moved to a fresh Home Assistant.
-                JSONObject removed = new JSONObject();
-                removed.put("p", "sensor");
-                JSONObject stale = new JSONObject(components.toString());
-                stale.put("thermal_status", removed);
-                JSONObject removal = new JSONObject(discovery.toString());
-                removal.put("cmps", stale);
-                publish(topic, removal.toString(), 1, true);
+                stale.put("thermal_status", withdrawn("sensor"));
             }
+            stale.put("auto_recycle", withdrawn("switch"));
+            stale.put("recycle_time", withdrawn("time"));
+            JSONObject removal = new JSONObject(discovery.toString());
+            removal.put("cmps", stale);
+            publish(topic, removal.toString(), 1, true);
+
             publish(topic, discovery.toString(), 1, true);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
@@ -564,17 +563,14 @@ final class MqttController implements MqttCallbackExtended {
         return toggle;
     }
 
-    /** A clock time. Home Assistant sends ISO "HH:MM:SS" and parses the same back. */
-    private JSONObject time(String name, String commandTemplate, String valueTemplate)
-            throws JSONException {
-        JSONObject time = new JSONObject();
-        time.put("p", "time");
-        time.put("name", name);
-        time.put("unique_id", uniqueId(name));
-        time.put("command_topic", topicPrefix + "command");
-        time.put("command_template", commandTemplate);
-        time.put("value_template", valueTemplate);
-        return time;
+    /**
+     * An empty component config, which is how Home Assistant is told to drop an entity a previous
+     * discovery payload announced. Only the platform key is required, and only it is sent.
+     */
+    private static JSONObject withdrawn(String platform) throws JSONException {
+        JSONObject removed = new JSONObject();
+        removed.put("p", platform);
+        return removed;
     }
 
     /** A press. Stateless, so it needs no template and reads nothing. */

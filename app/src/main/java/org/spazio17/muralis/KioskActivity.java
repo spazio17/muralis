@@ -94,10 +94,19 @@ public final class KioskActivity extends Activity {
     private static final long FROZEN_PAGE_CHECK_INTERVAL_MS = 5 * 60 * 1_000L;
     /**
      * How many consecutive unchanged checks before the dashboard is treated as frozen: three, i.e.
-     * fifteen minutes with not one visible change. This is a heuristic, openly: a page that is
-     * legitimately static, a single unchanging image with no live tiles, looks identical to a
-     * frozen one by this measure, which is exactly why {@link KioskConfig#detectFrozenPage} exists
-     * as an operator-facing switch rather than a fact this app claims to know for certain.
+     * fifteen minutes with not one visible change.
+     *
+     * <p>Still a heuristic, but no longer one that needs an operator-facing off switch to be safe.
+     * The switch existed because a legitimately static page — one unchanging image, no live tiles —
+     * is indistinguishable from a frozen one <em>by a single observation</em>. Over time it is not:
+     * a static page never changed, while a frozen one was changing and stopped. So a reload now
+     * requires having observed this generation of the page change at least once
+     * ({@link #sawPageChange}); until then "unchanged" carries no information and nothing fires.
+     *
+     * <p>The trade is deliberate and in the safe direction: a dashboard that freezes before the
+     * first observed change is not caught here. That case already belongs to the load-failure and
+     * hung-load paths, and to the nightly recycle. Reloading a working panel every fifteen minutes
+     * forever is the worse failure, and it is the one this rules out.
      */
     private static final int FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER = 3;
     private static final long OVERLAY_REFRESH_MS = 1_000L;
@@ -192,6 +201,13 @@ public final class KioskActivity extends Activity {
     private String lastPageFingerprint;
     /** How many consecutive checks have read the identical fingerprint. */
     private int unchangedPageChecks;
+    /**
+     * Whether this generation of the page has ever been observed to change. Gates the frozen-page
+     * reload: a page that has never changed may simply be static, and reloading it every fifteen
+     * minutes forever would be the worse failure. See
+     * {@link #FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER}.
+     */
+    private boolean sawPageChange;
     // The status readout on the configuration screens: built once, updated on the sampler tick.
     private KioskTheme statusChipTheme;
     private StatusIcon batteryIcon;
@@ -307,9 +323,6 @@ public final class KioskActivity extends Activity {
         if (webView == null || kioskStopped) {
             return;
         }
-        if (!KioskConfig.load(this).detectFrozenPage) {
-            return;
-        }
         // Only while the dashboard is in its settled, successfully-loaded state. A load already in
         // flight or already queued for retry is the existing HTTP/hang recovery path's business, not
         // this one's, and evaluating JavaScript mid-transition would only read a half-built page.
@@ -336,10 +349,15 @@ public final class KioskActivity extends Activity {
         if (fingerprint.equals(lastPageFingerprint)) {
             unchangedPageChecks++;
         } else {
+            // Not on the first probe of a generation: there is nothing to have changed from, and
+            // counting it would let a page that has only ever been observed once look "live".
+            if (lastPageFingerprint != null) {
+                sawPageChange = true;
+            }
             lastPageFingerprint = fingerprint;
             unchangedPageChecks = 0;
         }
-        if (unchangedPageChecks >= FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER) {
+        if (sawPageChange && unchangedPageChecks >= FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER) {
             unchangedPageChecks = 0;
             long minutes = FROZEN_PAGE_CHECK_INTERVAL_MS * FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER
                     / 60_000L;
@@ -360,6 +378,7 @@ public final class KioskActivity extends Activity {
     private void resetFrozenPageTracking() {
         lastPageFingerprint = null;
         unchangedPageChecks = 0;
+        sawPageChange = false;
     }
 
     /**
@@ -813,8 +832,8 @@ public final class KioskActivity extends Activity {
      * <p>Three things here are load-bearing. It loads a **fresh** {@link KioskConfig} instead of
      * mutating the snapshot the screen was built from, so a concurrent change from another surface
      * survives. It needs no controller restart, because every one of these settings is read live by
-     * whoever consumes it ({@code maybeRecycleDashboard} on each sample, the overlay ticker, the
-     * telemetry loop). And it calls {@link KioskService#publishTelemetrySoon} so the MQTT switch in
+     * whoever consumes it (the overlay ticker, the telemetry loop). And it calls
+     * {@link KioskService#publishTelemetrySoon} so the MQTT switch in
      * Home Assistant reflects the new value in under a second rather than up to a full interval
      * later — the same reason {@code KioskService.dispatch} republishes after an accepted command.
      */
@@ -1070,76 +1089,22 @@ public final class KioskActivity extends Activity {
             showConfiguration(config);
         });
         behaviourCard.addView(lightThemeInput, matchWrap());
-        // These three apply the moment they are touched, and are deliberately absent from the
-        // "Open dashboard" save below. They are standalone settings read live by whoever uses them,
-        // exactly like their counterparts in the web admin's Behaviour box, which has no Save
-        // button for the same reason. Leaving them to the aggregate save was a real bug: the whole
-        // KioskConfig snapshot this screen was built from got written back, so a value changed over
-        // MQTT or HTTP while the screen sat open was silently reverted on save.
+        // Applies the moment it is touched, and is deliberately absent from the "Open dashboard"
+        // save below. It is a standalone setting read live by whoever uses it, exactly like its
+        // counterpart in the web admin's Behaviour box, which has no Save button for the same
+        // reason. Leaving it to the aggregate save was a real bug: the whole KioskConfig snapshot
+        // this screen was built from got written back, so a value changed over MQTT or HTTP while
+        // the screen sat open was silently reverted on save.
+        //
+        // The dashboard-recycle and frozen-page checkboxes used to sit here. Both are gone: they
+        // are recovery mechanisms, not preferences, and a switch whose only use is to stop the
+        // panel healing itself is surface area that can only be used to break it. See
+        // RecyclePolicy and checkForFrozenPage, which now run unconditionally.
         CheckBox statsOverlayInput = themedCheckBox(theme,
                 "Show system stats on the dashboard", config.statsOverlay);
         statsOverlayInput.setOnCheckedChangeListener(
                 (button, checked) -> applyBehaviourSetting(fresh -> fresh.statsOverlay = checked));
         behaviourCard.addView(statsOverlayInput, matchWrap());
-        CheckBox autoRecycleInput = themedCheckBox(theme,
-                "Recycle the dashboard nightly and under memory pressure", config.autoRecycle);
-        autoRecycleInput.setOnCheckedChangeListener(
-                (button, checked) -> applyBehaviourSetting(fresh -> fresh.autoRecycle = checked));
-        behaviourCard.addView(autoRecycleInput, matchWrap());
-        CheckBox detectFrozenPageInput = themedCheckBox(theme,
-                "Reload the dashboard if it stops changing for 15 minutes",
-                config.detectFrozenPage);
-        detectFrozenPageInput.setOnCheckedChangeListener((button, checked) ->
-                applyBehaviourSetting(fresh -> fresh.detectFrozenPage = checked));
-        behaviourCard.addView(detectFrozenPageInput, matchWrap());
-        TextView recycleCaption = new TextView(this);
-        recycleCaption.setText("Nightly recycle time");
-        recycleCaption.setTextColor(theme.subtext);
-        recycleCaption.setTextSize(13);
-        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        captionParams.topMargin = dp(14);
-        behaviourCard.addView(recycleCaption, captionParams);
-
-        // A whole-width text field for "4" looked absurd; this is a chip that opens the platform
-        // time picker, so hours, minutes and AM/PM are all editable in one place.
-        final int[] recycleTime = {config.recycleHour, config.recycleMinute};
-        Button recycleTimeButton = secondaryButton(theme,
-                RecyclePolicy.formatTime(recycleTime[0], recycleTime[1]));
-        recycleTimeButton.setOnClickListener(view -> new android.app.TimePickerDialog(this,
-                (picker, hour, minute) -> {
-                    recycleTime[0] = hour;
-                    recycleTime[1] = minute;
-                    recycleTimeButton.setText(RecyclePolicy.formatTime(hour, minute));
-                    // Applied here, not on save, for the same reason the checkboxes above are:
-                    // dismissing the picker is already a deliberate choice.
-                    applyBehaviourSetting(fresh -> {
-                        fresh.recycleHour = RecyclePolicy.clampHour(hour);
-                        fresh.recycleMinute = RecyclePolicy.clampMinute(minute);
-                    });
-                }, recycleTime[0], recycleTime[1], false).show());
-        LinearLayout.LayoutParams timeParams = new LinearLayout.LayoutParams(
-                dp(150), ViewGroup.LayoutParams.WRAP_CONTENT);
-        timeParams.topMargin = dp(4);
-        behaviourCard.addView(recycleTimeButton, timeParams);
-
-        // The rule that surprised the project's own author on 2026-08-20: the time matched and
-        // nothing happened, because RecyclePolicy also requires 12 hours since the last rebuild and
-        // KioskService counts its own start as one. A schedule that silently declines is worse than
-        // no schedule, so it is stated where the time is set.
-        TextView recycleNote = new TextView(this);
-        // Just the rule, not the mechanism behind it. "Starting Muralis counts as a rebuild" was
-        // there for one revision and cut: the sentence above already reads as time since the
-        // dashboard opened, which is exactly what it is, and naming the internal event only asks
-        // the reader to hold a second concept.
-        recycleNote.setText("Skipped unless the dashboard has been up 12 hours.");
-        recycleNote.setTextColor(theme.subtext);
-        recycleNote.setTextSize(12);
-        LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        noteParams.topMargin = dp(6);
-        behaviourCard.addView(recycleNote, noteParams);
-
         TextView intervalCaption = new TextView(this);
         intervalCaption.setText("MQTT update interval");
         intervalCaption.setTextColor(theme.subtext);
@@ -1207,19 +1172,6 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(statsOverlayInput,
                             KioskConfig.statsOverlayEnabled(KioskActivity.this));
-                    setCheckedIfChanged(autoRecycleInput,
-                            KioskConfig.autoRecycleEnabled(KioskActivity.this));
-                    setCheckedIfChanged(detectFrozenPageInput,
-                            KioskConfig.detectFrozenPageEnabled(KioskActivity.this));
-
-                    int hour = KioskConfig.recycleHourOf(KioskActivity.this);
-                    int minute = KioskConfig.recycleMinuteOf(KioskActivity.this);
-                    if (hour != recycleTime[0] || minute != recycleTime[1]) {
-                        recycleTime[0] = hour;
-                        recycleTime[1] = minute;
-                        recycleTimeButton.setText(RecyclePolicy.formatTime(hour, minute));
-                    }
-
                     int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskActivity.this);
                     if (seconds != telemetryIntervalSeconds[0]) {
                         telemetryIntervalSeconds[0] = seconds;

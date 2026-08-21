@@ -6,8 +6,8 @@
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
 # Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run six suites: dispatcher, provisioning, system stats, recycle
-# policy, escape sequence and telemetry interval.
+# compile and run seven suites: dispatcher, provisioning, system stats, recycle
+# policy, memory baseline, escape sequence and telemetry interval.
 
 set -euo pipefail
 
@@ -62,8 +62,8 @@ done < <(grep -rn 'setLockTaskFeatures\|WindowInsetsController\|setDecorFitsSyst
 # Pure-Java sources must not drag in Android, or they stop being host-testable.
 pure_java_dir=${project_dir}/app/src/main/java/org/spazio17/muralis
 host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
-for name in KioskCommandDispatcher SystemStats RecyclePolicy EscapeSequence KioskRuntimeState \
-            Provisioning TelemetryInterval; do
+for name in KioskCommandDispatcher SystemStats RecyclePolicy MemoryBaseline EscapeSequence \
+            KioskRuntimeState Provisioning TelemetryInterval; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -93,14 +93,17 @@ java -cp "${test_dir}/provisioning" org.spazio17.muralis.ProvisioningTest
 javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \
     "${pure_java_dir}/RecyclePolicy.java" \
+    "${pure_java_dir}/MemoryBaseline.java" \
     "${pure_java_dir}/EscapeSequence.java" \
     "${pure_java_dir}/TelemetryInterval.java" \
     "${host_test_dir}/SystemStatsTest.java" \
     "${host_test_dir}/RecyclePolicyTest.java" \
+    "${host_test_dir}/MemoryBaselineTest.java" \
     "${host_test_dir}/EscapeSequenceTest.java" \
     "${host_test_dir}/TelemetryIntervalTest.java"
 java -cp "${test_dir}/stats" org.spazio17.muralis.SystemStatsTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.RecyclePolicyTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.MemoryBaselineTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.EscapeSequenceTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.TelemetryIntervalTest
 

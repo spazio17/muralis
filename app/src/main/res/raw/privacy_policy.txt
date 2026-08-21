@@ -20,7 +20,7 @@ Only to destinations you configure yourself, and only after you configure them. 
 - the dashboard address currently loaded, when it last loaded, and any load error
 - how many times the dashboard view has crashed or been rebuilt, and how long ago
 - the current screen brightness, whether the light sensor is setting it, and whether this device has one
-- the panel's own settings: its device identifier, the stats overlay switch, the nightly-recycle switch and time, the frozen-page-reload switch, and the publish interval
+- the panel's own settings: its device identifier, the stats overlay switch, and the publish interval
 
 Muralis publishes its status snapshot as a retained message, which means your broker keeps a copy of the most recent one and hands it to anything that subscribes later, including after the panel is switched off or removed.
 

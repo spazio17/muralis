@@ -25,28 +25,21 @@ final class KioskCommandDispatcher {
     }
 
     static final class CommandArgs {
-        static final CommandArgs EMPTY = new CommandArgs(-1, null, null, null);
+        static final CommandArgs EMPTY = new CommandArgs(-1, null, null);
 
         final int brightnessPercent;
         final String url;
         /** Null when the caller did not say, which is rejected rather than guessed at. */
         final Boolean enabled;
-        /** Clock time as text, "HH:MM" or "HH:MM:SS". Null when the caller did not say. */
-        final String time;
 
         CommandArgs(int brightnessPercent, String url) {
-            this(brightnessPercent, url, null, null);
+            this(brightnessPercent, url, null);
         }
 
         CommandArgs(int brightnessPercent, String url, Boolean enabled) {
-            this(brightnessPercent, url, enabled, null);
-        }
-
-        CommandArgs(int brightnessPercent, String url, Boolean enabled, String time) {
             this.brightnessPercent = brightnessPercent;
             this.url = url;
             this.enabled = enabled;
-            this.time = time;
         }
     }
 
@@ -83,12 +76,6 @@ final class KioskCommandDispatcher {
         boolean setAutoBrightness(boolean enabled);
 
         void setDashboardUrl(String url);
-
-        /** Turns the nightly and memory-pressure dashboard recycle on or off. */
-        void setAutoRecycle(boolean enabled);
-
-        /** Moves the nightly recycle. Both values are already validated. */
-        void setRecycleTime(int hour, int minute);
 
         void publishTelemetry();
 
@@ -156,20 +143,11 @@ final class KioskCommandDispatcher {
                     return rejected("this device has no ambient light sensor");
                 }
                 return accepted();
-            case "kiosk.auto_recycle":
-                if (args.enabled == null) {
-                    return rejected("enabled must be true or false");
-                }
-                executor.setAutoRecycle(args.enabled);
-                return accepted();
-            case "kiosk.recycle_time": {
-                int[] parsed = parseClockTime(args.time);
-                if (parsed == null) {
-                    return rejected("time must be HH:MM or HH:MM:SS, 00:00 to 23:59");
-                }
-                executor.setRecycleTime(parsed[0], parsed[1]);
-                return accepted();
-            }
+            // There is deliberately no "kiosk.auto_recycle" and no "kiosk.recycle_time". The
+            // dashboard recycle is a recovery mechanism, not a preference: nobody has a reason to
+            // turn a panel's self-healing off, and the schedule is derived per device rather than
+            // chosen. Both fall through to "unsupported", which is the honest answer for a control
+            // this build does not have. See RecyclePolicy.
             case "telemetry.publish":
                 executor.publishTelemetry();
                 return accepted();
@@ -190,63 +168,6 @@ final class KioskCommandDispatcher {
         }
     }
 
-    /**
-     * Parses "HH:MM" or "HH:MM:SS" into {hour, minute}, or null when it is not a real time.
-     *
-     * <p>Rejects rather than clamps, unlike {@link RecyclePolicy#clampHour}. Clamping is right where
-     * a stored value has to yield something usable whatever is in it; a command is somebody asking
-     * for a specific thing, and silently recycling at 04:00 because they asked for 25:00 is the kind
-     * of quiet substitution this project keeps deleting.
-     *
-     * <p>Seconds are accepted and discarded: Home Assistant's MQTT time platform sends ISO
-     * "HH:MM:SS", and the panel schedules to the minute.
-     */
-    static int[] parseClockTime(String value) {
-        if (value == null) {
-            return null;
-        }
-        // -1 keeps trailing empty fields, which the default split() discards: without it "12:30:"
-        // parsed as a well-formed two-part time rather than the malformed input it is.
-        String[] parts = value.trim().split(":", -1);
-        if (parts.length != 2 && parts.length != 3) {
-            return null;
-        }
-        int hour;
-        int minute;
-        try {
-            // Integer.parseInt accepts a leading sign, so "+1:+2" would otherwise arrive as 01:02.
-            // A clock time has no sign; anything but digits is malformed.
-            for (String part : parts) {
-                if (!isAllDigits(part)) {
-                    return null;
-                }
-            }
-            hour = Integer.parseInt(parts[0]);
-            minute = Integer.parseInt(parts[1]);
-            if (parts.length == 3) {
-                Integer.parseInt(parts[2]);
-            }
-        } catch (NumberFormatException notANumber) {
-            return null;
-        }
-        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-            return null;
-        }
-        return new int[] {hour, minute};
-    }
-
-    /** True for a non-empty run of ASCII digits, with no sign, space or separator. */
-    private static boolean isAllDigits(String value) {
-        if (value.isEmpty()) {
-            return false;
-        }
-        for (int i = 0; i < value.length(); i++) {
-            if (value.charAt(i) < '0' || value.charAt(i) > '9') {
-                return false;
-            }
-        }
-        return true;
-    }
 
     /** Returns null when {@code url} is an acceptable dashboard URL, an error message otherwise. */
     static String validateDashboardUrl(String url) {

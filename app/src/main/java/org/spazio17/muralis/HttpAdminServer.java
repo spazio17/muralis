@@ -192,13 +192,8 @@ final class HttpAdminServer {
             + "if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){"
             + "el.value=value;}}\n"
             + "follow('stats-overlay',cfg.stats_overlay);\n"
-            + "follow('auto-recycle',cfg.auto_recycle);\n"
-            + "if(cfg.recycle_hour!=null&&cfg.recycle_minute!=null){\n"
-            + "follow('recycle-time',('0'+cfg.recycle_hour).slice(-2)+':'"
-            + "+('0'+cfg.recycle_minute).slice(-2));}\n"
             + "if(cfg.telemetry_interval_seconds!=null){"
             + "follow('telemetry-interval',String(cfg.telemetry_interval_seconds));}\n"
-            + "follow('detect-frozen-page',cfg.detect_frozen_page);\n"
             // The slider follows the real backlight, except while the operator is actually dragging it.
             + "var disp=data.display||{},sl=document.getElementById('brightness');\n"
             + "if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){\n"
@@ -604,7 +599,6 @@ final class HttpAdminServer {
         int percent = -1;
         String url = null;
         Boolean enabled = null;
-        String time = null;
 
         String contentType = headers.getOrDefault("content-type", "");
         if (method.equals("POST") && contentType.contains("application/json") && body.length > 0) {
@@ -618,7 +612,6 @@ final class HttpAdminServer {
                     if (args.has("enabled")) {
                         enabled = args.optBoolean("enabled", false);
                     }
-                    time = args.has("time") ? args.optString("time", null) : null;
                 }
             } catch (JSONException malformed) {
                 writeResponse(output, 400, "application/json",
@@ -636,7 +629,6 @@ final class HttpAdminServer {
                 }
             }
             url = params.get("url");
-            time = params.get("time");
             if (params.containsKey("enabled")) {
                 String flag = params.get("enabled");
                 // Accept the spellings a shell or a browser form is likely to send.
@@ -652,7 +644,7 @@ final class HttpAdminServer {
         }
 
         KioskCommandDispatcher.Result result = kioskService.dispatch(
-                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, time));
+                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled));
         JSONObject response = new JSONObject();
         try {
             response.put("status", result.status);
@@ -750,24 +742,13 @@ final class HttpAdminServer {
                 }
                 break;
             case "behaviour":
-                // Presence used to carry the meaning, because an unchecked box sends nothing and the
-                // whole box was posted at once. These controls now post one at a time as they are
-                // touched, so presence would read every post as "the other two were just cleared".
-                // The value carries the meaning instead, and an absent key is simply not being set.
+                // Presence used to carry the meaning, because an unchecked box sends nothing and
+                // the whole box was posted at once. These controls now post one at a time as they
+                // are touched, so presence would read every post as "the others were just
+                // cleared". The value carries the meaning instead, and an absent key is simply not
+                // being set.
                 if (form.containsKey("stats_overlay")) {
                     fresh.statsOverlay = isTrue(form.get("stats_overlay"));
-                }
-                if (form.containsKey("auto_recycle")) {
-                    fresh.autoRecycle = isTrue(form.get("auto_recycle"));
-                }
-                if (form.containsKey("recycle_time")) {
-                    int[] time = parseClockTime(form.get("recycle_time"),
-                            fresh.recycleHour, fresh.recycleMinute);
-                    fresh.recycleHour = time[0];
-                    fresh.recycleMinute = time[1];
-                }
-                if (form.containsKey("detect_frozen_page")) {
-                    fresh.detectFrozenPage = isTrue(form.get("detect_frozen_page"));
                 }
                 if (form.containsKey("telemetry_interval_seconds")) {
                     int seconds = parseIntOrDefault(
@@ -793,25 +774,6 @@ final class HttpAdminServer {
     /** The spellings a browser form, a shell or a hand-written client is likely to send. */
     private static boolean isTrue(String value) {
         return "1".equals(value) || "true".equalsIgnoreCase(value) || "on".equalsIgnoreCase(value);
-    }
-
-    /** Reads an {@code <input type="time">} value ("HH:MM"), falling back to what is stored. */
-    private static int[] parseClockTime(String value, int fallbackHour, int fallbackMinute) {
-        if (value != null) {
-            String[] parts = value.trim().split(":");
-            if (parts.length >= 2) {
-                try {
-                    return new int[] {
-                        RecyclePolicy.clampHour(Integer.parseInt(parts[0])),
-                        RecyclePolicy.clampMinute(Integer.parseInt(parts[1])),
-                    };
-                } catch (NumberFormatException malformed) {
-                    // Fall through to the stored value.
-                }
-            }
-        }
-        return new int[] {RecyclePolicy.clampHour(fallbackHour),
-                RecyclePolicy.clampMinute(fallbackMinute)};
     }
 
     /**
@@ -934,24 +896,6 @@ final class HttpAdminServer {
                 .append("data-setting=\"stats_overlay\" id=\"stats-overlay\"")
                 .append(config.statsOverlay ? " checked" : "")
                 .append("> Show system stats on the dashboard</label>")
-                .append("<label class=\"check\"><input type=\"checkbox\" ")
-                .append("data-setting=\"auto_recycle\" id=\"auto-recycle\"")
-                .append(config.autoRecycle ? " checked" : "")
-                .append("> Recycle the dashboard nightly and under memory pressure</label>")
-                .append("<label class=\"inline\">Nightly recycle time")
-                .append("<input type=\"time\" data-setting=\"recycle_time\" ")
-                .append("id=\"recycle-time\" value=\"")
-                .append(String.format(Locale.US, "%02d:%02d",
-                        config.recycleHour, config.recycleMinute))
-                .append("\"></label>")
-                // RecyclePolicy also requires 12 hours since the last rebuild, and KioskService
-                // counts its own start as one. Without saying so, a schedule that declines looks
-                // broken: the clock matches and nothing happens.
-                .append("<p class=\"hint\">Skipped unless the dashboard has been up 12 hours.</p>")
-                .append("<label class=\"check\"><input type=\"checkbox\" ")
-                .append("data-setting=\"detect_frozen_page\" id=\"detect-frozen-page\"")
-                .append(config.detectFrozenPage ? " checked" : "")
-                .append("> Reload the dashboard if it stops changing for 15 minutes</label>")
                 .append("<label>MQTT update interval")
                 .append("<select data-setting=\"telemetry_interval_seconds\" ")
                 .append("id=\"telemetry-interval\">")

@@ -17,7 +17,7 @@ public final class KioskCommandDispatcherTest {
         require(executor.calls.contains("kioskReload"), "kiosk.reload did not reach executor");
 
         testPowerCommandsTellTheTruth();
-        testRecycleCommands();
+        testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
@@ -130,52 +130,31 @@ public final class KioskCommandDispatcherTest {
     }
 
     /**
-     * The nightly recycle, driven remotely. The time is the interesting half: it is **rejected**
-     * rather than clamped, unlike the stored value, because a command is somebody asking for a
-     * specific thing and quietly recycling at 04:00 when they asked for 25:00 is the sort of silent
-     * substitution this project keeps deleting.
+     * The recycle commands are gone, and this pins that they answer "unsupported" rather than
+     * quietly succeeding.
+     *
+     * <p>Worth a test rather than a deletion. Both were announced over MQTT discovery, so a Home
+     * Assistant somewhere may still hold an automation that publishes them, and an automation whose
+     * command is silently accepted while nothing happens is the exact failure this project deleted
+     * system.shutdown to avoid. "unsupported" is the honest answer and it is what a caller needs to
+     * see. See RecyclePolicy for why the controls went.
      */
-    private static void testRecycleCommands() {
+    private static void testWithdrawnRecycleCommands() {
         RecordingExecutor executor = new RecordingExecutor();
 
-        require(KioskCommandDispatcher.dispatch("kiosk.auto_recycle",
-                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
-                "auto_recycle without a flag was accepted");
-        require(!executor.calls.contains("setAutoRecycle"), "executor ran despite a missing flag");
-
-        require(KioskCommandDispatcher.dispatch("kiosk.auto_recycle",
-                new KioskCommandDispatcher.CommandArgs(-1, null, false), executor)
-                .status.equals("accepted"), "auto_recycle off was not accepted");
-        require(Boolean.FALSE.equals(executor.lastAutoRecycle), "auto_recycle flag not forwarded");
-
-        // Home Assistant's MQTT time platform sends ISO HH:MM:SS; a person or a shell sends HH:MM.
-        require(KioskCommandDispatcher.dispatch("kiosk.recycle_time",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "23:30:00"), executor)
-                .status.equals("accepted"), "HH:MM:SS was rejected");
-        require(executor.lastRecycleHour == 23 && executor.lastRecycleMinute == 30,
-                "recycle time not forwarded");
-
-        require(KioskCommandDispatcher.dispatch("kiosk.recycle_time",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "04:05"), executor)
-                .status.equals("accepted"), "HH:MM was rejected");
-        require(executor.lastRecycleHour == 4 && executor.lastRecycleMinute == 5,
-                "short recycle time not forwarded");
-
-        // Every one of these must be refused, not quietly turned into something valid. The last
-        // four were all accepted once: "12:30:" and "12:" because split() discards trailing empty
-        // fields, and the signed pair because Integer.parseInt takes a leading sign, so "+1:+2"
-        // silently became 01:02.
-        String[] rubbish = {null, "", "25:00", "12:60", "-1:00", "midnight", "12", "12:30:00:00",
-            "12:30:", "12:", "+1:+2", "1 2:30"};
-        for (String value : rubbish) {
-            executor.calls.clear();
+        for (String command : new String[] {"kiosk.auto_recycle", "kiosk.recycle_time"}) {
             KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(
-                    "kiosk.recycle_time",
-                    new KioskCommandDispatcher.CommandArgs(-1, null, null, value), executor);
-            require(result.status.equals("rejected"), "recycle_time accepted \"" + value + "\"");
-            require(!executor.calls.contains("setRecycleTime"),
-                    "executor ran for rejected time \"" + value + "\"");
+                    command, KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+            require(result.status.equals("unsupported"),
+                    command + " should be unsupported, got " + result.status);
         }
+
+        // Also with plausible arguments, so nothing routes on the strength of a populated field.
+        require(KioskCommandDispatcher.dispatch("kiosk.auto_recycle",
+                new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.FALSE), executor)
+                .status.equals("unsupported"), "auto_recycle with a flag was handled");
+        require(executor.calls.isEmpty(), "a withdrawn command reached the executor: "
+                + executor.calls);
     }
 
     /**
@@ -207,9 +186,6 @@ public final class KioskCommandDispatcherTest {
         int lastBrightness = -1;
         String lastUrl;
         Boolean lastAutoBrightness;
-        Boolean lastAutoRecycle;
-        int lastRecycleHour = -1;
-        int lastRecycleMinute = -1;
         boolean lightSensorPresent = true;
 
         @Override
@@ -265,18 +241,6 @@ public final class KioskCommandDispatcherTest {
             lastUrl = url;
         }
 
-        @Override
-        public void setAutoRecycle(boolean enabled) {
-            calls.add("setAutoRecycle");
-            lastAutoRecycle = enabled;
-        }
-
-        @Override
-        public void setRecycleTime(int hour, int minute) {
-            calls.add("setRecycleTime");
-            lastRecycleHour = hour;
-            lastRecycleMinute = minute;
-        }
 
         @Override
         public void publishTelemetry() {
