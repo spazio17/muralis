@@ -632,7 +632,17 @@ public final class KioskActivity extends Activity {
             return true;
         }
         if (configurationVisible) {
-            showDashboard(KioskConfig.load(this).dashboardUrl);
+            String url = KioskConfig.load(this).dashboardUrl;
+            // Mirrors onCreate's routing. With nothing configured the configuration screen *is* this
+            // app's home state, so Back leaves the app rather than revealing the empty dashboard
+            // behind it. Observed on the API 28 phone before this guard: a fresh install, one press
+            // of Back, and the screen was black apart from the stats overlay, with no visible route
+            // back. The corner-tap escape still worked, but nothing on screen said so, and that is
+            // the first thing a closed-test tester would have met.
+            if (url.isEmpty()) {
+                return false;
+            }
+            showDashboard(url);
             return true;
         }
         // Deliberately NOT webView.goBack(). That was removed on purpose: it let anyone standing at
