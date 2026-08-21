@@ -29,7 +29,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 ## Core architecture
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
-  switch (`kiosk.start/stop/reload/restart/set_url/auto_recycle/recycle_time`,
+  switch (`kiosk.start/stop/reload/restart/set_url`,
   `display.wake/visual_off/brightness/auto_brightness`, `system.reboot`, `telemetry.publish`)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
@@ -74,9 +74,39 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   install has no route to the internet and would never validate. It gives up after a bounded wait
   and starts anyway (fail soft): a panel with genuinely no network must still end up with a running
   web admin, since that's the surface someone would use to diagnose exactly that.
-- **`RecyclePolicy`** governs the nightly/memory-pressure dashboard recycle. A recycle time given as
-  a command is *rejected* if invalid, not clamped — clamping a bad value to something "safe" is a
-  silent substitution of what was actually asked for.
+- **`RecyclePolicy` and `MemoryBaseline` govern the dashboard recycle, and no user can touch
+  either.** The recycle is a recovery mechanism, not a preference: an "Auto recycle" switch and a
+  "Recycle time" clock existed on the tablet, in the web admin and over MQTT, and all of them were
+  deleted along with the `kiosk.auto_recycle` and `kiosk.recycle_time` commands. A control whose
+  only use is to stop a panel healing itself is surface area that can only be used to break it.
+  Both commands now answer `unsupported` rather than being silently ignored, since a Home Assistant
+  automation somewhere may still publish them.
+- **There is no memory threshold anywhere in the app.** The old policy recycled below a fixed 12% of
+  total memory free. That cannot be right for every device this runs on — the same footprint is a
+  leak on a 2 GB tablet and unremarkable on a 16 GB one — and it cannot tell a heavy dashboard from
+  a growing one at all. Two signals replaced it, neither of them ours: what the device itself
+  reports through `ActivityManager.MemoryInfo.lowMemory`, whose threshold the vendor sets per
+  device, and `MemoryBaseline`, an exponentially weighted mean and variance of the footprint
+  observed at the end of each dashboard generation. The trigger is mean + 3σ — a recommendation
+  learned from this device, the shape of a Kubernetes VPA raising requests after watching real
+  usage, not a number written down once. Two consequences to preserve: the model must **not** learn
+  from generations its own trigger cut short (or it chases itself upward and measures nothing),
+  which is what `GROWTH_TRIPS_BEFORE_ACCEPTING` is for, and it must still adapt when a dashboard
+  legitimately grows over months, which is the other half of the same counter. `MIN_SPREAD_FRACTION`
+  exists because a variance near zero collapses the budget onto the mean and turns a leak detector
+  into a periodic reloader.
+- **The nightly pass is scheduled per device, not at a fixed hour.** `RecyclePolicy.QUIET_HOUR` is
+  04, and the minute comes from `String.hashCode()` of the device id. Deterministic so a panel picks
+  the same minute every night, which is what makes the twelve-hour interval check behave; spread so
+  that panels across many installs do not all rebuild, and all hit whatever Home Assistant they talk
+  to, inside the same sixty seconds.
+- **The frozen-page detector runs unconditionally, and earns it.** Its off switch existed because a
+  legitimately static page — one unchanging image, no live tiles — is indistinguishable from a
+  frozen one *by a single observation*. Over time it is not: a static page never changed, a frozen
+  one was changing and stopped. So a reload now requires having observed this generation of the page
+  change at least once. The trade is in the safe direction — a page that freezes before the first
+  observed change is left to the load-failure, hung-load and nightly-recycle paths — because
+  reloading a working panel every fifteen minutes forever is the worse failure.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public

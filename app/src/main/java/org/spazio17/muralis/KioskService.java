@@ -149,8 +149,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 lastPublishedWatch = telemetryCollector == null
                         ? lastPublishedWatch : telemetryCollector.readWatch();
             }
-            // Read live rather than cached, the same way statsOverlayEnabled and autoRecycleEnabled
-            // already are, so a changed preset takes effect on this task's own next tick with no
+            // Read live rather than cached, the same way statsOverlayEnabled already is, so a
+            // changed preset takes effect on this task's own next tick with no
             // restart of the telemetry thread. Via the narrow reader, not load(), which would
             // decrypt every SecretStore entry on each tick just to reach one int.
             int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskService.this);
@@ -456,6 +456,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
+     * Separator for the fingerprints below. NUL cannot appear in a host, a port, a username or a
+     * password, so joining on it cannot produce the same string from two different configurations
+     * the way joining on ":" could.
+     *
+     * <p>Written as an escape on purpose. It used to be a raw NUL byte in the string literal, which
+     * compiles fine and behaves identically, but it made this file "data" rather than "text" to
+     * every tool that samples for binary content — so {@code grep -r} over the source tree skipped
+     * KioskService entirely and silently, and a search for a method defined here came back empty.
+     * Keep it escaped.
+     */
+    private static final String FIELD_SEPARATOR = "\0";
+
+    /**
      * The configuration a controller is actually built from, so a reload can tell whether that
      * controller needs rebuilding at all.
      *
@@ -463,12 +476,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * are short enough that exact comparison costs nothing. Never logged.
      */
     private static String mqttInputsOf(KioskConfig config) {
-        return config.mqttHost + " " + config.mqttPort + " " + config.mqttUsername
-                + " " + config.mqttPassword + " " + config.deviceId;
+        return config.mqttHost + FIELD_SEPARATOR + config.mqttPort + FIELD_SEPARATOR
+                + config.mqttUsername + FIELD_SEPARATOR + config.mqttPassword + FIELD_SEPARATOR
+                + config.deviceId;
     }
 
     private static String httpInputsOf(KioskConfig config) {
-        return config.httpPort + " " + config.httpAdminPassword;
+        return config.httpPort + FIELD_SEPARATOR + config.httpAdminPassword;
     }
 
     private void cancelStartupGate() {
@@ -548,33 +562,65 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * Rebuilds the dashboard WebView before memory pressure forces the kernel to. The kiosk already
      * recovers from an lmkd kill, but that reload lands at an unpredictable moment; this turns it
-     * into a scheduled one. Disabled by the same switch as the overlay is independent of, so an
-     * operator who dislikes the nightly blink can turn it off without a reflash.
+     * into a scheduled one.
+     *
+     * <p>Runs unconditionally. The switch that used to gate it, and the setting that used to choose
+     * its hour, are both gone: this is a recovery mechanism, not a preference. The schedule is
+     * derived from the device id so panels do not all rebuild in the same minute, and the memory
+     * trigger comes from what the device itself reports plus what this dashboard has historically
+     * cost here — never from a threshold written into this app. See {@link RecyclePolicy} and
+     * {@link MemoryBaseline}.
      */
     private void maybeRecycleDashboard(long nowMs, SystemStats.Sample sample) {
-        if (!KioskConfig.autoRecycleEnabled(this)) {
-            return;
-        }
         if (lastRecycleAtMs == 0) {
             // Count boot as a recycle: the dashboard has just been built.
             lastRecycleAtMs = nowMs;
             return;
         }
+        long usedKb = sample.memUsedKb();
+        MemoryBaseline baseline = KioskConfig.memoryBaselineOf(this);
         java.util.Calendar clock = java.util.Calendar.getInstance();
-        String reason = RecyclePolicy.shouldRecycle(nowMs, lastRecycleAtMs,
+        RecyclePolicy.Decision decision = RecyclePolicy.shouldRecycle(nowMs, lastRecycleAtMs,
                 clock.get(java.util.Calendar.HOUR_OF_DAY), clock.get(java.util.Calendar.MINUTE),
-                KioskConfig.recycleHourOf(this), KioskConfig.recycleMinuteOf(this),
-                sample.memAvailableKb, sample.memTotalKb);
-        if (reason == null) {
+                RecyclePolicy.QUIET_HOUR, scheduledRecycleMinute(),
+                usedKb, isSystemLowOnMemory(), baseline);
+        if (!decision.act()) {
             return;
         }
+        // Teach the model before rebuilding, since the footprint about to be reclaimed is the
+        // observation. A generation cut short by GROWTH is folded in only after it repeats; see
+        // MemoryBaseline for why the model must not learn from its own trigger.
+        KioskConfig.saveMemoryBaseline(this,
+                decision.cause == RecyclePolicy.Cause.GROWTH
+                        ? baseline.observeGrowthTrip(usedKb)
+                        : baseline.observeNaturalEnd(usedKb));
         lastRecycleAtMs = nowMs;
-        Log.i(TAG, "Recycling dashboard WebView: " + reason);
-        KioskRuntimeState.recordRecycle(reason);
+        Log.i(TAG, "Recycling dashboard WebView: " + decision.reason);
+        KioskRuntimeState.recordRecycle(decision.reason);
         // A recycle is rare and worth knowing about promptly rather than at the next scheduled
         // publish, which could be up to five minutes away with the slowest preset.
         publishStateSoon();
         kioskRestart();
+    }
+
+    /** This panel's minute within {@link RecyclePolicy#QUIET_HOUR}, fixed for the device. */
+    private int scheduledRecycleMinute() {
+        return RecyclePolicy.scheduledMinuteOf(KioskConfig.load(this).deviceId);
+    }
+
+    /**
+     * The device's own low-memory verdict rather than a fraction this app invented. The threshold
+     * behind it is set per device by the vendor, which is the whole point: it is the only figure
+     * available that already knows how much memory this hardware has.
+     */
+    private boolean isSystemLowOnMemory() {
+        android.app.ActivityManager manager = getSystemService(android.app.ActivityManager.class);
+        if (manager == null) {
+            return false;
+        }
+        android.app.ActivityManager.MemoryInfo info = new android.app.ActivityManager.MemoryInfo();
+        manager.getMemoryInfo(info);
+        return info.lowMemory;
     }
 
     /**
@@ -629,12 +675,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("has_light_sensor", hasLightSensor(this));
             applied.put("auto_brightness", isAutoBrightnessOn(this));
             stats.put("display", displaySnapshot());
-            applied.put("auto_recycle", config.autoRecycle);
-            applied.put("recycle_hour", config.recycleHour);
-            applied.put("recycle_minute", config.recycleMinute);
             applied.put("telemetry_interval_seconds",
                     TelemetryInterval.clampOrDefault(config.telemetryIntervalSeconds));
-            applied.put("detect_frozen_page", config.detectFrozenPage);
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("mqtt_host", config.mqttHost);
@@ -804,8 +846,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         KioskCommandDispatcher.CommandArgs args = new KioskCommandDispatcher.CommandArgs(
                 arguments.optInt("percent", -1),
                 arguments.optString("url", null),
-                arguments.has("enabled") ? arguments.optBoolean("enabled", false) : null,
-                arguments.has("time") ? arguments.optString("time", null) : null);
+                arguments.has("enabled") ? arguments.optBoolean("enabled", false) : null);
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -1003,26 +1044,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } catch (RuntimeException unavailable) {
             return false;
         }
-    }
-
-    @Override
-    public void setAutoRecycle(boolean enabled) {
-        KioskConfig fresh = KioskConfig.load(this);
-        fresh.autoRecycle = enabled;
-        fresh.save(this);
-        Log.i(TAG, "Auto recycle " + (enabled ? "enabled" : "disabled"));
-    }
-
-    @Override
-    public void setRecycleTime(int hour, int minute) {
-        KioskConfig fresh = KioskConfig.load(this);
-        fresh.recycleHour = hour;
-        fresh.recycleMinute = minute;
-        fresh.save(this);
-        // Nothing to restart: maybeRecycleDashboard reads both on every sample, which is also why
-        // the web admin can apply them without bouncing the controllers.
-        Log.i(TAG, "Nightly recycle moved to "
-                + RecyclePolicy.formatTime(hour, minute));
     }
 
     @Override
