@@ -74,52 +74,42 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   install has no route to the internet and would never validate. It gives up after a bounded wait
   and starts anyway (fail soft): a panel with genuinely no network must still end up with a running
   web admin, since that's the surface someone would use to diagnose exactly that.
-- **`RecyclePolicy` and `MemoryBaseline` govern the dashboard recycle, and no user can touch
-  either.** The recycle is a recovery mechanism, not a preference: an "Auto recycle" switch and a
-  "Recycle time" clock existed on the tablet, in the web admin and over MQTT, and all of them were
-  deleted along with the `kiosk.auto_recycle` and `kiosk.recycle_time` commands. A control whose
-  only use is to stop a panel healing itself is surface area that can only be used to break it.
-  Both commands now answer `unsupported` rather than being silently ignored, since a Home Assistant
-  automation somewhere may still publish them.
-- **There is no memory threshold anywhere in the app.** The old policy recycled below a fixed 12% of
-  total memory free. That cannot be right for every device this runs on — the same footprint is a
-  leak on a 2 GB tablet and unremarkable on a 16 GB one — and it cannot tell a heavy dashboard from
-  a growing one at all. Two signals replaced it, neither of them ours: what the device itself
-  reports through `ActivityManager.MemoryInfo.lowMemory`, whose threshold the vendor sets per
-  device, and `MemoryBaseline`, an exponentially weighted mean and variance of the footprint
-  observed at the end of each dashboard generation. The trigger is mean + 3σ — a recommendation
-  learned from this device, the shape of a Kubernetes VPA raising requests after watching real
-  usage, not a number written down once. Two consequences to preserve: the model must **not** learn
-  from generations its own trigger cut short (or it chases itself upward and measures nothing),
-  which is what `GROWTH_TRIPS_BEFORE_ACCEPTING` is for, and it must still adapt when a dashboard
-  legitimately grows over months, which is the other half of the same counter. `MIN_SPREAD_FRACTION`
-  exists because a variance near zero collapses the budget onto the mean and turns a leak detector
-  into a periodic reloader.
-- **The GROWTH cause does not currently fire, and the model needs redesigning rather than retuning.**
-  Do not treat the bullet above as describing working behaviour. With a zero measured variance the
-  budget is flatly `mean * 1.15`, i.e. a 15% climb, where the climb measured on this hardware before
-  lmkd kills the renderer is 5.6% — so the kill always wins. And because `memUsedKb` is system-wide,
-  `mean * 1.15` often exceeds physical RAM, which makes a device-independent relative headroom into
-  the fraction-of-total threshold this work set out to delete. The trip guard halves the rate of
-  runaway drift rather than preventing it, the "same level twice" rule it documents is not actually
-  implemented, and a single low outlier (opening the configuration screen destroys the WebView)
-  loosens the trigger for weeks. The fix is to learn the distribution of a generation's own growth
-  delta — memory now minus memory when this page settled — not of the absolute footprint; that needs
-  a per-generation anchor plumbed from the activity. Until then the working recovery mechanisms are
-  the nightly pass and the OS's own `lowMemory` verdict. See `MemoryBaseline`'s class comment for the
-  full list.
-- **The nightly pass is scheduled per device, not at a fixed hour.** `RecyclePolicy.QUIET_HOUR` is
-  04, and the minute comes from `String.hashCode()` of the device id. Deterministic so a panel picks
-  the same minute every night, which is what makes the twelve-hour interval check behave; spread so
-  that panels across many installs do not all rebuild, and all hit whatever Home Assistant they talk
-  to, inside the same sixty seconds.
-- **The frozen-page detector runs unconditionally, and earns it.** Its off switch existed because a
-  legitimately static page — one unchanging image, no live tiles — is indistinguishable from a
-  frozen one *by a single observation*. Over time it is not: a static page never changed, a frozen
-  one was changing and stopped. So a reload now requires having observed this generation of the page
-  change at least once. The trade is in the safe direction — a page that freezes before the first
-  observed change is left to the load-failure, hung-load and nightly-recycle paths — because
-  reloading a working panel every fifteen minutes forever is the worse failure.
+- **Two self-maintenance mechanisms, deliberately different in scale, and no user control over
+  either.** `RecyclePolicy` decides between them. A **nightly restart of the whole app**, once a day
+  at `QUIET_HOUR` (04) plus a per-device offset derived from `String.hashCode()` of the device id —
+  routine cleaning, and because the process actually exits it reclaims the heap, the renderer, native
+  allocations and any leaked handler in a way rebuilding in place cannot. And a **WebView rebuild
+  when the OS reports low memory**, which is a response to a live condition, floored at once per 30
+  minutes so a dashboard simply too big for the device cannot reload in a loop. Renderer death is
+  handled separately by `onRenderProcessGone`. An "Auto recycle" switch and a "Recycle time" clock
+  existed on the tablet, in the web admin and over MQTT, and all of them were deleted along with the
+  `kiosk.auto_recycle` and `kiosk.recycle_time` commands: these are recovery mechanisms, and a
+  control whose only use is to stop a panel healing itself is surface area that can only be used to
+  break it. Both commands answer `unsupported` rather than being silently ignored.
+- **The nightly rule is a calendar date, not an elapsed time.** `KioskConfig.recordNightlyRestartDay`
+  stores the local day number and `commit()`s it *synchronously before* `System.exit` — that write
+  being asynchronous would leave the day unrecorded, so the pass would fire again on the next tick
+  after the restart, forever. It is a date rather than a monotonic floor for two reasons: the process
+  dies, so any "time since the last one" resets with it; and the twelve-hour floor this replaced meant
+  a panel restarted for any other reason at 20:00 silently skipped that night's clean.
+- **The restart relaunches through an `AlarmManager` one-shot, not by trusting `START_STICKY`.** The
+  service would come back on its own and the activity usually follows because it is HOME, but
+  "usually" is doing too much work for the mechanism that has to survive unattended for months. An
+  alarm is held by the system rather than by this process, so it fires whether or not anything here
+  returns by itself. Verified on the API 26 panel: forced to fire immediately, the process exited,
+  came back, reconnected MQTT and rebound the admin server, then stayed put — which also proves the
+  synchronous date write, since otherwise it would have looped.
+- **There is no memory threshold in this app, and no learned model. Do not reintroduce one.** An
+  earlier version recycled below a fixed 12% of total memory. The version after that tried to learn
+  what this dashboard normally costs and act on growth, in the shape of a Kubernetes VPA raising a
+  pod's requests from observed usage. That idea cannot work here, and the reason is worth keeping
+  because it is not obvious: the WebView renderer is an isolated process belonging to the WebView
+  provider, not to this app, so no public API and no readable procfs path exposes its footprint.
+  Measuring system-wide memory instead measures the device rather than the dashboard — the node
+  rather than the pod — and every threshold derived from it was either unreachable or above physical
+  RAM. `getHistoricalProcessExitReasons` would give ground truth about a kill, but it is API 30 and
+  the target hardware is API 26. The nightly restart plus the OS's own verdict plus renderer-death
+  recovery cover the same failure without measuring anything.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public

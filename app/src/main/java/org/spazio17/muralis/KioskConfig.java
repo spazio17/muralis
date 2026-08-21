@@ -20,7 +20,7 @@ final class KioskConfig {
     private static final String HTTP_PORT = "http_port";
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     private static final String STATS_OVERLAY = "stats_overlay";
-    private static final String MEMORY_BASELINE = "memory_baseline";
+    private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
     private static final String TELEMETRY_INTERVAL_SECONDS = "telemetry_interval_seconds";
@@ -170,21 +170,32 @@ final class KioskConfig {
     }
 
     /**
-     * The learned memory model, read on every sample and written whenever a dashboard generation
-     * ends. Kept out of {@link #load} and {@link #save} on purpose: those two write every field, and
-     * a stale snapshot round-tripping through them would discard a fortnight of learning. Same
-     * reasoning as {@link #saveEscapeSequences}.
+     * The local date of the last nightly restart, as a day number, or -1 if there has never been one.
+     *
+     * <p>A date rather than an elapsed time, because the nightly pass now restarts the whole process
+     * and any monotonic "time since the last one" resets with it. A calendar day is also the honest
+     * expression of the rule: once a night, whatever else has happened to the panel in between. The
+     * previous twelve-hour floor meant a panel restarted for any other reason at 20:00 silently
+     * skipped that night's clean.
+     *
+     * <p>Written with {@code commit()}, not {@code apply()}, and that is load-bearing: the caller
+     * calls {@link System#exit} moments later, and an asynchronous write would be lost — leaving the
+     * day unrecorded, so the pass fires again on the next tick after the restart, forever.
+     *
+     * <p>Kept out of {@link #load} and {@link #save} for the same reason as
+     * {@link #saveEscapeSequences}: those write every field, and a stale snapshot round-tripping
+     * through them would revert it.
      */
-    static MemoryBaseline memoryBaselineOf(Context context) {
-        return MemoryBaseline.fromStorage(storageContext(context)
+    static long lastNightlyRestartDay(Context context) {
+        return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(MEMORY_BASELINE, null));
+                .getLong(LAST_NIGHTLY_RESTART_DAY, -1L);
     }
 
-    static void saveMemoryBaseline(Context context, MemoryBaseline baseline) {
+    static void recordNightlyRestartDay(Context context, long epochDay) {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(MEMORY_BASELINE, baseline.toStorage())
-                .apply();
+                .putLong(LAST_NIGHTLY_RESTART_DAY, epochDay)
+                .commit();
     }
 
     /**
