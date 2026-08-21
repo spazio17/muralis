@@ -606,7 +606,39 @@ public final class KioskActivity extends Activity {
     @SuppressWarnings("deprecation")
     @android.annotation.SuppressLint("GestureBackNavigation")
     public void onBackPressed() {
-        // Intentionally empty; see above. Still needed below API 33, where it is the only hook.
+        // Inert only in a kiosk. Below API 33 this is the only hook, so the decision lives here and
+        // in the OnBackInvokedCallback both.
+        if (isDeviceOwner()) {
+            return;
+        }
+        if (!navigateBack()) {
+            super.onBackPressed();
+        }
+    }
+
+    /**
+     * Moves one screen back, for an ordinary install where Back is a working button.
+     *
+     * @return true when this consumed the gesture, false on the dashboard, where there is nowhere
+     *     left to go and the caller should let the system finish the activity, which is what leaving
+     *     any other app looks like.
+     */
+    private boolean navigateBack() {
+        if (recorderVisible) {
+            // Same destination the recorder's own Cancel button uses, rather than a second opinion
+            // about where the recorder goes back to.
+            recorderVisible = false;
+            showEscapeSequences(KioskConfig.load(this));
+            return true;
+        }
+        if (configurationVisible) {
+            showDashboard(KioskConfig.load(this).dashboardUrl);
+            return true;
+        }
+        // Deliberately NOT webView.goBack(). That was removed on purpose: it let anyone standing at
+        // the panel walk the dashboard's history backwards, and on a Home Assistant frontend it
+        // strands the viewer on some earlier view with no obvious way forward.
+        return false;
     }
 
     /**
@@ -631,8 +663,17 @@ public final class KioskActivity extends Activity {
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                 () -> {
-                    // Deliberately empty: swallow the gesture. Every Muralis screen that needs to go
-                    // back has an explicit button, so nothing becomes unreachable.
+                    // Swallowed in a kiosk: every Muralis screen that needs to go back has an
+                    // explicit button, so nothing becomes unreachable.
+                    if (isDeviceOwner()) {
+                        return;
+                    }
+                    // Otherwise Back works. A registered callback consumes the gesture whatever it
+                    // does, so finishing has to be explicit here; there is no falling through to the
+                    // system default the way onBackPressed can call super.
+                    if (!navigateBack()) {
+                        finish();
+                    }
                 });
     }
 
@@ -2928,6 +2969,13 @@ public final class KioskActivity extends Activity {
      * window level, so there is nothing left to reveal.
      */
     private void setDashboardFullscreen(boolean fullscreen) {
+        // Same gate as enterImmersiveMode, and needed separately: FLAG_FULLSCREEN removes the status
+        // bar at the window level, so leaving it set would keep the bar gone on an ordinary install
+        // no matter what the immersive flags said.
+        if (fullscreen && !isDeviceOwner()) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            return;
+        }
         if (fullscreen) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         } else {
@@ -2947,6 +2995,16 @@ public final class KioskActivity extends Activity {
      */
     @SuppressWarnings("deprecation")
     private void enterImmersiveMode() {
+        // Kiosk chrome only when this app is actually running a kiosk. Hiding the bars on an
+        // ordinary install, where lock task never engages and Home and Overview work normally,
+        // bought nothing and cost the app its manners: a plain Play install looked broken, which is
+        // exactly the impression a closed-test tester forms in the first ten seconds. Checked here
+        // rather than at the six call sites, and at call time rather than once at startup, so
+        // granting device-owner status to an already-running app takes effect on the next resume.
+        if (!isDeviceOwner()) {
+            showSystemBars();
+            return;
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             android.view.WindowInsetsController insets =
                     getWindow().getInsetsController();
@@ -2969,6 +3027,26 @@ public final class KioskActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                         | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    /**
+     * Gives the status and navigation bars back, the exact inverse of {@link #enterImmersiveMode()}.
+     *
+     * <p>Both version paths again, for the same reason: the flags and the insets controller are the
+     * only mechanisms their respective halves of the supported range have. This runs on every
+     * non-device-owner install, so it is a normal path rather than a fallback.
+     */
+    @SuppressWarnings("deprecation")
+    private void showSystemBars() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController insets = getWindow().getInsetsController();
+            if (insets != null) {
+                getWindow().setDecorFitsSystemWindows(true);
+                insets.show(android.view.WindowInsets.Type.systemBars());
+                return;
+            }
+        }
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
     }
 
     /**
@@ -3012,6 +3090,12 @@ public final class KioskActivity extends Activity {
      */
     private void watchForRevealedSystemBars() {
         getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(visibility -> {
+            // Third place the same gate is needed, and the easiest to miss: without it this watcher
+            // would drag the bars back off screen 400ms after every reveal on an ordinary install,
+            // undoing showSystemBars() and making the bars flicker instead of simply staying.
+            if (!isDeviceOwner()) {
+                return;
+            }
             if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0) {
                 return;
             }
