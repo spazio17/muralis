@@ -16,8 +16,7 @@ package org.spazio17.muralis;
  *
  * <ul>
  *   <li><b>A nightly restart of the whole app</b>, once a day in the quiet hour. Routine cleaning,
- *   not a response to anything. Because the process actually exits, this reclaims everything —
- *   heap, the renderer, native allocations, any handler that leaked a reference — in a way that
+ *   not a response to anything. Because the process actually exits, this reclaims everything, *   heap, the renderer, native allocations, any handler that leaked a reference, in a way that
  *   rebuilding the WebView in place cannot.
  *   <li><b>A WebView rebuild when the operating system says memory is low</b>, which is a response
  *   to something, and needs to be cheap enough to do at any hour without anyone noticing.
@@ -41,7 +40,7 @@ package org.spazio17.muralis;
  * <p><b>No user-facing control either.</b> There is no switch to turn any of this off and no
  * setting for when it runs. Both existed and both were removed: these are recovery mechanisms, and
  * a control whose only use is to stop a panel healing itself is surface area that can only be used
- * to break it. The schedule is derived from the device id instead — see {@link #scheduledMinuteOf}.
+ * to break it. The schedule is derived from the device id instead, see {@link #scheduledMinuteOf}.
  *
  * <p>Pure logic with no Android imports, and time is passed in rather than read, so every branch is
  * covered by host tests instead of by waiting a day next to the tablet.
@@ -90,8 +89,7 @@ final class RecyclePolicy {
      *
      * <p>Spread deliberately. A fixed 04:00 is fine for one household and wrong at any scale: every
      * panel in every install would restart, reconnect to its broker and re-fetch its dashboard
-     * inside the same sixty seconds. Deriving the offset from the device id keeps it deterministic —
-     * a panel restarts at the same minute every night — while two panels in one house almost
+     * inside the same sixty seconds. Deriving the offset from the device id keeps it deterministic, * a panel restarts at the same minute every night, while two panels in one house almost
      * certainly differ.
      *
      * <p>{@link String#hashCode()} rather than {@link Object#hashCode()}: the former is specified by

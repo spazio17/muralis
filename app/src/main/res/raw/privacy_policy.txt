@@ -36,7 +36,7 @@ Muralis also publishes an online/offline availability value, the result of any c
 
 WHAT THE APP STORES ON THE DEVICE
 
-Your dashboard address, a device identifier that Muralis generates itself, and your display and behaviour preferences. Your broker credentials and administration password are stored encrypted through the Android keystore. The dashboard view stores whatever cookies or sessions your dashboard sets, in the same way a browser would.
+Your dashboard address, a device identifier that Muralis generates itself, your display and behaviour preferences, and the corner-tap combinations you record. Your broker credentials and administration password are stored encrypted through the Android keystore. The dashboard view stores whatever cookies or sessions your dashboard sets, in the same way a browser would.
 
 Muralis does not read your contacts, location, photos, files, messages, call history or microphone, and requests no permission that would allow it to.
 
@@ -48,10 +48,22 @@ DELETION
 
 Uninstalling the app, or clearing its data, removes everything it has stored, including the encrypted credentials.
 
+IF YOU BUY MURALIS PRO
+
+The purchase is handled by Google Play. Google is the seller, takes the payment and issues the receipt. The developer never sees your card details, your name or your address, and receives no report of who bought anything.
+
+To know whether the remote-control features are unlocked, Muralis asks the Google Play app on your device what the signed-in account has bought. That is a question to another app on the same device, not a request Muralis sends anywhere; whether Google Play then talks to Google's own servers is Google's business and is covered by Google's privacy policy, not this one. On a device with no Google Play, or with no account signed in, the answer is "nothing", and Muralis asks no further.
+
+Muralis stores the answer: Google's signed record of the purchase, encrypted through the Android keystore in the same way as your other credentials. It is kept so that the panel stays unlocked with no network, and so that it stays unlocked if you later remove the Google account from the device.
+
+There is no Muralis server, before or after a purchase. Nothing about your purchase, your account or your panel reaches the developer, and there is nothing for the developer to log.
+
 CHILDREN
 
 Muralis is not directed at children and collects nothing about anyone.
 
 CONTACT
 
-Replace this section with a working contact address before distribution.
+Juri Calleri, Vienna, Austria. juricalleri@gmail.com.
+
+A postal address is published on the imprint at muralis.spazio17.org, as Austrian law requires of it. It is kept in that one place rather than repeated here, so that changing it does not need a new release of the app.

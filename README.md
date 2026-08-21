@@ -19,7 +19,7 @@ scripts/build-app.sh         # assembleDebug; prints the APK path and the adb co
                               # it and take device ownership
 ```
 
-`scripts/gradle.sh <task>` runs any other Gradle task (`:app:lintDebug`, `:app:bundleDebug`, ...)
+`scripts/gradle.sh <task>` runs any other Gradle task (`:app:lintDebug`, `:app:bundleDebug`...)
 inside the same container.
 
 ## Status
@@ -28,7 +28,7 @@ Pre-release. Runs on real hardware; not yet published, and there is no release s
 
 ## License
 
-All rights reserved for now — see [`LICENSE`](LICENSE); a placeholder pending a final licensing
+All rights reserved for now, see [`LICENSE`](LICENSE); a placeholder pending a final licensing
 decision, not an open-source license. Built on [Eclipse Paho](https://www.eclipse.org/paho/) MQTT
 (`org.eclipse.paho.client.mqttv3`, EPL/EDL) and the [Catppuccin](https://catppuccin.com/) palette,
 both credited on the app's own About screen.

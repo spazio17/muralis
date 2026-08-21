@@ -444,7 +444,7 @@ final class MqttController implements MqttCallbackExtended {
             //
             // thermal_status is conditional: it is withdrawn only on hardware that cannot report
             // it. The two recycle controls are unconditional, because this build no longer has them
-            // at all — anything upgraded from a build that did would otherwise keep a switch and a
+            // at all, anything upgraded from a build that did would otherwise keep a switch and a
             // clock that answer nothing.
             JSONObject stale = new JSONObject(components.toString());
             if (!thermalSupported) {

@@ -735,7 +735,7 @@ final class HttpAdminServer {
             }
             case "webadmin": {
                 // Range-checked and REFUSED, not clamped, and this is the highest-severity input on
-                // the page. ServerSocket.bind throws IllegalArgumentException — not IOException — for
+                // the page. ServerSocket.bind throws IllegalArgumentException, not IOException, for
                 // a port outside 1-65535, and HttpAdminServer.start only catches IOException. So a
                 // value like 99999 was persisted, answered with a success page, and then threw an
                 // unchecked exception on the main thread inside restartControllers. START_STICKY
@@ -829,7 +829,7 @@ final class HttpAdminServer {
     private boolean isAuthorized(String authorizationHeader) {
         // Explicit, not merely implied by start() refusing to bind without a password. Left to the
         // comparison below, an empty expected password matched an empty supplied one and
-        // authorized everyone — unreachable today, but only by an invariant enforced in a
+        // authorized everyone, unreachable today, but only by an invariant enforced in a
         // different method, which is one refactor away from an authentication bypass.
         if (boundAdminPassword.isEmpty()) {
             return false;
@@ -1281,7 +1281,7 @@ final class HttpAdminServer {
      * Percent-decodes one field, or returns null if it is malformed.
      *
      * <p>{@code URLDecoder.decode} throws {@link IllegalArgumentException} on a truncated or
-     * non-hex escape — {@code "100%"}, {@code "%zz"}, {@code "abc%2"}. That used to travel all the
+     * non-hex escape, {@code "100%"}, {@code "%zz"}, {@code "abc%2"}. That used to travel all the
      * way out of the worker thread and kill the process, which a documented curl one-liner could
      * trigger just by passing a URL containing a bare {@code %}.
      */

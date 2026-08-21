@@ -97,8 +97,7 @@ public final class KioskActivity extends Activity {
      * fifteen minutes with not one visible change.
      *
      * <p>Still a heuristic, but no longer one that needs an operator-facing off switch to be safe.
-     * The switch existed because a legitimately static page — one unchanging image, no live tiles —
-     * is indistinguishable from a frozen one <em>by a single observation</em>. Over time it is not:
+     * The switch existed because a legitimately static page, one unchanging image, no live tiles, * is indistinguishable from a frozen one <em>by a single observation</em>. Over time it is not:
      * a static page never changed, while a frozen one was changing and stopped. So a reload now
      * requires having observed this generation of the page change at least once
      * ({@link #sawPageChange}); until then "unchanged" carries no information and nothing fires.
@@ -457,7 +456,7 @@ public final class KioskActivity extends Activity {
         keepBackInert();
         // KioskService sends this package-scoped, but package-scoping constrains the *sender*, not
         // who may reach the receiver. A context-registered receiver was implicitly EXPORTED before
-        // Android 14, and RECEIVER_NOT_EXPORTED is only API 33 — so on the API 26 hardware this app
+        // Android 14, and RECEIVER_NOT_EXPORTED is only API 33, so on the API 26 hardware this app
         // targets, the unflagged branch left any installed app able to broadcast UI_CONTROL and
         // repoint, blank or dim the kiosk. Both branches therefore also require a signature-level
         // permission, which works on every version; the flag stays because from API 34 Android
@@ -841,7 +840,7 @@ public final class KioskActivity extends Activity {
      * whoever consumes it (the overlay ticker, the telemetry loop). And it calls
      * {@link KioskService#publishTelemetrySoon} so the MQTT switch in
      * Home Assistant reflects the new value in under a second rather than up to a full interval
-     * later — the same reason {@code KioskService.dispatch} republishes after an accepted command.
+     * later, the same reason {@code KioskService.dispatch} republishes after an accepted command.
      */
     private void applyBehaviourSetting(java.util.function.Consumer<KioskConfig> change) {
         if (syncingBehaviourControls) {
@@ -1810,7 +1809,7 @@ public final class KioskActivity extends Activity {
         addAboutRow(creditsCard, theme, "Catppuccin", "Colour palette (MIT)");
 
         // No explanatory line above these two buttons. They are rendered in-app rather than linked
-        // out because a kiosk under lock task has no browser to hand a URL to — which is a fact
+        // out because a kiosk under lock task has no browser to hand a URL to, which is a fact
         // about the design, not something a reader of the Legal card needs told.
         LinearLayout legalCard = card(theme, "Legal");
         Button privacy = secondaryButton(theme, getString(R.string.privacy_policy_title));
@@ -2533,7 +2532,7 @@ public final class KioskActivity extends Activity {
             // Detach before destroying. Android's contract is that destroy() must follow removal
             // from the view hierarchy; destroying in place leaves the old tree to deliver
             // onDetachedFromWindow to a dead WebView, which crashes or leaks depending on the
-            // provider — and the provider here is updated by Play, so "fine today" is not durable.
+            // provider, and the provider here is updated by Play, so "fine today" is not durable.
             // onRenderProcessGone already does it in this order. This path runs on every nightly
             // recycle, every memory-pressure recycle and every kiosk.restart.
             ViewGroup parent = webView.getParent() instanceof ViewGroup
@@ -2708,7 +2707,7 @@ public final class KioskActivity extends Activity {
         // frozen-page reload: recordLoadFailure("page appears frozen") only arms nextRetryAtMs, and
         // the retry lands here. Setting the timestamps inline left sawPageChange and the last
         // fingerprint from the *previous* generation in place, so the reload never cleared the state
-        // that authorised it — three more identical probes and it fired again, every fifteen
+        // that authorised it, three more identical probes and it fired again, every fifteen
         // minutes, on a panel that was working. That is the failure the gate exists to prevent, so
         // every path that starts a generation must go through here.
         beginLoad();

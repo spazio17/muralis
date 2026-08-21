@@ -136,7 +136,7 @@ final class KioskConfig {
 
     /**
      * Switches the web admin off, on purpose. Goes straight to {@link SecretStore#clear} rather than
-     * through {@link #save}, because save now skips a secret it could not read — correct for an
+     * through {@link #save}, because save now skips a secret it could not read, correct for an
      * incidental write, wrong for somebody deliberately clearing the field.
      */
     static void clearHttpAdminPassword(Context context) {
@@ -179,7 +179,7 @@ final class KioskConfig {
      * skipped that night's clean.
      *
      * <p>Written with {@code commit()}, not {@code apply()}, and that is load-bearing: the caller
-     * calls {@link System#exit} moments later, and an asynchronous write would be lost — leaving the
+     * calls {@link System#exit} moments later, and an asynchronous write would be lost, leaving the
      * day unrecorded, so the pass fires again on the next tick after the restart, forever.
      *
      * <p>Kept out of {@link #load} and {@link #save} for the same reason as
@@ -209,8 +209,7 @@ final class KioskConfig {
      *
      * <p>Returns empty rather than minting an id, unlike {@code load()}: minting writes to disk with
      * {@code commit()}, and doing that from the sampler thread is not this method's business.
-     * RecyclePolicy.scheduledMinuteOf treats empty as minute zero, which is the un-spread default —
-     * acceptable for the window before load() has ever run, and load() runs at startup.
+     * RecyclePolicy.scheduledMinuteOf treats empty as minute zero, which is the un-spread default, * acceptable for the window before load() has ever run, and load() runs at startup.
      */
     static String deviceIdOf(Context context) {
         return storageContext(context)
