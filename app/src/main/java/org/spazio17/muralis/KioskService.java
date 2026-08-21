@@ -325,10 +325,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             try {
                 policy.setPackagesSuspended(admin, new String[] {getPackageName()}, false);
-                policy.addUserRestriction(admin, android.os.UserManager.DISALLOW_SAFE_BOOT);
             } catch (SecurityException | IllegalArgumentException refused) {
                 Log.w(TAG, "Could not apply device-owner package restrictions", refused);
             }
+        }
+
+        // Deliberately NOT inside the API 28 branch above, where it used to sit. DISALLOW_SAFE_BOOT
+        // is API 25, so gating it on 28 meant it never applied on the API 26/27 hardware this app is
+        // actually built for — and safe mode starts the device with third-party apps disabled: no
+        // Muralis, no lock task, no foreground service. That is an escape from the kiosk needing
+        // neither the corner-tap sequence nor a cable, on the primary target device.
+        try {
+            policy.addUserRestriction(admin, android.os.UserManager.DISALLOW_SAFE_BOOT);
+        } catch (SecurityException | IllegalArgumentException refused) {
+            Log.w(TAG, "Could not block safe-mode boot", refused);
         }
         grantOwnRuntimePermissions(policy, admin);
         Log.i(TAG, "Device-owner resource guarantees applied");
@@ -603,9 +613,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
         kioskRestart();
     }
 
-    /** This panel's minute within {@link RecyclePolicy#QUIET_HOUR}, fixed for the device. */
+    /**
+     * This panel's minute within {@link RecyclePolicy#QUIET_HOUR}, fixed for the device.
+     *
+     * <p>Via the narrow reader, not {@code KioskConfig.load()}: this is called on every sampler
+     * tick, and load() would decrypt all three SecretStore entries each time to reach one string.
+     */
     private int scheduledRecycleMinute() {
-        return RecyclePolicy.scheduledMinuteOf(KioskConfig.load(this).deviceId);
+        return RecyclePolicy.scheduledMinuteOf(KioskConfig.deviceIdOf(this));
     }
 
     /**

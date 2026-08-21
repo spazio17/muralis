@@ -43,6 +43,15 @@ final class KioskConfig {
     int httpPort = DEFAULT_HTTP_PORT;
     String httpAdminPassword = "";
     /**
+     * Whether each secret was actually readable when this snapshot was loaded. {@link #save} skips
+     * the ones that were not, so a briefly unavailable Keystore cannot turn an unrelated settings
+     * save into a deleted credential. True by default, so a freshly constructed config (a new
+     * install, a test) persists normally. See {@link SecretStore#getOrNull}.
+     */
+    private boolean mqttUsernameReadable = true;
+    private boolean mqttPasswordReadable = true;
+    private boolean httpAdminPasswordReadable = true;
+    /**
      * Draws the live system-stats block over the dashboard. On by default because it exists to be
      * watched during the multi-week endurance test; it is a switch rather than a build-time choice
      * so turning it off later needs no reflash.
@@ -76,10 +85,16 @@ final class KioskConfig {
         }
         config.mqttHost = preferences.getString(MQTT_HOST, "").trim();
         config.mqttPort = preferences.getInt(MQTT_PORT, 1883);
-        config.mqttUsername = secrets.get(MQTT_USERNAME);
-        config.mqttPassword = secrets.get(MQTT_PASSWORD);
+        String storedUsername = secrets.getOrNull(MQTT_USERNAME);
+        config.mqttUsernameReadable = storedUsername != null;
+        config.mqttUsername = storedUsername == null ? "" : storedUsername;
+        String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
+        config.mqttPasswordReadable = storedPassword != null;
+        config.mqttPassword = storedPassword == null ? "" : storedPassword;
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
-        config.httpAdminPassword = secrets.get(HTTP_ADMIN_PASSWORD);
+        String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
+        config.httpAdminPasswordReadable = storedAdminPassword != null;
+        config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.statsOverlay = statsOverlayEnabled(context);
         config.settingsSequence = preferences.getString(
                 SETTINGS_SEQUENCE, DEFAULT_SETTINGS_SEQUENCE);
@@ -105,10 +120,27 @@ final class KioskConfig {
                         TelemetryInterval.clampOrDefault(telemetryIntervalSeconds))
                 .apply();
 
+        // Each secret is written only if it was readable when this snapshot loaded. Writing an
+        // empty string is a delete, so persisting a value that failed to decrypt would destroy it.
         SecretStore secrets = new SecretStore(storageContext);
-        secrets.put(MQTT_USERNAME, mqttUsername);
-        secrets.put(MQTT_PASSWORD, mqttPassword);
-        secrets.put(HTTP_ADMIN_PASSWORD, httpAdminPassword);
+        if (mqttUsernameReadable) {
+            secrets.put(MQTT_USERNAME, mqttUsername);
+        }
+        if (mqttPasswordReadable) {
+            secrets.put(MQTT_PASSWORD, mqttPassword);
+        }
+        if (httpAdminPasswordReadable) {
+            secrets.put(HTTP_ADMIN_PASSWORD, httpAdminPassword);
+        }
+    }
+
+    /**
+     * Switches the web admin off, on purpose. Goes straight to {@link SecretStore#clear} rather than
+     * through {@link #save}, because save now skips a secret it could not read — correct for an
+     * incidental write, wrong for somebody deliberately clearing the field.
+     */
+    static void clearHttpAdminPassword(Context context) {
+        new SecretStore(storageContext(context)).clear(HTTP_ADMIN_PASSWORD);
     }
 
     /**
@@ -153,6 +185,26 @@ final class KioskConfig {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(MEMORY_BASELINE, baseline.toStorage())
                 .apply();
+    }
+
+    /**
+     * Reads just the device id, skipping {@link #load} and its three Keystore decryptions.
+     *
+     * <p>Needed because the recycle schedule is derived from this value on every sampler tick, and
+     * going through {@code load()} to reach one immutable string meant constructing a
+     * {@link SecretStore} and decrypting the broker username, the broker password and the admin
+     * password, twice a second, forever. Same reasoning as {@link #statsOverlayEnabled} and
+     * {@link #telemetryIntervalSecondsOf}.
+     *
+     * <p>Returns empty rather than minting an id, unlike {@code load()}: minting writes to disk with
+     * {@code commit()}, and doing that from the sampler thread is not this method's business.
+     * RecyclePolicy.scheduledMinuteOf treats empty as minute zero, which is the un-spread default —
+     * acceptable for the window before load() has ever run, and load() runs at startup.
+     */
+    static String deviceIdOf(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(DEVICE_ID, "").trim();
     }
 
     /** Read on every telemetry tick, so it skips {@link #load} and its SecretStore decryption. */

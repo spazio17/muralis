@@ -80,7 +80,6 @@ public final class RecyclePolicyTest {
                 SETTLED_KB, true, learned).act(), "backwards clock triggered a recycle");
 
         testScheduleJitter();
-        testFormat();
 
         System.out.println("RecyclePolicyTest passed");
     }
@@ -94,10 +93,20 @@ public final class RecyclePolicyTest {
         for (String id : new String[] {"kiosk-1a2b3c4d", "kiosk-deadbeef", "kiosk-00000000", ""}) {
             int minute = RecyclePolicy.scheduledMinuteOf(id);
             require(minute >= 0 && minute < 60, "minute out of range for \"" + id + "\": " + minute);
-            require(minute == RecyclePolicy.scheduledMinuteOf(id),
-                    "minute was not stable for \"" + id + "\"");
+            // A fresh, equal-but-distinct instance: re-hashing the SAME reference would pass even
+            // for System.identityHashCode, which is exactly what must not be used here — an address
+            // moves the schedule on every restart.
+            require(minute == RecyclePolicy.scheduledMinuteOf(new String(id.toCharArray())),
+                    "minute was not stable across instances for \"" + id + "\"");
         }
         require(RecyclePolicy.scheduledMinuteOf(null) == 0, "a null id should not throw");
+        // Integer.MIN_VALUE exactly: Math.abs of it is still negative, which is why floorMod is
+        // used. Nothing in the id lists above hashes to it, so without this the plain-abs bug passes.
+        require(RecyclePolicy.scheduledMinuteOf("polygenelubricants") == 52,
+                "Integer.MIN_VALUE hash was not folded into range");
+        // Pins String.hashCode itself, not just the range.
+        require(RecyclePolicy.scheduledMinuteOf("kiosk-1a2b3c4d") == 44,
+                "the derived minute changed for a known id");
 
         // Two ids should not normally collide. Not a guarantee — 60 buckets, so collisions exist —
         // but the whole point is that panels spread, so a implementation that returned a constant
@@ -116,11 +125,6 @@ public final class RecyclePolicyTest {
                 "ids barely spread across the hour: " + distinct + " of " + ids.length);
     }
 
-    private static void testFormat() {
-        require(RecyclePolicy.formatTime(4, 0).equals("04:00"), "24h format wrong");
-        require(RecyclePolicy.formatTime(14, 5).equals("14:05"), "afternoon format wrong");
-        require(RecyclePolicy.formatTime(0, 0).equals("00:00"), "midnight format wrong");
-    }
 
     /** A baseline that has seen enough settled generations to be worth acting on. */
     private static MemoryBaseline trained(long usedKb) {

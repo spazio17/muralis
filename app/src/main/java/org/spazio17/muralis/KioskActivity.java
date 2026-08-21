@@ -817,8 +817,14 @@ public final class KioskActivity extends Activity {
                     Toast.LENGTH_LONG).show();
             return;
         }
-        config.httpAdminPassword = typed;
-        config.save(this);
+        if (typed.isEmpty()) {
+            // Deliberate: an explicit clear must work even if the Keystore was unreadable when this
+            // config loaded, which is exactly the case KioskConfig.save() now declines to persist.
+            KioskConfig.clearHttpAdminPassword(this);
+        } else {
+            config.httpAdminPassword = typed;
+            config.save(this);
+        }
         KioskService.reloadConfiguration(this);
         Toast.makeText(this,
                 typed.isEmpty() ? "Web admin switched off" : "Web admin password updated",
@@ -2698,10 +2704,18 @@ public final class KioskActivity extends Activity {
         if (url.isEmpty()) {
             return;
         }
-        nextRetryAtMs = 0;
-        loadStartedAtMs = now;
         dashboardRetries++;
         Log.i(TAG, "Dashboard retry " + dashboardRetries + ": " + url);
+        // beginLoad(), not the three assignments this used to make by hand. It is the only place
+        // that also calls resetFrozenPageTracking(), and this is the one path that services a
+        // frozen-page reload: recordLoadFailure("page appears frozen") only arms nextRetryAtMs, and
+        // the retry lands here. Setting the timestamps inline left sawPageChange and the last
+        // fingerprint from the *previous* generation in place, so the reload never cleared the state
+        // that authorised it — three more identical probes and it fired again, every fifteen
+        // minutes, on a panel that was working. That is the failure the gate exists to prevent, so
+        // every path that starts a generation must go through here.
+        beginLoad();
+        loadStartedAtMs = now;
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
         // request that produced the cached error page. loadUrl always asks for the configured
         // dashboard, which is what kiosk.restart does and is known to work.
@@ -2774,6 +2788,13 @@ public final class KioskActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             loadStartedAtMs = android.os.SystemClock.uptimeMillis();
+            // A new document, and often one this app did not ask for: a JS location change, a login
+            // redirect, a server 302. Whatever the last document's content looked like says nothing
+            // about this one, and carrying sawPageChange across meant a static page inherited
+            // permission to be declared frozen. Deliberately not the whole of beginLoad(): the
+            // retry bookkeeping belongs to whoever issued the load, and clearing nextRetryAtMs here
+            // would cancel a pending recovery.
+            resetFrozenPageTracking();
         }
 
         @Override

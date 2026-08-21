@@ -96,11 +96,6 @@ final class RecyclePolicy {
         return Math.floorMod(deviceId.hashCode(), 60);
     }
 
-    /** "04:23" style label, for the admin surfaces and the logs. */
-    static String formatTime(int hour, int minute) {
-        return String.format(java.util.Locale.US, "%02d:%02d", hour, minute);
-    }
-
     /**
      * @param memUsedKb     system memory in use, which is what a growing renderer moves. Not the
      *                      renderer's own footprint: the WebView renderer is an isolated process

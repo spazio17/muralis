@@ -30,6 +30,44 @@ package org.spazio17.muralis;
  * {@link #GROWTH_TRIPS_BEFORE_ACCEPTING} times consecutively. One early trip is a leak; the same
  * early trip twice in a row, at the same level, is the new normal — a leak does not stabilise.
  *
+
+ * <p><b>KNOWN LIMITATION — the GROWTH cause does not currently fire on the measured hardware, and
+ * this model needs redesigning rather than retuning.</b> Found by adversarial review on 2026-08-21,
+ * recorded here rather than quietly left:
+ *
+ * <ul>
+ *   <li>In the ordinary case the measured variance is exactly zero — a panel whose generations end
+ *   at a similar footprint — so {@link #MIN_SPREAD_FRACTION} always wins and the budget is flatly
+ *   {@code mean * 1.15}. That demands a 15% climb. The climb actually measured on this tablet before
+ *   lmkd kills the renderer is 5.6% (1.62 GB to 1.71 GB), so the kill always arrives first.
+ *   <li>Worse, because {@code memUsedKb} is system-wide it is dominated by the device rather than by
+ *   the dashboard, so {@code mean * 1.15} frequently exceeds physical RAM and the comparison becomes
+ *   arithmetically unreachable. A device-independent 15% relative headroom is, in effect, the
+ *   fraction-of-total threshold this class was written to delete.
+ *   <li>{@link #GROWTH_TRIPS_BEFORE_ACCEPTING} does not stop runaway drift, it halves its rate: each
+ *   accepted trip folds a sample at {@code mean + 3σ}, which multiplies σ by ~1.56. A real leak walks
+ *   the budget above a 2 GB device's total RAM within about two hours.
+ *   <li>The "same level twice running" rule this class's own text describes is NOT implemented. The
+ *   first trip's value is discarded and the two levels are never compared, so two trips at wildly
+ *   different levels — the signature of a leak, by that same text — are accepted as the new normal.
+ *   <li>A SYSTEM_PRESSURE end is folded in unguarded and is by construction the highest footprint the
+ *   device reaches, which pins the budget above total RAM after a single pressure event.
+ *   <li>Because the variance is symmetric and the trigger one-sided, a single LOW outlier raises the
+ *   budget. Opening the configuration screen destroys the WebView, so one operator visit at the
+ *   scheduled minute loosens the trigger for over a fortnight.
+ * </ul>
+ *
+ * <p>The fix is not a new constant. It is to measure the <em>generation's own growth</em> — system
+ * memory now minus what it was when this page settled — and learn the distribution of that delta,
+ * rather than of the absolute footprint. A delta is small next to total RAM so the budget can never
+ * become unreachable; a rebuild-reclaimed low outlier becomes a negative delta that is rejected
+ * rather than folded; and the level comparison the trip rule needs becomes meaningful. That needs a
+ * per-generation anchor plumbed from the activity, which is why it is not in this commit.
+ *
+ * <p>Until then the effective recovery mechanisms are the nightly pass and the operating system's own
+ * lowMemory verdict — which is what the app had before this class existed, minus the fixed 12%
+ * threshold. Nothing is worse than it was; the new path simply does not yet earn its keep.
+ *
  * <p>Pure logic, no Android imports, every value passed in, so the whole model is covered by host
  * tests instead of by waiting a fortnight next to the tablet.
  */

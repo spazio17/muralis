@@ -95,6 +95,19 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   legitimately grows over months, which is the other half of the same counter. `MIN_SPREAD_FRACTION`
   exists because a variance near zero collapses the budget onto the mean and turns a leak detector
   into a periodic reloader.
+- **The GROWTH cause does not currently fire, and the model needs redesigning rather than retuning.**
+  Do not treat the bullet above as describing working behaviour. With a zero measured variance the
+  budget is flatly `mean * 1.15`, i.e. a 15% climb, where the climb measured on this hardware before
+  lmkd kills the renderer is 5.6% — so the kill always wins. And because `memUsedKb` is system-wide,
+  `mean * 1.15` often exceeds physical RAM, which makes a device-independent relative headroom into
+  the fraction-of-total threshold this work set out to delete. The trip guard halves the rate of
+  runaway drift rather than preventing it, the "same level twice" rule it documents is not actually
+  implemented, and a single low outlier (opening the configuration screen destroys the WebView)
+  loosens the trigger for weeks. The fix is to learn the distribution of a generation's own growth
+  delta — memory now minus memory when this page settled — not of the absolute footprint; that needs
+  a per-generation anchor plumbed from the activity. Until then the working recovery mechanisms are
+  the nightly pass and the OS's own `lowMemory` verdict. See `MemoryBaseline`'s class comment for the
+  full list.
 - **The nightly pass is scheduled per device, not at a fixed hour.** `RecyclePolicy.QUIET_HOUR` is
   04, and the minute comes from `String.hashCode()` of the device id. Deterministic so a panel picks
   the same minute every night, which is what makes the twelve-hour interval check behave; spread so

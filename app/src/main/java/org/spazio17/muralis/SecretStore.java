@@ -34,9 +34,21 @@ final class SecretStore {
         preferences = context.getSharedPreferences("kiosk_secrets", Context.MODE_PRIVATE);
     }
 
+    /**
+     * Removes a stored secret, deliberately and on request.
+     *
+     * <p>Separate from {@link #put} with an empty value because the two are different intentions.
+     * Clearing the admin password is a real feature — it switches the web admin off — and must work
+     * even while the Keystore is unavailable. An incidental write of a value that could not be read
+     * must not delete anything; see {@link #getOrNull}.
+     */
+    void clear(String name) {
+        preferences.edit().remove(name).apply();
+    }
+
     void put(String name, String value) {
         if (value == null || value.isEmpty()) {
-            preferences.edit().remove(name).apply();
+            clear(name);
             return;
         }
 
@@ -63,7 +75,26 @@ final class SecretStore {
         }
     }
 
+    /** Empty for anything unreadable, which is what most callers want. See {@link #getOrNull}. */
     String get(String name) {
+        String value = getOrNull(name);
+        return value == null ? "" : value;
+    }
+
+    /**
+     * The stored secret, {@code ""} when nothing is stored, or {@code null} when a value IS stored
+     * but could not be decrypted on this attempt.
+     *
+     * <p>The three-way answer exists because collapsing the last two into {@code ""} caused a real
+     * loss-of-credential path. A Keystore that is briefly unavailable — notably direct boot, where
+     * BootReceiver starts KioskService before the user has unlocked — made every secret read as
+     * empty, and the next {@code KioskConfig.save()} wrote those empties straight back, which
+     * {@link #put} turns into a delete. One unrelated settings save during that window and the admin
+     * password and broker credentials were gone for good: the web admin fails closed and never binds
+     * again, while MQTT fails OPEN and silently reconnects anonymously. Callers that persist must
+     * use this method and skip what they could not read.
+     */
+    String getOrNull(String name) {
         String encoded = preferences.getString(name, "");
         if (encoded.isEmpty()) {
             return "";
@@ -108,7 +139,7 @@ final class SecretStore {
             // once the Keystore is back, returns the real value.
             Log.e(TAG, "Could not decrypt configuration value; keeping it for a later attempt",
                     environmental);
-            return "";
+            return null;
         }
     }
 
