@@ -338,7 +338,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
         // Deliberately NOT inside the API 28 branch above, where it used to sit. DISALLOW_SAFE_BOOT
         // is API 25, so gating it on 28 meant it never applied on the API 26/27 hardware this app is
-        // actually built for — and safe mode starts the device with third-party apps disabled: no
+        // actually built for, and safe mode starts the device with third-party apps disabled: no
         // Muralis, no lock task, no foreground service. That is an escape from the kiosk needing
         // neither the corner-tap sequence nor a cable, on the primary target device.
         try {
@@ -478,7 +478,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>Written as an escape on purpose. It used to be a raw NUL byte in the string literal, which
      * compiles fine and behaves identically, but it made this file "data" rather than "text" to
-     * every tool that samples for binary content — so {@code grep -r} over the source tree skipped
+     * every tool that samples for binary content, so {@code grep -r} over the source tree skipped
      * KioskService entirely and silently, and a search for a method defined here came back empty.
      * Keep it escaped.
      */
@@ -512,8 +512,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Rebuilds only the controllers whose own configuration actually changed.
      *
      * <p>This used to stop and start both unconditionally. Stopping the MQTT client publishes a
-     * retained {@code availability: offline}, so *every* settings save — including ones with
-     * nothing to do with MQTT, like the escape sequences or the dashboard URL — made every Home
+     * retained {@code availability: offline}, so *every* settings save, including ones with
+     * nothing to do with MQTT, like the escape sequences or the dashboard URL, made every Home
      * Assistant entity for the panel drop to unavailable and the "Connected" sensor read
      * disconnected, then recover a second or two later. On a panel whose whole job is to look
      * dependable, a save should not make it briefly look dead.
@@ -524,7 +524,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private void restartControllers() {
         // Still waiting for a network: the gate will start both with the current configuration when
         // it fires, so there is nothing to restart. Tested with isPending() rather than for a null
-        // gate, because whenOnline never returns null and fires inline when already online — a
+        // gate, because whenOnline never returns null and fires inline when already online, a
         // non-null gate is the normal running state, not evidence that anything is pending.
         if (startupGate != null && startupGate.isPending()) {
             return;
@@ -586,7 +586,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>The switch that used to gate this and the setting that chose its hour are both gone: these
      * are recovery mechanisms, not preferences. So is the learned memory model that briefly lived
-     * here — see {@link RecyclePolicy} for why it could not work.
+     * here, see {@link RecyclePolicy} for why it could not work.
      */
     private void maybeMaintainDashboard(long nowMs) {
         java.util.Calendar clock = java.util.Calendar.getInstance();
@@ -630,7 +630,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>An alarm relaunches the activity rather than relying on the service being recreated.
      * {@code START_STICKY} would bring KioskService back on its own schedule, and the activity would
-     * usually follow because it is HOME — but "usually" is doing too much work for the mechanism
+     * usually follow because it is HOME, but "usually" is doing too much work for the mechanism
      * that has to survive unattended for months. An {@link android.app.AlarmManager} one-shot is
      * held by the system, not by this process, so it fires whether or not anything here comes back
      * by itself.
@@ -710,7 +710,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     private org.json.JSONObject buildStats(boolean includeAdminDetail) {
         // The collector is created by startTelemetry(), which runs *after* startControllers() in
-        // onCreate, and NetworkGate runs its work inline when a network is already up — the normal
+        // onCreate, and NetworkGate runs its work inline when a network is already up, the normal
         // case. So the HTTP accept thread is live and serving before this field is assigned, and a
         // browser polling /api/stats every five seconds will eventually land in that window. It
         // used to NPE on a worker thread and take the process down; the config block below needs no

@@ -24,7 +24,7 @@ public final class RecyclePolicyTest {
         // Wrong hour, no pressure: leave the panel alone.
         require(decide(13, 0, 4, 0, TODAY, YESTERDAY, false).action == RecyclePolicy.Action.NONE,
                 "a healthy panel outside the quiet hour should be left alone");
-        // Right hour, wrong minute — the minute is per device, so this must matter.
+        // Right hour, wrong minute, the minute is per device, so this must matter.
         require(decide(4, 0, 4, 37, TODAY, YESTERDAY, false).action == RecyclePolicy.Action.NONE,
                 "04:00 fired when this panel is scheduled for 04:37");
     }
@@ -38,7 +38,7 @@ public final class RecyclePolicyTest {
 
         // The whole point of recording a date: the process dies and comes straight back inside the
         // same minute, and must not restart again. A monotonic "time since last" cannot express
-        // this, because it resets with the process — which is why this is a calendar day.
+        // this, because it resets with the process, which is why this is a calendar day.
         require(decide(4, 37, 4, 37, TODAY, TODAY, false).action == RecyclePolicy.Action.NONE,
                 "restarted twice in one night");
 
@@ -97,7 +97,7 @@ public final class RecyclePolicyTest {
             int minute = RecyclePolicy.scheduledMinuteOf(id);
             require(minute >= 0 && minute < 60, "minute out of range for \"" + id + "\": " + minute);
             // A fresh, equal-but-distinct instance: re-hashing the SAME reference would pass even
-            // for System.identityHashCode, which is exactly what must not be used — an address moves
+            // for System.identityHashCode, which is exactly what must not be used, an address moves
             // the schedule on every restart.
             require(minute == RecyclePolicy.scheduledMinuteOf(new String(id.toCharArray())),
                     "minute was not stable across instances for \"" + id + "\"");

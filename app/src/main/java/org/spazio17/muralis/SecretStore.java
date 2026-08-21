@@ -38,7 +38,7 @@ final class SecretStore {
      * Removes a stored secret, deliberately and on request.
      *
      * <p>Separate from {@link #put} with an empty value because the two are different intentions.
-     * Clearing the admin password is a real feature — it switches the web admin off — and must work
+     * Clearing the admin password is a real feature, it switches the web admin off, and must work
      * even while the Keystore is unavailable. An incidental write of a value that could not be read
      * must not delete anything; see {@link #getOrNull}.
      */
@@ -86,8 +86,8 @@ final class SecretStore {
      * but could not be decrypted on this attempt.
      *
      * <p>The three-way answer exists because collapsing the last two into {@code ""} caused a real
-     * loss-of-credential path. A Keystore that is briefly unavailable — notably direct boot, where
-     * BootReceiver starts KioskService before the user has unlocked — made every secret read as
+     * loss-of-credential path. A Keystore that is briefly unavailable, notably direct boot, where
+     * BootReceiver starts KioskService before the user has unlocked, made every secret read as
      * empty, and the next {@code KioskConfig.save()} wrote those empties straight back, which
      * {@link #put} turns into a delete. One unrelated settings save during that window and the admin
      * password and broker credentials were gone for good: the web admin fails closed and never binds
@@ -131,8 +131,8 @@ final class SecretStore {
             return "";
         } catch (GeneralSecurityException environmental) {
             // The Keystore itself was unavailable, not the data. Deleting here was a real hazard:
-            // a transient failure — notably the direct-boot path, where BootReceiver starts
-            // KioskService before the user has unlocked — would permanently wipe the admin password
+            // a transient failure, notably the direct-boot path, where BootReceiver starts
+            // KioskService before the user has unlocked, would permanently wipe the admin password
             // and the broker credentials. The web admin then fails closed and the panel is
             // unreachable except at the glass, which is the one stuck state this product cannot
             // afford. Report empty for this read and leave the ciphertext alone so the next read,

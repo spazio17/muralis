@@ -75,7 +75,7 @@ android {
             // Shrunk and obfuscated. Not cosmetic and not premature: the paid unlock is
             // checked in this process, and an unobfuscated entitlement method keeps its
             // name and is a one-line patch. proguard-rules.pro explains what is kept and
-            // why — chiefly Paho, which resolves callbacks at runtime.
+            // why, chiefly Paho, which resolves callbacks at runtime.
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

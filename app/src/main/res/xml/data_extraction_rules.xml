@@ -9,7 +9,7 @@
     Everything is excluded from both, on purpose:
 
       * The secrets are AES-GCM under a non-exportable AndroidKeyStore key, so ciphertext
-        that arrived on another device could not be decrypted anyway — transferring it would
+        that arrived on another device could not be decrypted anyway, transferring it would
         only produce a panel whose credentials silently fail to load.
       * The escape-tap combinations are what protect the way out of the kiosk, and they are
         per panel by design; the whole reason they are recorded rather than fixed is that
@@ -18,7 +18,7 @@
         meaningless, or actively wrong, applied to another.
       * And once there is a paid unlock, its cached entitlement must not ride a transfer:
         that would let one purchased panel seed another. This is the reason the file cannot
-        wait — a plain flag copied by transfer is not fixable after the fact.
+        wait, a plain flag copied by transfer is not fixable after the fact.
 
     A restored or transferred panel is therefore configured from scratch, which for a device
     that is provisioned by QR and then mounted on a wall is the correct amount of ceremony.
