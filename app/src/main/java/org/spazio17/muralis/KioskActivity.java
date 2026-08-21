@@ -76,6 +76,26 @@ public final class KioskActivity extends Activity {
      */
     private static final long LOAD_TIMEOUT_MS = 60_000L;
     /**
+     * How long the single load issued by renderer-death recovery may take before it is retried.
+     *
+     * <p>Much tighter than {@link #LOAD_TIMEOUT_MS}, because this is not the situation that constant
+     * is generous for. A renderer death is already known rather than suspected: the process that
+     * draws the page is gone, the WebView is brand new, and the panel is showing nothing at all
+     * until this load lands. Spending the full minute discovering the replacement load is not
+     * coming turned a 1.4-second rebuild into 66 seconds of blank panel, measured on the API 26
+     * panel 2026-08-21, 15:25:57 to 15:27:03, and both rebuilds were visible from across the room.
+     *
+     * <p>Twenty-five seconds rather than less, on purpose. The load after a renderer death is a
+     * cold one: the new process has no warm cache, and a Home Assistant dashboard measured 10-15
+     * seconds to {@code onPageFinished} on this hardware even warm. A tighter bound would retry a
+     * load that was merely slow, which costs exactly the extra flash this exists to remove.
+     *
+     * <p>Applies to one load only, the one recovery issued. Every retry after it reverts to
+     * {@link #LOAD_TIMEOUT_MS}, so a dashboard that is slow rather than dead can never be caught in
+     * a fast reload loop.
+     */
+    private static final long RENDERER_DEATH_LOAD_TIMEOUT_MS = 25_000L;
+    /**
      * How often the recovery clock looks at the dashboard. Two seconds, so a retry goes out within a
      * couple of seconds of becoming due; the work per tick is two long comparisons.
      */
@@ -2681,9 +2701,11 @@ public final class KioskActivity extends Activity {
         }
         long now = android.os.SystemClock.uptimeMillis();
 
+        long loadTimeoutMs = loadFollowsRendererDeath
+                ? RENDERER_DEATH_LOAD_TIMEOUT_MS : LOAD_TIMEOUT_MS;
         if (nextRetryAtMs == 0 && loadStartedAtMs != 0
-                && now - loadStartedAtMs > LOAD_TIMEOUT_MS) {
-            Log.w(TAG, "Dashboard load has not finished in " + LOAD_TIMEOUT_MS + "ms; retrying");
+                && now - loadStartedAtMs > loadTimeoutMs) {
+            Log.w(TAG, "Dashboard load has not finished in " + loadTimeoutMs + "ms; retrying");
             recordLoadFailure("load timed out");
             nextRetryAtMs = now;
         }
@@ -2710,6 +2732,13 @@ public final class KioskActivity extends Activity {
         // that authorised it, three more identical probes and it fired again, every fifteen
         // minutes, on a panel that was working. That is the failure the gate exists to prevent, so
         // every path that starts a generation must go through here.
+        //
+        // Cleared here rather than in beginLoad(): this is the one place that turns a *pending*
+        // recovery into an issued load, so it is the point at which the tighter post-renderer-death
+        // bound has been spent. beginLoad() also runs from showDashboard, which is what recovery
+        // calls to create the WebView in the first place, so clearing it there would clear the flag
+        // before the load it applies to had even started.
+        loadFollowsRendererDeath = false;
         beginLoad();
         loadStartedAtMs = now;
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
@@ -2723,6 +2752,7 @@ public final class KioskActivity extends Activity {
         loadStartedAtMs = 0;
         nextRetryAtMs = 0;
         loadFailedAtMs = 0;
+        loadFollowsRendererDeath = false;
         resetFrozenPageTracking();
     }
 
@@ -2769,6 +2799,16 @@ public final class KioskActivity extends Activity {
      */
     private static final long LOAD_FAILURE_WINDOW_MS = 5_000L;
 
+    /**
+     * Whether the load in flight is the one {@code onRenderProcessGone} issued, and so is held to
+     * {@link #RENDERER_DEATH_LOAD_TIMEOUT_MS} rather than {@link #LOAD_TIMEOUT_MS}.
+     *
+     * <p>Set after {@code showDashboard} returns, never before: that method calls
+     * {@link #resetLoadTracking()}, which clears this along with the rest of the load bookkeeping,
+     * so setting it first would have it wiped by the very rebuild it describes.
+     */
+    private boolean loadFollowsRendererDeath;
+
     private final class KioskWebViewClient extends WebViewClient {
         /**
          * Notes when the load in flight began, so {@link #superviseDashboard()} can catch one that
@@ -2804,6 +2844,7 @@ public final class KioskActivity extends Activity {
             }
             loadStartedAtMs = 0;
             nextRetryAtMs = 0;
+            loadFollowsRendererDeath = false;
             KioskRuntimeState.recordPageFinished(url);
         }
 
@@ -2850,6 +2891,11 @@ public final class KioskActivity extends Activity {
                 view.destroy();
                 if (!isFinishing() && !isDestroyed() && !kioskStopped) {
                     showDashboard(KioskConfig.load(KioskActivity.this).dashboardUrl);
+                    // After showDashboard, which resets the load bookkeeping this belongs to. The
+                    // supervisor now holds that load to RENDERER_DEATH_LOAD_TIMEOUT_MS instead of
+                    // the minute a merely-slow dashboard is owed, because a panel that already
+                    // knows its renderer died should not spend that minute showing nothing.
+                    loadFollowsRendererDeath = true;
                 }
             });
             return true;
