@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    What may leave this device, and by which channel.
+
+    android:allowBackup="false" already blocks adb backup and Google's cloud backup. It does
+    NOT cover device-to-device transfer, which from Android 12 is governed by this file and
+    by nothing else. Without this file the app states no position on that channel at all.
+
+    Everything is excluded from both, on purpose:
+
+      * The secrets are AES-GCM under a non-exportable AndroidKeyStore key, so ciphertext
+        that arrived on another device could not be decrypted anyway — transferring it would
+        only produce a panel whose credentials silently fail to load.
+      * The escape-tap combinations are what protect the way out of the kiosk, and they are
+        per panel by design; the whole reason they are recorded rather than fixed is that
+        every device should differ.
+      * The learned memory baseline describes one dashboard on one piece of hardware and is
+        meaningless, or actively wrong, applied to another.
+      * And once there is a paid unlock, its cached entitlement must not ride a transfer:
+        that would let one purchased panel seed another. This is the reason the file cannot
+        wait — a plain flag copied by transfer is not fixable after the fact.
+
+    A restored or transferred panel is therefore configured from scratch, which for a device
+    that is provisioned by QR and then mounted on a wall is the correct amount of ceremony.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
+    </device-transfer>
+</data-extraction-rules>
