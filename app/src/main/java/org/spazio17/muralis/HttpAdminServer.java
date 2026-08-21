@@ -719,17 +719,34 @@ final class HttpAdminServer {
                 fresh.dashboardUrl = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
                 fresh.deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
                 break;
-            case "mqtt":
+            case "mqtt": {
                 fresh.mqttHost = form.getOrDefault("mqtt_host", fresh.mqttHost).trim();
-                fresh.mqttPort = parseIntOrDefault(form.get("mqtt_port"), fresh.mqttPort);
+                Integer brokerPort = parsePort(form.get("mqtt_port"), fresh.mqttPort);
+                if (brokerPort == null) {
+                    return "Broker port must be between 1 and 65535.";
+                }
+                fresh.mqttPort = brokerPort;
                 fresh.mqttUsername = form.getOrDefault("mqtt_username", fresh.mqttUsername);
                 String mqttPassword = form.get("mqtt_password");
                 if (mqttPassword != null && !mqttPassword.isEmpty()) {
                     fresh.mqttPassword = mqttPassword;
                 }
                 break;
-            case "webadmin":
-                fresh.httpPort = parseIntOrDefault(form.get("http_port"), fresh.httpPort);
+            }
+            case "webadmin": {
+                // Range-checked and REFUSED, not clamped, and this is the highest-severity input on
+                // the page. ServerSocket.bind throws IllegalArgumentException — not IOException — for
+                // a port outside 1-65535, and HttpAdminServer.start only catches IOException. So a
+                // value like 99999 was persisted, answered with a success page, and then threw an
+                // unchecked exception on the main thread inside restartControllers. START_STICKY
+                // brings the service back, onCreate starts the controllers, and it throws again:
+                // a permanent crash loop that survives reboot, takes the HOME activity down with
+                // it, and cannot be undone from the panel because the panel no longer runs.
+                Integer adminPort = parsePort(form.get("http_port"), fresh.httpPort);
+                if (adminPort == null) {
+                    return "Web admin port must be between 1 and 65535.";
+                }
+                fresh.httpPort = adminPort;
                 String adminPassword = form.get("http_admin_password");
                 if (adminPassword != null && !adminPassword.isEmpty()) {
                     if (adminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
@@ -741,6 +758,7 @@ final class HttpAdminServer {
                     fresh.httpAdminPassword = adminPassword;
                 }
                 break;
+            }
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1203,6 +1221,27 @@ final class HttpAdminServer {
         }
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;");
+    }
+
+    /**
+     * A TCP port, or null when the caller sent something that is not one.
+     *
+     * <p>Null rather than the fallback so the caller can refuse with a reason. The tablet's
+     * equivalent clamps ({@code KioskActivity.parsePort}) because a stored value has to yield
+     * something usable whatever is in it; a form submission is somebody asking for a specific
+     * thing, and silently substituting 8080 for the 99999 they typed is the quiet substitution this
+     * project keeps deleting. An absent field means "not being set" and keeps the current value.
+     */
+    private static Integer parsePort(String value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            int port = Integer.parseInt(value.trim());
+            return port >= 1 && port <= 65535 ? port : null;
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
     }
 
     private static int parseIntOrDefault(String value, int fallback) {
