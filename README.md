@@ -19,7 +19,7 @@ scripts/build-app.sh         # assembleDebug; prints the APK path and the adb co
                               # it and take device ownership
 ```
 
-`scripts/gradle.sh <task>` runs any other Gradle task (`:app:lintDebug`, `:app:bundleDebug`...)
+`scripts/gradle.sh <task>` runs any other Gradle task (`:app:lintDebug`, `:app:bundleDebug`, ...)
 inside the same container.
 
 ## Status

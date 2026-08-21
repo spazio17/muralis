@@ -22,7 +22,7 @@ elsewhere as a working proof of what a fully-privileged build can do; this app i
 constrained, publishable version of the same idea, not a port of that build's plumbing.
 
 `applicationId`/package is `org.spazio17.muralis`; "Muralis" is the Play display name. Internal
-Java class names (`KioskActivity`, `KioskService`, `KioskCommandDispatcher`...) still carry the
+Java class names (`KioskActivity`, `KioskService`, `KioskCommandDispatcher`, ...) still carry the
 old `Kiosk` prefix on purpose, a deliberate scope decision, not an oversight: they're not
 product-facing, and renaming them touches every file for a purely cosmetic gain.
 
