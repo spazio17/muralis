@@ -983,7 +983,7 @@ public final class KioskActivity extends Activity {
         final TextView brightnessValue = new TextView(this);
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedCheckBox(theme,
-                    "Adjust brightness automatically (light sensor)",
+                    "Adjust brightness automatically",
                     autoBrightnessWasOn);
             // Applied the moment it is touched, not on save.
             //
@@ -1809,13 +1809,10 @@ public final class KioskActivity extends Activity {
         addAboutRow(creditsCard, theme, "Eclipse Paho", "MQTT client (EPL/EDL)");
         addAboutRow(creditsCard, theme, "Catppuccin", "Colour palette (MIT)");
 
+        // No explanatory line above these two buttons. They are rendered in-app rather than linked
+        // out because a kiosk under lock task has no browser to hand a URL to — which is a fact
+        // about the design, not something a reader of the Legal card needs told.
         LinearLayout legalCard = card(theme, "Legal");
-        TextView legalIntro = new TextView(this);
-        legalIntro.setTextColor(theme.subtext);
-        legalIntro.setTextSize(13);
-        legalIntro.setText("Shown in the app rather than linked out, because a kiosk in lock-task "
-                + "mode has no browser to open.");
-        legalCard.addView(legalIntro, matchWrap());
         Button privacy = secondaryButton(theme, getString(R.string.privacy_policy_title));
         privacy.setOnClickListener(view -> showLegalDocument(
                 R.string.privacy_policy_title, R.raw.privacy_policy));
