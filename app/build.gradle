@@ -6,6 +6,29 @@ android {
     namespace 'org.spazio17.muralis'
 
     signingConfigs {
+        // The upload key, kept OUTSIDE this repository and outside the gitignored
+        // .gradle/ bind mount, which build-container.sh is documented as regenerating.
+        // scripts/gradle.sh mounts it read-only at /keys when it exists and passes the
+        // password through the environment, so nothing secret is ever a file in the tree.
+        //
+        // Under Play App Signing this is the *upload* key: Google re-signs what it
+        // distributes with an app signing key it holds, and can reset a lost upload key.
+        // So losing this file costs a support round trip, not the app.
+        //
+        // Absent on a machine that has not been given the key, which is deliberate:
+        // assembleRelease still runs and still shrinks, it just produces an unsigned APK,
+        // so anyone can reproduce and test the release build without the secret.
+        release {
+            def keystore = file(System.getenv('MURALIS_KEYSTORE') ?: '/keys/muralis-upload.p12')
+            if (keystore.exists() && System.getenv('MURALIS_KEYSTORE_PASSWORD')) {
+                storeFile keystore
+                storeType 'PKCS12'
+                storePassword System.getenv('MURALIS_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('MURALIS_KEY_ALIAS') ?: 'muralis-upload'
+                keyPassword System.getenv('MURALIS_KEY_PASSWORD')
+                        ?: System.getenv('MURALIS_KEYSTORE_PASSWORD')
+            }
+        }
         debug {
             // Pinned to the .gradle bind mount instead of letting AGP place it.
             //
@@ -49,10 +72,17 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // The ROM build shrank with proguard.flags; carry that over when the
-            // real sources land, not before, so early failures stay legible.
-            minifyEnabled false
+            // Shrunk and obfuscated. Not cosmetic and not premature: the paid unlock is
+            // checked in this process, and an unobfuscated entitlement method keeps its
+            // name and is a one-line patch. proguard-rules.pro explains what is kept and
+            // why — chiefly Paho, which resolves callbacks at runtime.
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Only configured when the key is actually present; see signingConfigs.release.
+            if (signingConfigs.release.storeFile != null) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
