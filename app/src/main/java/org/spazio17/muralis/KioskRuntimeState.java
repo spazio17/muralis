@@ -23,8 +23,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 final class KioskRuntimeState {
     private static final AtomicInteger rendererDeaths = new AtomicInteger();
+    /**
+     * Web admin lockouts, so repeated password guessing is visible somewhere durable.
+     *
+     * <p>Here rather than only in logcat, because logcat is not an audit trail on this
+     * hardware. Measured on the API 28 phone while testing the throttle: logd's chatty filter
+     * pruned the lockout warning outright, reporting only
+     * {@code uid=...(org.spazio17.muralis) pool-2-thread-5 expire 1 line}. A counter that rides
+     * out on telemetry reaches Home Assistant, where it can raise an automation, and survives
+     * for as long as the process does.
+     */
+    private static final AtomicInteger authLockouts = new AtomicInteger();
 
     private static volatile long lastRendererDeathAtMs = -1;
+    private static volatile long lastAuthLockoutAtMs = -1;
+    private static volatile String lastAuthLockoutHost = "";
     private static volatile long lastPageFinishedAtMs = -1;
     private static volatile long lastPageErrorAtMs = -1;
     private static volatile String lastPageError = "";
@@ -89,6 +102,25 @@ final class KioskRuntimeState {
 
     static String lastRecycleReason() {
         return lastRecycleReason;
+    }
+
+    /** Records that one address has been locked out of the web admin for guessing. */
+    static void recordAuthLockout(String host) {
+        authLockouts.incrementAndGet();
+        lastAuthLockoutAtMs = nowMs();
+        lastAuthLockoutHost = host == null ? "" : host;
+    }
+
+    static int authLockouts() {
+        return authLockouts.get();
+    }
+
+    static long lastAuthLockoutAgoMs() {
+        return lastAuthLockoutAtMs < 0 ? -1 : nowMs() - lastAuthLockoutAtMs;
+    }
+
+    static String lastAuthLockoutHost() {
+        return lastAuthLockoutHost;
     }
 
     static int rendererDeaths() {

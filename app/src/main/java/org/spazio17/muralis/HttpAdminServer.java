@@ -447,6 +447,12 @@ final class HttpAdminServer {
      * the queue would be a cap on nothing.
      */
     private final Map<String, Integer> hostConnections = new java.util.HashMap<>();
+    /**
+     * Rate-limits password guessing per address. Lives for as long as the server does rather than
+     * per connection, since every response here closes its connection and an attacker gets a fresh
+     * one per attempt.
+     */
+    private final AuthThrottle authThrottle = new AuthThrottle();
     private ExecutorService workers;
     private Thread acceptThread;
     private volatile boolean running;
@@ -643,12 +649,39 @@ final class HttpAdminServer {
 
             byte[] body = readBody(input, headers);
 
+            String remoteHost = remoteHostOf(socket);
+            // elapsedRealtime, not wall time: a lockout must not be escapable by setting the clock,
+            // and must not stall while the device is suspended.
+            long nowMs = android.os.SystemClock.elapsedRealtime();
+            long lockedForMs = authThrottle.lockedOutFor(remoteHost, nowMs);
+            if (lockedForMs > 0L) {
+                // 429 with Retry-After rather than another 401. It is the honest answer, it tells a
+                // legitimate operator who mistyped their password how long to wait instead of
+                // leaving them guessing, and refusing here costs no worker thread, which is the
+                // whole reason this throttles by refusing rather than by sleeping.
+                Map<String, String> extra = new HashMap<>();
+                extra.put("Retry-After", Long.toString((lockedForMs + 999L) / 1000L));
+                writeResponse(output, 429, "text/plain",
+                        bytes("Too Many Requests"), extra);
+                return;
+            }
             if (!isAuthorized(headers.get("authorization"))) {
+                if (authThrottle.recordFailure(remoteHost, nowMs)) {
+                    KioskRuntimeState.recordAuthLockout(remoteHost);
+                    // Only when a lockout begins. Logging every failure would let anyone on the LAN
+                    // fill this panel's log by guessing, which is a denial of service wearing the
+                    // costume of an audit trail. Never logs the credential that was tried.
+                    Log.w(TAG, "Web admin authentication failed "
+                            + AuthThrottle.FAILURES_BEFORE_LOCKOUT + " times from " + remoteHost
+                            + "; that address is now refused for "
+                            + (authThrottle.lockedOutFor(remoteHost, nowMs) / 1000L) + "s");
+                }
                 Map<String, String> extra = new HashMap<>();
                 extra.put("WWW-Authenticate", "Basic realm=\"Muralis\"");
                 writeResponse(output, 401, "text/plain", bytes("Unauthorized"), extra);
                 return;
             }
+            authThrottle.recordSuccess(remoteHost, nowMs);
 
             route(method, target, headers, body, output);
         } catch (IOException exception) {
@@ -1595,8 +1628,12 @@ final class HttpAdminServer {
                 return "Unauthorized";
             case 404:
                 return "Not Found";
+            case 405:
+                return "Method Not Allowed";
             case 413:
                 return "Payload Too Large";
+            case 429:
+                return "Too Many Requests";
             default:
                 return "Error";
         }

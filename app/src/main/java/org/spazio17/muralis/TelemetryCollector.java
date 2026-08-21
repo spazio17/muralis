@@ -224,6 +224,10 @@ final class TelemetryCollector {
         runtime.put("last_page_error_ago_ms", number(KioskRuntimeState.lastPageErrorAgoMs()));
         runtime.put("last_page_error", KioskRuntimeState.lastPageError());
         runtime.put("last_page_url", KioskRuntimeState.lastPageUrl());
+        runtime.put("auth_lockouts", KioskRuntimeState.authLockouts());
+        runtime.put("last_auth_lockout_ago_ms",
+                number(KioskRuntimeState.lastAuthLockoutAgoMs()));
+        runtime.put("last_auth_lockout_host", KioskRuntimeState.lastAuthLockoutHost());
         runtime.put("recycles", KioskRuntimeState.recycles());
         runtime.put("last_recycle_ago_ms", number(KioskRuntimeState.lastRecycleAgoMs()));
         runtime.put("last_recycle_reason", KioskRuntimeState.lastRecycleReason());
