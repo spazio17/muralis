@@ -7,117 +7,118 @@ package org.spazio17.muralis;
 public final class RecyclePolicyTest {
     private static final long MINUTE = 60_000L;
     private static final long HOUR = 60 * MINUTE;
-    /** Roughly what a settled dashboard costs on the test tablet, in KiB of system memory. */
-    private static final long SETTLED_KB = 1_620_000;
+    private static final long TODAY = 20_687L;
+    private static final long YESTERDAY = TODAY - 1;
+    private static final long NEVER = -1L;
 
     public static void main(String[] args) {
-        long now = 100 * HOUR;
-        MemoryBaseline learned = trained(SETTLED_KB);
-        MemoryBaseline unlearned = MemoryBaseline.empty();
-
-        // Healthy tablet outside the quiet hour: leave it alone.
-        require(!RecyclePolicy.shouldRecycle(now, now - 20 * HOUR, 13, 0, 4, 0,
-                SETTLED_KB, false, learned).act(),
-                "a healthy dashboard should never be recycled");
-
-        // Quiet hour, and the last recycle was long ago.
-        require(RecyclePolicy.shouldRecycle(now, now - 20 * HOUR, 4, 0, 4, 0,
-                SETTLED_KB, false, learned).cause == RecyclePolicy.Cause.SCHEDULED,
-                "quiet-hour recycle did not fire");
-
-        // Still the quiet hour an hour later, but one already ran: exactly one per night.
-        require(!RecyclePolicy.shouldRecycle(now, now - HOUR, 4, 0, 4, 0,
-                SETTLED_KB, false, learned).act(),
-                "quiet hour recycled twice in one night");
-
-        // The minute matters, since it is derived per device rather than always zero.
-        require(RecyclePolicy.shouldRecycle(now, now - 20 * HOUR, 4, 37, 4, 37,
-                SETTLED_KB, false, learned).act(), "04:37 did not fire when scheduled for 04:37");
-        require(!RecyclePolicy.shouldRecycle(now, now - 20 * HOUR, 4, 0, 4, 37,
-                SETTLED_KB, false, learned).act(), "04:00 fired when scheduled for 04:37");
-
-        // The device's own low-memory verdict, which is the only threshold this app trusts.
-        RecyclePolicy.Decision pressure = RecyclePolicy.shouldRecycle(now, now - HOUR, 13, 0, 4, 0,
-                SETTLED_KB, true, learned);
-        require(pressure.cause == RecyclePolicy.Cause.SYSTEM_PRESSURE,
-                "system low memory did not trigger a recycle");
-
-        // Same pressure moments later must not fire again; a too-big dashboard would otherwise
-        // reload in a loop, which is worse than the pressure it reacts to.
-        require(!RecyclePolicy.shouldRecycle(now, now - MINUTE, 13, 0, 4, 0,
-                SETTLED_KB, true, learned).act(), "pressure recycles must be rate limited");
-
-        // Growth against what this dashboard historically costs here. Note there is no fraction of
-        // total memory involved anywhere: the same figure is a leak or healthy depending only on
-        // what this device has learned.
-        long wayAbove = learned.budgetKb() + 100_000;
-        require(RecyclePolicy.shouldRecycle(now, now - HOUR, 13, 0, 4, 0,
-                wayAbove, false, learned).cause == RecyclePolicy.Cause.GROWTH,
-                "growth beyond the learned baseline did not trigger a recycle");
-        require(!RecyclePolicy.shouldRecycle(now, now - MINUTE, 13, 0, 4, 0,
-                wayAbove, false, learned).act(), "growth recycles must be rate limited too");
-
-        // Exactly at the budget is not yet growth.
-        require(!RecyclePolicy.shouldRecycle(now, now - HOUR, 13, 0, 4, 0,
-                learned.budgetKb(), false, learned).act(),
-                "recycled while still inside the learned budget");
-
-        // An untrained model must never act on memory. A fresh panel would otherwise reload itself
-        // on the strength of no evidence at all.
-        require(!RecyclePolicy.shouldRecycle(now, now - HOUR, 13, 0, 4, 0,
-                SETTLED_KB * 4, false, unlearned).act(),
-                "an untrained baseline was acted on");
-        // ...but the schedule and the system's own verdict still work while it learns.
-        require(RecyclePolicy.shouldRecycle(now, now - 20 * HOUR, 4, 0, 4, 0,
-                SETTLED_KB, false, unlearned).act(),
-                "the nightly pass should not wait for the model to train");
-        require(RecyclePolicy.shouldRecycle(now, now - HOUR, 13, 0, 4, 0,
-                SETTLED_KB, true, unlearned).act(),
-                "system pressure should not wait for the model to train");
-
-        // A backwards clock must not be read as "a very long time since the last recycle".
-        require(!RecyclePolicy.shouldRecycle(now, now + HOUR, 4, 0, 4, 0,
-                SETTLED_KB, true, learned).act(), "backwards clock triggered a recycle");
-
+        testNothingHappensByDefault();
+        testNightlyRestart();
+        testPressureRebuild();
+        testPressureBeatsTheSchedule();
         testScheduleJitter();
-
         System.out.println("RecyclePolicyTest passed");
     }
 
+    private static void testNothingHappensByDefault() {
+        // Wrong hour, no pressure: leave the panel alone.
+        require(decide(13, 0, 4, 0, TODAY, YESTERDAY, false).action == RecyclePolicy.Action.NONE,
+                "a healthy panel outside the quiet hour should be left alone");
+        // Right hour, wrong minute — the minute is per device, so this must matter.
+        require(decide(4, 0, 4, 37, TODAY, YESTERDAY, false).action == RecyclePolicy.Action.NONE,
+                "04:00 fired when this panel is scheduled for 04:37");
+    }
+
+    private static void testNightlyRestart() {
+        require(decide(4, 37, 4, 37, TODAY, YESTERDAY, false).action
+                == RecyclePolicy.Action.NIGHTLY_RESTART, "the nightly restart did not fire");
+        require(decide(4, 37, 4, 37, TODAY, NEVER, false).action
+                == RecyclePolicy.Action.NIGHTLY_RESTART,
+                "a panel that has never restarted should still do its first one");
+
+        // The whole point of recording a date: the process dies and comes straight back inside the
+        // same minute, and must not restart again. A monotonic "time since last" cannot express
+        // this, because it resets with the process — which is why this is a calendar day.
+        require(decide(4, 37, 4, 37, TODAY, TODAY, false).action == RecyclePolicy.Action.NONE,
+                "restarted twice in one night");
+
+        // ...and it must fire again the following night.
+        require(decide(4, 37, 4, 37, TODAY + 1, TODAY, false).action
+                == RecyclePolicy.Action.NIGHTLY_RESTART, "the next night was skipped");
+
+        // A panel restarted for some other reason at 20:00 must still get its nightly clean. Under
+        // the twelve-hour floor this replaced, that night was silently skipped.
+        require(decide(4, 37, 4, 37, TODAY, YESTERDAY, false).action
+                == RecyclePolicy.Action.NIGHTLY_RESTART,
+                "an unrelated restart should not cost the panel its nightly clean");
+    }
+
+    private static void testPressureRebuild() {
+        long now = 100 * HOUR;
+        // Nothing rebuilt yet this process: act immediately, do not wait out the floor.
+        RecyclePolicy.Decision first = RecyclePolicy.decide(now, 0, 13, 0, 4, 37,
+                TODAY, YESTERDAY, true);
+        require(first.action == RecyclePolicy.Action.REBUILD_DASHBOARD,
+                "system low memory did not trigger a rebuild");
+
+        // Rate limited: a dashboard simply too big for the device would otherwise reload in a loop,
+        // which is worse than the pressure it reacts to.
+        require(RecyclePolicy.decide(now, now - MINUTE, 13, 0, 4, 37, TODAY, YESTERDAY, true)
+                .action == RecyclePolicy.Action.NONE, "pressure rebuilds must be rate limited");
+        require(RecyclePolicy.decide(now, now - 31 * MINUTE, 13, 0, 4, 37, TODAY, YESTERDAY, true)
+                .action == RecyclePolicy.Action.REBUILD_DASHBOARD,
+                "a rebuild should be allowed again once the floor has passed");
+        // Exactly at the floor counts as elapsed.
+        require(RecyclePolicy.decide(now, now - RecyclePolicy.PRESSURE_MIN_INTERVAL_MS,
+                13, 0, 4, 37, TODAY, YESTERDAY, true).action
+                == RecyclePolicy.Action.REBUILD_DASHBOARD,
+                "the floor should be inclusive");
+
+        // A backwards monotonic clock must not read as "a very long time ago".
+        require(RecyclePolicy.decide(now, now + HOUR, 13, 0, 4, 37, TODAY, YESTERDAY, true)
+                .action == RecyclePolicy.Action.NONE, "a backwards clock triggered a rebuild");
+    }
+
+    private static void testPressureBeatsTheSchedule() {
+        // Both true at once. Pressure wins, because it is a response to a live condition while the
+        // nightly pass is housekeeping that can wait for the next minute or the next night. If this
+        // ever flips, a panel under pressure at exactly 04:37 would take the heavier action.
+        require(decide(4, 37, 4, 37, TODAY, YESTERDAY, true).action
+                == RecyclePolicy.Action.REBUILD_DASHBOARD,
+                "pressure should outrank the nightly pass");
+    }
+
     /**
-     * The nightly minute is per device, deterministic, and in range. Deterministic is the
-     * load-bearing half: the twelve-hour interval check only behaves if a panel picks the same
-     * minute every night.
+     * The nightly minute is per device, deterministic and in range. Deterministic matters more now
+     * than it did: the schedule has to survive the restart it causes.
      */
     private static void testScheduleJitter() {
         for (String id : new String[] {"kiosk-1a2b3c4d", "kiosk-deadbeef", "kiosk-00000000", ""}) {
             int minute = RecyclePolicy.scheduledMinuteOf(id);
             require(minute >= 0 && minute < 60, "minute out of range for \"" + id + "\": " + minute);
             // A fresh, equal-but-distinct instance: re-hashing the SAME reference would pass even
-            // for System.identityHashCode, which is exactly what must not be used here — an address
-            // moves the schedule on every restart.
+            // for System.identityHashCode, which is exactly what must not be used — an address moves
+            // the schedule on every restart.
             require(minute == RecyclePolicy.scheduledMinuteOf(new String(id.toCharArray())),
                     "minute was not stable across instances for \"" + id + "\"");
         }
         require(RecyclePolicy.scheduledMinuteOf(null) == 0, "a null id should not throw");
         // Integer.MIN_VALUE exactly: Math.abs of it is still negative, which is why floorMod is
-        // used. Nothing in the id lists above hashes to it, so without this the plain-abs bug passes.
+        // used. Nothing in the list above hashes to it, so without this the plain-abs bug passes.
         require(RecyclePolicy.scheduledMinuteOf("polygenelubricants") == 52,
                 "Integer.MIN_VALUE hash was not folded into range");
         // Pins String.hashCode itself, not just the range.
         require(RecyclePolicy.scheduledMinuteOf("kiosk-1a2b3c4d") == 44,
                 "the derived minute changed for a known id");
 
-        // Two ids should not normally collide. Not a guarantee — 60 buckets, so collisions exist —
-        // but the whole point is that panels spread, so a implementation that returned a constant
-        // must fail here.
         int distinct = 0;
-        int[] seen = new int[60];
+        boolean[] seen = new boolean[60];
         String[] ids = {"kiosk-11111111", "kiosk-22222222", "kiosk-33333333", "kiosk-44444444",
             "kiosk-55555555", "kiosk-66666666", "kiosk-77777777", "kiosk-88888888"};
         for (String id : ids) {
             int minute = RecyclePolicy.scheduledMinuteOf(id);
-            if (seen[minute]++ == 0) {
+            if (!seen[minute]) {
+                seen[minute] = true;
                 distinct++;
             }
         }
@@ -125,15 +126,11 @@ public final class RecyclePolicyTest {
                 "ids barely spread across the hour: " + distinct + " of " + ids.length);
     }
 
-
-    /** A baseline that has seen enough settled generations to be worth acting on. */
-    private static MemoryBaseline trained(long usedKb) {
-        MemoryBaseline baseline = MemoryBaseline.empty();
-        for (int i = 0; i < MemoryBaseline.MIN_GENERATIONS + 2; i++) {
-            baseline = baseline.observeNaturalEnd(usedKb);
-        }
-        require(baseline.trusted(), "the fixture failed to train the baseline");
-        return baseline;
+    /** No pressure history, so the pressure floor is out of the way; hours and dates vary. */
+    private static RecyclePolicy.Decision decide(int hour, int minute, int scheduledHour,
+            int scheduledMinute, long today, long lastRestartDay, boolean lowMemory) {
+        return RecyclePolicy.decide(100 * HOUR, 0, hour, minute, scheduledHour, scheduledMinute,
+                today, lastRestartDay, lowMemory);
     }
 
     private static void require(boolean condition, String message) {

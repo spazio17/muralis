@@ -37,6 +37,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private static final String CHANNEL_ID = "kiosk_runtime";
     private static final int NOTIFICATION_ID = 505;
     private static final long REMOTE_POWER_DELAY_MS = 2_000L;
+    /** How long after System.exit the alarm brings the activity back. */
+    private static final long RESTART_RELAUNCH_DELAY_MS = 3_000L;
+    /** Long enough for the log line and a pending MQTT publish to leave before the process dies. */
+    private static final long RESTART_EXIT_DELAY_MS = 750L;
+    private static final int RESTART_REQUEST_CODE = 7_301;
     /** Fast enough that the on-screen overlay reads as live rather than as a stale placard. */
     private static final long STATS_SAMPLE_INTERVAL_MS = 2_000L;
     /**
@@ -79,7 +84,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private String httpInputs;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private HardwareProperties hardwareProperties;
-    private long lastRecycleAtMs;
+    /** When the last pressure-driven rebuild happened, on the monotonic clock. */
+    private long lastRebuildAtMs;
     /**
      * The change-watch fields as of the last time state actually went out over MQTT, or null before
      * the first one. Compared against every two seconds; see {@link #statsTask}.
@@ -102,7 +108,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     SystemStats.formatOverlayHtml(sample, facts));
 
             long now = KioskRuntimeState.nowMs();
-            maybeRecycleDashboard(now, sample);
+            maybeMaintainDashboard(now);
 
             // Battery, charging, low memory and thermal status are worth publishing the moment
             // they change rather than waiting for the periodic interval, which can now be set as
@@ -570,55 +576,96 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * Rebuilds the dashboard WebView before memory pressure forces the kernel to. The kiosk already
-     * recovers from an lmkd kill, but that reload lands at an unpredictable moment; this turns it
-     * into a scheduled one.
+     * The panel's two self-maintenance mechanisms, both unconditional.
      *
-     * <p>Runs unconditionally. The switch that used to gate it, and the setting that used to choose
-     * its hour, are both gone: this is a recovery mechanism, not a preference. The schedule is
-     * derived from the device id so panels do not all rebuild in the same minute, and the memory
-     * trigger comes from what the device itself reports plus what this dashboard has historically
-     * cost here — never from a threshold written into this app. See {@link RecyclePolicy} and
-     * {@link MemoryBaseline}.
+     * <p>A nightly <b>restart of the whole app</b>, and a <b>WebView rebuild</b> when the operating
+     * system reports low memory. Deliberately different in scale: the nightly pass is routine
+     * cleaning and can afford to take the process down, which reclaims the heap, the renderer,
+     * native allocations and any leaked handler in a way rebuilding in place cannot. The pressure
+     * path is a response to a live condition and has to be cheap enough to run at any hour.
+     *
+     * <p>The switch that used to gate this and the setting that chose its hour are both gone: these
+     * are recovery mechanisms, not preferences. So is the learned memory model that briefly lived
+     * here — see {@link RecyclePolicy} for why it could not work.
      */
-    private void maybeRecycleDashboard(long nowMs, SystemStats.Sample sample) {
-        if (lastRecycleAtMs == 0) {
-            // Count boot as a recycle: the dashboard has just been built.
-            lastRecycleAtMs = nowMs;
-            return;
-        }
-        long usedKb = sample.memUsedKb();
-        MemoryBaseline baseline = KioskConfig.memoryBaselineOf(this);
+    private void maybeMaintainDashboard(long nowMs) {
         java.util.Calendar clock = java.util.Calendar.getInstance();
-        RecyclePolicy.Decision decision = RecyclePolicy.shouldRecycle(nowMs, lastRecycleAtMs,
+        RecyclePolicy.Decision decision = RecyclePolicy.decide(nowMs, lastRebuildAtMs,
                 clock.get(java.util.Calendar.HOUR_OF_DAY), clock.get(java.util.Calendar.MINUTE),
                 RecyclePolicy.QUIET_HOUR, scheduledRecycleMinute(),
-                usedKb, isSystemLowOnMemory(), baseline);
+                localEpochDay(clock), KioskConfig.lastNightlyRestartDay(this),
+                isSystemLowOnMemory());
         if (!decision.act()) {
             return;
         }
-        // Teach the model before rebuilding, since the footprint about to be reclaimed is the
-        // observation. A generation cut short by GROWTH is folded in only after it repeats; see
-        // MemoryBaseline for why the model must not learn from its own trigger.
-        KioskConfig.saveMemoryBaseline(this,
-                decision.cause == RecyclePolicy.Cause.GROWTH
-                        ? baseline.observeGrowthTrip(usedKb)
-                        : baseline.observeNaturalEnd(usedKb));
-        lastRecycleAtMs = nowMs;
-        Log.i(TAG, "Recycling dashboard WebView: " + decision.reason);
+        Log.i(TAG, "Dashboard maintenance: " + decision.action + " (" + decision.reason + ")");
         KioskRuntimeState.recordRecycle(decision.reason);
-        // A recycle is rare and worth knowing about promptly rather than at the next scheduled
+        if (decision.action == RecyclePolicy.Action.NIGHTLY_RESTART) {
+            restartApplication(localEpochDay(clock));
+            return;
+        }
+        lastRebuildAtMs = nowMs;
+        // A rebuild is rare and worth knowing about promptly rather than at the next scheduled
         // publish, which could be up to five minutes away with the slowest preset.
         publishStateSoon();
         kioskRestart();
     }
 
+    /** Local calendar date as a day number, which is what the once-a-night rule compares. */
+    private static long localEpochDay(java.util.Calendar clock) {
+        // Not Instant/LocalDate: those need java.time desugaring on API 26, and this is one
+        // subtraction. Days since the epoch in the device's own timezone, which is the timezone the
+        // quiet hour is expressed in.
+        long offsetMs = clock.get(java.util.Calendar.ZONE_OFFSET)
+                + clock.get(java.util.Calendar.DST_OFFSET);
+        return Math.floorDiv(clock.getTimeInMillis() + offsetMs, 86_400_000L);
+    }
+
     /**
-     * This panel's minute within {@link RecyclePolicy#QUIET_HOUR}, fixed for the device.
+     * Ends this process and comes back.
      *
-     * <p>Via the narrow reader, not {@code KioskConfig.load()}: this is called on every sampler
-     * tick, and load() would decrypt all three SecretStore entries each time to reach one string.
+     * <p>The date is recorded first, synchronously, because everything after it may not happen: an
+     * unrecorded restart fires again on the next tick after the process returns, which is a restart
+     * loop rather than a nightly clean.
+     *
+     * <p>An alarm relaunches the activity rather than relying on the service being recreated.
+     * {@code START_STICKY} would bring KioskService back on its own schedule, and the activity would
+     * usually follow because it is HOME — but "usually" is doing too much work for the mechanism
+     * that has to survive unattended for months. An {@link android.app.AlarmManager} one-shot is
+     * held by the system, not by this process, so it fires whether or not anything here comes back
+     * by itself.
+     *
+     * <p>{@code System.exit} rather than a graceful teardown: reclaiming everything is the entire
+     * point, and a tidy shutdown that leaves the process alive would reclaim nothing.
      */
+    private void restartApplication(long epochDay) {
+        KioskConfig.recordNightlyRestartDay(this, epochDay);
+        try {
+            android.app.AlarmManager alarms = getSystemService(android.app.AlarmManager.class);
+            android.app.PendingIntent relaunch = android.app.PendingIntent.getActivity(
+                    this, RESTART_REQUEST_CODE,
+                    new Intent(this, KioskActivity.class)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                    | Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                    android.app.PendingIntent.FLAG_ONE_SHOT
+                            | android.app.PendingIntent.FLAG_IMMUTABLE);
+            if (alarms != null) {
+                alarms.setExact(android.app.AlarmManager.RTC_WAKEUP,
+                        System.currentTimeMillis() + RESTART_RELAUNCH_DELAY_MS, relaunch);
+            }
+        } catch (RuntimeException refused) {
+            // Fail soft, and say so. START_STICKY plus being the HOME activity is the fallback, and
+            // it is a weaker guarantee rather than none.
+            Log.w(TAG, "Could not schedule the post-restart relaunch; relying on START_STICKY",
+                    refused);
+        }
+        Log.i(TAG, "Restarting Muralis for the nightly clean");
+        // Give the log line and the pending MQTT publish a moment to leave.
+        new Handler(Looper.getMainLooper()).postDelayed(() -> System.exit(0),
+                RESTART_EXIT_DELAY_MS);
+    }
+
+    /** This panel's minute within {@link RecyclePolicy#QUIET_HOUR}, fixed for the device. */
     private int scheduledRecycleMinute() {
         return RecyclePolicy.scheduledMinuteOf(KioskConfig.deviceIdOf(this));
     }
