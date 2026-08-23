@@ -63,12 +63,15 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   against a publicly-trusted certificate on a matching hostname, useless for the home-broker
   audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
   fingerprint machinery to back it.
-- **Dashboard self-recovery is one clock, not scattered callbacks.** A single supervising loop
-  (`dashboardSupervisor` in `KioskActivity`) owns every retry/timeout decision. WebView page
-  callbacks (`onPageStarted`, `onReceivedError`, etc.) only record facts (`recordLoadFailure`,
-  `beginLoad`), they never themselves issue a reload. This is deliberate: a single cancellable
-  handle that's reused for two different meanings (a retry timer and a hung-load timeout) is the
-  bug class that motivated this shape; don't reintroduce one. The failure no page callback can
+- **Dashboard self-recovery is one clock, not scattered callbacks, and its decisions are pure.**
+  Every retry/timeout/frozen-page decision lives in `RecoveryPolicy` (no Android imports,
+  host-tested, with each historical recovery bug pinned as a test); `KioskActivity` only wires it
+  to the WebView, the clock and the handlers, and its supervising loop (`dashboardSupervisor`) is
+  the single place a reload is ever issued. WebView page callbacks (`onPageStarted`,
+  `onReceivedError`, etc.) only record facts, they never themselves issue a reload. This is
+  deliberate: a single cancellable handle that's reused for two different meanings (a retry timer
+  and a hung-load timeout) is the bug class that motivated this shape; don't reintroduce one, and
+  put any new recovery decision in `RecoveryPolicy` with a test, not in the activity. The failure no page callback can
   report, the server restarting underneath an already-loaded page (a Home Assistant restart leaves
   the odd card stuck on an error tile while the frontend's own websocket reconnect recovers the
   rest, so the page is neither failed nor frozen), is covered by a reachability probe: while the
@@ -171,11 +174,14 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   outside `KioskCommandDispatcher` must also call `KioskService.publishTelemetrySoon`, since only
   the dispatcher republishes automatically, and without it Home Assistant keeps showing the old
   value for up to a full publish interval. Both UIs poll storage on a timer so a change made
-  elsewhere appears rather than leaving two surfaces disagreeing. And a writer must never save a
-  whole `KioskConfig` snapshot taken when a screen was built, `save()` writes every field, so a
-  stale snapshot silently reverts whatever another surface changed meanwhile; load fresh, set the
-  one field, save. That bug has been introduced three separate times, which is why
-  `saveEscapeSequences` exists as a partial write.
+  elsewhere appears rather than leaving two surfaces disagreeing. Writes go through
+  `KioskConfig.edit(...)`, which persists exactly the fields set on it; the whole-object `save()`
+  it replaced reverted another surface's change from a stale snapshot three separate times before
+  the API stopped being able to express the bug. A loaded `KioskConfig` is a read snapshot and a
+  display model only. The Save-button forms (both surfaces) additionally carry a baseline of the
+  values they were rendered from and are refused when it no longer matches the device, the same
+  rule the escape recorder pioneered, so a page or screen left open cannot silently revert a
+  newer change even to its own fields.
 - **Legal documents and app/device facts are shown in-app, not linked externally.** The About
   screen (tablet) and a matching page (web admin) render the bundled privacy policy and terms
   directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately
