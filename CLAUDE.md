@@ -137,7 +137,18 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   The Last Will only covers a session the broker *held and lost*, so it says nothing when the panel
   never reached the broker or when the broker itself died; the panel therefore also beats "online"
   onto the availability topic every 30s and that entity carries `expire_after`, which turns "nobody
-  has spoken for this panel" into `unavailable` instead of a stale `on`. Entity naming rule:
+  has spoken for this panel" into `unavailable` instead of a stale `on`. **There is no live
+  "Network state" entity, and one must not come back**: publishing "my network is down" requires
+  the network, so a live entity can only ever say "connected", and "MQTT down but network up" is
+  unreportable while it is true because the reporting channel is the thing that broke (the Last
+  Will cannot carry it either; its payload is frozen at connect time). The question is answered in
+  hindsight instead: `OutageLedger` (pure, host-tested) tracks the device's own connectivity
+  continuously, `connectComplete` asks it for a verdict on every MQTT reconnect, looking back 90s
+  before the reported loss because a keep-alive notices a break late, and the "Last MQTT outage
+  cause" diagnostic sensor plus `runtime.last_mqtt_outage_*` telemetry fields carry the answer:
+  `network` (Wi-Fi/router took it down) or `broker` (the network was clean, so the session died
+  alone: broker restart, HA update, credentials). When and for how long comes from the MQTT state
+  entity's own history. Entity naming rule:
   discovery key, `unique_id` and name all say the same thing, so a rename changes the entity id
   too. Renames are done by withdrawing the old key and publishing the new one, never by aliasing a
   new name onto an old `unique_id`.

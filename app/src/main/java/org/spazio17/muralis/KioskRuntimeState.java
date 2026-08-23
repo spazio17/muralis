@@ -51,6 +51,10 @@ final class KioskRuntimeState {
     private static volatile long lastRecycleAtMs = -1;
     private static volatile String lastRecycleReason = "";
     private static final AtomicInteger recycles = new AtomicInteger();
+    private static final AtomicInteger mqttOutages = new AtomicInteger();
+    private static volatile long lastMqttOutageAtMs = -1;
+    private static volatile long lastMqttOutageDurationMs = -1;
+    private static volatile String lastMqttOutageCause = "";
 
     private KioskRuntimeState() {
     }
@@ -102,6 +106,35 @@ final class KioskRuntimeState {
 
     static String lastRecycleReason() {
         return lastRecycleReason;
+    }
+
+    /**
+     * Records a survived MQTT outage, written by {@code MqttController} on reconnect. The cause is
+     * {@code OutageLedger}'s verdict, "network" or "broker", which is the answer to the question a
+     * live entity can never carry: whether MQTT died alone while the network stayed up. Recorded
+     * here so it rides out on the very telemetry publish the reconnect triggers.
+     */
+    static void recordMqttOutage(String cause, long durationMs) {
+        mqttOutages.incrementAndGet();
+        lastMqttOutageAtMs = nowMs();
+        lastMqttOutageDurationMs = durationMs;
+        lastMqttOutageCause = cause == null ? "" : cause;
+    }
+
+    static int mqttOutages() {
+        return mqttOutages.get();
+    }
+
+    static long lastMqttOutageAgoMs() {
+        return lastMqttOutageAtMs < 0 ? -1 : nowMs() - lastMqttOutageAtMs;
+    }
+
+    static long lastMqttOutageDurationMs() {
+        return lastMqttOutageDurationMs;
+    }
+
+    static String lastMqttOutageCause() {
+        return lastMqttOutageCause;
     }
 
     /** Records that one address has been locked out of the web admin for guessing. */
