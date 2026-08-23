@@ -85,20 +85,8 @@ final class MqttController implements MqttCallbackExtended {
         topicPrefix = "kiosk/" + config.deviceId + "/";
         deviceManufacturer = android.os.Build.MANUFACTURER;
         deviceModel = android.os.Build.MODEL;
-        appVersion = readAppVersion(context);
+        appVersion = TelemetryCollector.appVersionName(context);
         hasLightSensor = KioskService.hasLightSensor(context);
-    }
-
-    /** Installed version name, so discovery reports the build actually running. */
-    private static String readAppVersion(Context context) {
-        try {
-            String name = context.getPackageManager()
-                    .getPackageInfo(context.getPackageName(), 0).versionName;
-            return name == null ? "unknown" : name;
-        } catch (Exception unavailable) {
-            Log.w(TAG, "Could not read the app version", unavailable);
-            return "unknown";
-        }
     }
 
     void start() {
@@ -443,6 +431,16 @@ final class MqttController implements MqttCallbackExtended {
             components.put("battery_state", sensor(
                     "Battery state", null, null, null,
                     "{{ value_json.battery.charge_state or 'unknown' }}"));
+            // The build actually running, as its own entity rather than only the device-info "sw"
+            // field: device info is buried behind the device page, while a diagnostic sensor can
+            // sit on a dashboard, be templated against, and answer "which panels are behind"
+            // across an installation at a glance. The value names an exact commit, because
+            // versions are derived from git at build time.
+            JSONObject appVersionSensor = sensor(
+                    "App version", null, null, null,
+                    "{{ value_json.app_version }}");
+            appVersionSensor.put("entity_category", "diagnostic");
+            components.put("app_version", appVersionSensor);
 
             // Controls, not just readings. Discovery published sensors only, so a Home Assistant
             // user could see the panel but not touch it without hand-writing mqtt.publish calls in

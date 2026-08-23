@@ -29,15 +29,36 @@ import java.io.IOException;
 
 final class TelemetryCollector {
     private final Context context;
+    /** Read once: the installed version cannot change under a running process. */
+    private final String appVersion;
 
     TelemetryCollector(Context context) {
         this.context = context.getApplicationContext();
+        appVersion = appVersionName(this.context);
+    }
+
+    /**
+     * The installed version name, for every surface that reports what build is running: the
+     * telemetry document (and through it {@code /api/stats} and the Home Assistant sensor) and
+     * MQTT discovery's device info. Since versions are derived from git, this names the exact
+     * commit on the device, which is the point: "what is this panel running" should never need a
+     * cable again.
+     */
+    static String appVersionName(Context context) {
+        try {
+            String name = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0).versionName;
+            return name == null ? "unknown" : name;
+        } catch (Exception unavailable) {
+            return "unknown";
+        }
     }
 
     JSONObject snapshot() {
         JSONObject root = new JSONObject();
         try {
             root.put("schema", 1);
+            root.put("app_version", appVersion);
             // Both, and named for what they are. "uptime_ms" stays the device's age so nothing
             // already reading it changes meaning; the readouts show app_uptime_ms, because the
             // nightly restart takes the process down and not the device, and a row that cannot
