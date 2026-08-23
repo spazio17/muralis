@@ -69,6 +69,7 @@
     <uses-feature android:name="android.software.webview" android:required="true" />
 
     <application
+        android:name=".MuralisApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:directBootAware="true"

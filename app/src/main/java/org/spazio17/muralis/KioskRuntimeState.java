@@ -62,17 +62,29 @@ final class KioskRuntimeState {
     /**
      * Monotonic milliseconds; only ever meaningful as a difference against another reading.
      *
-     * <p>{@code System.nanoTime} rather than {@code SystemClock.elapsedRealtime} so this class stays
-     * free of Android imports and host-testable, which {@code scripts/test-host.sh} enforces. The
-     * difference matters in one case: {@code nanoTime} does not advance while the device is
-     * suspended, so every elapsed figure here, including the twelve-hour window
-     * {@link RecyclePolicy} checks, would under-report across a suspend. A wall panel holds a wake
-     * lock and is configured to stay on while charging, so it does not suspend in the deployment
-     * this is built for. If that ever stops being true, this is the line to change, and it will
-     * cost this class its host tests.
+     * <p>The clock is injected rather than called directly, so this class stays free of Android
+     * imports and host-testable (which {@code scripts/test-host.sh} enforces) while the app still
+     * gets the right clock. The default is {@code System.nanoTime}, which does NOT advance while
+     * the device is suspended, so every elapsed figure here would under-report across a suspend;
+     * {@code MuralisApplication} therefore installs {@code SystemClock.elapsedRealtime}, which
+     * does advance, before any component can record anything. The default only ever runs on a
+     * host-test JVM, where there is no suspend and no Android.
      */
     static long nowMs() {
-        return System.nanoTime() / 1_000_000L;
+        return clock.getAsLong();
+    }
+
+    private static volatile java.util.function.LongSupplier clock =
+            () -> System.nanoTime() / 1_000_000L;
+
+    /**
+     * Installs the real clock. Called once, from {@code MuralisApplication.onCreate}, which runs
+     * before any activity, service or receiver: every timestamp field in this class is relative,
+     * so mixing readings from two different clocks would produce garbage elapsed times, and the
+     * only safe installation point is before the first reading.
+     */
+    static void useClock(java.util.function.LongSupplier realClock) {
+        clock = realClock;
     }
 
     static void recordRendererDeath() {
