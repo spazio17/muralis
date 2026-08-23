@@ -1129,23 +1129,11 @@ public final class KioskActivity extends Activity {
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
+            // Plain subtext, deliberately not a warning: see webViewProviderSummary().
             TextView engine = new TextView(this);
+            engine.setTextColor(theme.subtext);
             engine.setTextSize(13);
-            // Judged by measurement, never by version: the verdict comes from feature probes run
-            // inside the engine itself after a dashboard load (see FEATURE_PROBE_JS), so it is
-            // proof about this device today and clears itself when the engine is updated. Before
-            // the first load of this process there is no measurement, so there is no warning.
-            String missing = KioskRuntimeState.webViewMissingFeatures();
-            if (missing != null && !missing.isEmpty()) {
-                engine.setTextColor(theme.warn);
-                engine.setText("Rendering engine: " + webViewProvider
-                        + ". Tested on this panel: it does not support " + missing
-                        + ", which the Home Assistant interface uses (this is why switch handles "
-                        + "can sit mid-track). Update Chrome or Android System WebView.");
-            } else {
-                engine.setTextColor(theme.subtext);
-                engine.setText("Rendering engine: " + webViewProvider);
-            }
+            engine.setText("Rendering engine: " + webViewProvider);
             dashboardCard.addView(engine, matchWrap());
         }
 
@@ -1984,12 +1972,16 @@ public final class KioskActivity extends Activity {
     /**
      * Which package is rendering the dashboard, and its version, for display.
      *
-     * <p>Reported here, judged elsewhere and only by measurement: the warning next to this line
-     * comes from {@link #FEATURE_PROBE_JS}, feature checks run inside the engine itself, never
-     * from a version threshold. An earlier hardcoded version floor was removed on 2026-08-19 as an
-     * invented number; a second one, briefly reintroduced on 2026-08-24 with the measured evidence
-     * as its source, was replaced the same day because a written-down number is still knowledge
-     * about the past, where the probe is proof about the present.
+     * <p>Reported, never judged, and this is now a settled decision with three attempts behind
+     * it, so do not add a warning here in any form. A hardcoded version floor was removed on
+     * 2026-08-19 as an invented number. On 2026-08-24 a floor with measured evidence, and then a
+     * runtime feature probe (CSS.supports checks run inside the engine itself), were both built
+     * and both removed the same day, at the user's direction: the probe only worked by knowing
+     * which features "the dashboard" needs, and Muralis is dashboard-agnostic, it shows whatever
+     * URL the operator configures, so any such list is an assumption about somebody else's page.
+     * Keeping the system's browser engine updated is the operator's responsibility; Muralis's
+     * whole job here is to state which engine is in use so a person diagnosing a strange-looking
+     * page can see it.
      *
      * <p>{@code WebView.getCurrentWebViewPackage()} is API 26, exactly this app's minSdk, so no
      * fallback branch is needed. The package name matters as well as the version: the provider can be
@@ -2007,50 +1999,6 @@ public final class KioskActivity extends Activity {
             Log.w(TAG, "Could not read the WebView provider version", unavailable);
             return null;
         }
-    }
-
-    /**
-     * Asks the engine itself which of the features the Home Assistant frontend leans on it
-     * actually supports. Never a version comparison: a version floor is knowledge about other
-     * engines written down once and rotting from that day on, while this runs inside the very
-     * engine that will draw the dashboard, so it is proof, stays correct when the engine updates,
-     * and the warning it feeds clears itself the moment an update lands.
-     *
-     * <p>The three probes are the features the 2026-08-23 measurement session found missing on
-     * this hardware's Chrome 101, chosen because the frontend visibly breaks without them:
-     * Material 3 positions a switch handle with the independent {@code translate} property, so
-     * every switch on the real dashboard rested mid-track. {@code CSS.supports} itself missing
-     * means an engine old beyond reasoning, and is reported as its own finding rather than
-     * swallowed as "fine".
-     */
-    private static final String FEATURE_PROBE_JS = "(function(){"
-            + "try{var missing=[];"
-            + "if(!CSS.supports('translate','10px')){missing.push('translate');}"
-            + "if(!CSS.supports('selector(:has(*))')){missing.push(':has()');}"
-            + "if(!CSS.supports('container-type','inline-size')){missing.push('container queries');}"
-            + "return missing.join(', ');}"
-            + "catch(e){return 'feature detection itself (CSS.supports)';}})()";
-
-    /**
-     * Runs the feature probe once per process, after a successful load, and records the verdict
-     * where the settings screen, the stats API and telemetry all read it. Once per process is
-     * deliberate: the engine cannot change under a running renderer, and the nightly restart
-     * re-measures every day, so an engine update is noticed within a day with zero polling.
-     */
-    private void probeWebViewFeatures(WebView view) {
-        if (KioskRuntimeState.webViewMissingFeatures() != null) {
-            return;
-        }
-        view.evaluateJavascript(FEATURE_PROBE_JS, result -> {
-            String missing = result == null ? "" : unquoteJavascriptResult(result);
-            if (missing.equals("null")) {
-                missing = "";
-            }
-            KioskRuntimeState.recordWebViewFeatureProbe(missing);
-            if (!missing.isEmpty()) {
-                Log.w(TAG, "The rendering engine lacks features the dashboard uses: " + missing);
-            }
-        });
     }
 
     /** True when Muralis holds device-owner status. Never throws; false when it cannot be determined. */
@@ -3067,7 +3015,6 @@ public final class KioskActivity extends Activity {
             // reported moments ago; only a genuine success is recorded as one.
             if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
                 KioskRuntimeState.recordPageFinished(url);
-                probeWebViewFeatures(view);
             }
         }
 

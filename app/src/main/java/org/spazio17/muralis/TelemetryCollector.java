@@ -265,11 +265,6 @@ final class TelemetryCollector {
         runtime.put("last_mqtt_outage_duration_ms",
                 number(KioskRuntimeState.lastMqttOutageDurationMs()));
         runtime.put("last_mqtt_outage_cause", KioskRuntimeState.lastMqttOutageCause());
-        // Measured inside the dashboard's own engine after a load, never inferred from a version
-        // number: "" means everything probed is present, null means not yet measured.
-        String missingFeatures = KioskRuntimeState.webViewMissingFeatures();
-        runtime.put("webview_missing_features",
-                missingFeatures == null ? JSONObject.NULL : missingFeatures);
         return runtime;
     }
 
