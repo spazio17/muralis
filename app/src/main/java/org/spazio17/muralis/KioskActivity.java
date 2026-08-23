@@ -1131,15 +1131,17 @@ public final class KioskActivity extends Activity {
         if (webViewProvider != null) {
             TextView engine = new TextView(this);
             engine.setTextSize(13);
-            if (webViewEngineOutdated()) {
-                // A warning with a floor that was measured, not invented; see
-                // MIN_HEALTHY_WEBVIEW_MAJOR for the evidence and the date.
+            // Judged by measurement, never by version: the verdict comes from feature probes run
+            // inside the engine itself after a dashboard load (see FEATURE_PROBE_JS), so it is
+            // proof about this device today and clears itself when the engine is updated. Before
+            // the first load of this process there is no measurement, so there is no warning.
+            String missing = KioskRuntimeState.webViewMissingFeatures();
+            if (missing != null && !missing.isEmpty()) {
                 engine.setTextColor(theme.warn);
                 engine.setText("Rendering engine: " + webViewProvider
-                        + ". This engine is older than Chrome "
-                        + MIN_HEALTHY_WEBVIEW_MAJOR
-                        + " and is known to misrender Home Assistant dashboards (switch handles, "
-                        + "modern layout). Update Chrome or Android System WebView.");
+                        + ". Tested on this panel: it does not support " + missing
+                        + ", which the Home Assistant interface uses (this is why switch handles "
+                        + "can sit mid-track). Update Chrome or Android System WebView.");
             } else {
                 engine.setTextColor(theme.subtext);
                 engine.setText("Rendering engine: " + webViewProvider);
@@ -1982,11 +1984,12 @@ public final class KioskActivity extends Activity {
     /**
      * Which package is rendering the dashboard, and its version, for display.
      *
-     * <p>Reported, and since 2026-08-24 also judged against {@link #MIN_HEALTHY_WEBVIEW_MAJOR},
-     * which exists because that constant finally has a real source. An earlier warning threshold
-     * was removed on 2026-08-19 as an invented number, with a note not to reintroduce one without
-     * evidence; the evidence arrived on 2026-08-23, measured on this hardware rather than assumed.
-     * See the constant.
+     * <p>Reported here, judged elsewhere and only by measurement: the warning next to this line
+     * comes from {@link #FEATURE_PROBE_JS}, feature checks run inside the engine itself, never
+     * from a version threshold. An earlier hardcoded version floor was removed on 2026-08-19 as an
+     * invented number; a second one, briefly reintroduced on 2026-08-24 with the measured evidence
+     * as its source, was replaced the same day because a written-down number is still knowledge
+     * about the past, where the probe is proof about the present.
      *
      * <p>{@code WebView.getCurrentWebViewPackage()} is API 26, exactly this app's minSdk, so no
      * fallback branch is needed. The package name matters as well as the version: the provider can be
@@ -2007,49 +2010,47 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Chromium major below which the rendering-engine line turns into a warning.
+     * Asks the engine itself which of the features the Home Assistant frontend leans on it
+     * actually supports. Never a version comparison: a version floor is knowledge about other
+     * engines written down once and rotting from that day on, while this runs inside the very
+     * engine that will draw the dashboard, so it is proof, stays correct when the engine updates,
+     * and the warning it feeds clears itself the moment an update lands.
      *
-     * <p>Not an invented requirement: measured on the BAH2-W19 panel on 2026-08-23 by serving a
-     * probe page to this app's own WebView (Chrome 101). It silently ignores the independent
-     * {@code translate} property (shipped in 104) and {@code :has()}, container queries and
-     * {@code cqw} (all 105), and Home Assistant's Material 3 frontend positions a switch handle
-     * with {@code translate}, so on the real dashboard every switch handle rests mid-track. 105
-     * is the smallest major with every feature the probe found missing, which makes it a floor
-     * derived from observed breakage of the one page this app exists to show, exactly the "real
-     * source" the earlier removal note demanded before any threshold could come back.
-     *
-     * <p>A warning colour and a sentence, not a block: the app cannot know whether the operator's
-     * particular dashboard uses the broken features, so it flags and explains rather than judges.
+     * <p>The three probes are the features the 2026-08-23 measurement session found missing on
+     * this hardware's Chrome 101, chosen because the frontend visibly breaks without them:
+     * Material 3 positions a switch handle with the independent {@code translate} property, so
+     * every switch on the real dashboard rested mid-track. {@code CSS.supports} itself missing
+     * means an engine old beyond reasoning, and is reported as its own finding rather than
+     * swallowed as "fine".
      */
-    static final int MIN_HEALTHY_WEBVIEW_MAJOR = 105;
+    private static final String FEATURE_PROBE_JS = "(function(){"
+            + "try{var missing=[];"
+            + "if(!CSS.supports('translate','10px')){missing.push('translate');}"
+            + "if(!CSS.supports('selector(:has(*))')){missing.push(':has()');}"
+            + "if(!CSS.supports('container-type','inline-size')){missing.push('container queries');}"
+            + "return missing.join(', ');}"
+            + "catch(e){return 'feature detection itself (CSS.supports)';}})()";
 
-    /** The leading integer of a Chromium version string, or -1 when it has no parseable major. */
-    private static int webViewMajorOf(String versionName) {
-        if (versionName == null) {
-            return -1;
+    /**
+     * Runs the feature probe once per process, after a successful load, and records the verdict
+     * where the settings screen, the stats API and telemetry all read it. Once per process is
+     * deliberate: the engine cannot change under a running renderer, and the nightly restart
+     * re-measures every day, so an engine update is noticed within a day with zero polling.
+     */
+    private void probeWebViewFeatures(WebView view) {
+        if (KioskRuntimeState.webViewMissingFeatures() != null) {
+            return;
         }
-        int end = 0;
-        while (end < versionName.length() && Character.isDigit(versionName.charAt(end))) {
-            end++;
-        }
-        try {
-            return end == 0 ? -1 : Integer.parseInt(versionName.substring(0, end));
-        } catch (NumberFormatException impossible) {
-            return -1;
-        }
-    }
-
-    /** Whether the current WebView provider is old enough to misrender the dashboard. */
-    private boolean webViewEngineOutdated() {
-        try {
-            android.content.pm.PackageInfo provider = WebView.getCurrentWebViewPackage();
-            int major = provider == null ? -1 : webViewMajorOf(provider.versionName);
-            // Unknown reads as fine: a warning that fires because a version string failed to
-            // parse would be the invented threshold all over again.
-            return major > 0 && major < MIN_HEALTHY_WEBVIEW_MAJOR;
-        } catch (RuntimeException unavailable) {
-            return false;
-        }
+        view.evaluateJavascript(FEATURE_PROBE_JS, result -> {
+            String missing = result == null ? "" : unquoteJavascriptResult(result);
+            if (missing.equals("null")) {
+                missing = "";
+            }
+            KioskRuntimeState.recordWebViewFeatureProbe(missing);
+            if (!missing.isEmpty()) {
+                Log.w(TAG, "The rendering engine lacks features the dashboard uses: " + missing);
+            }
+        });
     }
 
     /** True when Muralis holds device-owner status. Never throws; false when it cannot be determined. */
@@ -3066,6 +3067,7 @@ public final class KioskActivity extends Activity {
             // reported moments ago; only a genuine success is recorded as one.
             if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
                 KioskRuntimeState.recordPageFinished(url);
+                probeWebViewFeatures(view);
             }
         }
 

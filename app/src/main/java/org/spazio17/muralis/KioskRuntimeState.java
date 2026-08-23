@@ -149,6 +149,22 @@ final class KioskRuntimeState {
         return lastMqttOutageCause;
     }
 
+    /**
+     * What the dashboard's own rendering engine failed to support, measured by running feature
+     * probes inside that very engine after a successful page load. Null until the first
+     * measurement of this process, "" when everything probed is present. Never a version
+     * comparison: versions are knowledge about other engines, this is proof about this one.
+     */
+    private static volatile String webViewMissingFeatures;
+
+    static void recordWebViewFeatureProbe(String missingFeatures) {
+        webViewMissingFeatures = missingFeatures == null ? "" : missingFeatures;
+    }
+
+    static String webViewMissingFeatures() {
+        return webViewMissingFeatures;
+    }
+
     /** Records that one address has been locked out of the web admin for guessing. */
     static void recordAuthLockout(String host) {
         authLockouts.incrementAndGet();
