@@ -124,28 +124,50 @@ java -cp "${test_dir}/stats" org.spazio17.muralis.ServerProbePolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.OutageLedgerTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.EscapeSequenceTest
 
-# The admin page's JavaScript lives inside Java string literals, so nothing on the way to the
-# device parses it: a syntax error or a name collision ships and only shows up as a blank box in
-# somebody's browser. Both have happened. On 2026-08-23 a new "pct" helper was added to
-# STATS_SCRIPT while render() already had "var pct = bat.percent" for the battery chip; var hoists
-# to the top of the function, so the local shadowed the helper and every stats poll died with
-# "pct is not a function". This reassembles each script constant and checks it.
-python3 - "${project_dir}/app/src/main/java/org/spazio17/muralis/HttpAdminServer.java" <<'PYCHECK'
+# The admin page's JavaScript lives in res/raw as real files (it used to be Java string
+# literals, where a syntax error or a name collision shipped and only showed up as a blank box
+# in somebody's browser; both happened, see admin_stats.js for the "pct" shadowing story). Real
+# files get editor support, but still nothing executes them before a browser does, so this keeps
+# checking the two failure classes that shipped: bracket/quote balance, and a function shadowed
+# by a var of the same name (var hoists to the top of the enclosing function, so the shadow wins
+# even where the declaration sits below the call).
+python3 - "${project_dir}/app/src/main/res/raw" <<'PYCHECK'
+import os
 import re
 import sys
 
-source = open(sys.argv[1], encoding="utf-8").read()
+raw_dir = sys.argv[1]
 failures = []
+checked = 0
 
-for name in ("COMMAND_SCRIPT", "SETTING_SCRIPT", "STATS_SCRIPT", "THEME_SCRIPT"):
-    start = source.index("private static final String %s = " % name)
-    end = source.index('";\n', start)
-    # Only the string literals, so the // comments between them are dropped.
-    literals = re.findall(r'"((?:[^"\\]|\\.)*)"', source[start:end + 1])
-    js = "".join(literals).encode().decode("unicode_escape")
-    js = js.replace("<script>", "").replace("</script>", "")
+def strip_comments(text):
+    out = []
+    i, n, quote = 0, len(text), None
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1]); i += 2; continue
+            if c == quote:
+                quote = None
+            i += 1; continue
+        if c in "'\"":
+            quote = c; out.append(c); i += 1; continue
+        if text.startswith("//", i):
+            j = text.find("\n", i); i = n if j < 0 else j; continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2); i = n if j < 0 else j + 2; continue
+        out.append(c); i += 1
+    return "".join(out)
 
-    # Balance, which catches a dropped quote or bracket in the concatenation.
+for name in sorted(os.listdir(raw_dir)):
+    if not (name.startswith("admin") and (name.endswith(".js") or name.endswith(".css"))):
+        continue
+    checked += 1
+    js = strip_comments(open(os.path.join(raw_dir, name), encoding="utf-8").read())
+
+    # Balance, which catches a dropped quote or bracket.
     depth = {"(": 0, "[": 0, "{": 0}
     closers = {")": "(", "]": "[", "}": "{"}
     quote = None
@@ -171,8 +193,9 @@ for name in ("COMMAND_SCRIPT", "SETTING_SCRIPT", "STATS_SCRIPT", "THEME_SCRIPT")
         if count:
             failures.append("%s: unbalanced %s (%+d)" % (name, opener, count))
 
-    # A function shadowed by a var of the same name. var is function-scoped and hoisted, so the
-    # shadow wins for the whole enclosing function even where the declaration sits below the call.
+    if not name.endswith(".js"):
+        continue
+    # A function shadowed by a var of the same name.
     functions = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", js))
     bound = set()
     for declaration in re.findall(r"\b(?:var|let|const)\s+([^;{}\n]+)", js):
@@ -184,11 +207,15 @@ for name in ("COMMAND_SCRIPT", "SETTING_SCRIPT", "STATS_SCRIPT", "THEME_SCRIPT")
         failures.append(
             "%s: function %s() is shadowed by a var of the same name; rename one" % (name, clash))
 
+if checked < 5:
+    # Four scripts plus the stylesheet. A rename that stops them matching here would otherwise
+    # turn this whole check into a silent no-op.
+    failures.append("expected at least 5 admin assets, found %d" % checked)
 if failures:
     for failure in failures:
-        print("admin page script: " + failure, file=sys.stderr)
+        print("admin page asset: " + failure, file=sys.stderr)
     raise SystemExit(1)
-print("admin page scripts checked: balance and no shadowed helpers")
+print("admin page assets checked: balance and no shadowed helpers (%d files)" % checked)
 PYCHECK
 
 printf 'Muralis app host validation passed\n'

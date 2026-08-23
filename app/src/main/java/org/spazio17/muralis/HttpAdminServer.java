@@ -107,412 +107,21 @@ final class HttpAdminServer {
     private static final long ACCEPT_RETRY_DELAY_MS = 250L;
 
     /**
-     * Sends every command form in the background and reports the JSON result inline. Without this
-     * the browser navigates to the raw /api/command response and the operator has to press Back
-     * after each action. The forms keep working unchanged if scripting is unavailable, so this is
-     * an enhancement rather than the only path. Basic-auth credentials ride along because the
-     * request is same-origin.
+     * The admin page's JavaScript and CSS, loaded from {@code res/raw} at construction rather
+     * than living here as Java string literals. As literals, nothing on the way to the device
+     * ever parsed them: a syntax error or a name collision shipped and only showed up as a blank
+     * box in somebody's browser, which happened twice. As real files (admin_command.js,
+     * admin_setting.js, admin_stats.js, admin_theme.js, admin.css) they get an editor's syntax
+     * support and {@code scripts/test-host.sh} checks them directly; each file carries its own
+     * design rationale as comments. Read once, because this server is rebuilt whenever
+     * configuration reloads and a packaged resource cannot change under a running process.
      */
-    /**
-     * Runs every command form in the background and reports the result inline, so no press ever
-     * navigates away from the page. Also drives the brightness slider, which applies as it moves
-     * rather than needing a separate button. The plain forms keep working without scripting.
-     */
-    private static final String COMMAND_SCRIPT = "<script>\n"
-            + "(function(){\n"
-            // No on-page status line. It used to print every command and its result at the bottom of
-            // the page ("display.auto_brightness: accepted"), which is developer output rather than
-            // something an operator adjusting a wall panel needs to read. Removed at the user's
-            // request 2026-08-19. Logged to the browser console instead, so a rejection is still
-            // diagnosable rather than silently vanishing.
-            + "function show(text,ok){if(!ok&&window.console){console.warn('Muralis: '+text);}"
-            + "else if(window.console){console.log('Muralis: '+text);}}\n"
-            + "function encode(form){var parts=[];\n"
-            + "Array.prototype.forEach.call(form.elements,function(el){\n"
-            + "if(el.name){parts.push(encodeURIComponent(el.name)+'='+encodeURIComponent(el.value));}"
-            + "});\n"
-            + "return parts.join('&');}\n"
-            + "function send(query,label){\n"
-            + "show(label+': sending...',true);\n"
-            + "return fetch('/api/command',{method:'POST',credentials:'same-origin',"
-            + "headers:{'Content-Type':'application/x-www-form-urlencoded',"
-            + "'Accept':'application/json'},body:query})\n"
-            + ".then(function(r){return r.text();})\n"
-            + ".then(function(text){var detail=text,ok=true;\n"
-            + "try{var parsed=JSON.parse(text);\n"
-            + "detail=parsed.status+(parsed.detail?': '+parsed.detail:'');\n"
-            + "ok=parsed.status!=='rejected';}catch(ignored){}\n"
-            + "show(label+': '+detail,ok);})\n"
-            + ".catch(function(){show(label+': no response. The device may be rebooting,"
-            + " shutting down, or off the network',false);});}\n"
-            + "Array.prototype.forEach.call(document.querySelectorAll('form.cmd'),function(form){\n"
-            + "form.addEventListener('submit',function(event){\n"
-            + "event.preventDefault();\n"
-            + "send(encode(form),form.elements.cmnd.value);});});\n"
-            + "var auto=document.getElementById('auto-brightness');\n"
-            + "if(auto){auto.addEventListener('change',function(){\n"
-            // Marked as user-driven so the stats poll does not fight the operator: without this, a
-            // poll landing between the click and the tablet applying the change would snap the box
-            // back and look like the click was ignored.
-            + "auto.dataset.pending='1';\n"
-            + "send('cmnd=display.auto_brightness&enabled='+(auto.checked?'1':'0'),"
-            + "'display.auto_brightness')\n"
-            + ".then(function(){setTimeout(function(){delete auto.dataset.pending;},1500);});"
-            + "});}\n"
-            + "var portrait=document.getElementById('portrait');\n"
-            + "if(portrait){portrait.addEventListener('change',function(){\n"
-            + "portrait.dataset.pending='1';\n"
-            + "send('cmnd=display.portrait&enabled='+(portrait.checked?'1':'0'),"
-            + "'display.portrait')\n"
-            + ".then(function(){setTimeout(function(){delete portrait.dataset.pending;},1500);});"
-            + "});}\n"
-            + "var slider=document.getElementById('brightness');\n"
-            + "if(slider){var label=document.getElementById('brightness-value'),timer=null;\n"
-            + "slider.addEventListener('input',function(){\n"
-            + "label.textContent=slider.value+'%';\n"
-            // Without this the five-second poll would yank the thumb back mid-drag.
-            + "slider.dataset.pending='1';\n"
-            + "clearTimeout(timer);\n"
-            + "// Debounced: dragging fires continuously and each command reaches the tablet.\n"
-            + "timer=setTimeout(function(){\n"
-            + "send('cmnd=display.brightness&percent='+slider.value,'display.brightness')\n"
-            + ".then(function(){setTimeout(function(){delete slider.dataset.pending;},1500);});},250);"
-            + "});}\n"
-            + "})();\n"
-            + "</script>";
+    private final String commandScript;
+    private final String settingScript;
+    private final String statsScript;
+    private final String themeScript;
+    private final String pageCss;
 
-    /**
-     * Applies every standalone control the moment it is touched, so none of them needs a Save
-     * button. The same shape as the brightness controls above, and for the same reason: a setting
-     * that depends on nothing else has nothing to wait for.
-     *
-     * <p>These controls used to live together in a Behaviour box. They now sit in the box each one
-     * is actually about, the overlay switch under the stats it switches on, the publish interval
-     * inside MQTT, which is why this is keyed on the {@code data-setting} attribute rather than on
-     * a container: the script does not care where on the page a control ended up.
-     *
-     * <p>The {@code data-pending} flag exists here for the reason it exists on the slider. The stats
-     * poll below writes these controls from the device's real state every five seconds, and a poll
-     * landing between the click and the tablet storing the change would snap the box back and make
-     * the click look ignored.
-     *
-     * <p>Note the {@code change} event rather than {@code input}: a time field fires {@code input} on
-     * every digit, so a half-typed "0" would be posted as 00:00 on the way to 04:00.
-     */
-    private static final String SETTING_SCRIPT = "<script>\n"
-            + "(function(){\n"
-            + "function apply(el){\n"
-            + "var value=el.type==='checkbox'?(el.checked?'1':'0'):el.value;\n"
-            + "el.dataset.pending='1';\n"
-            // "behaviour" is the section name POST /api/setting has always accepted. It
-            // outlived the box it was named after and is kept as the wire name rather than
-            // renamed, so a page cached in a browser keeps working against a newer tablet.
-            + "var body='section=behaviour&'+encodeURIComponent(el.dataset.setting)+'='"
-            + "+encodeURIComponent(value);\n"
-            + "fetch('/api/setting',{method:'POST',credentials:'same-origin',"
-            + "headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body})\n"
-            + ".then(function(r){return r.text();})\n"
-            // Console, not the page: a wall-panel operator has no use for a running log of saves,
-            // and a rejection still has to be diagnosable.
-            + ".then(function(text){if(window.console){console.log('Muralis: '"
-            + "+el.dataset.setting+': '+text);}})\n"
-            + ".catch(function(){if(window.console){console.warn('Muralis: '+el.dataset.setting"
-            + "+': no response. The device may be rebooting or off the network');}})\n"
-            + ".then(function(){setTimeout(function(){delete el.dataset.pending;},1500);});}\n"
-            + "Array.prototype.forEach.call(document.querySelectorAll('[data-setting]'),"
-            + "function(el){el.addEventListener('change',function(){apply(el);});});\n"
-            + "})();\n"
-            + "</script>";
-
-    /**
-     * Live stats and the configuration actually applied on the device, so this page can be trusted
-     * after somebody has changed something at the tablet, rather than showing whatever was current
-     * when it was loaded.
-     */
-    private static final String STATS_SCRIPT = "<script>\n"
-            + "(function(){\n"
-            + "var target=document.getElementById('stats');\n"
-            + "function mb(kb){return kb==null?'--':Math.round(kb/1024)+'M';}\n"
-            + "function num(v,d){return v==null?'--':v.toFixed(d||0);}\n"
-            + "function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}\n"
-            + "function dur(ms){if(ms==null||ms<0){return '--';}\n"
-            + "var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),"
-            + "m=Math.floor(s%3600/60);\n"
-            + "return d>0?(d+'d'+h+'h'):(h>0?(h+'h'+m+'m'):(m+'m'));}\n"
-            + "function render(data){\n"
-            + "var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},"
-            + "net=data.network||{},mem=data.memory||{},cfg=data.config||{};\n"
-            // The same eight rows, in the same order, as the tablet's own overlay; see
-            // SystemStats.formatOverlayHtml. Padded labels so the values line up in the <pre>.
-            + "var lines=[];\n"
-            + "lines.push('CPU  '+num(sys.cpu_busy_percent)+'%'"
-            + "+(sys.cpu_max_frequency_khz!=null?'   '"
-            + "+(sys.cpu_max_frequency_khz/1000000).toFixed(2)+'GHz':'')"
-            + "+(sys.load_average?'   load '+num(sys.load_average[0],2):''));\n"
-            + "lines.push('RAM  '+mb(sys.mem_used_kb)+'/'+mb(sys.mem_total_kb)"
-            + "+'   '+usedPercent(sys.mem_used_kb,sys.mem_total_kb)"
-            + "+(mem.low?'   LOW MEMORY':''));\n"
-            + "lines.push('ZRAM '+mb(sys.swap_used_kb)+'/'+mb(sys.swap_total_kb));\n"
-            + "lines.push('TEMP '+num(sys.cpu_temperature_c,1)+'C cpu   '"
-            + "+num(sys.gpu_temperature_c,1)+'C gpu');\n"
-            + "lines.push('BAT  '+(bat.percent==null?'--':Math.round(bat.percent)+'%')"
-            + "+(bat.charge_state?' '+bat.charge_state:''));\n"
-            + "lines.push('IP   '+(net.ip_address||'--')"
-            + "+'   '+(net.wifi_rssi_dbm!=null?net.wifi_rssi_dbm+'dBm':'--'));\n"
-            // The age is of the last renderer death, not the last page load: see the same row in
-            // SystemStats.formatOverlayHtml for why those two must not be confused.
-            + "lines.push('WEB  '+(run.renderer_deaths!=null?run.renderer_deaths:'--')+' deaths'"
-            + "+'   '+(run.last_renderer_death_ago_ms!=null"
-            + "&&run.last_renderer_death_ago_ms>=0"
-            + "?dur(run.last_renderer_death_ago_ms)+' ago':'never')"
-            + "+'   '+(run.recycles||0)+' recycles');\n"
-            // app_uptime_ms, not uptime_ms: the same row the tablet's overlay shows, and for the
-            // same reason. See SystemStats.RuntimeFacts.appUptimeMs.
-            + "lines.push('UP   '+dur(data.app_uptime_ms));\n"
-            + "if(run.last_page_error){lines.push('ERR  '+run.last_page_error);}\n"
-            + "var auto=document.getElementById('auto-brightness');\n"
-            + "if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){"
-            + "auto.checked=cfg.auto_brightness;}\n"
-            // These controls have no Save button, so nothing else would ever correct them after
-            // somebody changed the same setting on the tablet or from a second browser.
-            + "function follow(id,value){var el=document.getElementById(id);\n"
-            + "if(!el||el.dataset.pending||value==null){return;}\n"
-            + "if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){"
-            + "el.value=value;}}\n"
-            + "follow('stats-overlay',cfg.stats_overlay);\n"
-            + "follow('portrait',cfg.portrait);\n"
-            // The slider follows the real backlight, except while the operator is actually dragging it.
-            + "var disp=data.display||{},sl=document.getElementById('brightness');\n"
-            + "if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){\n"
-            + "sl.value=disp.brightness_percent;\n"
-            + "var lbl=document.getElementById('brightness-value');\n"
-            + "if(lbl){lbl.textContent=disp.brightness_percent+'%';}}\n"
-            // Updated on every poll and NOT gated on dataset.pending: the mode is a fact about the
-            // device, not something the operator is mid-way through editing, and it is exactly the
-            // thing that was previously stuck reading "automatic" after auto was switched off.
-            + "var md=document.getElementById('brightness-mode');\n"
-            + "if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':"
-            + "(disp.auto?'automatic':'manual'))+')';}\n"
-            // The slider follows the mode, since a level set while the sensor is in charge is
-            // refused rather than applied.
-            + "if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}\n"
-            + "target.textContent=lines.join('\\n');\n"
-            + "var battery=document.getElementById('chip-battery');\n"
-            + "if(battery){var pct=bat.percent;\n"
-            + "battery.textContent=(pct==null?'--':Math.round(pct)+'%')"
-            + "+(bat.charge_state?' '+bat.charge_state:'');\n"
-            // The battery glyph is a real gauge: the fill rectangle is resized in place, the bolt
-            // is revealed while charging, and a nearly flat panel on battery turns red.
-            + "var fillEl=document.getElementById('chip-battery-fill'),"
-            + "top=5.9,bottom=20.1,frac=pct==null?0:Math.max(0,Math.min(100,pct))/100;\n"
-            + "fillEl.setAttribute('height',((bottom-top)*frac).toFixed(2));\n"
-            + "fillEl.setAttribute('y',(bottom-(bottom-top)*frac).toFixed(2));\n"
-
-            + "var low=pct!=null&&pct<15&&!bat.plugged,tone=low?'var(--bad)':'var(--text)';\n"
-            + "document.getElementById('chip-battery-icon').style.color=tone;\n"
-            + "battery.style.color=tone;\n"
-            + "battery.parentNode.title='battery'+(bat.charge_state?', '+bat.charge_state:'');\n"
-            + "var addr=document.getElementById('chip-address');\n"
-            + "addr.textContent=net.ip_address||'--';\n"
-            + "addr.parentNode.title='address of this panel on the network';\n"
-            + "var ram=document.getElementById('chip-ram');\n"
-            + "ram.textContent=(sys.mem_used_kb&&sys.mem_total_kb?"
-            + "Math.round(100*sys.mem_used_kb/sys.mem_total_kb)+'%':'--');\n"
-            + "ram.parentNode.title='memory in use';\n"
-            + "var cpu=document.getElementById('chip-cpu');\n"
-            + "cpu.textContent=num(sys.cpu_busy_percent)+'%';\n"
-            + "cpu.parentNode.title='processor load';}}\n"
-            // Why this is not three lines and a setInterval.
-            //
-            // It used to be, and every way it could fail printed the same sentence: "stats
-            // unavailable, no response". That sentence was usually a lie. r.json() was called
-            // without looking at r.ok, so a 401, a 429 or a 500 had its plain-text body parsed as
-            // JSON, threw, and landed in the same catch as an actual dead socket. An operator was
-            // told the panel had not answered when it had answered perfectly clearly.
-            //
-            // Worse, the retry made a transient failure permanent. Every poll that reaches the
-            // tablet without usable credentials is an authentication failure to AuthThrottle, and
-            // FAILURES_BEFORE_LOCKOUT of them locks this whole machine out for thirty seconds,
-            // then a minute, doubling to fifteen. A fixed five-second retry walks straight up that
-            // ladder and stays there, which is a page that has taken itself off the air and is
-            // blaming the network. So: an unauthorised or throttled poll stops the loop instead of
-            // feeding it, and everything else backs off.
-            //
-            // setTimeout chained from the response, not setInterval: a poll slower than the
-            // interval used to overlap the next one, and two connections in flight where one was
-            // expected is what PER_HOST_CONNECTIONS counts.
-            + "var fails=0,shown=false,stopped=false;\n"
-            + "function stop(text){stopped=true;target.textContent=text;}\n"
-            // A refused poll is a normal event here, not an outage: the per-host connection cap
-            // exists to refuse them. Blanking a wall panel's whole readout for one, chip included,
-            // threw away good numbers to report a hiccup. The figures stay, with a line saying how
-            // stale they are.
-            + "function note(text){var el=document.getElementById('stats-stale');\n"
-            + "if(!el){el=document.createElement('p');el.id='stats-stale';el.className='hint';\n"
-            + "target.parentNode.insertBefore(el,target.nextSibling);}\n"
-            + "el.textContent=text;}\n"
-            + "function clearNote(){var el=document.getElementById('stats-stale');\n"
-            + "if(el){el.parentNode.removeChild(el);}}\n"
-            + "function again(){if(stopped){return;}\n"
-            + "setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}\n"
-            + "function ok(){fails=0;shown=true;clearNote();again();}\n"
-            + "function bad(text){fails++;\n"
-            + "if(shown){note(text+'; showing the last reading');}else{target.textContent=text;}\n"
-            + "again();}\n"
-            + "function poll(){fetch('/api/stats',{credentials:'same-origin'})\n"
-            + ".then(function(r){\n"
-            + "if(r.status===401||r.status===403){stop('stats unavailable: this browser was not "
-            + "authorised. Reload the page to sign in again.');return null;}\n"
-            + "if(r.status===429){stop('stats unavailable: the panel is refusing this machine "
-            + "after too many failed sign-ins. Wait a minute, then reload.');return null;}\n"
-            + "if(!r.ok){throw new Error('HTTP '+r.status);}\n"
-            + "return r.json();})\n"
-            + ".then(function(data){if(data===null){return;}\n"
-            // A bug in render() is not the panel being unreachable, and reporting it as one sent
-            // somebody to check the network cable. The data arrived; say so, and log the reason.
-            + "try{render(data);}catch(e){shown=false;fails=0;clearNote();\n"
-            + "target.textContent='stats received but could not be displayed: '+e.message;\n"
-            + "if(window.console){console.error('Muralis: stats render failed',e);}\n"
-            + "again();return;}\n"
-            + "ok();})\n"
-            + ".catch(function(error){if(stopped){return;}\n"
-            + "bad('stats unavailable: '+((error&&error.message)||'no response'));});}\n"
-            + "poll();\n"
-            + "})();\n"
-            + "</script>";
-
-
-    /** Light / dark / follow-the-device, remembered in the browser rather than on the tablet. */
-    private static final String THEME_SCRIPT = "<script>\n"
-            + "(function(){\n"
-            + "var KEY='kiosk-admin-theme';\n"
-            + "function apply(mode){\n"
-            + "document.documentElement.setAttribute('data-theme',mode);\n"
-            + "Array.prototype.forEach.call(document.querySelectorAll('.themepick button'),\n"
-            + "function(b){b.setAttribute('aria-pressed',String(b.dataset.theme===mode));});}\n"
-            + "var saved=null;\n"
-            + "try{saved=localStorage.getItem(KEY);}catch(e){}\n"
-            + "apply(saved||'system');\n"
-            + "document.addEventListener('click',function(event){\n"
-            + "var button=event.target.closest?event.target.closest('.themepick button'):null;\n"
-            + "if(!button){return;}\n"
-            + "apply(button.dataset.theme);\n"
-            + "try{localStorage.setItem(KEY,button.dataset.theme);}catch(e){}});\n"
-            + "})();\n"
-            + "</script>";
-
-
-    /**
-     * Catppuccin, Mocha and Latte, matching KioskTheme on the tablet. Sections flow into as many
-     * columns as the window allows rather than one tall stack, which on a landscape tablet or a
-     * desktop browser turned every text field into a full-width slab.
-     */
-    private static final String PAGE_CSS =
-            ":root{color-scheme:light dark;"
-            + "--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;"
-            + "--border:#bcc0cc;--text:#4c4f69;--subtext:#6c6f85;--accent:#8226ef;"
-            + "--accent-alt:#1e66f5;--ok:#2fa019;--warn:#d68000;--bad:#d20f39;--radius:14px}"
-            + "@media (prefers-color-scheme:dark){:root{"
-            + "--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;"
-            + "--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;"
-            + "--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91}}"
-            + "html[data-theme=light]{color-scheme:light;"
-            + "--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;"
-            + "--border:#bcc0cc;--text:#4c4f69;--subtext:#6c6f85;--accent:#8226ef;"
-            + "--accent-alt:#1e66f5;--ok:#2fa019;--warn:#d68000;--bad:#d20f39}"
-            + "html[data-theme=dark]{color-scheme:dark;"
-            + "--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;"
-            + "--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;"
-            + "--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91}"
-            + "*{box-sizing:border-box}"
-            + "body{margin:0;padding:1.5rem 1.25rem 4rem;background:var(--base);color:var(--text);"
-            + "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.5}"
-            + "main{max-width:1400px;margin:0 auto}"
-            + "header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;"
-            + "justify-content:space-between;margin-bottom:1.25rem}"
-            + "h1{font-size:1.8rem;margin:0;color:var(--accent);font-weight:650}"
-            + ".sub{color:var(--subtext);font-size:.9rem;margin:.1rem 0 0}"
-            // The chip: one glyph per row so no bare percentage has to be guessed at. Monochrome in
-            // the style of a Pixel status bar, matching StatusIcon on the tablet glyph for glyph.
-            + ".chip{display:flex;flex-direction:column;align-items:flex-end;gap:.15rem;"
-            + "line-height:1.3;font-size:.85rem;color:var(--subtext)}"
-            + ".chip .row{display:flex;align-items:center;gap:.45rem}"
-            + ".chip .row.pair{gap:1.1rem}"
-            + ".ico{width:17px;height:17px;flex:none;color:var(--text)}"
-            // Badges above the sections, the way Home Assistant floats them over a view.
-            + ".badges{display:flex;justify-content:center;margin:0 0 1.25rem}"
-            + ".notice{margin:0 0 1.25rem;padding:.7rem .9rem;border-radius:10px;"
-            + "border-left:4px solid var(--bad);background:var(--mantle);color:var(--text);"
-            + "font-size:.9rem}"
-            + "label.slider{display:block;margin-top:.8rem;color:var(--text);font-size:.9rem}"
-            + "label.slider .readout{display:block;margin-top:.15rem;color:var(--subtext);"
-            + "font-size:.85rem;font-variant-numeric:tabular-nums}"
-            // min-width:0 as well as width:100%: a range input carries an intrinsic minimum width
-            // that width alone does not override, and that minimum is half of what pushed the
-            // Display box off the screen.
-            + "label.slider input[type=range]{display:block;width:100%;min-width:0;"
-            + "margin-top:.35rem;accent-color:var(--accent)}"
-            + ".themepick{display:flex;gap:.25rem;background:var(--surface);padding:.25rem;"
-            + "border-radius:999px;border:1px solid var(--border)}"
-            // Excluded from the 3D button treatment below: a segmented pill picker, not a
-            // discrete action, and a shadowed edge on each pill would look like clutter.
-            + ".themepick button{margin:0;padding:.35rem .85rem;border:0;border-radius:999px;"
-            + "background:transparent;color:var(--subtext);font-size:.85rem;cursor:pointer;"
-            + "box-shadow:none;transition:none}"
-            + ".themepick button[aria-pressed=true]{background:var(--accent);color:var(--base);"
-            + "font-weight:600}"
-            // The sections layout: as many columns as fit, each at least 300px, except when
-            // the container itself is narrower than 300px, which is what min() is for. A bare
-            // minmax(300px,1fr) is a floor the track cannot go under, so on a phone below that
-            // width every column overhangs the viewport and the page scrolls sideways.
-            + ".grid{display:grid;gap:1rem;"
-            + "grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));"
-            + "align-items:start}"
-            // min-width:0 is load-bearing, not tidying. A grid item defaults to min-width:auto,
-            // meaning it refuses to be laid out narrower than its own min-content width, so one
-            // box containing something wide and unshrinkable grows past its column and past the
-            // screen while its neighbours sit correctly aligned. That is the Display box bug.
-            + "fieldset{border:1px solid var(--accent);background:var(--surface);margin:0;"
-            + "min-width:0;border-radius:var(--radius);padding:1rem 1.1rem 1.2rem}"
-            + "legend{padding:0 .4rem;font-weight:600;font-size:.95rem}"
-            + "label{display:block;margin-top:.7rem;color:var(--subtext);font-size:.8rem}"
-            + "input[type=text],input[type=password],input[type=number],select{width:100%;"
-            + "margin-top:.25rem;padding:.5rem .65rem;border-radius:10px;"
-            + "border:1px solid var(--border);background:var(--surface-alt);color:var(--text);"
-            + "font-size:.95rem}"
-            + "input:focus,select:focus{outline:none;border-color:var(--accent-alt);"
-            + "box-shadow:0 0 0 2px color-mix(in srgb,var(--accent-alt) 30%,transparent)}"
-            + "input[type=checkbox]{width:auto;margin-right:.5rem;accent-color:var(--accent)}"
-            + "label.check{display:flex;align-items:center;color:var(--text);font-size:.9rem;"
-            + "margin-top:.7rem}"
-            + ".hint{color:var(--subtext);font-size:.78rem;margin:.5rem 0 0}"
-            // A slight 3D lift: a coloured "bottom edge" plus a soft shadow, both gone on
-            // :active and the button nudged down a pixel, so pressing one reads as pressing
-            // something solid rather than just a colour change.
-            + "button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;"
-            + "border:1px solid var(--accent-alt);background:transparent;color:var(--accent-alt);"
-            + "font-size:.9rem;cursor:pointer;"
-            + "box-shadow:0 2px 0 0 var(--accent-alt),0 2px 4px rgba(0,0,0,.18);"
-            + "transition:transform .08s ease,box-shadow .08s ease}"
-            + "button:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}"
-            + "button:active{transform:translateY(2px);"
-            + "box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}"
-            + "button.primary{background:var(--accent);border-color:var(--accent);"
-            + "color:var(--base);font-weight:600;"
-            + "box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent) 70%,black 20%),"
-            + "0 2px 4px rgba(0,0,0,.22)}"
-            + "button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}"
-            + ".actions{display:flex;flex-wrap:wrap;gap:.4rem}"
-            + ".actions form{display:inline}"
-            + "#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;"
-            + "white-space:pre-wrap;background:var(--mantle);border-radius:10px;padding:.7rem;"
-            + "overflow-x:auto;color:var(--subtext);margin:.6rem 0 0}"
-            + "dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem .8rem;margin:.6rem 0 0;"
-            + "font-size:.85rem}"
-            + "dt{color:var(--subtext)}"
-            + "dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,"
-            + "monospace}"
-            + "a{color:var(--accent-alt)}";
 
     private final Context context;
     private final KioskService kioskService;
@@ -547,6 +156,16 @@ final class HttpAdminServer {
     HttpAdminServer(Context context, KioskService kioskService) {
         this.context = context;
         this.kioskService = kioskService;
+        commandScript = script(R.raw.admin_command);
+        settingScript = script(R.raw.admin_setting);
+        statsScript = script(R.raw.admin_stats);
+        themeScript = script(R.raw.admin_theme);
+        pageCss = readRawText(R.raw.admin);
+    }
+
+    /** One raw JavaScript resource, wrapped in the tag the page splices it in with. */
+    private String script(int rawRes) {
+        return "<script>\n" + readRawText(rawRes) + "</script>";
     }
 
     void start() {
@@ -1084,7 +703,7 @@ final class HttpAdminServer {
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
             // POST /api/setting has always accepted. It now covers the stats-overlay switch alone,
-            // the publish interval having been removed. See SETTING_SCRIPT.
+            // the publish interval having been removed. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1193,7 +812,7 @@ final class HttpAdminServer {
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
                 .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
                 .append("<title>Muralis admin</title><style>")
-                .append(PAGE_CSS)
+                .append(pageCss)
                 .append("</style></head><body><main>")
                 .append("<header><div><h1>Muralis</h1><p class=\"sub\">")
                 .append(escapeHtml(config.deviceId)).append("</p></div>")
@@ -1282,7 +901,7 @@ final class HttpAdminServer {
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands
                 // alone and applies itself, the way the brightness controls already did.
-                // data-setting names the field it posts; see SETTING_SCRIPT.
+                // data-setting names the field it posts; see settingScript.
                 .append("<fieldset><legend>System stats</legend>")
                 .append("<pre id=\"stats\">loading...</pre>")
                 .append("<label class=\"check\"><input type=\"checkbox\" ")
@@ -1298,10 +917,10 @@ final class HttpAdminServer {
 
                 .append("</div>");
 
-        html.append(COMMAND_SCRIPT);
-        html.append(SETTING_SCRIPT);
-        html.append(STATS_SCRIPT);
-        html.append(THEME_SCRIPT);
+        html.append(commandScript);
+        html.append(settingScript);
+        html.append(statsScript);
+        html.append(themeScript);
         html.append("</main></body></html>");
         return html.toString();
     }
@@ -1319,7 +938,7 @@ final class HttpAdminServer {
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
                 .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
                 .append("<title>").append(escapeHtml(title)).append(" &middot; Muralis</title>")
-                .append("<style>").append(PAGE_CSS)
+                .append("<style>").append(pageCss)
                 .append("main{max-width:640px}h2{color:var(--accent);font-size:1rem;"
                         + "letter-spacing:.04em;margin:1.6rem 0 .4rem}"
                         + "p.doc{margin:.2rem 0}</style></head><body><main>")
@@ -1367,7 +986,7 @@ final class HttpAdminServer {
      * read 70%, so the page confidently contradicted the device. Reported from the panel 2026-08-19.
      *
      * <p>Rendered from {@code KioskService.statsJson().display} and then kept live by
-     * {@code STATS_SCRIPT} on every poll, which matters most in automatic mode, where the value moves
+     * {@code statsScript} on every poll, which matters most in automatic mode, where the value moves
      * on its own as the light changes and no page load would ever catch up.
      */
     private String brightnessControl() {
@@ -1385,7 +1004,7 @@ final class HttpAdminServer {
             // Fall back to the old fixed position rather than dropping the control.
         }
         percent = Math.max(1, Math.min(100, percent));
-        // The mode label is ALWAYS rendered and carries an id, so STATS_SCRIPT can keep it current.
+        // The mode label is ALWAYS rendered and carries an id, so statsScript can keep it current.
         // It first shipped as a bare "(automatic)" with no id, emitted only in automatic mode: it never
         // changed to "manual" when the checkbox was cleared, and never changed at all after page load,
         // which is precisely the staleness this control was rewritten to remove. Naming the mode is
@@ -1395,7 +1014,7 @@ final class HttpAdminServer {
         // mode is refused rather than written. It was refused for a good reason (the backlight never
         // followed it, so the panel reported a brightness nobody was looking at), but a control that
         // moves and is then rejected is its own small lie. The mode label beside it says why, and
-        // STATS_SCRIPT keeps both in step with the switch.
+        // statsScript keeps both in step with the switch.
         // Stacked, not a flex row. As one row of caption + slider + readout + mode, this was the
         // widest thing on the page and it could not shrink: a range input has an intrinsic minimum
         // width, the readout reserved 3.2rem, and the whole row therefore had a min-content width
@@ -1403,7 +1022,7 @@ final class HttpAdminServer {
         // Display fieldset could not be squeezed to match its neighbours and hung over the right
         // edge of the screen while every other box lined up. Seen on a 360px-wide phone
         // 2026-08-23; invisible on a large one, which is exactly why it survived this long. The
-        // grid and the fieldset were both given room to shrink as well; see PAGE_CSS.
+        // grid and the fieldset were both given room to shrink as well; see pageCss.
         //
         // Stacking also puts the readout where it was asked to go, directly under the caption,
         // where it reads as a value belonging to "Brightness" rather than as a number floating at
@@ -1458,7 +1077,7 @@ final class HttpAdminServer {
      * like a statement of state, which is genuinely ambiguous; and the state was read once when the
      * page was rendered and never refreshed, so if the mode changed afterwards, from the tablet's own
      * shade toggle or another browser, the button kept sending the stale value and did the opposite of
-     * what it said. A checkbox shows the state directly, and {@code STATS_SCRIPT} keeps it honest by
+     * what it said. A checkbox shows the state directly, and {@code statsScript} keeps it honest by
      * syncing it from every poll.
      *
      * <p>It maps to exactly the setting a person toggles next to the brightness slider in the
