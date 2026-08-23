@@ -24,7 +24,6 @@ final class KioskConfig {
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
-    private static final String TELEMETRY_INTERVAL_SECONDS = "telemetry_interval_seconds";
 
     static final int DEFAULT_HTTP_PORT = 8080;
     /** The original fixed gesture, kept as the default so nothing changes until it is recorded. */
@@ -66,8 +65,6 @@ final class KioskConfig {
      * wall the other way up still renders the right way round without a second setting for it.
      */
     boolean portrait = false;
-    /** How often MQTT state is published. One of {@link TelemetryInterval#OPTIONS}. */
-    int telemetryIntervalSeconds = TelemetryInterval.DEFAULT_SECONDS;
     /** Corner-tap combination that opens this configuration screen. */
     String settingsSequence = DEFAULT_SETTINGS_SEQUENCE;
     /** Corner-tap combination that leaves the kiosk for the system launcher. */
@@ -110,10 +107,6 @@ final class KioskConfig {
                 SETTINGS_SEQUENCE, DEFAULT_SETTINGS_SEQUENCE);
         config.launcherSequence = preferences.getString(
                 LAUNCHER_SEQUENCE, DEFAULT_LAUNCHER_SEQUENCE);
-        // Defensive against a hand-edited preferences file rather than against any code path in
-        // this app, which only ever writes one of the four presets.
-        config.telemetryIntervalSeconds = TelemetryInterval.clampOrDefault(
-                preferences.getInt(TELEMETRY_INTERVAL_SECONDS, TelemetryInterval.DEFAULT_SECONDS));
         return config;
     }
 
@@ -127,8 +120,6 @@ final class KioskConfig {
                 .putInt(HTTP_PORT, httpPort)
                 .putBoolean(STATS_OVERLAY, statsOverlay)
                 .putBoolean(PORTRAIT, portrait)
-                .putInt(TELEMETRY_INTERVAL_SECONDS,
-                        TelemetryInterval.clampOrDefault(telemetryIntervalSeconds))
                 .apply();
 
         // Each secret is written only if it was readable when this snapshot loaded. Writing an
@@ -225,12 +216,12 @@ final class KioskConfig {
      * <p>Needed because the recycle schedule is derived from this value on every sampler tick, and
      * going through {@code load()} to reach one immutable string meant constructing a
      * {@link SecretStore} and decrypting the broker username, the broker password and the admin
-     * password, twice a second, forever. Same reasoning as {@link #statsOverlayEnabled} and
-     * {@link #telemetryIntervalSecondsOf}.
+     * password, twice a second, forever. Same reasoning as {@link #statsOverlayEnabled}.
      *
      * <p>Returns empty rather than minting an id, unlike {@code load()}: minting writes to disk with
      * {@code commit()}, and doing that from the sampler thread is not this method's business.
-     * RecyclePolicy.scheduledMinuteOf treats empty as minute zero, which is the un-spread default, * acceptable for the window before load() has ever run, and load() runs at startup.
+     * RecyclePolicy.scheduledMinuteOf treats empty as minute zero, which is the un-spread default,
+     * acceptable for the window before load() has ever run, and load() runs at startup.
      */
     static String deviceIdOf(Context context) {
         return storageContext(context)
@@ -238,12 +229,6 @@ final class KioskConfig {
                 .getString(DEVICE_ID, "").trim();
     }
 
-    /** Read on every telemetry tick, so it skips {@link #load} and its SecretStore decryption. */
-    static int telemetryIntervalSecondsOf(Context context) {
-        return TelemetryInterval.clampOrDefault(storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(TELEMETRY_INTERVAL_SECONDS, TelemetryInterval.DEFAULT_SECONDS));
-    }
 
     private static Context storageContext(Context context) {
         return context.createDeviceProtectedStorageContext();

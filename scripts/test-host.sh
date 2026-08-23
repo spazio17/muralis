@@ -63,7 +63,7 @@ done < <(grep -rn 'setLockTaskFeatures\|WindowInsetsController\|setDecorFitsSyst
 pure_java_dir=${project_dir}/app/src/main/java/org/spazio17/muralis
 host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy EscapeSequence \
-            KioskRuntimeState Provisioning TelemetryInterval RequestOrigin \
+            KioskRuntimeState Provisioning RequestOrigin \
             AuthThrottle; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
@@ -107,14 +107,78 @@ javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \
     "${pure_java_dir}/RecyclePolicy.java" \
     "${pure_java_dir}/EscapeSequence.java" \
-    "${pure_java_dir}/TelemetryInterval.java" \
     "${host_test_dir}/SystemStatsTest.java" \
     "${host_test_dir}/RecyclePolicyTest.java" \
-    "${host_test_dir}/EscapeSequenceTest.java" \
-    "${host_test_dir}/TelemetryIntervalTest.java"
+    "${host_test_dir}/EscapeSequenceTest.java"
 java -cp "${test_dir}/stats" org.spazio17.muralis.SystemStatsTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.RecyclePolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.EscapeSequenceTest
-java -cp "${test_dir}/stats" org.spazio17.muralis.TelemetryIntervalTest
+
+# The admin page's JavaScript lives inside Java string literals, so nothing on the way to the
+# device parses it: a syntax error or a name collision ships and only shows up as a blank box in
+# somebody's browser. Both have happened. On 2026-08-23 a new "pct" helper was added to
+# STATS_SCRIPT while render() already had "var pct = bat.percent" for the battery chip; var hoists
+# to the top of the function, so the local shadowed the helper and every stats poll died with
+# "pct is not a function". This reassembles each script constant and checks it.
+python3 - "${project_dir}/app/src/main/java/org/spazio17/muralis/HttpAdminServer.java" <<'PYCHECK'
+import re
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+failures = []
+
+for name in ("COMMAND_SCRIPT", "SETTING_SCRIPT", "STATS_SCRIPT", "THEME_SCRIPT"):
+    start = source.index("private static final String %s = " % name)
+    end = source.index('";\n', start)
+    # Only the string literals, so the // comments between them are dropped.
+    literals = re.findall(r'"((?:[^"\\]|\\.)*)"', source[start:end + 1])
+    js = "".join(literals).encode().decode("unicode_escape")
+    js = js.replace("<script>", "").replace("</script>", "")
+
+    # Balance, which catches a dropped quote or bracket in the concatenation.
+    depth = {"(": 0, "[": 0, "{": 0}
+    closers = {")": "(", "]": "[", "}": "{"}
+    quote = None
+    escaped = False
+    for character in js:
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in "'\"":
+            quote = character
+        elif character in depth:
+            depth[character] += 1
+        elif character in closers:
+            depth[closers[character]] -= 1
+    if quote is not None:
+        failures.append("%s: unterminated string literal" % name)
+    for opener, count in depth.items():
+        if count:
+            failures.append("%s: unbalanced %s (%+d)" % (name, opener, count))
+
+    # A function shadowed by a var of the same name. var is function-scoped and hoisted, so the
+    # shadow wins for the whole enclosing function even where the declaration sits below the call.
+    functions = set(re.findall(r"function\s+([A-Za-z_$][\w$]*)\s*\(", js))
+    bound = set()
+    for declaration in re.findall(r"\b(?:var|let|const)\s+([^;{}\n]+)", js):
+        for piece in declaration.split(","):
+            match = re.match(r"\s*([A-Za-z_$][\w$]*)\s*(=|$)", piece)
+            if match:
+                bound.add(match.group(1))
+    for clash in sorted(functions & bound):
+        failures.append(
+            "%s: function %s() is shadowed by a var of the same name; rename one" % (name, clash))
+
+if failures:
+    for failure in failures:
+        print("admin page script: " + failure, file=sys.stderr)
+    raise SystemExit(1)
+print("admin page scripts checked: balance and no shadowed helpers")
+PYCHECK
 
 printf 'Muralis app host validation passed\n'

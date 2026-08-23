@@ -182,9 +182,14 @@ final class HttpAdminServer {
             + "</script>";
 
     /**
-     * Applies every standalone Behaviour control the moment it is touched, so that box needs no Save
+     * Applies every standalone control the moment it is touched, so none of them needs a Save
      * button. The same shape as the brightness controls above, and for the same reason: a setting
      * that depends on nothing else has nothing to wait for.
+     *
+     * <p>These controls used to live together in a Behaviour box. They now sit in the box each one
+     * is actually about, the overlay switch under the stats it switches on, the publish interval
+     * inside MQTT, which is why this is keyed on the {@code data-setting} attribute rather than on
+     * a container: the script does not care where on the page a control ended up.
      *
      * <p>The {@code data-pending} flag exists here for the reason it exists on the slider. The stats
      * poll below writes these controls from the device's real state every five seconds, and a poll
@@ -194,11 +199,14 @@ final class HttpAdminServer {
      * <p>Note the {@code change} event rather than {@code input}: a time field fires {@code input} on
      * every digit, so a half-typed "0" would be posted as 00:00 on the way to 04:00.
      */
-    private static final String BEHAVIOUR_SCRIPT = "<script>\n"
+    private static final String SETTING_SCRIPT = "<script>\n"
             + "(function(){\n"
             + "function apply(el){\n"
             + "var value=el.type==='checkbox'?(el.checked?'1':'0'):el.value;\n"
             + "el.dataset.pending='1';\n"
+            // "behaviour" is the section name POST /api/setting has always accepted. It
+            // outlived the box it was named after and is kept as the wire name rather than
+            // renamed, so a page cached in a browser keeps working against a newer tablet.
             + "var body='section=behaviour&'+encodeURIComponent(el.dataset.setting)+'='"
             + "+encodeURIComponent(value);\n"
             + "fetch('/api/setting',{method:'POST',credentials:'same-origin',"
@@ -226,6 +234,7 @@ final class HttpAdminServer {
             + "var target=document.getElementById('stats');\n"
             + "function mb(kb){return kb==null?'--':Math.round(kb/1024)+'M';}\n"
             + "function num(v,d){return v==null?'--':v.toFixed(d||0);}\n"
+            + "function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}\n"
             + "function dur(ms){if(ms==null||ms<0){return '--';}\n"
             + "var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),"
             + "m=Math.floor(s%3600/60);\n"
@@ -233,24 +242,38 @@ final class HttpAdminServer {
             + "function render(data){\n"
             + "var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},"
             + "net=data.network||{},mem=data.memory||{},cfg=data.config||{};\n"
+            // The same eight rows, in the same order, as the tablet's own overlay; see
+            // SystemStats.formatOverlayHtml. Padded labels so the values line up in the <pre>.
             + "var lines=[];\n"
-            + "lines.push('uptime '+dur(data.uptime_ms)+'   cpu '+num(sys.cpu_busy_percent)+'%'"
-            + "+'   load '+(sys.load_average?num(sys.load_average[0],2):'--'));\n"
-            + "lines.push('ram  '+mb(sys.mem_used_kb)+'/'+mb(sys.mem_total_kb)"
-            + "+'   zram '+mb(sys.swap_used_kb)+'/'+mb(sys.swap_total_kb)"
+            + "lines.push('CPU  '+num(sys.cpu_busy_percent)+'%'"
+            + "+(sys.cpu_max_frequency_khz!=null?'   '"
+            + "+(sys.cpu_max_frequency_khz/1000000).toFixed(2)+'GHz':'')"
+            + "+(sys.load_average?'   load '+num(sys.load_average[0],2):''));\n"
+            + "lines.push('RAM  '+mb(sys.mem_used_kb)+'/'+mb(sys.mem_total_kb)"
+            + "+'   '+usedPercent(sys.mem_used_kb,sys.mem_total_kb)"
             + "+(mem.low?'   LOW MEMORY':''));\n"
-            + "lines.push('temp '+num(sys.cpu_temperature_c,1)+'C cpu   '"
-            + "+num(sys.gpu_temperature_c,1)+'C gpu   batt '+num(bat.percent)+'%');\n"
-            + "lines.push('ip   '+(net.ip_address||'--'));\n"
-            + "lines.push('wifi '+(net.wifi_rssi_dbm!=null?net.wifi_rssi_dbm+'dBm':'--')"
-            + "+'   renderer deaths '+(run.renderer_deaths!=null?run.renderer_deaths:'--')"
-            + "+'   last load '+dur(run.last_page_finished_ago_ms)+' ago');\n"
-            + "if(run.last_page_error){lines.push('last error '+run.last_page_error);}\n"
-            + "lines.push('recycles '+(run.recycles||0));\n"
+            + "lines.push('ZRAM '+mb(sys.swap_used_kb)+'/'+mb(sys.swap_total_kb));\n"
+            + "lines.push('TEMP '+num(sys.cpu_temperature_c,1)+'C cpu   '"
+            + "+num(sys.gpu_temperature_c,1)+'C gpu');\n"
+            + "lines.push('BAT  '+(bat.percent==null?'--':Math.round(bat.percent)+'%')"
+            + "+(bat.charge_state?' '+bat.charge_state:''));\n"
+            + "lines.push('IP   '+(net.ip_address||'--')"
+            + "+'   '+(net.wifi_rssi_dbm!=null?net.wifi_rssi_dbm+'dBm':'--'));\n"
+            // The age is of the last renderer death, not the last page load: see the same row in
+            // SystemStats.formatOverlayHtml for why those two must not be confused.
+            + "lines.push('WEB  '+(run.renderer_deaths!=null?run.renderer_deaths:'--')+' deaths'"
+            + "+'   '+(run.last_renderer_death_ago_ms!=null"
+            + "&&run.last_renderer_death_ago_ms>=0"
+            + "?dur(run.last_renderer_death_ago_ms)+' ago':'never')"
+            + "+'   '+(run.recycles||0)+' recycles');\n"
+            // app_uptime_ms, not uptime_ms: the same row the tablet's overlay shows, and for the
+            // same reason. See SystemStats.RuntimeFacts.appUptimeMs.
+            + "lines.push('UP   '+dur(data.app_uptime_ms));\n"
+            + "if(run.last_page_error){lines.push('ERR  '+run.last_page_error);}\n"
             + "var auto=document.getElementById('auto-brightness');\n"
             + "if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){"
             + "auto.checked=cfg.auto_brightness;}\n"
-            // The Behaviour box has no Save button, so nothing else would ever correct it after
+            // These controls have no Save button, so nothing else would ever correct them after
             // somebody changed the same setting on the tablet or from a second browser.
             + "function follow(id,value){var el=document.getElementById(id);\n"
             + "if(!el||el.dataset.pending||value==null){return;}\n"
@@ -258,8 +281,6 @@ final class HttpAdminServer {
             + "el.value=value;}}\n"
             + "follow('stats-overlay',cfg.stats_overlay);\n"
             + "follow('portrait',cfg.portrait);\n"
-            + "if(cfg.telemetry_interval_seconds!=null){"
-            + "follow('telemetry-interval',String(cfg.telemetry_interval_seconds));}\n"
             // The slider follows the real backlight, except while the operator is actually dragging it.
             + "var disp=data.display||{},sl=document.getElementById('brightness');\n"
             + "if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){\n"
@@ -301,10 +322,62 @@ final class HttpAdminServer {
             + "var cpu=document.getElementById('chip-cpu');\n"
             + "cpu.textContent=num(sys.cpu_busy_percent)+'%';\n"
             + "cpu.parentNode.title='processor load';}}\n"
+            // Why this is not three lines and a setInterval.
+            //
+            // It used to be, and every way it could fail printed the same sentence: "stats
+            // unavailable, no response". That sentence was usually a lie. r.json() was called
+            // without looking at r.ok, so a 401, a 429 or a 500 had its plain-text body parsed as
+            // JSON, threw, and landed in the same catch as an actual dead socket. An operator was
+            // told the panel had not answered when it had answered perfectly clearly.
+            //
+            // Worse, the retry made a transient failure permanent. Every poll that reaches the
+            // tablet without usable credentials is an authentication failure to AuthThrottle, and
+            // FAILURES_BEFORE_LOCKOUT of them locks this whole machine out for thirty seconds,
+            // then a minute, doubling to fifteen. A fixed five-second retry walks straight up that
+            // ladder and stays there, which is a page that has taken itself off the air and is
+            // blaming the network. So: an unauthorised or throttled poll stops the loop instead of
+            // feeding it, and everything else backs off.
+            //
+            // setTimeout chained from the response, not setInterval: a poll slower than the
+            // interval used to overlap the next one, and two connections in flight where one was
+            // expected is what PER_HOST_CONNECTIONS counts.
+            + "var fails=0,shown=false,stopped=false;\n"
+            + "function stop(text){stopped=true;target.textContent=text;}\n"
+            // A refused poll is a normal event here, not an outage: the per-host connection cap
+            // exists to refuse them. Blanking a wall panel's whole readout for one, chip included,
+            // threw away good numbers to report a hiccup. The figures stay, with a line saying how
+            // stale they are.
+            + "function note(text){var el=document.getElementById('stats-stale');\n"
+            + "if(!el){el=document.createElement('p');el.id='stats-stale';el.className='hint';\n"
+            + "target.parentNode.insertBefore(el,target.nextSibling);}\n"
+            + "el.textContent=text;}\n"
+            + "function clearNote(){var el=document.getElementById('stats-stale');\n"
+            + "if(el){el.parentNode.removeChild(el);}}\n"
+            + "function again(){if(stopped){return;}\n"
+            + "setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}\n"
+            + "function ok(){fails=0;shown=true;clearNote();again();}\n"
+            + "function bad(text){fails++;\n"
+            + "if(shown){note(text+'; showing the last reading');}else{target.textContent=text;}\n"
+            + "again();}\n"
             + "function poll(){fetch('/api/stats',{credentials:'same-origin'})\n"
-            + ".then(function(r){return r.json();}).then(render)\n"
-            + ".catch(function(){target.textContent='stats unavailable, no response';});}\n"
-            + "poll();setInterval(poll,5000);\n"
+            + ".then(function(r){\n"
+            + "if(r.status===401||r.status===403){stop('stats unavailable: this browser was not "
+            + "authorised. Reload the page to sign in again.');return null;}\n"
+            + "if(r.status===429){stop('stats unavailable: the panel is refusing this machine "
+            + "after too many failed sign-ins. Wait a minute, then reload.');return null;}\n"
+            + "if(!r.ok){throw new Error('HTTP '+r.status);}\n"
+            + "return r.json();})\n"
+            + ".then(function(data){if(data===null){return;}\n"
+            // A bug in render() is not the panel being unreachable, and reporting it as one sent
+            // somebody to check the network cable. The data arrived; say so, and log the reason.
+            + "try{render(data);}catch(e){shown=false;fails=0;clearNote();\n"
+            + "target.textContent='stats received but could not be displayed: '+e.message;\n"
+            + "if(window.console){console.error('Muralis: stats render failed',e);}\n"
+            + "again();return;}\n"
+            + "ok();})\n"
+            + ".catch(function(error){if(stopped){return;}\n"
+            + "bad('stats unavailable: '+((error&&error.message)||'no response'));});}\n"
+            + "poll();\n"
             + "})();\n"
             + "</script>";
 
@@ -371,14 +444,14 @@ final class HttpAdminServer {
             + ".notice{margin:0 0 1.25rem;padding:.7rem .9rem;border-radius:10px;"
             + "border-left:4px solid var(--bad);background:var(--mantle);color:var(--text);"
             + "font-size:.9rem}"
-            + "label.inline{display:flex;align-items:center;gap:.6rem;color:var(--text);"
-            + "font-size:.9rem;margin-top:.8rem}"
-            + "label.inline input[type=time]{width:auto;margin:0;padding:.4rem .55rem;"
-            + "border-radius:10px;border:1px solid var(--border);background:var(--surface-alt);"
-            + "color:var(--text)}"
-            + "label.inline input[type=range]{flex:1;accent-color:var(--accent)}"
-            + "label.inline output{min-width:3.2rem;text-align:right;"
-            + "font-variant-numeric:tabular-nums}"
+            + "label.slider{display:block;margin-top:.8rem;color:var(--text);font-size:.9rem}"
+            + "label.slider .readout{display:block;margin-top:.15rem;color:var(--subtext);"
+            + "font-size:.85rem;font-variant-numeric:tabular-nums}"
+            // min-width:0 as well as width:100%: a range input carries an intrinsic minimum width
+            // that width alone does not override, and that minimum is half of what pushed the
+            // Display box off the screen.
+            + "label.slider input[type=range]{display:block;width:100%;min-width:0;"
+            + "margin-top:.35rem;accent-color:var(--accent)}"
             + ".themepick{display:flex;gap:.25rem;background:var(--surface);padding:.25rem;"
             + "border-radius:999px;border:1px solid var(--border)}"
             // Excluded from the 3D button treatment below: a segmented pill picker, not a
@@ -388,11 +461,19 @@ final class HttpAdminServer {
             + "box-shadow:none;transition:none}"
             + ".themepick button[aria-pressed=true]{background:var(--accent);color:var(--base);"
             + "font-weight:600}"
-            // The sections layout: as many columns as fit, each at least 300px.
-            + ".grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));"
+            // The sections layout: as many columns as fit, each at least 300px, except when
+            // the container itself is narrower than 300px, which is what min() is for. A bare
+            // minmax(300px,1fr) is a floor the track cannot go under, so on a phone below that
+            // width every column overhangs the viewport and the page scrolls sideways.
+            + ".grid{display:grid;gap:1rem;"
+            + "grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));"
             + "align-items:start}"
+            // min-width:0 is load-bearing, not tidying. A grid item defaults to min-width:auto,
+            // meaning it refuses to be laid out narrower than its own min-content width, so one
+            // box containing something wide and unshrinkable grows past its column and past the
+            // screen while its neighbours sit correctly aligned. That is the Display box bug.
             + "fieldset{border:1px solid var(--accent);background:var(--surface);margin:0;"
-            + "border-radius:var(--radius);padding:1rem 1.1rem 1.2rem}"
+            + "min-width:0;border-radius:var(--radius);padding:1rem 1.1rem 1.2rem}"
             + "legend{padding:0 .4rem;font-weight:600;font-size:.95rem}"
             + "label{display:block;margin-top:.7rem;color:var(--subtext);font-size:.8rem}"
             + "input[type=text],input[type=password],input[type=number],select{width:100%;"
@@ -423,9 +504,6 @@ final class HttpAdminServer {
             + "button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}"
             + ".actions{display:flex;flex-wrap:wrap;gap:.4rem}"
             + ".actions form{display:inline}"
-            + ".slider{display:flex;align-items:center;gap:.75rem;margin-top:.6rem}"
-            + ".slider input[type=range]{flex:1;accent-color:var(--accent)}"
-            + ".slider output{min-width:3.2rem;text-align:right;font-variant-numeric:tabular-nums}"
             + "#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;"
             + "white-space:pre-wrap;background:var(--mantle);border-radius:10px;padding:.7rem;"
             + "overflow-x:auto;color:var(--subtext);margin:.6rem 0 0}"
@@ -874,10 +952,10 @@ final class HttpAdminServer {
     /**
      * Applies one standalone control, the moment it is touched, with no Save button anywhere near it.
      *
-     * <p>Every field in the Behaviour box stands on its own: an overlay switch, a recycle switch and
-     * a time. Nothing there has to agree with anything else, so making the operator tick a box and
-     * then find a button is ceremony, and it is ceremony this page had already dropped for the
-     * brightness slider and the auto-brightness checkbox. The boxes that keep their Save button,
+     * <p>Each of these stands on its own: the overlay switch, the publish interval. Neither has to
+     * agree with anything else, so making the operator tick a box and then find a button is
+     * ceremony, and it is ceremony this page had already dropped for the brightness slider and the
+     * auto-brightness checkbox. The boxes that keep their Save button,
      * Dashboard, MQTT, the web admin and the escape sequences, are the ones whose fields only mean
      * something together: a host with no password, or one sequence saved before the other, is a
      * half-applied setting, and for those a deliberate save is the point.
@@ -975,6 +1053,9 @@ final class HttpAdminServer {
                 }
                 break;
             }
+            // Named after a box that no longer exists, and kept anyway: it is the wire name
+            // POST /api/setting has always accepted. It now covers the stats-overlay switch alone,
+            // the publish interval having been removed. See SETTING_SCRIPT.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -983,18 +1064,6 @@ final class HttpAdminServer {
                 // being set.
                 if (form.containsKey("stats_overlay")) {
                     fresh.statsOverlay = isTrue(form.get("stats_overlay"));
-                }
-                if (form.containsKey("telemetry_interval_seconds")) {
-                    int seconds = parseIntOrDefault(
-                            form.get("telemetry_interval_seconds"), -1);
-                    // Rejected rather than clamped: the presets are the only values a select
-                    // element can ever actually send, so anything else reaching here is not a real
-                    // request, and clamping it to the default would silently substitute a value
-                    // nobody asked for.
-                    if (!TelemetryInterval.isValid(seconds)) {
-                        return "telemetry interval must be 10, 30, 60 or 300 seconds";
-                    }
-                    fresh.telemetryIntervalSeconds = seconds;
                 }
                 break;
             default:
@@ -1120,24 +1189,6 @@ final class HttpAdminServer {
                 .append(" characters. No username.</p>")
                 .append(sectionFormEnd("Save"))
 
-                // No form and no Save button: every control here stands alone and applies itself,
-                // the way the brightness slider and the auto-brightness checkbox already did.
-                // data-setting names the field each control posts; see BEHAVIOUR_SCRIPT.
-                .append("<fieldset><legend>Behaviour</legend>")
-                .append("<label class=\"check\"><input type=\"checkbox\" ")
-                .append("data-setting=\"stats_overlay\" id=\"stats-overlay\"")
-                .append(config.statsOverlay ? " checked" : "")
-                .append("> Show system stats on the dashboard</label>")
-                .append("<label>MQTT update interval")
-                .append("<select data-setting=\"telemetry_interval_seconds\" ")
-                .append("id=\"telemetry-interval\">")
-                .append(telemetryIntervalOption(10, "10 seconds", config.telemetryIntervalSeconds))
-                .append(telemetryIntervalOption(30, "30 seconds", config.telemetryIntervalSeconds))
-                .append(telemetryIntervalOption(60, "60 seconds", config.telemetryIntervalSeconds))
-                .append(telemetryIntervalOption(300, "5 minutes", config.telemetryIntervalSeconds))
-                .append("</select></label>")
-                .append("</fieldset>")
-
                 .append(sectionFormStart("sequences", "Escape sequences"))
                 .append("<input type=\"hidden\" name=\"sequence_baseline\" value=\"")
                 .append(escapeHtml(config.settingsSequence + "|" + config.launcherSequence))
@@ -1174,8 +1225,17 @@ final class HttpAdminServer {
                 .append("placeholder=\"http://homeassistant.local:8123/\">")
                 .append("<button type=\"submit\">Go</button></form></fieldset>")
 
+                // The switch sits under the readout it governs, so "what is this?" and "show
+                // it on the glass too" are one glance apart. No form and no Save button: it stands
+                // alone and applies itself, the way the brightness controls already did.
+                // data-setting names the field it posts; see SETTING_SCRIPT.
                 .append("<fieldset><legend>System stats</legend>")
-                .append("<pre id=\"stats\">loading...</pre></fieldset>")
+                .append("<pre id=\"stats\">loading...</pre>")
+                .append("<label class=\"check\"><input type=\"checkbox\" ")
+                .append("data-setting=\"stats_overlay\" id=\"stats-overlay\"")
+                .append(config.statsOverlay ? " checked" : "")
+                .append("> Show system stats on the dashboard</label>")
+                .append("</fieldset>")
 
                 .append("<fieldset><legend>Legal</legend><div class=\"actions\">")
                 .append(navButton("/privacy", context.getString(R.string.privacy_policy_title)))
@@ -1185,7 +1245,7 @@ final class HttpAdminServer {
                 .append("</div>");
 
         html.append(COMMAND_SCRIPT);
-        html.append(BEHAVIOUR_SCRIPT);
+        html.append(SETTING_SCRIPT);
         html.append(STATS_SCRIPT);
         html.append(THEME_SCRIPT);
         html.append("</main></body></html>");
@@ -1282,11 +1342,23 @@ final class HttpAdminServer {
         // followed it, so the panel reported a brightness nobody was looking at), but a control that
         // moves and is then rejected is its own small lie. The mode label beside it says why, and
         // STATS_SCRIPT keeps both in step with the switch.
-        return "<label class=\"inline\">Brightness"
+        // Stacked, not a flex row. As one row of caption + slider + readout + mode, this was the
+        // widest thing on the page and it could not shrink: a range input has an intrinsic minimum
+        // width, the readout reserved 3.2rem, and the whole row therefore had a min-content width
+        // larger than a narrow phone's column. A grid item defaults to min-width:auto, so the
+        // Display fieldset could not be squeezed to match its neighbours and hung over the right
+        // edge of the screen while every other box lined up. Seen on a 360px-wide phone
+        // 2026-08-23; invisible on a large one, which is exactly why it survived this long. The
+        // grid and the fieldset were both given room to shrink as well; see PAGE_CSS.
+        //
+        // Stacking also puts the readout where it was asked to go, directly under the caption,
+        // where it reads as a value belonging to "Brightness" rather than as a number floating at
+        // the far end of a track.
+        return "<label class=\"slider\">Brightness"
+                + "<span class=\"readout\"><output id=\"brightness-value\">" + percent
+                + "%</output> <small id=\"brightness-mode\">(" + mode + ")</small></span>"
                 + "<input type=\"range\" id=\"brightness\" min=\"1\" max=\"100\" value=\""
-                + percent + "\"" + (sensorInCharge ? " disabled" : "") + ">"
-                + "<output id=\"brightness-value\">" + percent + "%</output>"
-                + " <small id=\"brightness-mode\">(" + mode + ")</small></label>";
+                + percent + "\"" + (sensorInCharge ? " disabled" : "") + "></label>";
     }
 
     /**
@@ -1309,6 +1381,17 @@ final class HttpAdminServer {
     }
 
     /**
+     * The orientation toggle. A command rather than a {@code data-setting}, deliberately: a setting
+     * post only persists, while this has to turn the panel now, and the command path already carries
+     * the change through KioskService to the activity that owns the window.
+     */
+    private String portraitControl() {
+        return "<label class=\"check\"><input type=\"checkbox\" id=\"portrait\""
+                + (KioskConfig.portraitEnabled(context) ? " checked" : "")
+                + "> Use portrait mode</label>";
+    }
+
+    /**
      * The automatic-brightness control: a checkbox showing state, or nothing at all.
      *
      * <p>Omitted entirely on hardware with no ambient light sensor, because a control that cannot work
@@ -1328,17 +1411,6 @@ final class HttpAdminServer {
      * notification shade: {@code Settings.System.SCREEN_BRIGHTNESS_MODE}, system-wide, not an
      * app-local preference.
      */
-    /**
-     * The orientation toggle. A command rather than a {@code data-setting}, deliberately: a setting
-     * post only persists, while this has to turn the panel now, and the command path already carries
-     * the change through KioskService to the activity that owns the window.
-     */
-    private String portraitControl() {
-        return "<label class=\"check\"><input type=\"checkbox\" id=\"portrait\""
-                + (KioskConfig.portraitEnabled(context) ? " checked" : "")
-                + "> Use portrait mode</label>";
-    }
-
     private String autoBrightnessControl() {
         if (!KioskService.hasLightSensor(context)) {
             return "";
@@ -1417,11 +1489,6 @@ final class HttpAdminServer {
     private static String sectionFormEnd(String label) {
         return "<button class=\"primary\" type=\"submit\">" + escapeHtml(label)
                 + "</button></fieldset></form>";
-    }
-
-    private static String telemetryIntervalOption(int seconds, String label, int current) {
-        return "<option value=\"" + seconds + "\""
-                + (seconds == current ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
     }
 
     private static String field(String type, String name, String label, String value) {

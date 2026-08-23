@@ -49,6 +49,20 @@ final class MqttController implements MqttCallbackExtended {
     private final KioskConfig config;
     private final CommandListener commandListener;
     private final String topicPrefix;
+    /**
+     * How often {@link #heartbeat()} reasserts availability, and how long Home Assistant waits
+     * before deciding the panel has gone quiet. See {@link #publishMqttStateEntity} for why the
+     * Last Will alone is not enough.
+     */
+    static final long HEARTBEAT_INTERVAL_MS = 30_000L;
+    private static final int HEARTBEAT_EXPIRY_SECONDS = 90;
+    /**
+     * How long a deliberate shutdown waits for its "offline" to reach the broker. Short: this runs
+     * on the way to disconnecting and a configuration reload must not visibly hang on a broker that
+     * has already gone away.
+     */
+    private static final long FAREWELL_TIMEOUT_MS = 1_000L;
+
     /** Real hardware identity for Home Assistant discovery. See {@link #publishDiscovery()}. */
     private final String deviceManufacturer;
     private final String deviceModel;
@@ -152,7 +166,23 @@ final class MqttController implements MqttCallbackExtended {
         client = null;
         try {
             if (stopping.isConnected()) {
-                publish(topicPrefix + "availability", "offline", 1, true);
+                // Explicitly against `stopping`, and waited on.
+                //
+                // This used to call publish(), which reads the `client` field, and the line above
+                // has just set that field to null. So it returned immediately and silently, and
+                // the farewell has not actually been sent since the null-first ordering was
+                // introduced. The effect was invisible on the panel and glaring in Home Assistant:
+                // a deliberate shutdown sends a DISCONNECT, which by MQTT's own rules tells the
+                // broker *not* to fire the Last Will, so with the "offline" missing too, nothing
+                // ever replaced the retained "online". Change the broker host, or stop the panel
+                // for maintenance, and the dashboard went on reporting it connected forever.
+                // Found 2026-08-23 against a throwaway broker; the log showed the DISCONNECT with
+                // no "offline" before it.
+                //
+                // Waited on because the publish is asynchronous and disconnectForcibly is about to
+                // tear the socket down underneath it. Its quiesce timeout would usually cover this,
+                // but "usually" is what produced the bug above.
+                publishAndWait(stopping, topicPrefix + "availability", "offline");
             }
             // Unconditionally, not just when connected. A client caught mid-CONNECT is neither
             // connected nor idle, and close() refuses to tear one down in that state
@@ -297,6 +327,21 @@ final class MqttController implements MqttCallbackExtended {
         // Delivery acknowledgements do not need a second application-level log.
     }
 
+    /**
+     * Publishes on an explicitly named client and waits for it to land, for the one caller that
+     * cannot use {@link #publish}: {@code stop()} has already cleared the {@code client} field by
+     * the time it says goodbye. Failures are logged and swallowed, because a shutdown that cannot
+     * reach the broker still has to finish shutting down.
+     */
+    private void publishAndWait(MqttAsyncClient target, String topic, String payload) {
+        try {
+            target.publish(topic, payload.getBytes(StandardCharsets.UTF_8), 1, true)
+                    .waitForCompletion(FAREWELL_TIMEOUT_MS);
+        } catch (MqttException exception) {
+            Log.w(TAG, "Could not publish the offline notice before disconnecting", exception);
+        }
+    }
+
     private void publish(String topic, String payload, int qos, boolean retained) {
         MqttAsyncClient activeClient = client;
         if (activeClient == null || !activeClient.isConnected()) {
@@ -374,14 +419,30 @@ final class MqttController implements MqttCallbackExtended {
             // operator most needs to hear about. "connected" below, built from the MQTT Last Will
             // rather than from this field, is the one that actually degrades in every case that
             // matters and is the one to watch.
+            // Two values and only ever two, so a binary_sensor with the connectivity device
+            // class rather than a text sensor: it gets the right icon, the right colour, and it
+            // works in a condition as `is_state(..., 'on')` instead of a string comparison.
+            //
+            // The trade is that its *state* is now `on`/`off` and Home Assistant renders the words
+            // from the device class, which prints them capitalised and gives the panel no say. The
+            // lower-case "connected"/"disconnected" a text sensor could carry is not achievable
+            // through a binary_sensor at all.
+            //
+            // Key, name and unique_id all say network_state, so the entity id does too. The
+            // previous spellings of this entity are withdrawn below rather than aliased.
             JSONObject network = binarySensor(
-                    "Network", "connectivity",
+                    "Network state", "connectivity",
                     "{{ 'ON' if value_json.network.connected else 'OFF' }}");
             network.put("entity_category", "diagnostic");
-            components.put("network", network);
-            components.put("charging", binarySensor(
-                    "Charging", "battery_charging",
-                    "{{ 'ON' if value_json.battery.status in [2, 5] else 'OFF' }}"));
+            components.put("network_state", network);
+            // Four values, not two, so this one stays a text sensor: charging, discharging,
+            // charged, on hold. Straight from battery.charge_state, which is
+            // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
+            // so the three surfaces cannot drift apart. It is empty when the battery has no
+            // reading at all, which would be a blank state rather than an honest one.
+            components.put("battery_state", sensor(
+                    "Battery state", null, null, null,
+                    "{{ value_json.battery.charge_state or 'unknown' }}"));
 
             // Controls, not just readings. Discovery published sensors only, so a Home Assistant
             // user could see the panel but not touch it without hand-writing mqtt.publish calls in
@@ -432,7 +493,7 @@ final class MqttController implements MqttCallbackExtended {
             components.put("reboot", button("Reboot tablet", "system.reboot"));
             discovery.put("cmps", components);
 
-            publishConnectedEntity(device, origin);
+            publishMqttStateEntity(device, origin);
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
 
@@ -457,6 +518,28 @@ final class MqttController implements MqttCallbackExtended {
             }
             stale.put("auto_recycle", withdrawn("switch"));
             stale.put("recycle_time", withdrawn("time"));
+            // Earlier spellings of the two entities above. "network" and "charging" were the
+            // original binary_sensors; both are gone, the first renamed to network_state and the
+            // second replaced by battery_state. Withdrawn under their own keys, which is safe
+            // precisely because nothing in the payload that follows uses those keys again: a key
+            // that appears withdrawn here and complete there would delete and recreate a live
+            // entity on every discovery run, a visible flicker each time Home Assistant restarts.
+            stale.put("network", withdrawn("binary_sensor"));
+            stale.put("charging", withdrawn("binary_sensor"));
+            // And the text-sensor spelling of network_state, which is the *same key* the live
+            // binary_sensor uses. That looks like the flicker hazard described above and is not
+            // one, because a discovered component is identified by platform *and* key, never by
+            // key alone. That is exactly why Home Assistant requires the platform in a removal
+            // payload: this line retires the (sensor, network_state) discovery and leaves the
+            // (binary_sensor, network_state) one in the payload below untouched.
+            //
+            // Needed because that identity rule cuts both ways. When network_state changed from
+            // sensor to binary_sensor, the old discovery was never told it was gone, so the text
+            // sensor stayed subscribed to the state topic and kept updating, and Home Assistant
+            // will not let anyone delete an entity an active discovery still provides. Reported
+            // from the dashboard 2026-08-23: a "Network" entity that could not be removed and was
+            // still receiving values. Merely omitting a component never removes it; only this does.
+            stale.put("network_state", withdrawn("sensor"));
             JSONObject removal = new JSONObject(discovery.toString());
             removal.put("cmps", stale);
             publish(topic, removal.toString(), 1, true);
@@ -468,35 +551,94 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * A plain-text "connected"/"disconnected" reading of the same MQTT Last Will every other
-     * entity's availability already relies on, added 2026-08-20 at the user's request.
+     * Whether the broker currently holds a session with this panel, as a diagnostic binary sensor
+     * beside Network state. Two values and only ever two, so the connectivity device class fits;
+     * the same trade applies as there, the rendered words come from Home Assistant and are
+     * capitalised.
      *
-     * <p>Deliberately a standalone, classic MQTT discovery message (its own
-     * {@code homeassistant/sensor/<id>/config} topic) rather than one more component in the
-     * device-based {@code cmps} bundle above. A component inside that bundle inherits the device's
-     * own {@code availability_topic}, so it would itself be marked "unavailable" the instant the
-     * Last Will fires, which is precisely the outcome this entity exists to avoid: an MQTT entity
-     * with no {@code availability_topic} configured at all is, by the integration's own default,
-     * always considered available, so this one just shows the templated text and nothing ever
-     * greys it out.
+     * <p>Deliberately a standalone, classic discovery message rather than one more component in
+     * the device-based {@code cmps} bundle. A component in that bundle inherits the device's
+     * {@code availability_topic}, so it would be marked unavailable the instant the Last Will
+     * fires, which is precisely the outcome this entity exists to report. An MQTT entity with no
+     * {@code availability_topic} of its own is always considered available, so this one keeps
+     * showing its state while every other entity greys out around it.
      *
-     * <p>Its {@code state_topic} is the very same topic the Last Will publishes to. No second
-     * signal is invented: "online"/"offline" is simply rendered as "connected"/"disconnected" for
-     * whoever glances at the dashboard, while every other entity keeps going "unavailable" through
-     * the ordinary device-level mechanism exactly as before.
+     * <p>Its {@code state_topic} is the topic the Last Will writes to, so no second signal is
+     * invented: {@code online}/{@code offline} map straight onto on/off.
+     *
+     * <p>The half the Last Will cannot cover, and why {@code expire_after} is here. A will is
+     * published by the <em>broker</em>, so it fires only for a session the broker was holding and
+     * then lost ungracefully: the panel loses power, crashes, or drops off the network, detected
+     * one and a half keep-alives later, about 45s at the 30s keep-alive set in start(). It cannot
+     * fire when there is no session to lose. A panel that never reaches the broker at all (wrong
+     * host, broker down, refused credentials) leaves the retained "online" from its last good
+     * session on this topic and every dashboard goes on claiming it is connected. Neither can it
+     * fire when the broker itself is what died, since the process that owed us the will is the one
+     * that went away, and a broker with persistence restores that same retained "online" on the way
+     * back up. So the panel beats on this topic (see {@link #heartbeat()}) and this entity expires
+     * if the beat stops, at three missed beats: long enough that one dropped publish is not an
+     * alarm, short enough to be useful.
+     *
+     * <p>An expired entity reads unavailable rather than "disconnected", and that is the honest
+     * rendering: nobody has spoken for this panel, and nothing at this end can tell a dead panel
+     * from an unreachable broker, because both are silence.
      */
-    private void publishConnectedEntity(JSONObject device, JSONObject origin) throws JSONException {
-        JSONObject connected = new JSONObject();
-        connected.put("name", "Connected");
-        connected.put("unique_id", config.deviceId + "_connected");
-        connected.put("state_topic", topicPrefix + "availability");
-        connected.put("value_template",
-                "{{ 'connected' if value == 'online' else 'disconnected' }}");
-        connected.put("dev", device);
-        connected.put("o", origin);
-        connected.put("qos", 0);
-        publish("homeassistant/sensor/" + config.deviceId + "_connected/config",
-                connected.toString(), 1, true);
+    private void publishMqttStateEntity(JSONObject device, JSONObject origin) throws JSONException {
+        JSONObject state = new JSONObject();
+        state.put("name", "MQTT state");
+        state.put("unique_id", config.deviceId + "_mqtt_state");
+        state.put("state_topic", topicPrefix + "availability");
+        state.put("device_class", "connectivity");
+        state.put("payload_on", "online");
+        state.put("payload_off", "offline");
+        state.put("entity_category", "diagnostic");
+        state.put("expire_after", HEARTBEAT_EXPIRY_SECONDS);
+        state.put("dev", device);
+        state.put("o", origin);
+        state.put("qos", 0);
+        publish("homeassistant/binary_sensor/" + config.deviceId + "_mqtt_state/config",
+                state.toString(), 1, true);
+
+        // The same entity under its two earlier names, deleted rather than left to rot. Classic
+        // discovery removes an entity by publishing an empty retained payload to its config topic,
+        // which also clears the retained config so a fresh Home Assistant never sees it. Both were
+        // sensors on the sensor/ topic tree, so neither is reachable from the binary_sensor topic
+        // above and neither would ever go away on its own.
+        publish("homeassistant/sensor/" + config.deviceId + "_connected/config", "", 1, true);
+    }
+
+    /**
+     * Reasserts "online" on the availability topic, so the MQTT state entity above has something
+     * to expire against.
+     *
+     * <p>Called on a fixed cadence rather than from {@link #publishState}: the telemetry interval
+     * is an operator preset that reaches five minutes, and tying liveness detection to it would
+     * mean a panel could be unreachable for twelve minutes before anything said so. It is a
+     * six-byte retained publish; at {@link #HEARTBEAT_INTERVAL_MS} that is well under the traffic
+     * the state topic already generates.
+     *
+     * <p>Silently does nothing when there is no live session, which is not a failure: it is the
+     * condition the entity is there to detect, and the absence of this publish is the signal.
+     */
+    void heartbeat() {
+        MqttAsyncClient active = client;
+        if (active == null || !active.isConnected()) {
+            return;
+        }
+        publish(topicPrefix + "availability", "online", 1, true);
+    }
+
+    private JSONObject binarySensor(
+            String name, String deviceClass, String valueTemplate) throws JSONException {
+        JSONObject sensor = new JSONObject();
+        sensor.put("p", "binary_sensor");
+        sensor.put("name", name);
+        sensor.put("unique_id", uniqueId(name));
+        sensor.put("device_class", deviceClass);
+        sensor.put("value_template", valueTemplate);
+        sensor.put("payload_on", "ON");
+        sensor.put("payload_off", "OFF");
+        return sensor;
     }
 
     private JSONObject sensor(
@@ -593,17 +735,4 @@ final class MqttController implements MqttCallbackExtended {
         return config.deviceId + "_" + name.toLowerCase(java.util.Locale.ROOT).replace(' ', '_');
     }
 
-    private JSONObject binarySensor(
-            String name, String deviceClass, String valueTemplate) throws JSONException {
-        JSONObject sensor = new JSONObject();
-        sensor.put("p", "binary_sensor");
-        sensor.put("name", name);
-        sensor.put("unique_id", config.deviceId + "_" + name
-                .toLowerCase(java.util.Locale.ROOT).replace(' ', '_'));
-        sensor.put("device_class", deviceClass);
-        sensor.put("value_template", valueTemplate);
-        sensor.put("payload_on", "ON");
-        sensor.put("payload_off", "OFF");
-        return sensor;
-    }
 }

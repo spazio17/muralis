@@ -113,11 +113,26 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
   API since 24) recovers CPU/thermal readings once the app is device owner, bypassing the denied
-  procfs paths entirely. Telemetry publishes on a configurable interval (10/30/60/300s) and early,
-  on-change, for a short allowlist of fields (battery, charging, memory pressure, thermal status)
-  that change rarely enough for an early publish not to spam the broker. A "Connected"/
-  "disconnected" entity is backed directly by the broker's Last Will rather than by a periodic
+  procfs paths entirely. Telemetry publishes on a **fixed 60-second interval** and early, on-change,
+  for a short allowlist of fields (battery, charging, memory pressure, thermal status) that change
+  rarely enough for an early publish not to spam the broker. The interval was four presets
+  (10/30/60/300s) with a button row on the tablet and a menu in the web admin; both are gone, along
+  with the stored field, for the reason the "Auto recycle" switch went: nobody can set it from an
+  informed position, and it had to be kept in step across three surfaces to do nothing an operator
+  wanted. Sixty rather than the thirty it replaced, because every field that behaves like an event
+  already publishes on change, leaving the periodic tick only the readings that drift (battery
+  temperature, available memory, available storage, network state). Liveness does not ride on it:
+  that is the 30-second heartbeat plus `expire_after` on the one entity that needs it, so
+  lengthening this cannot make anything read unavailable. An "MQTT state"
+  connectivity binary_sensor is backed directly by the broker's Last Will rather than by a periodic
   field, so it reflects the tablet being gone even when nothing is left running to publish `false`.
+  The Last Will only covers a session the broker *held and lost*, so it says nothing when the panel
+  never reached the broker or when the broker itself died; the panel therefore also beats "online"
+  onto the availability topic every 30s and that entity carries `expire_after`, which turns "nobody
+  has spoken for this panel" into `unavailable` instead of a stale `on`. Entity naming rule:
+  discovery key, `unique_id` and name all say the same thing, so a rename changes the entity id
+  too. Renames are done by withdrawing the old key and publishing the new one, never by aliasing a
+  new name onto an old `unique_id`.
 - **The escape hatch** is a user-recorded corner-tap sequence, three to twelve taps across the four
   screen corners, tail-matched with a maximum gap between taps, and recorded separately for "open
   settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture
@@ -129,8 +144,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device owner, so
   HOME reliably returns to it.
 - **A setting changed on any surface must be visible on all of them, quickly.** Three surfaces can
-  write the same settings, so the rules are: every Behaviour control, the brightness pair and the
-  admin password apply the moment they are touched, on the tablet and in the web admin alike; only
+  write the same settings, so the rules are: the stats-overlay switch, portrait, the brightness pair
+  and the admin password apply the moment they are touched, on the
+  tablet and in the web admin alike; only
   the connection fields (dashboard URL, device id, broker, ports) wait for a save button, because
   applying those per keystroke would rebind sockets and restart the MQTT client. Anything applied
   outside `KioskCommandDispatcher` must also call `KioskService.publishTelemetrySoon`, since only

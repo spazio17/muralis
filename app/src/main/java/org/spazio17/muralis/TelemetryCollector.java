@@ -38,7 +38,12 @@ final class TelemetryCollector {
         JSONObject root = new JSONObject();
         try {
             root.put("schema", 1);
+            // Both, and named for what they are. "uptime_ms" stays the device's age so nothing
+            // already reading it changes meaning; the readouts show app_uptime_ms, because the
+            // nightly restart takes the process down and not the device, and a row that cannot
+            // move when the panel restarts is the one row nobody can use to check that it did.
             root.put("uptime_ms", SystemClock.elapsedRealtime());
+            root.put("app_uptime_ms", KioskService.appUptimeMs());
             root.put("battery", batterySnapshot());
             root.put("memory", memorySnapshot());
             root.put("storage", storageSnapshot());

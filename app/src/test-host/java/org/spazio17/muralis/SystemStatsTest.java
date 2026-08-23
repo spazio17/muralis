@@ -107,13 +107,14 @@ public final class SystemStatsTest {
         sample.loadAverage = new double[] {1.25, 1.0, 0.8};
 
         SystemStats.RuntimeFacts facts = new SystemStats.RuntimeFacts();
-        facts.uptimeMs = 3_600_000 * 26;
+        facts.appUptimeMs = 3_600_000 * 26;
         facts.batteryPercent = 87.0;
         facts.charging = true;
         // A charging panel is a plugged-in panel; the cable is what the label keys off.
         facts.plugged = true;
         facts.wifiRssiDbm = -52;
         facts.rendererDeaths = 2;
+        facts.lastRendererDeathAgoMs = 300_000;
         facts.lastPageFinishedAgoMs = 120_000;
 
         // Charge state, which a bare percentage cannot express. "charging" alone was wrong twice
@@ -124,10 +125,8 @@ public final class SystemStatsTest {
         charge.plugged = true;
         charge.charging = true;
         require(SystemStats.chargeStateLabel(charge).equals("charging"), "plugged and rising");
-        require(SystemStats.chargeStateShort(charge).equals("chg"), "short form for charging");
         charge.full = true;
         require(SystemStats.chargeStateLabel(charge).equals("charged"), "full on mains is charged");
-        require(SystemStats.chargeStateShort(charge).equals("full"), "short form for full");
         charge.full = false;
         charge.charging = false;
         require(SystemStats.chargeStateLabel(charge).equals("on hold"), "plugged, taking nothing");
@@ -139,28 +138,46 @@ public final class SystemStatsTest {
         charge.full = true;
         require(SystemStats.chargeStateLabel(charge).equals("discharging"),
                 "no cable beats a stale charging status");
-        require(SystemStats.chargeStateShort(charge).equals("bat"), "short form ignores it too");
         charge.charging = false;
         charge.full = false;
-        require(SystemStats.chargeStateShort(charge).equals("bat"), "short form on battery");
+        require(SystemStats.chargeStateLabel(charge).equals("discharging"),
+                "no cable, no charging claim");
         charge.batteryPercent = -1;
         require(SystemStats.chargeStateLabel(charge).isEmpty(), "no reading, no claim");
 
         String overlay = SystemStats.formatOverlay(sample, facts);
         require(overlay.contains("CPU 23%"), "cpu missing from overlay: " + overlay);
         require(overlay.contains("1.50GHz"), "frequency missing from overlay: " + overlay);
-        require(overlay.contains("zram"), "zram missing from overlay: " + overlay);
-        require(overlay.contains("1d2h"), "uptime missing from overlay: " + overlay);
-        require(overlay.contains("bat 87% chg"), "battery missing from overlay: " + overlay);
+        require(overlay.contains("ZRAM"), "zram missing from overlay: " + overlay);
+        require(overlay.contains("UP 1d2h"), "uptime missing from overlay: " + overlay);
+        // Spelled out, not abbreviated: "chg" and "bat" were a guess dressed as a reading.
+        require(overlay.contains("BAT 87% charging"), "battery missing from overlay: " + overlay);
         require(overlay.contains("-52dBm"), "wifi missing from overlay: " + overlay);
-        require(overlay.contains("renderer deaths 2"), "renderer deaths missing: " + overlay);
+        require(overlay.contains("WEB 2 deaths  5m ago"), "renderer deaths missing: " + overlay);
+
+        // The row order is a contract, not an accident: the web admin's System stats box renders
+        // the same eight in the same sequence, and somebody comparing the panel with the admin
+        // page has to be reading the same thing in the same place. See formatOverlayHtml.
+        String[] labels = {"CPU ", "RAM ", "ZRAM ", "TEMP ", "BAT ", "IP ", "WEB ", "UP "};
+        String[] rows = overlay.split("\n");
+        require(rows.length == labels.length,
+                "expected " + labels.length + " overlay rows, got " + rows.length + ": " + overlay);
+        for (int i = 0; i < labels.length; i++) {
+            require(rows[i].startsWith(labels[i]),
+                    "row " + i + " should start with " + labels[i] + ": " + rows[i]);
+        }
 
         // An all-unknown sample is what an enforcing-SELinux device would produce. It must still
         // format, and must not invent zeroes.
         String unknown = SystemStats.formatOverlay(
                 new SystemStats.Sample(), new SystemStats.RuntimeFacts());
         require(unknown.contains("CPU --%"), "unknown sample formatted as a number: " + unknown);
-        require(unknown.contains("page never"), "never-loaded page misreported: " + unknown);
+        require(unknown.contains("WEB 0 deaths  never"),
+                "a WebView that has never died misreported: " + unknown);
+        require(unknown.split("\n").length == labels.length,
+                "an unknown sample must still produce every row: " + unknown);
+        require(unknown.contains("BAT --") && unknown.contains("IP --"),
+                "missing figures must read -- rather than drop their row: " + unknown);
     }
 
     private static void testColorThresholds() {
@@ -209,7 +226,7 @@ public final class SystemStatsTest {
         sample.gpuTemperatureC = 39.0;
 
         SystemStats.RuntimeFacts facts = new SystemStats.RuntimeFacts();
-        facts.uptimeMs = 7_200_000;
+        facts.appUptimeMs = 7_200_000;
         facts.rendererDeaths = 3;
         facts.lastPageError = "HTTP 502";
         // The error must carry an age now: an error with no timestamp is treated as not current,
@@ -219,6 +236,12 @@ public final class SystemStatsTest {
 
         String html = SystemStats.formatOverlayHtml(sample, facts);
         require(html.contains("CPU"), "cpu row missing: " + html);
+        require(html.split("<br>").length == 9,
+                "eight rows plus the error row expected: " + html);
+        require(html.indexOf("BAT") < html.indexOf("IP")
+                        && html.indexOf("IP") < html.indexOf("WEB")
+                        && html.indexOf("WEB") < html.indexOf("UP"),
+                "rows are out of order: " + html);
         require(html.contains(SystemStats.cpuColor(92.0)), "cpu value not coloured by threshold");
         require(html.contains(SystemStats.memoryColor(95)), "near-full memory not coloured red");
         require(html.contains("ERR"), "error row missing when an error is recorded");
@@ -313,7 +336,7 @@ public final class SystemStatsTest {
         require(!SystemStats.pageErrorIsCurrent(stale), "an error older than the last load is stale");
         require(!SystemStats.formatOverlayHtml(sample, stale).contains("ERR"),
                 "a stale error must not be drawn");
-        require(!SystemStats.formatOverlay(sample, stale).contains("last error"),
+        require(!SystemStats.formatOverlay(sample, stale).contains("ERR "),
                 "a stale error must not appear in the text overlay either");
 
         // The reverse: an error newer than the last successful load is real and must show.

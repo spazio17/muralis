@@ -45,6 +45,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** Fast enough that the on-screen overlay reads as live rather than as a stale placard. */
     private static final long STATS_SAMPLE_INTERVAL_MS = 2_000L;
     /**
+     * How often the full state document is published, and it is fixed rather than configurable.
+     *
+     * <p>There used to be four presets (10/30/60/300s) with a button row on the tablet and a menu in
+     * the web admin. Both are gone, for the reason the "Auto recycle" switch and the "Recycle time"
+     * clock went: it is a control nobody can set from an informed position, and it had to be kept in
+     * step across three surfaces to do nothing an operator wanted.
+     *
+     * <p>Sixty seconds rather than the thirty it replaced, because of what this timer is actually
+     * for. Everything that behaves like an <em>event</em> already publishes the moment it happens:
+     * battery level, charge state, low memory and thermal status through the change watch in
+     * {@link #statsTask}, and every accepted command through {@link #dispatch}. What is left to the
+     * periodic tick is the handful of readings that drift rather than jump, battery temperature,
+     * available memory, available storage and network state, and a minute is ample for those on a
+     * panel bolted to a wall. Liveness detection does not ride on this at all: that is
+     * {@link MqttController#heartbeat} on its own 30-second cadence with {@code expire_after} on the
+     * one entity that needs it, so lengthening this cannot make anything read unavailable.
+     */
+    private static final long TELEMETRY_INTERVAL_MS = 60_000L;
+    /**
      * How long after an accepted command the panel republishes its state. Long enough for the
      * command's effect to be readable, short enough that a Home Assistant control does not visibly
      * spring back before the truth arrives.
@@ -110,6 +129,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
             long now = KioskRuntimeState.nowMs();
             maybeMaintainDashboard(now);
 
+            // Liveness for Home Assistant, on this 2-second sampler rather than on the telemetry
+            // interval, because that interval is an operator preset that reaches five minutes and
+            // nothing about detecting a dead panel should inherit it. See
+            // MqttController.heartbeat, which is a no-op when there is no session, that silence
+            // being exactly the signal.
+            MqttController heartbeatClient = mqttController;
+            if (heartbeatClient != null
+                    && now - lastHeartbeatMs >= MqttController.HEARTBEAT_INTERVAL_MS) {
+                lastHeartbeatMs = now;
+                heartbeatClient.heartbeat();
+            }
+
             // Battery, charging, low memory and thermal status are worth publishing the moment
             // they change rather than waiting for the periodic interval, which can now be set as
             // high as five minutes. Deliberately narrow: cpu/memory-available/Wi-Fi signal jitter on
@@ -129,6 +160,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             telemetryHandler.postDelayed(this, STATS_SAMPLE_INTERVAL_MS);
         }
     };
+
+    /** When {@link MqttController#heartbeat} last ran; see the sampler above. */
+    private long lastHeartbeatMs;
 
     private final Runnable stateEchoTask = new Runnable() {
         @Override
@@ -155,12 +189,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 lastPublishedWatch = telemetryCollector == null
                         ? lastPublishedWatch : telemetryCollector.readWatch();
             }
-            // Read live rather than cached, the same way statsOverlayEnabled already is, so a
-            // changed preset takes effect on this task's own next tick with no
-            // restart of the telemetry thread. Via the narrow reader, not load(), which would
-            // decrypt every SecretStore entry on each tick just to reach one int.
-            int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskService.this);
-            telemetryHandler.postDelayed(this, seconds * 1000L);
+            telemetryHandler.postDelayed(this, TELEMETRY_INTERVAL_MS);
         }
     };
 
@@ -738,8 +767,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("has_light_sensor", hasLightSensor(this));
             applied.put("auto_brightness", isAutoBrightnessOn(this));
             stats.put("display", displaySnapshot());
-            applied.put("telemetry_interval_seconds",
-                    TelemetryInterval.clampOrDefault(config.telemetryIntervalSeconds));
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("mqtt_host", config.mqttHost);
@@ -822,10 +849,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return display;
     }
 
+    /**
+     * How long this process has been alive, on the same monotonic clock as everything else here.
+     *
+     * <p>{@code Process.getStartElapsedRealtime()} is API 24, below this app's minSdk, so it needs no
+     * fallback branch. It is what makes the nightly restart visible: the process exits, so this drops
+     * to zero while device uptime carries on climbing.
+     */
+    static long appUptimeMs() {
+        return SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime();
+    }
+
     private SystemStats.RuntimeFacts collectRuntimeFacts() {
         SystemStats.RuntimeFacts facts = new SystemStats.RuntimeFacts();
-        facts.uptimeMs = SystemClock.elapsedRealtime();
+        facts.appUptimeMs = appUptimeMs();
         facts.rendererDeaths = KioskRuntimeState.rendererDeaths();
+        facts.lastRendererDeathAgoMs = KioskRuntimeState.lastRendererDeathAgoMs();
         facts.lastPageFinishedAgoMs = KioskRuntimeState.lastPageFinishedAgoMs();
         facts.lastPageError = KioskRuntimeState.lastPageError();
         facts.lastPageErrorAgoMs = KioskRuntimeState.lastPageErrorAgoMs();

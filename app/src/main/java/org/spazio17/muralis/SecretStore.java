@@ -75,12 +75,6 @@ final class SecretStore {
         }
     }
 
-    /** Empty for anything unreadable, which is what most callers want. See {@link #getOrNull}. */
-    String get(String name) {
-        String value = getOrNull(name);
-        return value == null ? "" : value;
-    }
-
     /**
      * The stored secret, {@code ""} when nothing is stored, or {@code null} when a value IS stored
      * but could not be decrypted on this attempt.

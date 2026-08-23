@@ -137,6 +137,42 @@ final class KioskTheme {
         return layered;
     }
 
+    /**
+     * The pressed counterpart of {@link #raisedButton}: the same face, pushed down onto its edge so
+     * the coloured lip disappears and the button reads as depressed.
+     *
+     * <p>The inset moves from the bottom to the top, which is the drawable-level equivalent of the
+     * web admin's {@code :active { transform: translateY(2px); box-shadow: none }}. Both surfaces
+     * therefore react the same way to a press, which is the point: the tablet's buttons had no press
+     * feedback at all, because {@code raiseSlightly} turns off the platform's own elevation animator
+     * to hold a constant lift and nothing replaced it.
+     */
+    Drawable pressedButton(GradientDrawable face, int edgeColor, float cornerRadiusPx, int edgePx) {
+        GradientDrawable edge = new GradientDrawable();
+        edge.setShape(GradientDrawable.RECTANGLE);
+        edge.setColor(edgeColor);
+        edge.setCornerRadius(cornerRadiusPx);
+        LayerDrawable layered = new LayerDrawable(new Drawable[]{edge, face});
+        layered.setLayerInset(1, 0, edgePx, 0, 0);
+        return layered;
+    }
+
+    /**
+     * Picks between a resting and a pressed background.
+     *
+     * <p>The two must be separate {@link Drawable} instances rather than one reused twice: a drawable
+     * carries its own bounds and state, so sharing one between both entries of a
+     * {@link StateListDrawable} makes the pressed entry drag the resting one's geometry around with
+     * it.
+     */
+    Drawable pressable(Drawable resting, Drawable pressed) {
+        android.graphics.drawable.StateListDrawable states =
+                new android.graphics.drawable.StateListDrawable();
+        states.addState(new int[]{android.R.attr.state_pressed}, pressed);
+        states.addState(new int[0], resting);
+        return states;
+    }
+
     /** The same colour, scaled darker by {@code factor} (0-1), for a bevel-style bottom edge. */
     static int darken(int color, float factor) {
         float[] hsv = new float[3];

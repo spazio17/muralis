@@ -130,13 +130,12 @@ public final class KioskActivity extends Activity {
     private static final int FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER = 3;
     private static final long OVERLAY_REFRESH_MS = 1_000L;
     /**
-     * How often the configuration screen re-reads its Behaviour controls from storage, so a change
-     * made over MQTT or from the web admin is reflected here. Matches the web admin's own poll.
+     * How often the configuration screen re-reads its instantly applied controls from storage, so
+     * a change made over MQTT or from the web admin is reflected here. Matches the web admin's own
+     * poll.
      */
-    private static final long BEHAVIOUR_SYNC_INTERVAL_MS = 5_000L;
+    private static final long LIVE_SETTING_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
-    private static final int ADMIN_ESCAPE_TAPS = 9;
-    private static final long ADMIN_ESCAPE_WINDOW_MS = 5_000L;
     private static final int ADMIN_ESCAPE_ZONE_DP = 96;
     /**
      * Smallest visible-frame reduction treated as a keyboard rather than a system bar or cutout.
@@ -207,6 +206,12 @@ public final class KioskActivity extends Activity {
     private WebView webView;
     private View blackout;
     private TextView statsOverlay;
+    /**
+     * The System stats card's readout on the configuration screen. Distinct from
+     * {@link #statsOverlay}, which is the block drawn over the dashboard; the two are never on
+     * screen at the same time but are fed the same text by the same tick.
+     */
+    private TextView configStatsView;
     private TextView networkWaitLabel;
     private NetworkGate dashboardGate;
     private TextView brightnessModeNote;
@@ -239,14 +244,20 @@ public final class KioskActivity extends Activity {
     private boolean unlockReceiverRegistered;
     private boolean configurationVisible;
     /**
-     * Set while {@link #behaviourSyncTask} is writing a control's state back from storage, so the
-     * change listener that would normally save it recognises the write as its own echo. Without
+     * Set while {@link #liveSettingSyncTask} is writing a control's state back from storage, so
+     * the change listener that would normally save it recognises the write as its own echo. Without
      * this, following an external change would immediately re-save it, and a value being changed
      * from two surfaces at once could ping-pong.
      */
-    private boolean syncingBehaviourControls;
-    /** Re-reads the Behaviour settings so a change from MQTT or the web admin shows up here too. */
-    private Runnable behaviourSyncTask;
+    private boolean syncingLiveControls;
+    /** Re-reads the live settings so a change from MQTT or the web admin shows up here too. */
+    private Runnable liveSettingSyncTask;
+    /**
+     * How to draw the screen that is currently up, so a rotation can redraw it. Null on the
+     * dashboard, which needs no redraw: a WebView reflows itself, and rebuilding it would reload
+     * the page. See {@link #onConfigurationChanged}.
+     */
+    private Runnable currentScreen;
     private final java.util.List<EscapeSequence.Tap> escapeTaps = new java.util.ArrayList<>();
     private boolean recorderVisible;
     private boolean recordingForLauncher;
@@ -415,6 +426,17 @@ public final class KioskActivity extends Activity {
                 if (enabled) {
                     statsOverlay.setText(renderOverlay());
                 }
+                anythingToRepaint = true;
+            }
+            // Dropped as soon as the screen holding it has gone, rather than waiting for something
+            // to remember to clear it: About and the legal pages replace the content view without
+            // touching this field, and repainting a detached view tree once a second is a leak
+            // that keeps the whole configuration screen alive behind the dashboard.
+            if (configStatsView != null && !configStatsView.isAttachedToWindow()) {
+                configStatsView = null;
+            }
+            if (configStatsView != null) {
+                configStatsView.setText(renderOverlay());
                 anythingToRepaint = true;
             }
             // The configuration screen's chip used to be a snapshot taken when the screen was built,
@@ -712,15 +734,54 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * Redraws whichever screen is up when the panel is turned.
+     *
+     * <p>The manifest lists {@code orientation|screenSize|screenLayout|smallestScreenSize} in
+     * {@code configChanges}, so Android does not recreate this activity, and nothing here used to
+     * react to the change either. Every layout decision that reads {@code screenWidthDp} was
+     * therefore frozen at whatever the width had been when the screen was built: {@link #cardGrid}
+     * kept two lanes in portrait, or one lane in landscape with every card and every field stretched
+     * the full width, and {@link #actionRow} kept the wrong axis. The MQTT interval buttons are the
+     * most visible casualty, since they share a row at weight 1 and simply elongate. Leaving the
+     * screen for the dashboard and coming back fixed it, because that rebuilt the view tree, which
+     * is precisely what this does without making the operator do it.
+     *
+     * <p>Not {@code recreate()}: this activity is the HOME activity and is holding lock task, and
+     * tearing it down to rebuild a form is a much bigger hammer than the problem needs.
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        Runnable redraw = currentScreen;
+        if (redraw == null) {
+            return;
+        }
+        // Posted rather than run inline: getConfiguration() is updated before this callback, but
+        // the window has not been resized yet, and a view tree built against the old window size
+        // measures against it once and reads as stretched all over again.
+        mainHandler.post(() -> {
+            if (currentScreen == redraw) {
+                redraw.run();
+            }
+        });
+    }
+
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            String zone = cornerZoneAt(event.getX(), event.getY());
+            // Screen coordinates, because cornerZoneAt compares against the content view's position
+            // on screen. getX/getY are window-relative and were part of the offset that made the
+            // recorder's targets miss on a device with visible system bars.
+            String zone = cornerZoneAt(event.getRawX(), event.getRawY());
             if (recorderVisible) {
                 if (zone != null) {
                     recordZone(zone);
                 }
-                // Swallow every touch while recording so the sequence is captured cleanly.
+                // Passed on rather than consumed: the recorder's own Save, Start over and Cancel
+                // buttons are ordinary views inside this screen and have to keep receiving touches.
+                // The corner targets are plain labels with no click listener, so letting the event
+                // through costs nothing.
                 return super.dispatchTouchEvent(event);
             }
             // Deliberately not gated on configurationVisible: an escape hatch that stops working
@@ -764,14 +825,43 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** Which corner a touch landed in, or null for anywhere else on the screen. */
+    /**
+     * Which corner a touch landed in, or null for anywhere else on the screen.
+     *
+     * <p>Measured against the <b>content view</b>, in screen coordinates, and that is the whole
+     * point. It used to measure against the decor view, which spans the window including the system
+     * bars, while the recorder draws its four corner targets inside the content view, which is inset
+     * below the status bar and above the navigation bar. On a device-owner install the two are the
+     * same rectangle, because every screen is fullscreen, so nothing looked wrong. Where the bars are
+     * visible they differ by exactly the height of those bars, and the targets end up offset from the
+     * region that listens for them.
+     *
+     * <p>Measured on the API 28 phone 2026-08-23: the bottom-left target was drawn from y=1839 to
+     * y=2120 with its label at y=1982, while the listening region started at y=1992
+     * (2280 minus 96dp). A tap on the label recorded nothing; the same tap 120px lower recorded. So
+     * the half of the button a person actually aims at was dead, which is why recording a
+     * combination worked on the tablet and almost never worked on the phone.
+     *
+     * <p>Anchoring to the content view keeps the two in step on both: fullscreen or not, the corner
+     * that listens is the corner that is drawn.
+     */
     private String cornerZoneAt(float x, float y) {
-        View decor = getWindow().getDecorView();
+        View content = findViewById(android.R.id.content);
+        if (content == null || content.getWidth() == 0 || content.getHeight() == 0) {
+            return null;
+        }
+        int[] origin = new int[2];
+        content.getLocationOnScreen(origin);
+        x -= origin[0];
+        y -= origin[1];
+        if (x < 0 || y < 0 || x > content.getWidth() || y > content.getHeight()) {
+            return null;
+        }
         int zone = dp(ADMIN_ESCAPE_ZONE_DP);
         boolean left = x <= zone;
-        boolean right = x >= decor.getWidth() - zone;
+        boolean right = x >= content.getWidth() - zone;
         boolean top = y <= zone;
-        boolean bottom = y >= decor.getHeight() - zone;
+        boolean bottom = y >= content.getHeight() - zone;
         if (left && top) {
             return EscapeSequence.TOP_LEFT;
         }
@@ -903,8 +993,10 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Applies one Behaviour-card setting immediately, the way the web admin's equivalent controls
-     * already do, and tells Home Assistant about it without waiting for the next telemetry tick.
+     * Applies one instantly-applied setting the moment it is touched, the way the web admin's
+     * equivalent controls already do, and tells Home Assistant about it without waiting for the
+     * next telemetry tick. These controls sit in the card each one is about rather than collected
+     * into a box of their own, so this is what they have in common, not where they are.
      *
      * <p>Three things here are load-bearing. It loads a **fresh** {@link KioskConfig} instead of
      * mutating the snapshot the screen was built from, so a concurrent change from another surface
@@ -914,9 +1006,9 @@ public final class KioskActivity extends Activity {
      * Home Assistant reflects the new value in under a second rather than up to a full interval
      * later, the same reason {@code KioskService.dispatch} republishes after an accepted command.
      */
-    private void applyBehaviourSetting(java.util.function.Consumer<KioskConfig> change) {
-        if (syncingBehaviourControls) {
-            // Our own write, echoed back by behaviourSyncTask. Saving it again would be harmless
+    private void applyLiveSetting(java.util.function.Consumer<KioskConfig> change) {
+        if (syncingLiveControls) {
+            // Our own write, echoed back by liveSettingSyncTask. Saving it again would be harmless
             // but pointless, and would republish state for a change nobody made.
             return;
         }
@@ -988,7 +1080,7 @@ public final class KioskActivity extends Activity {
         }
 
 
-        LinearLayout mqttCard = card(theme, "MQTT (optional)");
+        LinearLayout mqttCard = card(theme, "MQTT");
         EditText brokerInput = themedInput(theme, config.mqttHost, false);
         addField(mqttCard, theme, "Broker host", brokerInput);
         EditText portInput = themedInput(theme, Integer.toString(config.mqttPort), false);
@@ -998,6 +1090,7 @@ public final class KioskActivity extends Activity {
         addField(mqttCard, theme, "Username", usernameInput);
         EditText passwordInput = themedInput(theme, config.mqttPassword, true);
         addField(mqttCard, theme, "Password", passwordInput);
+
 
 
         LinearLayout httpCard = card(theme, "Local web admin");
@@ -1039,8 +1132,9 @@ public final class KioskActivity extends Activity {
         httpCard.addView(httpState, httpStateParams);
 
 
-        // Display sits in its own card, separate from behaviour: brightness and the light sensor
-        // are about the panel, recycling and the theme are about the app.
+        // Everything about how the glass looks, in one card: the backlight, which way up the
+        // panel is, and the colours of this screen itself. The web admin splits the last of those
+        // into the header pill because it has a header to put it in; this screen does not.
         LinearLayout displayCard = card(theme, "Display");
         final CheckBox autoBrightnessInput;
         // Remembered so saving the form can tell an actual change from an unchanged checkbox. Without
@@ -1157,92 +1251,81 @@ public final class KioskActivity extends Activity {
         brightnessModeNote = brightnessNote;
         applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
 
-        LinearLayout behaviourCard = card(theme, "Behaviour");
+        CheckBox portraitInput = themedCheckBox(theme, "Use portrait mode", config.portrait);
+        portraitInput.setOnCheckedChangeListener((button, checked) -> {
+            applyLiveSetting(fresh -> fresh.portrait = checked);
+            // Applied here as well as saved, because this screen is the one surface that does not go
+            // through KioskService and so never receives the broadcast that turns the window.
+            applyOrientation();
+        });
+        displayCard.addView(portraitInput, matchWrap());
+
+        // Kept in UI preferences rather than KioskConfig, and so deliberately outside
+        // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
+        // screen, not a property of the device, and nothing else has any business following it.
         CheckBox lightThemeInput = themedCheckBox(theme, "Light theme", theme.light);
         lightThemeInput.setOnCheckedChangeListener((button, checked) -> {
             getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE).edit()
                     .putBoolean(LIGHT_CONFIGURATION_THEME, checked)
                     .apply();
-            showConfiguration(config);
+            // Loaded fresh, not the snapshot this screen was built from. Redrawing from a stale
+            // snapshot put old text in the URL and broker fields, and "Open dashboard" then wrote
+            // those back over whatever another surface had changed meanwhile. Same rule the
+            // rotation redraw and the save button already follow.
+            showConfiguration(KioskConfig.load(this));
         });
-        behaviourCard.addView(lightThemeInput, matchWrap());
+        displayCard.addView(lightThemeInput, matchWrap());
+
+        // The web admin's System stats box, on the tablet: the same eight rows from the same
+        // formatter, with the switch that puts them on the dashboard directly under them. A switch
+        // labelled "show system stats" sitting three cards away from the stats it shows was a
+        // question the operator had to answer by toggling it and looking somewhere else.
+        LinearLayout statsCard = card(theme, "System stats");
+        TextView statsReadout = new TextView(this);
+        statsReadout.setTypeface(Typeface.MONOSPACE);
+        statsReadout.setTextSize(13);
+        statsReadout.setTextColor(theme.text);
+        statsReadout.setLineSpacing(dp(2), 1.1f);
+        // Drawn as a code block, matching the web admin's <pre id="stats">: same monospace face, same
+        // darker plate behind it, same padding and corner. The two surfaces show identical rows from
+        // identical data, so looking identical is the honest presentation; monospace text sitting
+        // bare on the card read as prose that happened to be misaligned.
+        statsReadout.setBackground(theme.panel(theme.mantle, dp(10)));
+        int statsPad = dp(10);
+        statsReadout.setPadding(statsPad, statsPad, statsPad, statsPad);
+        statsReadout.setText(renderOverlay());
+        statsCard.addView(statsReadout, matchWrap());
+        // Repainted by overlayTask on the same one-second tick as the dashboard overlay and the
+        // status chip, and for the same reason: a stats block that was a snapshot taken when the
+        // screen was built is a worse readout than none, because it looks live.
+        configStatsView = statsReadout;
+
         // Applies the moment it is touched, and is deliberately absent from the "Open dashboard"
         // save below. It is a standalone setting read live by whoever uses it, exactly like its
-        // counterpart in the web admin's Behaviour box, which has no Save button for the same
-        // reason. Leaving it to the aggregate save was a real bug: the whole KioskConfig snapshot
-        // this screen was built from got written back, so a value changed over MQTT or HTTP while
-        // the screen sat open was silently reverted on save.
+        // counterpart in the web admin, which has no Save button for the same reason. Leaving it
+        // to the aggregate save was a real bug: the whole KioskConfig snapshot this screen was
+        // built from got written back, so a value changed over MQTT or HTTP while the screen sat
+        // open was silently reverted on save.
         //
-        // The dashboard-recycle and frozen-page checkboxes used to sit here. Both are gone: they
-        // are recovery mechanisms, not preferences, and a switch whose only use is to stop the
-        // panel healing itself is surface area that can only be used to break it. See
+        // The dashboard-recycle and frozen-page checkboxes used to sit beside it. Both are gone:
+        // they are recovery mechanisms, not preferences, and a switch whose only use is to stop
+        // the panel healing itself is surface area that can only be used to break it. See
         // RecyclePolicy and checkForFrozenPage, which now run unconditionally.
         CheckBox statsOverlayInput = themedCheckBox(theme,
                 "Show system stats on the dashboard", config.statsOverlay);
         statsOverlayInput.setOnCheckedChangeListener(
-                (button, checked) -> applyBehaviourSetting(fresh -> fresh.statsOverlay = checked));
-        behaviourCard.addView(statsOverlayInput, matchWrap());
-        CheckBox portraitInput = themedCheckBox(theme, "Use portrait mode", config.portrait);
-        portraitInput.setOnCheckedChangeListener((button, checked) -> {
-            applyBehaviourSetting(fresh -> fresh.portrait = checked);
-            // Applied here as well as saved, because this screen is the one surface that does not go
-            // through KioskService and so never receives the broadcast that turns the window.
-            applyOrientation();
-        });
-        behaviourCard.addView(portraitInput, matchWrap());
-        TextView intervalCaption = new TextView(this);
-        intervalCaption.setText("MQTT update interval");
-        intervalCaption.setTextColor(theme.subtext);
-        intervalCaption.setTextSize(13);
-        LinearLayout.LayoutParams intervalCaptionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        intervalCaptionParams.topMargin = dp(14);
-        behaviourCard.addView(intervalCaption, intervalCaptionParams);
-
-        // A row of four presets, not a free-form field: settled 2026-08-20 after two other shapes
-        // were tried and dropped for this exact setting. See TelemetryInterval's own documentation
-        // for why. A Spinner would have worked too, but a small button row matches every other
-        // choice already on this screen (the time picker, the theme switcher on the web admin) and
-        // needs no themed popup chrome to fight the platform's own styling for.
-        final int[] telemetryIntervalSeconds = {
-                TelemetryInterval.clampOrDefault(config.telemetryIntervalSeconds)};
-        LinearLayout intervalRow = new LinearLayout(this);
-        intervalRow.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams intervalRowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        intervalRowParams.topMargin = dp(4);
-        behaviourCard.addView(intervalRow, intervalRowParams);
-        Button[] intervalButtons = new Button[TelemetryInterval.OPTIONS.length];
-        String[] intervalLabels = {"10s", "30s", "60s", "5min"};
-        for (int i = 0; i < TelemetryInterval.OPTIONS.length; i++) {
-            int seconds = TelemetryInterval.OPTIONS[i];
-            Button intervalButton = secondaryButton(theme, intervalLabels[i]);
-            intervalButton.setOnClickListener(view -> {
-                telemetryIntervalSeconds[0] = seconds;
-                applyBehaviourSetting(fresh -> fresh.telemetryIntervalSeconds = seconds);
-                for (int j = 0; j < intervalButtons.length; j++) {
-                    markIntervalButtonSelected(theme, intervalButtons[j],
-                            TelemetryInterval.OPTIONS[j] == seconds);
-                }
-            });
-            LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            buttonParams.rightMargin = i < intervalButtons.length - 1 ? dp(6) : 0;
-            intervalRow.addView(intervalButton, buttonParams);
-            intervalButtons[i] = intervalButton;
-            markIntervalButtonSelected(theme, intervalButton,
-                    seconds == telemetryIntervalSeconds[0]);
-        }
+                (button, checked) -> applyLiveSetting(fresh -> fresh.statsOverlay = checked));
+        statsCard.addView(statsOverlayInput, matchWrap());
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
         // done this from the start via its five-second /api/stats poll; this is the tablet's
-        // equivalent. Only the Behaviour card is followed: the text fields above it are things the
-        // operator may be part-way through typing, and snatching those back would be hostile.
-        if (behaviourSyncTask != null) {
-            mainHandler.removeCallbacks(behaviourSyncTask);
+        // equivalent. Only the instantly applied controls are followed: the text fields are things
+        // the operator may be part-way through typing, and snatching those back would be hostile.
+        if (liveSettingSyncTask != null) {
+            mainHandler.removeCallbacks(liveSettingSyncTask);
         }
-        behaviourSyncTask = new Runnable() {
+        liveSettingSyncTask = new Runnable() {
             @Override
             public void run() {
                 // Stops itself rather than needing every other screen to remember to cancel it.
@@ -1253,27 +1336,19 @@ public final class KioskActivity extends Activity {
                 if (!configurationVisible || !statsOverlayInput.isAttachedToWindow()) {
                     return;
                 }
-                syncingBehaviourControls = true;
+                syncingLiveControls = true;
                 try {
                     setCheckedIfChanged(statsOverlayInput,
                             KioskConfig.statsOverlayEnabled(KioskActivity.this));
                     setCheckedIfChanged(portraitInput,
                             KioskConfig.portraitEnabled(KioskActivity.this));
-                    int seconds = KioskConfig.telemetryIntervalSecondsOf(KioskActivity.this);
-                    if (seconds != telemetryIntervalSeconds[0]) {
-                        telemetryIntervalSeconds[0] = seconds;
-                        for (int j = 0; j < intervalButtons.length; j++) {
-                            markIntervalButtonSelected(theme, intervalButtons[j],
-                                    TelemetryInterval.OPTIONS[j] == seconds);
-                        }
-                    }
                 } finally {
-                    syncingBehaviourControls = false;
+                    syncingLiveControls = false;
                 }
-                mainHandler.postDelayed(this, BEHAVIOUR_SYNC_INTERVAL_MS);
+                mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
             }
         };
-        mainHandler.postDelayed(behaviourSyncTask, BEHAVIOUR_SYNC_INTERVAL_MS);
+        mainHandler.postDelayed(liveSettingSyncTask, LIVE_SETTING_SYNC_INTERVAL_MS);
 
         LinearLayout escapeCard = card(theme, "Escape sequences");
         TextView escapeSummary = new TextView(this);
@@ -1299,7 +1374,7 @@ public final class KioskActivity extends Activity {
         aboutCard.addView(aboutButton, matchWrap());
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
-                dashboardCard, mqttCard, httpCard, displayCard, behaviourCard, escapeCard,
+                dashboardCard, mqttCard, httpCard, displayCard, statsCard, escapeCard,
                 aboutCard)),
                 matchWrap());
 
@@ -1311,9 +1386,10 @@ public final class KioskActivity extends Activity {
                 // KioskConfig.save() writes every field, so saving the stale object would revert
                 // anything MQTT or the web admin changed while the screen sat open.
                 //
-                // Only the fields with a text box on this screen are taken from the form. Every
-                // Behaviour control, the brightness pair and the admin password already applied
-                // themselves when touched, so they must be left at whatever the fresh load holds.
+                // Only the fields with a text box on this screen are taken from the form. The
+                // overlay switch, the publish interval, portrait, the brightness pair and the
+                // admin password already applied themselves when touched, so they must be left at
+                // whatever the fresh load holds.
                 KioskConfig saving = KioskConfig.load(this);
                 saving.dashboardUrl = url;
                 saving.deviceId = deviceIdInput.getText().toString().trim();
@@ -1334,6 +1410,20 @@ public final class KioskActivity extends Activity {
         page.addView(actionRow(java.util.Arrays.<View>asList(open)), matchWrap());
 
         setContentView(scrollPage(theme, page));
+        // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
+        // from a fresh load with the boxes laid over it, which is the rule the Save button follows
+        // too: the snapshot this screen was built from is stale the moment another surface writes.
+        currentScreen = () -> {
+            KioskConfig pending = KioskConfig.load(this);
+            pending.dashboardUrl = urlInput.getText().toString();
+            pending.deviceId = deviceIdInput.getText().toString();
+            pending.mqttHost = brokerInput.getText().toString();
+            pending.mqttPort = parsePort(portInput.getText().toString(), pending.mqttPort);
+            pending.mqttUsername = usernameInput.getText().toString();
+            pending.mqttPassword = passwordInput.getText().toString();
+            pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
+            showConfiguration(pending);
+        };
     }
 
     /**
@@ -1368,6 +1458,7 @@ public final class KioskActivity extends Activity {
         page.addView(back, matchWrap());
 
         setContentView(scrollPage(theme, page));
+        currentScreen = () -> showEscapeSequences(KioskConfig.load(this));
     }
 
     private LinearLayout sequenceCard(KioskTheme theme, String title, String sequence,
@@ -1390,10 +1481,15 @@ public final class KioskActivity extends Activity {
      * is comfortable to perform where the tablet is actually mounted.
      */
     private void showSequenceRecorder(boolean forLauncher) {
+        recordedZones.clear();
+        renderSequenceRecorder(forLauncher);
+    }
+
+    /** Draws the recorder from whatever has been tapped so far. See {@link #showSequenceRecorder}. */
+    private void renderSequenceRecorder(boolean forLauncher) {
         clearStatusChip();
         recorderVisible = true;
         recordingForLauncher = forLauncher;
-        recordedZones.clear();
         applyKioskPolicy();
         setDashboardFullscreen(true);
         enterImmersiveMode();
@@ -1456,10 +1552,29 @@ public final class KioskActivity extends Activity {
         });
         panel.addView(cancel, matchWrap());
 
+        // 460dp was a fixed width, and a phone in portrait is 360dp or less, so the panel and
+        // every button in it ran off both edges with no way to reach Save. Capped instead: as wide
+        // as it wants up to 460dp, and never wider than the viewport less a margin.
+        //
+        // Wrapped in a scroller for the other half of the same bug. Six stacked children at
+        // WRAP_CONTENT height overflow a short viewport (a phone in landscape) just as surely, and
+        // clipping falls on the buttons at the bottom. The corner targets stay reachable either
+        // way: taps are matched by coordinate in dispatchTouchEvent, not by which view is on top.
+        int margin = dp(16);
+        int panelWidth = Math.min(dp(460),
+                Math.max(dp(240), dp(getResources().getConfiguration().screenWidthDp) - 2 * margin));
+        ScrollView panelScroll = new ScrollView(this);
+        panelScroll.addView(panel, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
-                dp(460), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
-        root.addView(panel, panelParams);
+                panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        root.addView(panelScroll, panelParams);
         setContentView(root);
+        // Rebuilt on rotation like every other screen, without clearing what has been tapped so
+        // far: see onConfigurationChanged. showSequenceRecorder is the entry point that resets the
+        // recording; this one only redraws it.
+        currentScreen = () -> renderSequenceRecorder(forLauncher);
+        updateRecorderReadout();
     }
 
     private void addCornerTarget(FrameLayout root, KioskTheme theme, int gravity, int size,
@@ -1862,6 +1977,7 @@ public final class KioskActivity extends Activity {
      * the status bar suppressed here.
      */
     private void showAbout() {
+        currentScreen = this::showAbout;
         configurationVisible = true;
         recorderVisible = false;
         applyKioskPolicy();
@@ -1926,6 +2042,7 @@ public final class KioskActivity extends Activity {
      * {@code res/values/legal.xml}, anyone reading these screens must be able to tell.
      */
     private void showLegalDocument(int titleRes, int bodyRes) {
+        currentScreen = () -> showLegalDocument(titleRes, bodyRes);
         configurationVisible = true;
         recorderVisible = false;
         applyKioskPolicy();
@@ -2364,8 +2481,12 @@ public final class KioskActivity extends Activity {
         button.setAllCaps(false);
         button.setTextSize(16);
         button.setTextColor(theme.onAccent());
-        button.setBackground(theme.raisedButton(theme.filledButton(theme.accent, dp(12)),
-                KioskTheme.darken(theme.accent, 0.72f), dp(12), dp(3)));
+        int primaryEdge = KioskTheme.darken(theme.accent, 0.72f);
+        button.setBackground(theme.pressable(
+                theme.raisedButton(theme.filledButton(theme.accent, dp(12)),
+                        primaryEdge, dp(12), dp(3)),
+                theme.pressedButton(theme.filledButton(theme.accent, dp(12)),
+                        primaryEdge, dp(12), dp(3))));
         button.setPadding(dp(20), dp(14), dp(20), dp(14));
         raiseSlightly(button, dp(3));
         return button;
@@ -2382,29 +2503,19 @@ public final class KioskActivity extends Activity {
         button.setElevation(elevationPx);
     }
 
-    /** Toggles one of the four interval-preset buttons between its filled and outlined look. */
-    private void markIntervalButtonSelected(KioskTheme theme, Button button, boolean selected) {
-        if (selected) {
-            button.setBackground(theme.raisedButton(theme.filledButton(theme.accent, dp(12)),
-                    KioskTheme.darken(theme.accent, 0.72f), dp(12), dp(2)));
-            button.setTextColor(theme.base);
-        } else {
-            button.setBackground(theme.raisedButton(
-                    theme.outlinedButton(dp(12), dp(1), theme.accentAlt, theme.surface),
-                    theme.accentAlt, dp(12), dp(2)));
-            button.setTextColor(theme.accentAlt);
-        }
-    }
-
     private Button secondaryButton(KioskTheme theme, String label) {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
         button.setTextSize(15);
         button.setTextColor(theme.accentAlt);
-        button.setBackground(theme.raisedButton(
-                theme.outlinedButton(dp(12), dp(1), theme.accentAlt, theme.surface),
-                theme.accentAlt, dp(12), dp(2)));
+        button.setBackground(theme.pressable(
+                theme.raisedButton(
+                        theme.outlinedButton(dp(12), dp(1), theme.accentAlt, theme.surface),
+                        theme.accentAlt, dp(12), dp(2)),
+                theme.pressedButton(
+                        theme.outlinedButton(dp(12), dp(1), theme.accentAlt, theme.surface),
+                        theme.accentAlt, dp(12), dp(2))));
         button.setPadding(dp(20), dp(12), dp(20), dp(12));
         // Less than the primary button's, so the hierarchy between them still reads at a glance.
         raiseSlightly(button, dp(2));
@@ -2412,6 +2523,9 @@ public final class KioskActivity extends Activity {
     }
 
     private void showDashboard(String url) {
+        // Cleared, not set: a WebView reflows itself on rotation, and rebuilding this screen would
+        // reload the dashboard every time somebody turned the panel. See onConfigurationChanged.
+        currentScreen = null;
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;

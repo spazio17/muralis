@@ -89,7 +89,8 @@ final class RecyclePolicy {
      *
      * <p>Spread deliberately. A fixed 04:00 is fine for one household and wrong at any scale: every
      * panel in every install would restart, reconnect to its broker and re-fetch its dashboard
-     * inside the same sixty seconds. Deriving the offset from the device id keeps it deterministic, * a panel restarts at the same minute every night, while two panels in one house almost
+     * inside the same sixty seconds. Deriving the offset from the device id keeps it deterministic,
+     * a panel restarts at the same minute every night, while two panels in one house almost
      * certainly differ.
      *
      * <p>{@link String#hashCode()} rather than {@link Object#hashCode()}: the former is specified by

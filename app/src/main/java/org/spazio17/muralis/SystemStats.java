@@ -271,37 +271,43 @@ final class SystemStats {
         StringBuilder text = new StringBuilder();
         text.append("CPU ").append(percent(sample.cpuBusyPercent));
         if (sample.cpuMaxFrequencyKhz != UNKNOWN) {
-            text.append(' ').append(String.format(Locale.US, "%.2fGHz",
+            text.append("  ").append(String.format(Locale.US, "%.2fGHz",
                     sample.cpuMaxFrequencyKhz / 1_000_000.0));
         }
-        text.append("  T ").append(celsius(sample.cpuTemperatureC))
-                .append('/').append(celsius(sample.gpuTemperatureC));
         if (sample.loadAverage != null) {
             text.append("  load ").append(String.format(Locale.US, "%.2f", sample.loadAverage[0]));
         }
 
+        long memPercent = usedPercent(sample.memUsedKb(), sample.memTotalKb);
         text.append('\n').append("RAM ").append(mib(sample.memUsedKb()))
                 .append('/').append(mib(sample.memTotalKb));
-        text.append("  zram ").append(mib(sample.swapUsedKb()))
+        if (memPercent >= 0) {
+            text.append("  ").append(memPercent).append('%');
+        }
+
+        text.append('\n').append("ZRAM ").append(mib(sample.swapUsedKb()))
                 .append('/').append(mib(sample.swapTotalKb));
 
-        text.append('\n').append("up ").append(duration(runtime.uptimeMs));
-        if (runtime.batteryPercent >= 0) {
-            text.append("  bat ").append(Math.round(runtime.batteryPercent)).append('%')
-                    .append(' ').append(chargeStateShort(runtime));
-        }
-        if (runtime.wifiRssiDbm != UNKNOWN) {
-            text.append("  wifi ").append(runtime.wifiRssiDbm).append("dBm");
-        }
-        if (runtime.ipAddress != null && !runtime.ipAddress.isEmpty()) {
-            text.append('\n').append("ip ").append(runtime.ipAddress);
-        }
+        text.append('\n').append("TEMP ").append(celsius(sample.cpuTemperatureC)).append("cpu  ")
+                .append(celsius(sample.gpuTemperatureC)).append("gpu");
 
-        text.append('\n').append("renderer deaths ").append(runtime.rendererDeaths);
-        text.append("  page ").append(runtime.lastPageFinishedAgoMs < 0
-                ? "never" : duration(runtime.lastPageFinishedAgoMs) + " ago");
+        text.append('\n').append("BAT ").append(runtime.batteryPercent < 0
+                ? "--" : Math.round(runtime.batteryPercent) + "% " + chargeStateLabel(runtime));
+
+        text.append('\n').append("IP ")
+                .append(runtime.ipAddress == null || runtime.ipAddress.isEmpty()
+                        ? "--" : runtime.ipAddress)
+                .append("  ").append(runtime.wifiRssiDbm == UNKNOWN
+                        ? "--" : runtime.wifiRssiDbm + "dBm");
+
+        text.append('\n').append("WEB ").append(runtime.rendererDeaths).append(" deaths  ")
+                .append(runtime.lastRendererDeathAgoMs < 0
+                        ? "never" : duration(runtime.lastRendererDeathAgoMs) + " ago");
+
+        text.append('\n').append("UP ").append(duration(runtime.appUptimeMs));
+
         if (pageErrorIsCurrent(runtime)) {
-            text.append('\n').append("last error ").append(runtime.lastPageError);
+            text.append('\n').append("ERR ").append(runtime.lastPageError);
         }
         return text.toString();
     }
@@ -314,6 +320,13 @@ final class SystemStats {
      * <p>Formatted here rather than in the view so the thresholds are covered by host tests. Only
      * the tags {@code TextView} actually honours are used ({@code font color}, {@code b},
      * {@code br}); anything richer is silently dropped by the platform's HTML parser.
+     *
+     * <p>Eight rows, always all eight, in the order CPU, RAM, ZRAM, TEMP, BAT, IP, WEB, UP, with a
+     * ninth ERR row only while a page error is current. The same order the web admin's System stats
+     * box renders, deliberately: somebody reading the panel and somebody reading the admin page are
+     * reading the same readout, and a row that appears and disappears with its value moves every
+     * row under it, which is exactly what makes a glance from across the room unreliable. An
+     * unavailable figure is {@code --}, never an omitted line.
      */
     static String formatOverlayHtml(Sample sample, RuntimeFacts runtime) {
         StringBuilder html = new StringBuilder();
@@ -340,29 +353,30 @@ final class SystemStats {
                 + dim("cpu  ") + colored(celsius(sample.gpuTemperatureC),
                         temperatureColor(sample.gpuTemperatureC)) + dim("gpu"));
 
-        StringBuilder line = new StringBuilder();
-        line.append(colored(duration(runtime.uptimeMs), VALUE)).append(dim(" up"));
-        if (runtime.batteryPercent >= 0) {
-            line.append(dim("   ")).append(colored(Math.round(runtime.batteryPercent) + "%",
-                    batteryColor(runtime.batteryPercent, runtime.charging)));
-            line.append(dim(" " + chargeStateShort(runtime)));
-        }
-        if (runtime.wifiRssiDbm != UNKNOWN) {
-            line.append(dim("   ")).append(colored(runtime.wifiRssiDbm + "dBm",
-                    wifiColor(runtime.wifiRssiDbm)));
-        }
-        row(html, "SYS", line.toString());
+        row(html, "BAT", runtime.batteryPercent < 0
+                ? colored("--", LABEL)
+                : colored(Math.round(runtime.batteryPercent) + "%",
+                        batteryColor(runtime.batteryPercent, runtime.charging))
+                        + dim(" " + chargeStateLabel(runtime)));
 
-        if (runtime.ipAddress != null && !runtime.ipAddress.isEmpty()) {
-            row(html, "IP", colored(escapeHtml(runtime.ipAddress), VALUE));
-        }
+        row(html, "IP", colored(runtime.ipAddress == null || runtime.ipAddress.isEmpty()
+                        ? "--" : escapeHtml(runtime.ipAddress), VALUE)
+                + dim("   ")
+                + (runtime.wifiRssiDbm == UNKNOWN
+                        ? colored("--", LABEL)
+                        : colored(runtime.wifiRssiDbm + "dBm", wifiColor(runtime.wifiRssiDbm))));
 
+        // The age is of the last *death*, not the last page load: "2 deaths, 3m ago" is a panel
+        // that is failing right now, and "2 deaths, 6d ago" is one that recovered a week ago.
+        // Reading the page-load time here made those two look identical.
         row(html, "WEB", colored(Integer.toString(runtime.rendererDeaths),
                 runtime.rendererDeaths == 0 ? OK : BAD)
                 + dim(" deaths   ")
-                + colored(runtime.lastPageFinishedAgoMs < 0
-                        ? "never" : duration(runtime.lastPageFinishedAgoMs) + " ago",
-                        runtime.lastPageFinishedAgoMs < 0 ? WARN : VALUE));
+                + colored(runtime.lastRendererDeathAgoMs < 0
+                        ? "never" : duration(runtime.lastRendererDeathAgoMs) + " ago",
+                        runtime.lastRendererDeathAgoMs < 0 ? VALUE : WARN));
+
+        row(html, "UP", colored(duration(runtime.appUptimeMs), VALUE));
 
         if (pageErrorIsCurrent(runtime)) {
             row(html, "ERR", colored(escapeHtml(clip(runtime.lastPageError, 40)), BAD));
@@ -464,7 +478,18 @@ final class SystemStats {
 
     /** The Android-side facts the overlay shows next to the kernel counters. */
     static final class RuntimeFacts {
-        long uptimeMs;
+        /**
+         * How long <em>this app's process</em> has been running, not how long the device has been
+         * up.
+         *
+         * <p>It used to be {@code SystemClock.elapsedRealtime()}, which is time since boot, and that
+         * made the overlay's UP row unable to show the one event it most needs to: the nightly
+         * restart exits the process, so a panel that restarted at 04:00 still read "UP 3d" all day.
+         * Measured on the API 28 phone 2026-08-23, the app had been up 13 minutes and the row said
+         * 50m, which was the device's age. Device uptime is still published as
+         * {@code device_uptime_ms} for anyone who wants it.
+         */
+        long appUptimeMs;
         double batteryPercent = -1;
         /** True while the battery is gaining charge, or is full on mains. */
         boolean charging;
@@ -476,6 +501,8 @@ final class SystemStats {
         /** Address of the active network, so the admin page can be reached without adb. */
         String ipAddress = "";
         int rendererDeaths;
+        /** Age of the most recent renderer death, or -1 while the WebView has never been killed. */
+        long lastRendererDeathAgoMs = -1;
         long lastPageFinishedAgoMs = -1;
         String lastPageError = "";
         /** Age of {@link #lastPageError}. Needed to tell a current failure from an old one. */
@@ -513,6 +540,11 @@ final class SystemStats {
      * down, which on a wall panel is the more urgent half of the reading. "Charged" rather than
      * "charging" while plugged and full, because Android reports full as a charging state and a
      * panel that has been on mains for a week should not claim to still be filling up.
+     *
+     * <p>Used verbatim on all three surfaces: the tablet's overlay, its System stats card and the
+     * web admin's {@code battery.charge_state}. There used to be an abbreviated form for the
+     * overlay, back when the battery shared a line with uptime and Wi-Fi; the eight-row layout gave
+     * it a line of its own, and "chg" was never worth the room it saved.
      */
     static String chargeStateLabel(RuntimeFacts runtime) {
         if (runtime.batteryPercent < 0) {
@@ -526,17 +558,6 @@ final class SystemStats {
             return "charged";
         }
         return runtime.charging ? "charging" : "on hold";
-    }
-
-    /** The same states abbreviated for the on-glass overlay, where the line has to stay short. */
-    static String chargeStateShort(RuntimeFacts runtime) {
-        if (runtime.batteryPercent < 0) {
-            return "";
-        }
-        if (!runtime.plugged) {
-            return "bat";
-        }
-        return runtime.full ? "full" : runtime.charging ? "chg" : "hold";
     }
 
     static String percent(double value) {
