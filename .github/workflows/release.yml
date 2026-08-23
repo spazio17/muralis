@@ -1,0 +1,92 @@
+# Release: run by hand, from main only. Tags the current commit with the semantic version you
+# type, builds the debug APK (for the panels) and the release AAB (signed with the upload key,
+# for Play Console), and attaches both to a GitHub Release, which unlike a CI artifact never
+# expires. The Play upload itself stays manual: Play requires the AAB, and the very first upload
+# of a new app must go through the Console UI anyway because it is what creates the app and
+# enrols Play App Signing.
+#
+# The version is typed by a human on purpose: the semver digits carry meaning (breaking, feature,
+# fix) that automation cannot know. The tag this creates is what git describe then reports on
+# every later build, so the version installed on a device always names its commit.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to release, e.g. 0.2.0 (tags this commit as v0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Refuse to release anything but main
+        run: |
+          if [ "$GITHUB_REF_NAME" != "main" ]; then
+            echo "Releases come from main; this ran on $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+
+      - name: Validate and create the tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "Not a semantic version: $VERSION (expected e.g. 0.2.0)" >&2; exit 1; }
+          git config user.name 'Juri Calleri'
+          git config user.email 'juricalleri@gmail.com'
+          git tag -a "v$VERSION" -m "Muralis $VERSION"
+          git push origin "v$VERSION"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Host tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          scripts/test-host.sh
+
+      - name: Restore the signing keys
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+          UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+        run: |
+          for name in DEBUG_KEYSTORE_B64 UPLOAD_KEYSTORE_B64; do
+            if [ -z "$(eval "printf '%s' \"\$$name\"")" ]; then
+              echo "$name secret is missing." >&2; exit 1
+            fi
+          done
+          mkdir -p .gradle
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > .gradle/kiosk-debug.keystore
+          printf '%s' "$UPLOAD_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/muralis-upload.p12"
+
+      - name: Build the APK and the AAB
+        env:
+          MURALIS_KEYSTORE: ${{ runner.temp }}/muralis-upload.p12
+          MURALIS_KEYSTORE_PASSWORD: ${{ secrets.MURALIS_KEYSTORE_PASSWORD }}
+          MURALIS_KEY_ALIAS: muralis-upload
+        run: ./gradlew --no-daemon assembleDebug bundleRelease
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk "muralis-$VERSION-debug.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "muralis-$VERSION.aab"
+          gh release create "v$VERSION" \
+            --title "Muralis $VERSION" \
+            --notes "Debug APK for the panels (adb install -r), AAB for Play Console." \
+            "muralis-$VERSION-debug.apk" "muralis-$VERSION.aab"

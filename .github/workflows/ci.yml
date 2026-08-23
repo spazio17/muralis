@@ -1,0 +1,67 @@
+# CI: every push to any branch runs the host tests and builds an installable debug APK.
+#
+# There is deliberately no pull_request trigger: check runs attach to the commit, so a PR shows
+# these results anyway, and a second trigger would build every PR push twice for a repo with one
+# committer and no forks.
+#
+# The debug keystore comes from the DEBUG_KEYSTORE_B64 secret and must stay the same file
+# scripts/gradle.sh created locally (.gradle/kiosk-debug.keystore): Android refuses to update an
+# app whose signature changed, and the wall tablet runs Muralis as device owner, which cannot be
+# uninstalled to switch keys. A CI keystore of its own would produce APKs no panel accepts.
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: versionName comes from git describe and versionCode from the commit
+          # count, so a shallow clone would produce a wrong version, not a faster build.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Host tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          scripts/test-host.sh
+
+      - name: Restore the debug keystore
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "DEBUG_KEYSTORE_B64 secret is missing; the APK would be unsignable." >&2
+            echo "Create it from the machine that provisioned the devices:" >&2
+            echo "  base64 -w0 .gradle/kiosk-debug.keystore" >&2
+            exit 1
+          fi
+          mkdir -p .gradle
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > .gradle/kiosk-debug.keystore
+
+      - name: Build the debug APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Version for the artifact name
+        id: version
+        run: echo "name=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muralis-${{ steps.version.outputs.name }}-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

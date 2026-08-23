@@ -2,6 +2,35 @@ plugins {
     id 'com.android.application'
 }
 
+// The app's version identity comes from git, not from numbers edited here, so every build is
+// traceable to an exact commit and nobody has to remember to bump anything:
+//
+//   versionName = git describe: "0.1.0" exactly on the tag v0.1.0, "0.1.0-7-ga1b2c3d" seven
+//                 commits later, "-dirty" appended for an uncommitted tree.
+//   versionCode = the commit count, which only ever grows, which is all Android requires of it.
+//
+// The semantic version is decided by a human pushing a tag (v0.2.0), never by automation: the
+// digits carry meaning (breaking/feature/fix) that a robot bumping per push cannot know.
+//
+// Resolution order: environment first, because the containerized build has no git and
+// scripts/gradle.sh computes both values on the host; then git directly, which is what CI and any
+// ordinary checkout use; then a fallback that is obviously not a release.
+def execGit = { List<String> gitArgs ->
+    try {
+        def command = (['git'] + gitArgs).execute(null, rootDir)
+        def out = command.inputStream.text.trim()
+        return command.waitFor() == 0 && !out.isEmpty() ? out : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+def muralisVersionName = System.getenv('MURALIS_VERSION_NAME')
+        ?: execGit(['describe', '--tags', '--always', '--dirty'])?.replaceFirst(/^v/, '')
+        ?: '0.0.0-unknown'
+def muralisVersionCode = (System.getenv('MURALIS_VERSION_CODE')
+        ?: execGit(['rev-list', '--count', 'HEAD'])
+        ?: '1') as Integer
+
 android {
     namespace 'org.spazio17.muralis'
 
@@ -62,8 +91,8 @@ android {
         minSdk 26
         targetSdk 36
 
-        versionCode 1
-        versionName '0.1.0-staging'
+        versionCode muralisVersionCode
+        versionName muralisVersionName
     }
 
     buildTypes {

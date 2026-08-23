@@ -63,6 +63,17 @@ if [[ -f "${key_dir}/muralis-upload.p12" ]]; then
     )
 fi
 
+# The version identity comes from git (see the comment in app/build.gradle), but the container
+# has no git, so both values are computed here on the host and passed in. Absent when this is not
+# a git checkout, and that is fine: the build falls back to a value that is obviously no release.
+version_args=()
+if version_name=$(git -C "${project_dir}" describe --tags --always --dirty 2>/dev/null); then
+    version_args+=(--env "MURALIS_VERSION_NAME=${version_name#v}")
+fi
+if version_code=$(git -C "${project_dir}" rev-list --count HEAD 2>/dev/null); then
+    version_args+=(--env "MURALIS_VERSION_CODE=${version_code}")
+fi
+
 # --no-daemon: each invocation is a fresh short-lived container, so a lingering
 # daemon would be killed with it anyway and only costs startup work.
 podman run --rm --interactive \
@@ -72,5 +83,6 @@ podman run --rm --interactive \
     --volume "${project_dir}/.android-sdk:/sdk" \
     --volume "${project_dir}/.gradle:/gradle" \
     "${key_args[@]+"${key_args[@]}"}" \
+    "${version_args[@]+"${version_args[@]}"}" \
     "${image_name}" \
     gradle --project-dir /src --no-daemon "$@"
