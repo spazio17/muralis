@@ -571,10 +571,11 @@ final class HttpAdminServer {
     /**
      * Applies one standalone control, the moment it is touched, with no Save button anywhere near it.
      *
-     * <p>Each of these stands on its own: the overlay switch, the publish interval. Neither has to
-     * agree with anything else, so making the operator tick a box and then find a button is
-     * ceremony, and it is ceremony this page had already dropped for the brightness slider and the
-     * auto-brightness checkbox. The boxes that keep their Save button,
+     * <p>Each of these stands on its own (today only the overlay switch; the publish interval was
+     * removed along with its presets). A control that has to agree with nothing else makes "tick a
+     * box and then find a button" pure ceremony, and it is ceremony this page had already dropped
+     * for the brightness slider and the auto-brightness checkbox. The boxes that keep their Save
+     * button,
      * Dashboard, MQTT, the web admin and the escape sequences, are the ones whose fields only mean
      * something together: a host with no password, or one sequence saved before the other, is a
      * half-applied setting, and for those a deliberate save is the point.

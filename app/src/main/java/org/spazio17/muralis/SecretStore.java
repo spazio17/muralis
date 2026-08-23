@@ -82,11 +82,12 @@ final class SecretStore {
      * <p>The three-way answer exists because collapsing the last two into {@code ""} caused a real
      * loss-of-credential path. A Keystore that is briefly unavailable, notably direct boot, where
      * BootReceiver starts KioskService before the user has unlocked, made every secret read as
-     * empty, and the next {@code KioskConfig.save()} wrote those empties straight back, which
-     * {@link #put} turns into a delete. One unrelated settings save during that window and the admin
-     * password and broker credentials were gone for good: the web admin fails closed and never binds
-     * again, while MQTT fails OPEN and silently reconnects anonymously. Callers that persist must
-     * use this method and skip what they could not read.
+     * empty, and the whole-object save that predated {@code KioskConfig.Editor} wrote those
+     * empties straight back, which {@link #put} turns into a delete. One unrelated settings save
+     * during that window and the admin password and broker credentials were gone for good: the web
+     * admin fails closed and never binds again, while MQTT fails OPEN and silently reconnects
+     * anonymously. Today the guard lives in {@code Editor.apply}, which skips an empty write over
+     * a secret this method reports unreadable.
      */
     String getOrNull(String name) {
         String encoded = preferences.getString(name, "");
