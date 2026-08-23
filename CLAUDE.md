@@ -68,7 +68,15 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   callbacks (`onPageStarted`, `onReceivedError`, etc.) only record facts (`recordLoadFailure`,
   `beginLoad`), they never themselves issue a reload. This is deliberate: a single cancellable
   handle that's reused for two different meanings (a retry timer and a hung-load timeout) is the
-  bug class that motivated this shape; don't reintroduce one.
+  bug class that motivated this shape; don't reintroduce one. The failure no page callback can
+  report, the server restarting underneath an already-loaded page (a Home Assistant restart leaves
+  the odd card stuck on an error tile while the frontend's own websocket reconnect recovers the
+  rest, so the page is neither failed nor frozen), is covered by a reachability probe: while the
+  page is settled the activity sends a HEAD to the dashboard URL every 15 seconds, and
+  `ServerProbePolicy` (pure, host-tested) turns the verdicts into at most one reload per outage,
+  fired on recovery rather than mid-outage so the wall never trades a live-looking page for an
+  error page, and serviced through the same `recordLoadFailure`/supervisor path as everything
+  else.
 - **`NetworkGate`** holds MQTT/HTTP startup and the first dashboard load until there's a network,
   using `NET_CAPABILITY_INTERNET`, never `NET_CAPABILITY_VALIDATED`, a LAN-only Home Assistant
   install has no route to the internet and would never validate. It gives up after a bounded wait

@@ -101,6 +101,25 @@ public final class KioskActivity extends Activity {
      */
     private static final long SUPERVISOR_INTERVAL_MS = 2_000L;
     /**
+     * How often the dashboard's server is probed for reachability while the page is settled.
+     *
+     * <p>Fifteen seconds: a Home Assistant restart keeps the server down for tens of seconds to a
+     * couple of minutes, so an outage that matters spans several probes, and the reload lands
+     * within one probe interval plus one backoff of the server coming back. An outage shorter than
+     * one interval can slip between two probes, deliberately: nothing that recovers that fast kept
+     * the page's websocket down for long enough to strand a card, and the frontend reconnects it
+     * by itself. The probe is a HEAD request any web server answers from memory; at this rate it
+     * costs nothing worth measuring, even against a remote instance.
+     */
+    private static final long SERVER_PROBE_INTERVAL_MS = 15_000L;
+    /**
+     * Connect and read timeout for one probe request. A healthy server on a home network answers a
+     * HEAD in milliseconds, and one that takes longer than this to accept or answer is, for the
+     * page's purposes, down. Well under the probe interval, so a probe always finishes, one way or
+     * the other, before the next one is due.
+     */
+    private static final int SERVER_PROBE_TIMEOUT_MS = 5_000;
+    /**
      * How long the brightness slider waits before writing. A SeekBar reports every pixel of a drag
      * and each report is a settings write, so without this a single swipe writes dozens of times.
      * Short enough that the panel still follows the finger.
@@ -232,6 +251,15 @@ public final class KioskActivity extends Activity {
      * {@link #FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER}.
      */
     private boolean sawPageChange;
+    /** Turns server probe verdicts into at most one reload per outage. */
+    private final ServerProbePolicy serverProbePolicy = new ServerProbePolicy();
+    /** Whether a probe request is in flight. Only ever touched on the main thread. */
+    private boolean serverProbeInFlight;
+    /**
+     * Bumped whenever a load is issued or forgotten, so a probe verdict that was in flight across
+     * that boundary is discarded rather than recorded against a page it never observed.
+     */
+    private int serverProbeGeneration;
     // The status readout on the configuration screens: built once, updated on the sampler tick.
     private KioskTheme statusChipTheme;
     private StatusIcon batteryIcon;
@@ -409,6 +437,99 @@ public final class KioskActivity extends Activity {
         lastPageFingerprint = null;
         unchangedPageChecks = 0;
         sawPageChange = false;
+    }
+
+    /**
+     * Catches the other failure nothing else notices: the page loaded fine, and then the server
+     * restarted underneath it. No main-frame request happens, so the error callbacks stay silent;
+     * no load is in flight, so the hung-load timeout is idle; and after a Home Assistant restart
+     * the frontend reconnects its own websocket and most cards recover, so the frozen-page probe
+     * correctly sees a live page. What is left is the odd card stuck on an error tile, observed on
+     * the panel after an ordinary Home Assistant restart, and until this existed nothing ever
+     * reloaded it.
+     *
+     * <p>The probe only observes; the decision is {@link ServerProbePolicy}'s, and the reload is
+     * the supervisor's, armed through {@link #recordLoadFailure} so it inherits the backoff, the
+     * network gate and the single-load-in-flight guarantee. The backoff is also useful in itself
+     * here: a server that has only just started answering again gets ten more seconds to warm up
+     * before being asked for the whole dashboard.
+     */
+    private final Runnable serverProbeTask = new Runnable() {
+        @Override
+        public void run() {
+            mainHandler.postDelayed(this, SERVER_PROBE_INTERVAL_MS);
+            probeDashboardServer();
+        }
+    };
+
+    private void probeDashboardServer() {
+        if (webView == null || kioskStopped || serverProbeInFlight) {
+            return;
+        }
+        // Only while the dashboard is settled. A load in flight or a pending retry already belongs
+        // to the load-failure path, and its own outcome says everything a probe could.
+        if (loadStartedAtMs != 0 || nextRetryAtMs != 0) {
+            return;
+        }
+        String url = KioskConfig.load(this).dashboardUrl;
+        if (url.isEmpty()) {
+            return;
+        }
+        int generation = serverProbeGeneration;
+        serverProbeInFlight = true;
+        // A thread per probe rather than an executor kept warm for one request every fifteen
+        // seconds; the in-flight guard means there is never more than one.
+        new Thread(() -> {
+            boolean serverUp = probeServerOnce(url);
+            mainHandler.post(() -> onServerProbeResult(generation, serverUp));
+        }, "MuralisServerProbe").start();
+    }
+
+    /**
+     * One HEAD request to the dashboard URL, off the main thread. Any answered status counts as
+     * up, including 401/404/405, because an answer proves the server is there; see
+     * {@link ServerProbePolicy#statusMeansServerUp}. Every exception counts as down: refused,
+     * timed out, unresolved and no-network-at-all look the same from the page's point of view,
+     * and treating a dead router like a dead server is right here, because a router reboot kills
+     * the page's websocket exactly the way a server restart does.
+     */
+    private static boolean probeServerOnce(String url) {
+        java.net.HttpURLConnection connection = null;
+        try {
+            connection = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            connection.setConnectTimeout(SERVER_PROBE_TIMEOUT_MS);
+            connection.setReadTimeout(SERVER_PROBE_TIMEOUT_MS);
+            connection.setRequestMethod("HEAD");
+            return ServerProbePolicy.statusMeansServerUp(connection.getResponseCode());
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private void onServerProbeResult(int generation, boolean serverUp) {
+        serverProbeInFlight = false;
+        if (webView == null || kioskStopped) {
+            return;
+        }
+        // The page this verdict describes is gone: a load was issued, or another detector armed a
+        // retry, while the request was in flight. Recording it anyway could make the new page's
+        // first healthy probe read as a recovery and reload a page that was never down.
+        if (generation != serverProbeGeneration || loadStartedAtMs != 0 || nextRetryAtMs != 0) {
+            return;
+        }
+        if (serverProbePolicy.recordResult(serverUp)) {
+            Log.w(TAG, "Dashboard server is back after an outage; reloading");
+            recordLoadFailure("server restored after an outage");
+        }
+    }
+
+    private void resetServerProbeTracking() {
+        serverProbePolicy.reset();
+        serverProbeGeneration++;
     }
 
     /**
@@ -2599,6 +2720,8 @@ public final class KioskActivity extends Activity {
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
         mainHandler.removeCallbacks(frozenPageCheckTask);
         mainHandler.postDelayed(frozenPageCheckTask, FROZEN_PAGE_CHECK_INTERVAL_MS);
+        mainHandler.removeCallbacks(serverProbeTask);
+        mainHandler.postDelayed(serverProbeTask, SERVER_PROBE_INTERVAL_MS);
         loadWhenOnline(url);
     }
 
@@ -2720,6 +2843,7 @@ public final class KioskActivity extends Activity {
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.removeCallbacks(frozenPageCheckTask);
+        mainHandler.removeCallbacks(serverProbeTask);
         cancelDashboardGate();
         statsOverlay = null;
         networkWaitLabel = null;
@@ -2937,6 +3061,7 @@ public final class KioskActivity extends Activity {
         loadFailedAtMs = 0;
         loadFollowsRendererDeath = false;
         resetFrozenPageTracking();
+        resetServerProbeTracking();
     }
 
     /**
@@ -2952,6 +3077,10 @@ public final class KioskActivity extends Activity {
         nextRetryAtMs = 0;
         loadFailedAtMs = 0;
         resetFrozenPageTracking();
+        // The probe state too: this load's outcome belongs to the load-failure path, and an outage
+        // observed before it would otherwise make the new page's first healthy probe read as a
+        // recovery and demand a second reload.
+        resetServerProbeTracking();
     }
 
     /**
