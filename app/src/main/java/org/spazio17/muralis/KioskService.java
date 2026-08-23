@@ -1095,17 +1095,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public void setDashboardUrl(String url) {
-        KioskConfig config = KioskConfig.load(this);
-        config.dashboardUrl = url;
-        config.save(this);
+        KioskConfig.edit(this).dashboardUrl(url).apply();
         sendUiCommand("kiosk.set_url", -1, url);
     }
 
     /**
      * Stores the orientation and tells the activity to turn.
-     *
-     * <p>Loaded fresh and saved with one field changed, never a snapshot taken earlier: {@code save}
-     * writes every field, so a stale one silently reverts whatever another surface changed meanwhile.
      *
      * <p>The activity owns the window, so it has to be told. Telemetry is republished immediately
      * because this is applied outside the dispatcher's own republish path, and without it Home
@@ -1113,9 +1108,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     @Override
     public void setPortrait(boolean enabled) {
-        KioskConfig config = KioskConfig.load(this);
-        config.portrait = enabled;
-        config.save(this);
+        KioskConfig.edit(this).portrait(enabled).apply();
         sendUiCommand(enabled ? "display.portrait_on" : "display.portrait_off", -1, null);
         publishTelemetrySoon(this);
     }

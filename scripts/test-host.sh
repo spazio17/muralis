@@ -6,9 +6,9 @@
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
 # Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run ten suites: dispatcher, provisioning, request origin,
-# auth throttle, system stats, recycle policy, server probe policy, outage
-# ledger, escape sequence and telemetry interval.
+# compile and run eleven suites: dispatcher, provisioning, request origin,
+# auth throttle, system stats, recycle policy, recovery policy, server probe
+# policy, outage ledger, escape sequence and telemetry interval.
 
 set -euo pipefail
 
@@ -63,9 +63,9 @@ done < <(grep -rn 'setLockTaskFeatures\|WindowInsetsController\|setDecorFitsSyst
 # Pure-Java sources must not drag in Android, or they stop being host-testable.
 pure_java_dir=${project_dir}/app/src/main/java/org/spazio17/muralis
 host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
-for name in KioskCommandDispatcher SystemStats RecyclePolicy ServerProbePolicy \
-            OutageLedger EscapeSequence KioskRuntimeState Provisioning RequestOrigin \
-            AuthThrottle; do
+for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
+            ServerProbePolicy OutageLedger EscapeSequence KioskRuntimeState \
+            Provisioning RequestOrigin AuthThrottle; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -107,16 +107,19 @@ java -cp "${test_dir}/throttle" org.spazio17.muralis.AuthThrottleTest
 javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \
     "${pure_java_dir}/RecyclePolicy.java" \
+    "${pure_java_dir}/RecoveryPolicy.java" \
     "${pure_java_dir}/ServerProbePolicy.java" \
     "${pure_java_dir}/OutageLedger.java" \
     "${pure_java_dir}/EscapeSequence.java" \
     "${host_test_dir}/SystemStatsTest.java" \
     "${host_test_dir}/RecyclePolicyTest.java" \
+    "${host_test_dir}/RecoveryPolicyTest.java" \
     "${host_test_dir}/ServerProbePolicyTest.java" \
     "${host_test_dir}/OutageLedgerTest.java" \
     "${host_test_dir}/EscapeSequenceTest.java"
 java -cp "${test_dir}/stats" org.spazio17.muralis.SystemStatsTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.RecyclePolicyTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.RecoveryPolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.ServerProbePolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.OutageLedgerTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.EscapeSequenceTest

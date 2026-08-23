@@ -30,6 +30,13 @@ final class KioskConfig {
     static final String DEFAULT_SETTINGS_SEQUENCE = "BL,BL,BL,BL,BL,BL,BL,BL,BL";
     static final String DEFAULT_LAUNCHER_SEQUENCE = "BR,BR,BR,BR,BR,BR,BR,BR,BR";
 
+    // A loaded KioskConfig is a READ snapshot and a display model, never a write vehicle. The
+    // fields stay mutable because the screens overlay half-typed values on one for redisplay, but
+    // nothing can persist a whole object: writes go through edit(), which touches only the fields
+    // explicitly set. The whole-object save() this replaces caused the same bug three separate
+    // times, a stale snapshot silently reverting whatever another surface changed meanwhile, and
+    // the third time it was reintroduced proved the documentation rule was not enough: the safe
+    // pattern has to be the only pattern the API can express.
     String dashboardUrl = "";
     String deviceId = "";
     String mqttHost = "";
@@ -42,15 +49,6 @@ final class KioskConfig {
     String mqttPassword = "";
     int httpPort = DEFAULT_HTTP_PORT;
     String httpAdminPassword = "";
-    /**
-     * Whether each secret was actually readable when this snapshot was loaded. {@link #save} skips
-     * the ones that were not, so a briefly unavailable Keystore cannot turn an unrelated settings
-     * save into a deleted credential. True by default, so a freshly constructed config (a new
-     * install, a test) persists normally. See {@link SecretStore#getOrNull}.
-     */
-    private boolean mqttUsernameReadable = true;
-    private boolean mqttPasswordReadable = true;
-    private boolean httpAdminPasswordReadable = true;
     /**
      * Draws the live system-stats block over the dashboard. On by default because it exists to be
      * watched during the multi-week endurance test; it is a switch rather than a build-time choice
@@ -92,14 +90,11 @@ final class KioskConfig {
         config.mqttHost = preferences.getString(MQTT_HOST, "").trim();
         config.mqttPort = preferences.getInt(MQTT_PORT, 1883);
         String storedUsername = secrets.getOrNull(MQTT_USERNAME);
-        config.mqttUsernameReadable = storedUsername != null;
         config.mqttUsername = storedUsername == null ? "" : storedUsername;
         String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
-        config.mqttPasswordReadable = storedPassword != null;
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
-        config.httpAdminPasswordReadable = storedAdminPassword != null;
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.statsOverlay = statsOverlayEnabled(context);
         config.portrait = portraitEnabled(context);
@@ -110,29 +105,94 @@ final class KioskConfig {
         return config;
     }
 
-    void save(Context context) {
-        Context storageContext = storageContext(context);
-        storageContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(DASHBOARD_URL, dashboardUrl.trim())
-                .putString(DEVICE_ID, deviceId.trim())
-                .putString(MQTT_HOST, mqttHost.trim())
-                .putInt(MQTT_PORT, mqttPort)
-                .putInt(HTTP_PORT, httpPort)
-                .putBoolean(STATS_OVERLAY, statsOverlay)
-                .putBoolean(PORTRAIT, portrait)
-                .apply();
+    /** The only way to write settings; see the comment on the fields above. */
+    static Editor edit(Context context) {
+        return new Editor(storageContext(context));
+    }
 
-        // Each secret is written only if it was readable when this snapshot loaded. Writing an
-        // empty string is a delete, so persisting a value that failed to decrypt would destroy it.
-        SecretStore secrets = new SecretStore(storageContext);
-        if (mqttUsernameReadable) {
-            secrets.put(MQTT_USERNAME, mqttUsername);
+    /**
+     * Writes exactly the fields that were set on it and nothing else, so a writer cannot revert a
+     * field it never meant to touch, whatever snapshot its screen was built from.
+     */
+    static final class Editor {
+        private final Context storageContext;
+        private final SharedPreferences.Editor plain;
+        /** Secrets queued for {@link #apply}; LinkedHashMap so writes land in call order. */
+        private final java.util.LinkedHashMap<String, String> secrets =
+                new java.util.LinkedHashMap<>();
+
+        private Editor(Context storageContext) {
+            this.storageContext = storageContext;
+            plain = storageContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
         }
-        if (mqttPasswordReadable) {
-            secrets.put(MQTT_PASSWORD, mqttPassword);
+
+        Editor dashboardUrl(String value) {
+            plain.putString(DASHBOARD_URL, value.trim());
+            return this;
         }
-        if (httpAdminPasswordReadable) {
-            secrets.put(HTTP_ADMIN_PASSWORD, httpAdminPassword);
+
+        Editor deviceId(String value) {
+            plain.putString(DEVICE_ID, value.trim());
+            return this;
+        }
+
+        Editor mqttHost(String value) {
+            plain.putString(MQTT_HOST, value.trim());
+            return this;
+        }
+
+        Editor mqttPort(int value) {
+            plain.putInt(MQTT_PORT, value);
+            return this;
+        }
+
+        Editor httpPort(int value) {
+            plain.putInt(HTTP_PORT, value);
+            return this;
+        }
+
+        Editor statsOverlay(boolean value) {
+            plain.putBoolean(STATS_OVERLAY, value);
+            return this;
+        }
+
+        Editor portrait(boolean value) {
+            plain.putBoolean(PORTRAIT, value);
+            return this;
+        }
+
+        Editor mqttUsername(String value) {
+            secrets.put(MQTT_USERNAME, value);
+            return this;
+        }
+
+        Editor mqttPassword(String value) {
+            secrets.put(MQTT_PASSWORD, value);
+            return this;
+        }
+
+        Editor httpAdminPassword(String value) {
+            secrets.put(HTTP_ADMIN_PASSWORD, value);
+            return this;
+        }
+
+        void apply() {
+            plain.apply();
+            if (secrets.isEmpty()) {
+                return;
+            }
+            SecretStore store = new SecretStore(storageContext);
+            for (java.util.Map.Entry<String, String> secret : secrets.entrySet()) {
+                // Writing an empty string is a delete. An empty value arriving while the stored
+                // secret is unreadable is almost certainly the echo of that unreadable read, a
+                // form prefilled blank because the Keystore was briefly unavailable, so it is
+                // skipped rather than allowed to destroy the credential. A deliberate clear of the
+                // admin password has its own path, clearHttpAdminPassword, exactly for this case.
+                if (secret.getValue().isEmpty() && store.getOrNull(secret.getKey()) == null) {
+                    continue;
+                }
+                store.put(secret.getKey(), secret.getValue());
+            }
         }
     }
 
@@ -166,13 +226,13 @@ final class KioskConfig {
     }
 
     /**
-     * Escape sequences are written only here, never by {@link #save}.
+     * Escape sequences are written only here and are deliberately absent from {@link Editor}.
      *
-     * <p>They are recorded on a different screen from the one that saves everything else, so a
-     * configuration screen built before a recording still holds the old value in memory; letting
-     * its save write that back silently reverted a freshly recorded combination, which is exactly
-     * what happened on 2026-08-17. Splitting the write makes the stale-overwrite impossible rather
-     * than merely unlikely.
+     * <p>They are recorded on a different screen from the one that saves everything else, and
+     * before {@link Editor} existed, a whole-object save from a screen built before a recording
+     * silently reverted a freshly recorded combination, which is exactly what happened on
+     * 2026-08-17. The Editor pattern generalises this method's lesson; the method itself stays so
+     * the recorder keeps one obvious write path for its pair of fields.
      */
     void saveEscapeSequences(Context context) {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -194,9 +254,8 @@ final class KioskConfig {
      * calls {@link System#exit} moments later, and an asynchronous write would be lost, leaving the
      * day unrecorded, so the pass fires again on the next tick after the restart, forever.
      *
-     * <p>Kept out of {@link #load} and {@link #save} for the same reason as
-     * {@link #saveEscapeSequences}: those write every field, and a stale snapshot round-tripping
-     * through them would revert it.
+     * <p>Kept out of {@link #load} and {@link Editor} entirely: it is bookkeeping owned by the
+     * recycle pass, not a setting any surface should be able to touch.
      */
     static long lastNightlyRestartDay(Context context) {
         return storageContext(context)

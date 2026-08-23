@@ -57,45 +57,6 @@ import java.util.List;
 public final class KioskActivity extends Activity {
     private static final String TAG = "MuralisActivity";
     /**
-     * How long to wait before retrying an unreachable dashboard.
-     *
-     * <p>Ten seconds, chosen for an ordinary home: the dashboard is unreachable mainly while Home
-     * Assistant restarts or updates, which takes tens of seconds to minutes, and this retry repeats for
-     * as long as that lasts because each failed attempt schedules the next. Fast enough that the panel
-     * is back within seconds of the server returning, slow enough not to hammer a machine that is
-     * already busy coming up.
-     */
-    private static final long RELOAD_BACKOFF_MS = 10_000L;
-    /**
-     * How long a load may take before it is treated as hung and retried.
-     *
-     * <p>Generous on purpose. A Home Assistant dashboard is a heavy single-page app and measured
-     * 10-15 seconds to reach {@code onPageFinished} on the interim MediaPad, so a tight timeout would
-     * reload a page that was merely slow and never let it finish. This only needs to catch a load that
-     * is never going to complete.
-     */
-    private static final long LOAD_TIMEOUT_MS = 60_000L;
-    /**
-     * How long the single load issued by renderer-death recovery may take before it is retried.
-     *
-     * <p>Much tighter than {@link #LOAD_TIMEOUT_MS}, because this is not the situation that constant
-     * is generous for. A renderer death is already known rather than suspected: the process that
-     * draws the page is gone, the WebView is brand new, and the panel is showing nothing at all
-     * until this load lands. Spending the full minute discovering the replacement load is not
-     * coming turned a 1.4-second rebuild into 66 seconds of blank panel, measured on the API 26
-     * panel 2026-08-21, 15:25:57 to 15:27:03, and both rebuilds were visible from across the room.
-     *
-     * <p>Twenty-five seconds rather than less, on purpose. The load after a renderer death is a
-     * cold one: the new process has no warm cache, and a Home Assistant dashboard measured 10-15
-     * seconds to {@code onPageFinished} on this hardware even warm. A tighter bound would retry a
-     * load that was merely slow, which costs exactly the extra flash this exists to remove.
-     *
-     * <p>Applies to one load only, the one recovery issued. Every retry after it reverts to
-     * {@link #LOAD_TIMEOUT_MS}, so a dashboard that is slow rather than dead can never be caught in
-     * a fast reload loop.
-     */
-    private static final long RENDERER_DEATH_LOAD_TIMEOUT_MS = 25_000L;
-    /**
      * How often the recovery clock looks at the dashboard. Two seconds, so a retry goes out within a
      * couple of seconds of becoming due; the work per tick is two long comparisons.
      */
@@ -131,22 +92,6 @@ public final class KioskActivity extends Activity {
      * checks, while running rarely enough that it costs nothing worth measuring.
      */
     private static final long FROZEN_PAGE_CHECK_INTERVAL_MS = 5 * 60 * 1_000L;
-    /**
-     * How many consecutive unchanged checks before the dashboard is treated as frozen: three, i.e.
-     * fifteen minutes with not one visible change.
-     *
-     * <p>Still a heuristic, but no longer one that needs an operator-facing off switch to be safe.
-     * The switch existed because a legitimately static page, one unchanging image, no live tiles, * is indistinguishable from a frozen one <em>by a single observation</em>. Over time it is not:
-     * a static page never changed, while a frozen one was changing and stopped. So a reload now
-     * requires having observed this generation of the page change at least once
-     * ({@link #sawPageChange}); until then "unchanged" carries no information and nothing fires.
-     *
-     * <p>The trade is deliberate and in the safe direction: a dashboard that freezes before the
-     * first observed change is not caught here. That case already belongs to the load-failure and
-     * hung-load paths, and to the nightly recycle. Reloading a working panel every fifteen minutes
-     * forever is the worse failure, and it is the one this rules out.
-     */
-    private static final int FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER = 3;
     private static final long OVERLAY_REFRESH_MS = 1_000L;
     /**
      * How often the configuration screen re-reads its instantly applied controls from storage, so
@@ -235,22 +180,14 @@ public final class KioskActivity extends Activity {
     private NetworkGate dashboardGate;
     private TextView brightnessModeNote;
     private int pendingBrightnessPercent = -1;
-    /** When the load in flight began, on the uptime clock, or 0 when nothing is loading. */
-    private long loadStartedAtMs;
-    /** When the next recovery attempt is due, on the uptime clock, or 0 when none is pending. */
-    private long nextRetryAtMs;
-    private int dashboardRetries;
-    /** The last content fingerprint the frozen-page probe read, or null before the first check. */
-    private String lastPageFingerprint;
-    /** How many consecutive checks have read the identical fingerprint. */
-    private int unchangedPageChecks;
     /**
-     * Whether this generation of the page has ever been observed to change. Gates the frozen-page
-     * reload: a page that has never changed may simply be static, and reloading it every fifteen
-     * minutes forever would be the worse failure. See
-     * {@link #FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER}.
+     * Every retry/timeout/frozen-page decision, as pure host-tested state; this class only wires
+     * it to the WebView, the clock and the handlers. Time is always
+     * {@code SystemClock.uptimeMillis()}. See {@link RecoveryPolicy} for the design rules and the
+     * bug history that shaped them.
      */
-    private boolean sawPageChange;
+    private final RecoveryPolicy recovery = new RecoveryPolicy();
+    private int dashboardRetries;
     /** Turns server probe verdicts into at most one reload per outage. */
     private final ServerProbePolicy serverProbePolicy = new ServerProbePolicy();
     /** Whether a probe request is in flight. Only ever touched on the main thread. */
@@ -280,6 +217,11 @@ public final class KioskActivity extends Activity {
     private boolean syncingLiveControls;
     /** Re-reads the live settings so a change from MQTT or the web admin shows up here too. */
     private Runnable liveSettingSyncTask;
+    /**
+     * The stored connection fields as of when the configuration screen was built, for the Save
+     * button's stale-form check. See {@link #connectionBaselineOf}.
+     */
+    private String connectionBaseline = "";
     /**
      * How to draw the screen that is currently up, so a rotation can redraw it. Null on the
      * dashboard, which needs no redraw: a WebView reflows itself, and rebuilding it would reload
@@ -384,7 +326,7 @@ public final class KioskActivity extends Activity {
         // Only while the dashboard is in its settled, successfully-loaded state. A load already in
         // flight or already queued for retry is the existing HTTP/hang recovery path's business, not
         // this one's, and evaluating JavaScript mid-transition would only read a half-built page.
-        if (loadStartedAtMs != 0 || nextRetryAtMs != 0) {
+        if (!recovery.settled()) {
             return;
         }
         WebView probed = webView;
@@ -404,21 +346,9 @@ public final class KioskActivity extends Activity {
             return;
         }
         String fingerprint = unquoteJavascriptResult(result);
-        if (fingerprint.equals(lastPageFingerprint)) {
-            unchangedPageChecks++;
-        } else {
-            // Not on the first probe of a generation: there is nothing to have changed from, and
-            // counting it would let a page that has only ever been observed once look "live".
-            if (lastPageFingerprint != null) {
-                sawPageChange = true;
-            }
-            lastPageFingerprint = fingerprint;
-            unchangedPageChecks = 0;
-        }
-        if (sawPageChange && unchangedPageChecks >= FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER) {
-            unchangedPageChecks = 0;
-            long minutes = FROZEN_PAGE_CHECK_INTERVAL_MS * FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER
-                    / 60_000L;
+        if (recovery.recordFingerprint(fingerprint)) {
+            long minutes = FROZEN_PAGE_CHECK_INTERVAL_MS
+                    * RecoveryPolicy.FROZEN_PAGE_STALE_CHECKS_TO_TRIGGER / 60_000L;
             Log.w(TAG, "Dashboard content has not changed in " + minutes
                     + "m; treating it as frozen and reloading");
             recordLoadFailure("page appears frozen");
@@ -431,12 +361,6 @@ public final class KioskActivity extends Activity {
             return result.substring(1, result.length() - 1);
         }
         return result;
-    }
-
-    private void resetFrozenPageTracking() {
-        lastPageFingerprint = null;
-        unchangedPageChecks = 0;
-        sawPageChange = false;
     }
 
     /**
@@ -468,7 +392,7 @@ public final class KioskActivity extends Activity {
         }
         // Only while the dashboard is settled. A load in flight or a pending retry already belongs
         // to the load-failure path, and its own outcome says everything a probe could.
-        if (loadStartedAtMs != 0 || nextRetryAtMs != 0) {
+        if (!recovery.settled()) {
             return;
         }
         String url = KioskConfig.load(this).dashboardUrl;
@@ -518,7 +442,7 @@ public final class KioskActivity extends Activity {
         // The page this verdict describes is gone: a load was issued, or another detector armed a
         // retry, while the request was in flight. Recording it anyway could make the new page's
         // first healthy probe read as a recovery and reload a page that was never down.
-        if (generation != serverProbeGeneration || loadStartedAtMs != 0 || nextRetryAtMs != 0) {
+        if (generation != serverProbeGeneration || !recovery.settled()) {
             return;
         }
         if (serverProbePolicy.recordResult(serverUp)) {
@@ -1101,11 +1025,10 @@ public final class KioskActivity extends Activity {
         }
         if (typed.isEmpty()) {
             // Deliberate: an explicit clear must work even if the Keystore was unreadable when this
-            // config loaded, which is exactly the case KioskConfig.save() now declines to persist.
+            // config loaded, which is exactly the case Editor.apply declines to persist.
             KioskConfig.clearHttpAdminPassword(this);
         } else {
-            config.httpAdminPassword = typed;
-            config.save(this);
+            KioskConfig.edit(this).httpAdminPassword(typed).apply();
         }
         KioskService.reloadConfiguration(this);
         Toast.makeText(this,
@@ -1119,23 +1042,21 @@ public final class KioskActivity extends Activity {
      * next telemetry tick. These controls sit in the card each one is about rather than collected
      * into a box of their own, so this is what they have in common, not where they are.
      *
-     * <p>Three things here are load-bearing. It loads a **fresh** {@link KioskConfig} instead of
-     * mutating the snapshot the screen was built from, so a concurrent change from another surface
-     * survives. It needs no controller restart, because every one of these settings is read live by
-     * whoever consumes it (the overlay ticker, the telemetry loop). And it calls
-     * {@link KioskService#publishTelemetrySoon} so the MQTT switch in
+     * <p>Two things here are load-bearing. It needs no controller restart, because every one of
+     * these settings is read live by whoever consumes it (the overlay ticker, the telemetry loop).
+     * And it calls {@link KioskService#publishTelemetrySoon} so the MQTT switch in
      * Home Assistant reflects the new value in under a second rather than up to a full interval
      * later, the same reason {@code KioskService.dispatch} republishes after an accepted command.
      */
-    private void applyLiveSetting(java.util.function.Consumer<KioskConfig> change) {
+    private void applyLiveSetting(java.util.function.Consumer<KioskConfig.Editor> change) {
         if (syncingLiveControls) {
             // Our own write, echoed back by liveSettingSyncTask. Saving it again would be harmless
             // but pointless, and would republish state for a change nobody made.
             return;
         }
-        KioskConfig fresh = KioskConfig.load(this);
-        change.accept(fresh);
-        fresh.save(this);
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        change.accept(editor);
+        editor.apply();
         KioskService.publishTelemetrySoon(this);
     }
 
@@ -1154,7 +1075,23 @@ public final class KioskActivity extends Activity {
                 .getBoolean(LIGHT_CONFIGURATION_THEME, false));
     }
 
+    /**
+     * The seven connection fields joined on NUL (which none of them can contain, same trick as the
+     * service's controller fingerprints), so the Save button can tell whether any of them changed
+     * on another surface while the screen sat open.
+     */
+    private static String connectionBaselineOf(KioskConfig config) {
+        return config.dashboardUrl + '\u0000' + config.deviceId + '\u0000' + config.mqttHost
+                + '\u0000' + config.mqttPort + '\u0000' + config.mqttUsername + '\u0000'
+                + config.mqttPassword + '\u0000' + config.httpPort;
+    }
+
     private void showConfiguration(KioskConfig config) {
+        // What is actually stored right now, not what the (possibly rotation-carried) display
+        // model says: the Save button compares against this to detect a form gone stale. Loaded
+        // fresh even though a config was passed in, because after a rotation the passed object
+        // carries half-typed field values that are exactly what must NOT be in the baseline.
+        connectionBaseline = connectionBaselineOf(KioskConfig.load(this));
         // Deliberately stays inside lock-task mode: DevicePolicyManager.setStatusBarDisabled is
         // documented to have no effect outside it, so releasing lock task here, which is what this
         // screen used to do, to keep the navigation bar for dismissing the keyboard, left a fully
@@ -1374,7 +1311,7 @@ public final class KioskActivity extends Activity {
 
         CheckBox portraitInput = themedCheckBox(theme, "Use portrait mode", config.portrait);
         portraitInput.setOnCheckedChangeListener((button, checked) -> {
-            applyLiveSetting(fresh -> fresh.portrait = checked);
+            applyLiveSetting(editor -> editor.portrait(checked));
             // Applied here as well as saved, because this screen is the one surface that does not go
             // through KioskService and so never receives the broadcast that turns the window.
             applyOrientation();
@@ -1435,7 +1372,7 @@ public final class KioskActivity extends Activity {
         CheckBox statsOverlayInput = themedCheckBox(theme,
                 "Show system stats on the dashboard", config.statsOverlay);
         statsOverlayInput.setOnCheckedChangeListener(
-                (button, checked) -> applyLiveSetting(fresh -> fresh.statsOverlay = checked));
+                (button, checked) -> applyLiveSetting(editor -> editor.statsOverlay(checked)));
         statsCard.addView(statsOverlayInput, matchWrap());
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
@@ -1503,24 +1440,32 @@ public final class KioskActivity extends Activity {
         open.setOnClickListener(view -> {
             String url = normalizeUrl(urlInput.getText().toString());
             if (!url.isEmpty()) {
-                // Loaded fresh rather than reusing the snapshot this screen was built from:
-                // KioskConfig.save() writes every field, so saving the stale object would revert
-                // anything MQTT or the web admin changed while the screen sat open.
-                //
-                // Only the fields with a text box on this screen are taken from the form. The
-                // overlay switch, the publish interval, portrait, the brightness pair and the
-                // admin password already applied themselves when touched, so they must be left at
-                // whatever the fresh load holds.
-                KioskConfig saving = KioskConfig.load(this);
-                saving.dashboardUrl = url;
-                saving.deviceId = deviceIdInput.getText().toString().trim();
-                saving.mqttHost = brokerInput.getText().toString().trim();
-                saving.mqttPort = parsePort(portInput.getText().toString(), 1883);
-                saving.mqttUsername = usernameInput.getText().toString();
-                saving.mqttPassword = passwordInput.getText().toString();
-                saving.httpPort = parsePort(
-                        httpPortInput.getText().toString(), KioskConfig.DEFAULT_HTTP_PORT);
-                saving.save(this);
+                // Stale-form guard, the same rule the escape recorder and the web admin boxes
+                // follow: this form holds the values that were current when the screen was built,
+                // and if another surface changed any of them since, writing the form back would
+                // silently revert that change. Refused with an explanation, and the screen is
+                // rebuilt showing what is actually stored now.
+                KioskConfig current = KioskConfig.load(this);
+                if (!connectionBaselineOf(current).equals(connectionBaseline)) {
+                    Toast.makeText(this, "Not saved: these settings were changed from another "
+                            + "surface while this screen was open. Showing the current values.",
+                            Toast.LENGTH_LONG).show();
+                    showConfiguration(current);
+                    return;
+                }
+                // Only the fields with a text box on this screen are written. The overlay switch,
+                // portrait, the brightness pair and the admin password already applied themselves
+                // when touched, and the Editor cannot touch what it was not given.
+                KioskConfig.edit(this)
+                        .dashboardUrl(url)
+                        .deviceId(deviceIdInput.getText().toString())
+                        .mqttHost(brokerInput.getText().toString())
+                        .mqttPort(parsePort(portInput.getText().toString(), 1883))
+                        .mqttUsername(usernameInput.getText().toString())
+                        .mqttPassword(passwordInput.getText().toString())
+                        .httpPort(parsePort(httpPortInput.getText().toString(),
+                                KioskConfig.DEFAULT_HTTP_PORT))
+                        .apply();
                 KioskService.reloadConfiguration(this);
                 showDashboard(url);
             }
@@ -2715,7 +2660,6 @@ public final class KioskActivity extends Activity {
         applyKioskPolicy();
         kioskStopped = false;
         resetLoadTracking();
-        resetFrozenPageTracking();
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
         mainHandler.removeCallbacks(frozenPageCheckTask);
@@ -2979,50 +2923,33 @@ public final class KioskActivity extends Activity {
      * time is idempotent, issuing a load is not.
      */
     private void recordLoadFailure(String description) {
-        long now = android.os.SystemClock.uptimeMillis();
         KioskRuntimeState.recordPageError(description);
-        loadFailedAtMs = now;
-        nextRetryAtMs = now + RELOAD_BACKOFF_MS;
+        recovery.recordLoadFailure(android.os.SystemClock.uptimeMillis());
         // A dashboard going down is exactly the kind of thing worth knowing about before the next
         // scheduled telemetry tick, which can now be as much as five minutes away.
         KioskService.publishTelemetrySoon(this);
     }
 
     /**
-     * Decides, every {@link #SUPERVISOR_INTERVAL_MS}, whether the dashboard needs reloading.
-     *
-     * <p>This is what makes the panel come back on its own after Home Assistant, or whatever serves
-     * the page, has been down: each failed attempt makes the next one due {@link #RELOAD_BACKOFF_MS}
-     * later, so it keeps trying for as long as the outage lasts and stops the moment a load succeeds.
-     * There is no attempt limit on purpose. A wall panel has nobody to press a button, and an outage
-     * that outlasts a limit would leave it dark until somebody noticed.
-     *
-     * <p>Exactly one recovery load is ever in flight: issuing one clears the pending attempt, and every
-     * outcome puts one back. An error re-arms it after a backoff, a success clears it for good, and a
-     * load that neither finishes nor errors is caught by the hung-load check below, which is the case
-     * nothing else notices, a server that accepts the connection and then never answers.
+     * The recovery clock's tick, every {@link #SUPERVISOR_INTERVAL_MS}. All decisions are
+     * {@link RecoveryPolicy}'s; this method only supplies the clock, the preconditions that need
+     * Android (a network, a configured URL), and the WebView. The preconditions are checked only
+     * once an attempt is actually due, because {@code KioskConfig.load} decrypts three secrets and
+     * has no business running twice a second, and a blocked attempt stays due so it goes out the
+     * moment they clear, which is what a router reboot used to not look like from the panel.
      */
     private void superviseDashboard() {
         if (kioskStopped || webView == null) {
             return;
         }
         long now = android.os.SystemClock.uptimeMillis();
-
-        long loadTimeoutMs = loadFollowsRendererDeath
-                ? RENDERER_DEATH_LOAD_TIMEOUT_MS : LOAD_TIMEOUT_MS;
-        if (nextRetryAtMs == 0 && loadStartedAtMs != 0
-                && now - loadStartedAtMs > loadTimeoutMs) {
-            Log.w(TAG, "Dashboard load has not finished in " + loadTimeoutMs + "ms; retrying");
-            recordLoadFailure("load timed out");
-            nextRetryAtMs = now;
+        String hung = recovery.checkHungLoad(now);
+        if (hung != null) {
+            Log.w(TAG, "Dashboard " + hung + "; retrying");
+            KioskRuntimeState.recordPageError(hung);
+            KioskService.publishTelemetrySoon(this);
         }
-        if (nextRetryAtMs == 0 || now < nextRetryAtMs) {
-            return;
-        }
-        if (!NetworkGate.isOnline(this)) {
-            // The attempt stays due rather than being spent, so it goes out as soon as there is a
-            // network again. Loading now would only render an error page and burn the backoff, which
-            // is what a router reboot used to look like from the panel.
+        if (!recovery.retryDue(now) || !NetworkGate.isOnline(this)) {
             return;
         }
         String url = KioskConfig.load(this).dashboardUrl;
@@ -3031,23 +2958,8 @@ public final class KioskActivity extends Activity {
         }
         dashboardRetries++;
         Log.i(TAG, "Dashboard retry " + dashboardRetries + ": " + url);
-        // beginLoad(), not the three assignments this used to make by hand. It is the only place
-        // that also calls resetFrozenPageTracking(), and this is the one path that services a
-        // frozen-page reload: recordLoadFailure("page appears frozen") only arms nextRetryAtMs, and
-        // the retry lands here. Setting the timestamps inline left sawPageChange and the last
-        // fingerprint from the *previous* generation in place, so the reload never cleared the state
-        // that authorised it, three more identical probes and it fired again, every fifteen
-        // minutes, on a panel that was working. That is the failure the gate exists to prevent, so
-        // every path that starts a generation must go through here.
-        //
-        // Cleared here rather than in beginLoad(): this is the one place that turns a *pending*
-        // recovery into an issued load, so it is the point at which the tighter post-renderer-death
-        // bound has been spent. beginLoad() also runs from showDashboard, which is what recovery
-        // calls to create the WebView in the first place, so clearing it there would clear the flag
-        // before the load it applies to had even started.
-        loadFollowsRendererDeath = false;
-        beginLoad();
-        loadStartedAtMs = now;
+        recovery.issueLoad(now);
+        resetServerProbeTracking();
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
         // request that produced the cached error page. loadUrl always asks for the configured
         // dashboard, which is what kiosk.restart does and is known to work.
@@ -3056,11 +2968,7 @@ public final class KioskActivity extends Activity {
 
     /** Forgets any pending recovery and any load in flight. Nothing is loading after this. */
     private void resetLoadTracking() {
-        loadStartedAtMs = 0;
-        nextRetryAtMs = 0;
-        loadFailedAtMs = 0;
-        loadFollowsRendererDeath = false;
-        resetFrozenPageTracking();
+        recovery.reset();
         resetServerProbeTracking();
     }
 
@@ -3068,58 +2976,17 @@ public final class KioskActivity extends Activity {
      * Marks a load as starting now, at every site that asks the WebView to load something.
      *
      * <p>Not left to {@code onPageStarted}, deliberately. That callback fires when the WebView starts
-     * receiving a page, so for the failure this hung-load timeout exists to catch, a server that
+     * receiving a page, so for the failure the hung-load timeout exists to catch, a server that
      * accepts the connection and then never answers, it may not fire at all. Arming the clock from the
      * callback would mean the one case nothing else notices is also the one case the timeout misses.
      */
     private void beginLoad() {
-        loadStartedAtMs = android.os.SystemClock.uptimeMillis();
-        nextRetryAtMs = 0;
-        loadFailedAtMs = 0;
-        resetFrozenPageTracking();
+        recovery.beginLoad(android.os.SystemClock.uptimeMillis());
         // The probe state too: this load's outcome belongs to the load-failure path, and an outage
         // observed before it would otherwise make the new page's first healthy probe read as a
         // recovery and demand a second reload.
         resetServerProbeTracking();
     }
-
-    /**
-     * Whether the load currently in flight has already reported a failure.
-     *
-     * <p>This exists because of a bug that made the retry logic useless. An error page is still a page:
-     * for an HTTP 502 the WebView reports {@code onReceivedHttpError} and then {@code onPageFinished},
-     * because the proxy's error body loaded perfectly well. {@code onPageFinished} cancelled the pending
-     * reload, so **the retry was cancelled by the very failure that scheduled it** and the panel sat on
-     * the error page indefinitely. Measured 2026-08-19: one 502 logged, zero reloads.
-     */
-    /**
-     * When the load in flight last reported a failure, on the uptime clock, or 0 for never.
-     *
-     * <p>A timestamp rather than a boolean, because **the WebView callbacks do not arrive in the order
-     * they read like**. Measured 2026-08-19: for an HTTP 502 the sequence was `onReceivedHttpError`,
-     * then `onPageStarted`, then `onPageFinished`. A boolean cleared in `onPageStarted` was therefore
-     * wiped by the very load that had just failed, `onPageFinished` then treated the error page as a
-     * success, cancelled the pending retry and recorded a healthy load. Net effect: one 502 logged, the
-     * retry never ran, and the panel sat on the error page. A timestamp cannot be undone by a
-     * late-arriving callback.
-     */
-    private long loadFailedAtMs;
-
-    /**
-     * How recently a failure must have been reported for the load that is finishing to count as failed.
-     * Generous enough to absorb out-of-order callbacks, far shorter than any retry interval.
-     */
-    private static final long LOAD_FAILURE_WINDOW_MS = 5_000L;
-
-    /**
-     * Whether the load in flight is the one {@code onRenderProcessGone} issued, and so is held to
-     * {@link #RENDERER_DEATH_LOAD_TIMEOUT_MS} rather than {@link #LOAD_TIMEOUT_MS}.
-     *
-     * <p>Set after {@code showDashboard} returns, never before: that method calls
-     * {@link #resetLoadTracking()}, which clears this along with the rest of the load bookkeeping,
-     * so setting it first would have it wiped by the very rebuild it describes.
-     */
-    private boolean loadFollowsRendererDeath;
 
     private final class KioskWebViewClient extends WebViewClient {
         /**
@@ -3135,29 +3002,16 @@ public final class KioskActivity extends Activity {
          */
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-            loadStartedAtMs = android.os.SystemClock.uptimeMillis();
-            // A new document, and often one this app did not ask for: a JS location change, a login
-            // redirect, a server 302. Whatever the last document's content looked like says nothing
-            // about this one, and carrying sawPageChange across meant a static page inherited
-            // permission to be declared frozen. Deliberately not the whole of beginLoad(): the
-            // retry bookkeeping belongs to whoever issued the load, and clearing nextRetryAtMs here
-            // would cancel a pending recovery.
-            resetFrozenPageTracking();
+            recovery.pageStarted(android.os.SystemClock.uptimeMillis());
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
-            // An error page is still a page: for an HTTP 502 the WebView reports onReceivedHttpError
-            // and then onPageFinished, because the proxy's error body loaded perfectly well. Treating
-            // that as a successful load would clear the pending retry and make the health figures
-            // claim a dashboard that never came.
-            if (android.os.SystemClock.uptimeMillis() - loadFailedAtMs < LOAD_FAILURE_WINDOW_MS) {
-                return;
+            // The policy decides whether this finish is a success or the error page of a failure
+            // reported moments ago; only a genuine success is recorded as one.
+            if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
+                KioskRuntimeState.recordPageFinished(url);
             }
-            loadStartedAtMs = 0;
-            nextRetryAtMs = 0;
-            loadFollowsRendererDeath = false;
-            KioskRuntimeState.recordPageFinished(url);
         }
 
         @Override
@@ -3204,10 +3058,10 @@ public final class KioskActivity extends Activity {
                 if (!isFinishing() && !isDestroyed() && !kioskStopped) {
                     showDashboard(KioskConfig.load(KioskActivity.this).dashboardUrl);
                     // After showDashboard, which resets the load bookkeeping this belongs to. The
-                    // supervisor now holds that load to RENDERER_DEATH_LOAD_TIMEOUT_MS instead of
-                    // the minute a merely-slow dashboard is owed, because a panel that already
+                    // supervisor now holds that load to the tighter renderer-death bound instead
+                    // of the minute a merely-slow dashboard is owed, because a panel that already
                     // knows its renderer died should not spend that minute showing nothing.
-                    loadFollowsRendererDeath = true;
+                    recovery.markLoadFollowsRendererDeath();
                 }
             });
             return true;

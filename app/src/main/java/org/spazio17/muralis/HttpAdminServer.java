@@ -1003,31 +1003,59 @@ final class HttpAdminServer {
         KioskConfig fresh = KioskConfig.load(context);
         String section = form.getOrDefault("section", "main");
 
-        // Each box on the page posts only its own fields. Applying everything from every post is
-        // what made a partial form read as "all checkboxes unchecked".
+        // Each box on the page posts only its own fields, and each writes only what it posts,
+        // through KioskConfig.edit. Applying everything from every post is what once made a
+        // partial form read as "all checkboxes unchecked".
         switch (section) {
             case "sequences":
                 saveEscapeSequences(form, fresh);
                 return null;
-            case "dashboard":
-                fresh.dashboardUrl = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
-                fresh.deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
-                break;
+            case "dashboard": {
+                String stale = staleFormRefusal(form,
+                        fresh.dashboardUrl + "|" + fresh.deviceId);
+                if (stale != null) {
+                    return stale;
+                }
+                String url = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
+                KioskConfig.edit(context)
+                        .dashboardUrl(url)
+                        .deviceId(form.getOrDefault("device_id", fresh.deviceId))
+                        .apply();
+                if (!url.equals(fresh.dashboardUrl)) {
+                    // Saving a new URL must also navigate to it; the form path used to only save,
+                    // so the panel sat on the old page until something else reloaded it, while the
+                    // command path (kiosk.set_url) always did both. Route through the same method
+                    // the dispatcher uses, so the two paths cannot disagree again.
+                    kioskService.setDashboardUrl(url);
+                }
+                return null;
+            }
             case "mqtt": {
-                fresh.mqttHost = form.getOrDefault("mqtt_host", fresh.mqttHost).trim();
+                String stale = staleFormRefusal(form,
+                        fresh.mqttHost + "|" + fresh.mqttPort + "|" + fresh.mqttUsername);
+                if (stale != null) {
+                    return stale;
+                }
                 Integer brokerPort = parsePort(form.get("mqtt_port"), fresh.mqttPort);
                 if (brokerPort == null) {
                     return "Broker port must be between 1 and 65535.";
                 }
-                fresh.mqttPort = brokerPort;
-                fresh.mqttUsername = form.getOrDefault("mqtt_username", fresh.mqttUsername);
+                KioskConfig.Editor editor = KioskConfig.edit(context)
+                        .mqttHost(form.getOrDefault("mqtt_host", fresh.mqttHost))
+                        .mqttPort(brokerPort)
+                        .mqttUsername(form.getOrDefault("mqtt_username", fresh.mqttUsername));
                 String mqttPassword = form.get("mqtt_password");
                 if (mqttPassword != null && !mqttPassword.isEmpty()) {
-                    fresh.mqttPassword = mqttPassword;
+                    editor.mqttPassword(mqttPassword);
                 }
-                break;
+                editor.apply();
+                return null;
             }
             case "webadmin": {
+                String stale = staleFormRefusal(form, Integer.toString(fresh.httpPort));
+                if (stale != null) {
+                    return stale;
+                }
                 // Range-checked and REFUSED, not clamped, and this is the highest-severity input on
                 // the page. ServerSocket.bind throws IllegalArgumentException, not IOException, for
                 // a port outside 1-65535, and HttpAdminServer.start only catches IOException. So a
@@ -1040,7 +1068,7 @@ final class HttpAdminServer {
                 if (adminPort == null) {
                     return "Web admin port must be between 1 and 65535.";
                 }
-                fresh.httpPort = adminPort;
+                KioskConfig.Editor editor = KioskConfig.edit(context).httpPort(adminPort);
                 String adminPassword = form.get("http_admin_password");
                 if (adminPassword != null && !adminPassword.isEmpty()) {
                     if (adminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
@@ -1049,9 +1077,10 @@ final class HttpAdminServer {
                                 + "switch this page off, and only the tablet could switch it back "
                                 + "on.";
                     }
-                    fresh.httpAdminPassword = adminPassword;
+                    editor.httpAdminPassword(adminPassword);
                 }
-                break;
+                editor.apply();
+                return null;
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
             // POST /api/setting has always accepted. It now covers the stats-overlay switch alone,
@@ -1061,17 +1090,35 @@ final class HttpAdminServer {
                 // the whole box was posted at once. These controls now post one at a time as they
                 // are touched, so presence would read every post as "the others were just
                 // cleared". The value carries the meaning instead, and an absent key is simply not
-                // being set.
+                // being set. No stale-form guard either: the posted value is what the operator
+                // just touched, not what the page remembered.
                 if (form.containsKey("stats_overlay")) {
-                    fresh.statsOverlay = isTrue(form.get("stats_overlay"));
+                    KioskConfig.edit(context)
+                            .statsOverlay(isTrue(form.get("stats_overlay")))
+                            .apply();
                 }
-                break;
+                return null;
             default:
                 Log.i(TAG, "Ignoring a settings post with no known section");
                 return null;
         }
-        fresh.save(context);
-        return null;
+    }
+
+    /**
+     * The stale-form check for the Save-button boxes, generalising the escape-sequences baseline:
+     * a page keeps the values that were current when it loaded, and submitting it after another
+     * surface changed one of those fields would silently revert that change. Refused with an
+     * explanation rather than ignored, because the response re-renders the page and the operator
+     * sees the current values immediately. A missing baseline is treated as stale, since the only
+     * pages without one are older than this check.
+     */
+    private static String staleFormRefusal(Map<String, String> form, String currentBaseline) {
+        String baseline = form.get("baseline");
+        if (baseline != null && baseline.equals(currentBaseline)) {
+            return null;
+        }
+        return "Not saved: these settings were changed elsewhere after this page loaded. "
+                + "The page now shows the current values; please re-apply your edit.";
     }
 
     /** The spellings a browser form, a shell or a hand-written client is likely to send. */
@@ -1168,11 +1215,17 @@ final class HttpAdminServer {
         html.append("<div class=\"grid\">")
 
                 .append(sectionFormStart("dashboard", "Dashboard"))
+                // Each Save box carries the values it was rendered from, so a submit from a page
+                // that has gone stale is refused instead of reverting a newer change; see
+                // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
+                .append(baselineField(config.dashboardUrl + "|" + config.deviceId))
                 .append(field("text", "dashboard_url", "Dashboard URL", config.dashboardUrl))
                 .append(field("text", "device_id", "Device ID", config.deviceId))
                 .append(sectionFormEnd("Save"))
 
                 .append(sectionFormStart("mqtt", "MQTT"))
+                .append(baselineField(
+                        config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername))
                 .append(field("text", "mqtt_host", "Broker host", config.mqttHost))
                 .append(field("number", "mqtt_port", "Broker port",
                         Integer.toString(config.mqttPort)))
@@ -1182,6 +1235,7 @@ final class HttpAdminServer {
                 .append(sectionFormEnd("Save"))
 
                 .append(sectionFormStart("webadmin", "Local web admin"))
+                .append(baselineField(Integer.toString(config.httpPort)))
                 .append(field("number", "http_port", "Port", Integer.toString(config.httpPort)))
                 .append(field("password", "http_admin_password",
                         "Admin password (blank keeps the current one)", ""))
@@ -1489,6 +1543,11 @@ final class HttpAdminServer {
     private static String sectionFormEnd(String label) {
         return "<button class=\"primary\" type=\"submit\">" + escapeHtml(label)
                 + "</button></fieldset></form>";
+    }
+
+    /** The hidden input staleFormRefusal checks on submit. */
+    private static String baselineField(String value) {
+        return "<input type=\"hidden\" name=\"baseline\" value=\"" + escapeHtml(value) + "\">";
     }
 
     private static String field(String type, String name, String label, String value) {
