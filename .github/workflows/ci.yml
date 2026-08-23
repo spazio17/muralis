@@ -56,6 +56,15 @@ jobs:
       - name: Build the debug APK
         run: ./gradlew --no-daemon assembleDebug
 
+      - name: Lint
+        run: ./gradlew --no-daemon lint
+
+      # Unsigned without the release secrets, which is fine: the point is that the shrunk,
+      # ProGuard-processed build is exercised on the push that breaks it (a keep rule that stops
+      # covering Paho, a resource the shrinker drops) rather than discovered on release day.
+      - name: Build the release APK
+        run: ./gradlew --no-daemon assembleRelease
+
       - name: Version for the artifact name
         id: version
         run: echo "name=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
