@@ -247,14 +247,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return;
         }
         networkLedgerCallback = new ConnectivityManager.NetworkCallback() {
+            /** The default network we last saw. Callbacks arrive serially on one thread. */
+            private android.net.Network current;
+
             @Override
             public void onAvailable(android.net.Network network) {
+                current = network;
                 outageLedger.networkAvailable(android.os.SystemClock.elapsedRealtime());
             }
 
             @Override
             public void onLost(android.net.Network network) {
-                outageLedger.networkLost(android.os.SystemClock.elapsedRealtime());
+                // On a default-network switch, onLost for the old network can arrive AFTER
+                // onAvailable for its replacement. That is a handover, not an outage; counting it
+                // would leave the ledger stuck on "down" and blame every later MQTT outage on the
+                // network. Only the loss of the network we currently hold is a real outage.
+                if (network.equals(current)) {
+                    current = null;
+                    outageLedger.networkLost(android.os.SystemClock.elapsedRealtime());
+                }
             }
         };
         connectivity.registerDefaultNetworkCallback(networkLedgerCallback);
