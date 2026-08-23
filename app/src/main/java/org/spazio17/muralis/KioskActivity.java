@@ -1129,11 +1129,21 @@ public final class KioskActivity extends Activity {
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
-            // Plain subtext, deliberately not a warning: see webViewProviderSummary().
             TextView engine = new TextView(this);
-            engine.setTextColor(theme.subtext);
             engine.setTextSize(13);
-            engine.setText("Rendering engine: " + webViewProvider);
+            if (webViewEngineOutdated()) {
+                // A warning with a floor that was measured, not invented; see
+                // MIN_HEALTHY_WEBVIEW_MAJOR for the evidence and the date.
+                engine.setTextColor(theme.warn);
+                engine.setText("Rendering engine: " + webViewProvider
+                        + ". This engine is older than Chrome "
+                        + MIN_HEALTHY_WEBVIEW_MAJOR
+                        + " and is known to misrender Home Assistant dashboards (switch handles, "
+                        + "modern layout). Update Chrome or Android System WebView.");
+            } else {
+                engine.setTextColor(theme.subtext);
+                engine.setText("Rendering engine: " + webViewProvider);
+            }
             dashboardCard.addView(engine, matchWrap());
         }
 
@@ -1972,12 +1982,11 @@ public final class KioskActivity extends Activity {
     /**
      * Which package is rendering the dashboard, and its version, for display.
      *
-     * <p>Reported, not judged. There was briefly a check here that warned below a hardcoded Chromium
-     * major version; it was removed on 2026-08-19 because the threshold was invented. Home Assistant
-     * publishes no minimum WebView version, and nothing can detect whether a page actually rendered
-     * correctly, so the banner was an arbitrary number presented as a requirement. Stating the version
-     * lets whoever is diagnosing a strange-looking dashboard see it and decide; that is the honest
-     * amount of help this app can give. Do not reintroduce a threshold without a real source for it.
+     * <p>Reported, and since 2026-08-24 also judged against {@link #MIN_HEALTHY_WEBVIEW_MAJOR},
+     * which exists because that constant finally has a real source. An earlier warning threshold
+     * was removed on 2026-08-19 as an invented number, with a note not to reintroduce one without
+     * evidence; the evidence arrived on 2026-08-23, measured on this hardware rather than assumed.
+     * See the constant.
      *
      * <p>{@code WebView.getCurrentWebViewPackage()} is API 26, exactly this app's minSdk, so no
      * fallback branch is needed. The package name matters as well as the version: the provider can be
@@ -1994,6 +2003,52 @@ public final class KioskActivity extends Activity {
         } catch (RuntimeException unavailable) {
             Log.w(TAG, "Could not read the WebView provider version", unavailable);
             return null;
+        }
+    }
+
+    /**
+     * The Chromium major below which the rendering-engine line turns into a warning.
+     *
+     * <p>Not an invented requirement: measured on the BAH2-W19 panel on 2026-08-23 by serving a
+     * probe page to this app's own WebView (Chrome 101). It silently ignores the independent
+     * {@code translate} property (shipped in 104) and {@code :has()}, container queries and
+     * {@code cqw} (all 105), and Home Assistant's Material 3 frontend positions a switch handle
+     * with {@code translate}, so on the real dashboard every switch handle rests mid-track. 105
+     * is the smallest major with every feature the probe found missing, which makes it a floor
+     * derived from observed breakage of the one page this app exists to show, exactly the "real
+     * source" the earlier removal note demanded before any threshold could come back.
+     *
+     * <p>A warning colour and a sentence, not a block: the app cannot know whether the operator's
+     * particular dashboard uses the broken features, so it flags and explains rather than judges.
+     */
+    static final int MIN_HEALTHY_WEBVIEW_MAJOR = 105;
+
+    /** The leading integer of a Chromium version string, or -1 when it has no parseable major. */
+    private static int webViewMajorOf(String versionName) {
+        if (versionName == null) {
+            return -1;
+        }
+        int end = 0;
+        while (end < versionName.length() && Character.isDigit(versionName.charAt(end))) {
+            end++;
+        }
+        try {
+            return end == 0 ? -1 : Integer.parseInt(versionName.substring(0, end));
+        } catch (NumberFormatException impossible) {
+            return -1;
+        }
+    }
+
+    /** Whether the current WebView provider is old enough to misrender the dashboard. */
+    private boolean webViewEngineOutdated() {
+        try {
+            android.content.pm.PackageInfo provider = WebView.getCurrentWebViewPackage();
+            int major = provider == null ? -1 : webViewMajorOf(provider.versionName);
+            // Unknown reads as fine: a warning that fires because a version string failed to
+            // parse would be the invented threshold all over again.
+            return major > 0 && major < MIN_HEALTHY_WEBVIEW_MAJOR;
+        } catch (RuntimeException unavailable) {
+            return false;
         }
     }
 

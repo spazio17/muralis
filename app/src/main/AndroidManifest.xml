@@ -79,6 +79,14 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Muralis"
         android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic is app-wide and stays that way, a decision rather than an
+             omission. What actually needs it is the dashboard WebView and the server probe: a
+             typical Home Assistant install on a home LAN is plain http, and the host is whatever
+             the operator types at runtime, so a network-security-config allowlist (which is
+             static XML, resolved at install) cannot express it; scoping to specific domains
+             would just break the next customer's URL. The app's own sockets are unaffected
+             either way: both the admin server and Paho MQTT use raw java.net sockets, which
+             bypass the platform's cleartext policy entirely. -->
 
         <!-- Device-owner component, provisioned with
              `adb shell dpm set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`.
