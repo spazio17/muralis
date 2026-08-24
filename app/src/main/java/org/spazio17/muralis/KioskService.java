@@ -93,8 +93,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private HandlerThread telemetryThread;
     private Handler telemetryHandler;
     private TelemetryCollector telemetryCollector;
-    private MqttController mqttController;
-    private HttpAdminServer httpAdminServer;
+    /**
+     * Volatile for the same hazard MqttController.client documents: written on the main thread
+     * (startControllersNow/restartControllers), read from the MuralisTelemetry thread and from
+     * Paho's callback thread. The readers already copy to a local and null-check; without
+     * volatile that copy had no visibility guarantee.
+     */
+    private volatile MqttController mqttController;
+    private volatile HttpAdminServer httpAdminServer;
     /** Network downtime history, so a survived MQTT outage can be blamed correctly. */
     private OutageLedger outageLedger;
     private ConnectivityManager.NetworkCallback networkLedgerCallback;
@@ -431,6 +437,33 @@ public final class KioskService extends Service implements KioskCommandDispatche
             policy.addUserRestriction(admin, android.os.UserManager.DISALLOW_SAFE_BOOT);
         } catch (SecurityException | IllegalArgumentException refused) {
             Log.w(TAG, "Could not block safe-mode boot", refused);
+        }
+
+        // Accessibility services: system-only. The configuration screen renders both corner-tap
+        // combinations in plaintext, and an enabled accessibility service could read them and
+        // synthesise the taps, which makes it a keyless escape from the kiosk. An empty list
+        // permits only services bundled in the system image.
+        try {
+            policy.setPermittedAccessibilityServices(admin, java.util.Collections.emptyList());
+        } catch (SecurityException | IllegalArgumentException refused) {
+            Log.w(TAG, "Could not restrict accessibility services", refused);
+        }
+
+        // Keyboards: system ones plus whichever keyboard is active right now, resolved rather
+        // than hardcoded (same rule as debloating: which IME a device uses varies, the MediaPad's
+        // is SwiftKey). A third-party IME sees the broker and admin passwords being typed, so an
+        // arbitrary sideloaded one must not be usable; but blocking the keyboard the operator
+        // already types on would brick the settings screen, which is why the active one is kept.
+        try {
+            String activeIme = Settings.Secure.getString(getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD);
+            java.util.List<String> permitted = new java.util.ArrayList<>();
+            if (activeIme != null && activeIme.contains("/")) {
+                permitted.add(activeIme.substring(0, activeIme.indexOf('/')));
+            }
+            policy.setPermittedInputMethods(admin, permitted);
+        } catch (SecurityException | IllegalArgumentException refused) {
+            Log.w(TAG, "Could not restrict input methods", refused);
         }
         grantOwnRuntimePermissions(policy, admin);
         Log.i(TAG, "Device-owner resource guarantees applied");
@@ -876,7 +909,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             // The APPLIED override, not the last level chosen. Reading the wrong preference reported
             // a stale manual level after automatic mode had cleared the override.
-            int override = getSharedPreferences("kiosk_runtime", MODE_PRIVATE)
+            int override = KioskConfig.storageContext(this)
+                    .getSharedPreferences("kiosk_runtime", MODE_PRIVATE)
                     .getInt(APPLIED_BRIGHTNESS_KEY, -1);
 
             // Brightness now always comes from the system setting, so mode is simply the checkbox.

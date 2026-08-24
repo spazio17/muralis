@@ -1091,7 +1091,8 @@ public final class KioskActivity extends Activity {
     }
 
     private KioskTheme currentTheme() {
-        return KioskTheme.of(getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+        return KioskTheme.of(KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
                 .getBoolean(LIGHT_CONFIGURATION_THEME, false));
     }
 
@@ -1167,8 +1168,12 @@ public final class KioskActivity extends Activity {
         addField(mqttCard, theme, "Broker port", portInput);
         EditText usernameInput = themedInput(theme, config.mqttUsername, false);
         addField(mqttCard, theme, "Username", usernameInput);
-        EditText passwordInput = themedInput(theme, config.mqttPassword, true);
-        addField(mqttCard, theme, "Password", passwordInput);
+        // Rendered blank, never prefilled: the stored plaintext in a masked EditText is one
+        // input-type toggle (or one accessibility service) away from being read, and the web
+        // admin has always rendered this blank for that reason. Blank keeps the current one,
+        // the same rule the web admin's form follows; the Save path skips an empty box.
+        EditText passwordInput = themedInput(theme, "", true);
+        addField(mqttCard, theme, "Password (blank keeps the current one)", passwordInput);
 
 
 
@@ -1176,15 +1181,34 @@ public final class KioskActivity extends Activity {
         EditText httpPortInput = themedInput(theme, Integer.toString(config.httpPort), false);
         httpPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(httpCard, theme, "Port", httpPortInput);
-        EditText httpAdminPasswordInput = themedInput(theme, config.httpAdminPassword, true);
-        addField(httpCard, theme, "Admin password (blank disables the web admin)",
+        // Rendered blank, never prefilled, same reasoning as the broker password above. Blank
+        // still means "switch the web admin off", but only once the field has actually been
+        // edited: without the edited flag, merely focusing this empty box and leaving it would
+        // have cleared the stored password and killed the web admin.
+        EditText httpAdminPasswordInput = themedInput(theme, "", true);
+        addField(httpCard, theme, "Admin password (unchanged until edited; clear to disable)",
                 httpAdminPasswordInput);
+        final boolean[] adminPasswordEdited = {false};
+        httpAdminPasswordInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                adminPasswordEdited[0] = true;
+            }
+        });
         // Applied on blur, not on the aggregate Save: waiting for "Open dashboard" meant the web
         // admin stayed dark, or kept an old password, until the operator happened to leave the
         // screen for an unrelated reason. Same shape as the auto-brightness checkbox above: a
         // field losing focus is as much a deliberate action as a click is.
         httpAdminPasswordInput.setOnFocusChangeListener((view, hasFocus) -> {
-            if (!hasFocus) {
+            if (!hasFocus && adminPasswordEdited[0]) {
                 applyHttpAdminPassword(httpAdminPasswordInput.getText().toString());
             }
         });
@@ -1347,7 +1371,8 @@ public final class KioskActivity extends Activity {
         // screen, not a property of the device, and nothing else has any business following it.
         CheckBox lightThemeInput = themedCheckBox(theme, "Light theme", theme.light);
         lightThemeInput.setOnCheckedChangeListener((button, checked) -> {
-            getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE).edit()
+            KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                    .edit()
                     .putBoolean(LIGHT_CONFIGURATION_THEME, checked)
                     .apply();
             // Loaded fresh, not the snapshot this screen was built from. Redrawing from a stale
@@ -1496,16 +1521,22 @@ public final class KioskActivity extends Activity {
                 // Only the fields with a text box on this screen are written. The overlay switch,
                 // portrait, the brightness pair and the admin password already applied themselves
                 // when touched, and the Editor cannot touch what it was not given.
-                KioskConfig.edit(this)
+                KioskConfig.Editor editor = KioskConfig.edit(this)
                         .dashboardUrl(url)
                         .deviceId(deviceId)
                         .mqttHost(brokerInput.getText().toString())
                         .mqttPort(parsePort(portInput.getText().toString(), 1883))
                         .mqttUsername(usernameInput.getText().toString())
-                        .mqttPassword(passwordInput.getText().toString())
                         .httpPort(parsePort(httpPortInput.getText().toString(),
-                                KioskConfig.DEFAULT_HTTP_PORT))
-                        .apply();
+                                KioskConfig.DEFAULT_HTTP_PORT));
+                String mqttPassword = passwordInput.getText().toString();
+                if (!mqttPassword.isEmpty()) {
+                    // The box renders blank and blank means "keep", exactly like the web admin's
+                    // form; writing the empty string here would wipe the stored password on every
+                    // unrelated save.
+                    editor.mqttPassword(mqttPassword);
+                }
+                editor.apply();
                 KioskService.reloadConfiguration(this);
                 // House rule: applied outside the dispatcher, so republish. dashboard_url and
                 // device id ride in the telemetry document, and this save used to leave Home
@@ -1530,7 +1561,8 @@ public final class KioskActivity extends Activity {
             pending.mqttHost = brokerInput.getText().toString();
             pending.mqttPort = parsePort(portInput.getText().toString(), pending.mqttPort);
             pending.mqttUsername = usernameInput.getText().toString();
-            pending.mqttPassword = passwordInput.getText().toString();
+            // The password deliberately does not ride across a rotation: the box renders blank by
+            // design, and carrying a half-typed secret in the display model would re-render it.
             pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
             showConfiguration(pending);
         };
@@ -2982,7 +3014,8 @@ public final class KioskActivity extends Activity {
                 ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
                 : Math.max(0.01f, Math.min(1.0f, percent / 100.0f));
         getWindow().setAttributes(attributes);
-        getSharedPreferences("kiosk_runtime", MODE_PRIVATE).edit()
+        KioskConfig.storageContext(this).getSharedPreferences("kiosk_runtime", MODE_PRIVATE)
+                .edit()
                 .putInt(KioskService.APPLIED_BRIGHTNESS_KEY, percent < 0 ? -1 : percent)
                 .apply();
     }
@@ -3061,6 +3094,28 @@ public final class KioskActivity extends Activity {
     }
 
     private final class KioskWebViewClient extends WebViewClient {
+        /**
+         * Refuses navigation to anything that is not a web page.
+         *
+         * <p>Only non-web schemes are blocked, nothing else: intent://, tel:, market: and their
+         * kind hand control to another app or to Android's chooser, which on a kiosk is an escape
+         * hatch a dashboard link (or an injected one, this WebView runs arbitrary configured
+         * pages with JavaScript on) must not be able to open. Every http(s) navigation is
+         * allowed, deliberately: Muralis is dashboard-agnostic, dashboards legitimately navigate
+         * across hosts, and confining them to one origin was considered and refused with the
+         * user on 2026-08-24 for exactly that reason.
+         */
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view,
+                android.webkit.WebResourceRequest request) {
+            String scheme = request.getUrl() != null ? request.getUrl().getScheme() : null;
+            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                return false;
+            }
+            Log.w(TAG, "Blocked dashboard navigation to a non-web scheme: " + scheme);
+            return true;
+        }
+
         /**
          * Notes when the load in flight began, so {@link #superviseDashboard()} can catch one that
          * never finishes: a server that accepts the connection and then does not answer, which is a

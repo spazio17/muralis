@@ -44,6 +44,10 @@ final class MqttController implements MqttCallbackExtended {
     private static final String TAG = "MuralisMqtt";
     private static final Pattern BROKER_HOST = Pattern.compile("[A-Za-z0-9.-]{1,253}");
     private static final Pattern SAFE_COMMAND = Pattern.compile("[A-Za-z0-9._:-]{1,96}");
+    /** Mirrors HttpAdminServer.MAX_BODY_BYTES, so neither transport accepts what the other caps. */
+    static final int MAX_COMMAND_BYTES = 16_384;
+    /** Same ceiling as a command name; long enough for any honest correlation id. */
+    private static final int MAX_COMMAND_ID_LENGTH = 96;
 
     private final KioskConfig config;
     private final CommandListener commandListener;
@@ -300,6 +304,17 @@ final class MqttController implements MqttCallbackExtended {
             publish(topicPrefix + "command", "", 0, true);
             return;
         }
+        if (message.getPayload().length > MAX_COMMAND_BYTES) {
+            // The HTTP twin has capped bodies at 16 KB since the flood fixes; a broker connection
+            // had no ceiling at all, so a single publish could hand this process a payload of any
+            // size the broker allows. Refused before decoding, with the reason on the result
+            // topic; no id is available because the envelope goes unread.
+            Log.w(TAG, "Rejected oversized MQTT command payload ("
+                    + message.getPayload().length + " bytes)");
+            publishCommandResult("", "rejected",
+                    "payload exceeds " + MAX_COMMAND_BYTES + " bytes");
+            return;
+        }
         String payload = new String(message.getPayload(), StandardCharsets.UTF_8).trim();
         if (payload.isEmpty()) {
             // Deliberately silent, and it must stay silent: clearing a retained command is done by
@@ -314,7 +329,10 @@ final class MqttController implements MqttCallbackExtended {
             try {
                 JSONObject envelope = new JSONObject(payload);
                 command = envelope.optString("command", "");
-                id = envelope.optString("id", "");
+                // The id is echoed into results and logged, so it is bounded and stripped of
+                // control characters here, once, before any use. Unfiltered, an embedded newline
+                // forged extra log lines in logcat, and there was no length limit at all.
+                id = sanitizeCommandId(envelope.optString("id", ""));
                 JSONObject args = envelope.optJSONObject("args");
                 if (args != null) {
                     arguments = args;
@@ -363,6 +381,23 @@ final class MqttController implements MqttCallbackExtended {
         } catch (MqttException exception) {
             Log.w(TAG, "Could not publish the offline notice before disconnecting", exception);
         }
+    }
+
+    /**
+     * Bounds a caller-supplied command id and strips control characters, so it is safe to log and
+     * to echo into results. Sanitized rather than rejected: the id exists only so the caller can
+     * correlate a result with its request, and a caller odd enough to need trimming still gets a
+     * recognisable prefix back, where a rejection would cost it the whole answer.
+     */
+    private static String sanitizeCommandId(String id) {
+        StringBuilder clean = new StringBuilder(Math.min(id.length(), MAX_COMMAND_ID_LENGTH));
+        for (int i = 0; i < id.length() && clean.length() < MAX_COMMAND_ID_LENGTH; i++) {
+            char c = id.charAt(i);
+            if (!Character.isISOControl(c)) {
+                clean.append(c);
+            }
+        }
+        return clean.toString();
     }
 
     /**
