@@ -309,7 +309,15 @@ final class KioskConfig {
     }
 
 
-    private static Context storageContext(Context context) {
+    /**
+     * Device-protected storage for every preference file this app owns, not only this class's.
+     * The service is directBootAware and BootReceiver starts it on LOCKED_BOOT_COMPLETED, so any
+     * preference it can reach before the first unlock must live here; a credential-encrypted read
+     * on a locked device throws. kiosk_runtime learned that the audited way, read by
+     * displaySnapshot from the pre-unlock telemetry path. Package-visible so KioskActivity's
+     * kiosk_runtime and kiosk_ui files use the same rule instead of each picking a storage.
+     */
+    static Context storageContext(Context context) {
         return context.createDeviceProtectedStorageContext();
     }
 }
