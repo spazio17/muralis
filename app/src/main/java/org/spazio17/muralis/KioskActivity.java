@@ -261,6 +261,11 @@ public final class KioskActivity extends Activity {
             // way here is a permission the operator can fix, and offerWriteSettingsGrant says that
             // in the one place that can act on it.
             Log.w(TAG, "Brightness not applied: " + problem);
+        } else {
+            // The house rule (CLAUDE.md): anything applied outside the dispatcher republishes,
+            // or Home Assistant shows the old value until the next 60-second tick. The slider
+            // and the auto switch were the two controls that never did.
+            KioskService.publishTelemetrySoon(this);
         }
     };
 
@@ -1238,6 +1243,9 @@ public final class KioskActivity extends Activity {
                     // Automatic mode does nothing until any per-window override is out of the way,
                     // in either direction; brightness itself is the system setting now.
                     setWindowBrightness(-1);
+                    // Same house rule as the slider: applied outside the dispatcher, so republish,
+                    // or the HA switch shows the old side for up to a minute.
+                    KioskService.publishTelemetrySoon(this);
                 } else if (!KioskService.canWriteSystemSettings(this)) {
                     // The hardware can do it and the app cannot, which is a fixable state, so say so
                     // and offer the one screen that fixes it.
@@ -1499,6 +1507,10 @@ public final class KioskActivity extends Activity {
                                 KioskConfig.DEFAULT_HTTP_PORT))
                         .apply();
                 KioskService.reloadConfiguration(this);
+                // House rule: applied outside the dispatcher, so republish. dashboard_url and
+                // device id ride in the telemetry document, and this save used to leave Home
+                // Assistant on the old values for up to a minute.
+                KioskService.publishTelemetrySoon(this);
                 showDashboard(url);
             }
         });
@@ -2706,6 +2718,13 @@ public final class KioskActivity extends Activity {
         if (kioskStopped) {
             blackout.setVisibility(View.VISIBLE);
         }
+        // display.visual_off's 1% override, on the other hand, does NOT survive a rebuild: the
+        // blackout it belongs to was just recreated hidden, and the persisted override used to
+        // outlive both a rebuild and a reboot on its own. That stranded the panel dark with every
+        // brightness command answering accepted while a window attribute outranked the setting
+        // they write, and kept applied_brightness_percent reporting 1% so Home Assistant's slider
+        // sprang back to it. A fresh dashboard starts with the window at the system setting.
+        setWindowBrightness(-1);
         resetLoadTracking();
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
