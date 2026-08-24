@@ -365,6 +365,23 @@ final class MqttController implements MqttCallbackExtended {
         }
     }
 
+    /**
+     * Null when a publish handed over right now would reach a live session, a short reason
+     * otherwise. Exists so telemetry.publish can answer honestly: {@link #publish} deliberately
+     * drops payloads in silence, which is right for the periodic tick and wrong for a command
+     * that must not claim success over a dead or absent connection.
+     */
+    String publishProblem() {
+        if (config.mqttHost.isEmpty()) {
+            return "MQTT is not configured";
+        }
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected()) {
+            return "MQTT is not connected";
+        }
+        return null;
+    }
+
     private void publish(String topic, String payload, int qos, boolean retained) {
         MqttAsyncClient activeClient = client;
         if (activeClient == null || !activeClient.isConnected()) {

@@ -20,6 +20,8 @@ public final class KioskCommandDispatcherTest {
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
         testDeviceIdValidation();
+        testTelemetryPublishTellsTheTruth();
+        testEnabledFlagParsing();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
                 "display.brightness", new KioskCommandDispatcher.CommandArgs(150, null), executor);
@@ -122,6 +124,60 @@ public final class KioskCommandDispatcherTest {
         require(owner.status.equals("accepted"),
                 "reboot as device owner must be accepted, got: " + owner.status);
         require(owner.detail.equals("rebooting"), "reboot detail should say rebooting");
+    }
+
+    /**
+     * telemetry.publish must answer for what actually happened. It used to return accepted
+     * unconditionally while the payload was silently dropped on a missing or disconnected broker,
+     * the accepted no-op shape system.shutdown was deleted to avoid.
+     */
+    private static void testTelemetryPublishTellsTheTruth() {
+        RecordingExecutor executor = new RecordingExecutor();
+
+        KioskCommandDispatcher.Result published = KioskCommandDispatcher.dispatch(
+                "telemetry.publish", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(published.status.equals("accepted"), "a handed-over publish was not accepted");
+
+        executor.telemetryProblem = "MQTT is not connected";
+        KioskCommandDispatcher.Result dropped = KioskCommandDispatcher.dispatch(
+                "telemetry.publish", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(dropped.status.equals("rejected"),
+                "a publish that went nowhere must not be accepted");
+        require(dropped.detail.equals("MQTT is not connected"),
+                "the rejection should carry the executor's reason: " + dropped.detail);
+    }
+
+    /**
+     * One parser for the enabled flag on every transport. The JSON paths used optBoolean, which
+     * coerces the number 1 to false, so {"enabled":1} and ?enabled=1 flipped auto-brightness in
+     * opposite directions, both "accepted". Unparseable values are null, which callers reject.
+     */
+    private static void testEnabledFlagParsing() {
+        require(Boolean.TRUE.equals(KioskCommandDispatcher.parseEnabledFlag(Boolean.TRUE)),
+                "a JSON true must parse as true");
+        require(Boolean.FALSE.equals(KioskCommandDispatcher.parseEnabledFlag(Boolean.FALSE)),
+                "a JSON false must parse as false");
+        require(Boolean.TRUE.equals(KioskCommandDispatcher.parseEnabledFlag(Integer.valueOf(1))),
+                "the number 1 must mean true on every transport");
+        require(Boolean.FALSE.equals(KioskCommandDispatcher.parseEnabledFlag(Integer.valueOf(0))),
+                "the number 0 must mean false on every transport");
+        require(Boolean.TRUE.equals(KioskCommandDispatcher.parseEnabledFlag("1")),
+                "the query spelling ?enabled=1 must keep meaning true");
+        require(Boolean.TRUE.equals(KioskCommandDispatcher.parseEnabledFlag("on")),
+                "browser form checkboxes send on");
+        require(Boolean.FALSE.equals(KioskCommandDispatcher.parseEnabledFlag("off")),
+                "off must mean false, not fall to the reject path");
+        require(Boolean.FALSE.equals(KioskCommandDispatcher.parseEnabledFlag("FALSE")),
+                "spellings are case-insensitive");
+
+        require(KioskCommandDispatcher.parseEnabledFlag(Integer.valueOf(2)) == null,
+                "a number that is neither 0 nor 1 must be unparseable, never guessed");
+        require(KioskCommandDispatcher.parseEnabledFlag("yes") == null,
+                "an unknown spelling must be unparseable, not silently false");
+        require(KioskCommandDispatcher.parseEnabledFlag(null) == null,
+                "null is unparseable");
+        require(KioskCommandDispatcher.parseEnabledFlag(new Object()) == null,
+                "an arbitrary object is unparseable");
     }
 
     /**
@@ -287,9 +343,13 @@ public final class KioskCommandDispatcherTest {
         }
 
 
+        /** Null means "handed to a live session"; a message stands in for a down or absent broker. */
+        String telemetryProblem = null;
+
         @Override
-        public void publishTelemetry() {
+        public String publishTelemetry() {
             calls.add("publishTelemetry");
+            return telemetryProblem;
         }
 
         /** Whether this fake device can reboot, i.e. whether it stands in for a device owner. */

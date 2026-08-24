@@ -515,7 +515,16 @@ final class HttpAdminServer {
                     percent = args.optInt("percent", -1);
                     url = args.has("url") ? args.optString("url", null) : null;
                     if (args.has("enabled")) {
-                        enabled = args.optBoolean("enabled", false);
+                        // Shared parser, shared refusal: optBoolean(..., false) coerced any
+                        // non-boolean, the number 1 included, to false, so the JSON and query
+                        // encodings of the same command disagreed while both answered accepted.
+                        enabled = KioskCommandDispatcher.parseEnabledFlag(args.opt("enabled"));
+                        if (enabled == null) {
+                            writeResponse(output, 400, "application/json", bytes(
+                                    "{\"status\":\"rejected\","
+                                    + "\"detail\":\"enabled must be true or false\"}"));
+                            return;
+                        }
                     }
                 }
             } catch (JSONException malformed) {
@@ -543,10 +552,15 @@ final class HttpAdminServer {
             }
             url = params.get("url");
             if (params.containsKey("enabled")) {
-                String flag = params.get("enabled");
-                // Accept the spellings a shell or a browser form is likely to send.
-                enabled = "1".equals(flag) || "true".equalsIgnoreCase(flag)
-                        || "on".equalsIgnoreCase(flag);
+                // The same parser the JSON path uses. The old spelling list here treated every
+                // unrecognized value as false, so ?enabled=yes silently turned things off.
+                enabled = KioskCommandDispatcher.parseEnabledFlag(params.get("enabled"));
+                if (enabled == null) {
+                    writeResponse(output, 400, "application/json", bytes(
+                            "{\"status\":\"rejected\","
+                            + "\"detail\":\"enabled must be true or false\"}"));
+                    return;
+                }
             }
         }
 

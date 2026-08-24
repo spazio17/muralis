@@ -642,6 +642,9 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onDestroy() {
         mainHandler.removeCallbacksAndMessages(null);
+        // No screen means no operator screen; without this, exiting to the launcher from the
+        // configuration screen would leave the pressure rebuild deferred until the app returns.
+        KioskRuntimeState.publishOperatorOnScreen(false);
         releaseKioskPolicy();
         unregisterReceiver(controlReceiver);
         if (unlockReceiverRegistered) {
@@ -691,6 +694,16 @@ public final class KioskActivity extends Activity {
      *     left to go and the caller should let the system finish the activity, which is what leaving
      *     any other app looks like.
      */
+    /**
+     * Tells the service whether an operator screen is up, so the pressure rebuild can wait
+     * instead of destroying a half-edited form (see {@code RecyclePolicy.decide}). Called after
+     * every mutation of {@link #configurationVisible}/{@link #recorderVisible}; not derived
+     * inside {@code applyKioskPolicy()} because some screens set the flags after calling it.
+     */
+    private void publishOperatorScreenState() {
+        KioskRuntimeState.publishOperatorOnScreen(configurationVisible || recorderVisible);
+    }
+
     private boolean navigateBack() {
         if (recorderVisible) {
             // Same destination the recorder's own Cancel button uses, rather than a second opinion
@@ -1107,6 +1120,7 @@ public final class KioskActivity extends Activity {
         destroyWebView();
         kioskStopped = false;
         configurationVisible = true;
+        publishOperatorScreenState();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         enterImmersiveMode();
 
@@ -1518,6 +1532,7 @@ public final class KioskActivity extends Activity {
     private void showEscapeSequences(KioskConfig config) {
         configurationVisible = true;
         recorderVisible = false;
+        publishOperatorScreenState();
         applyKioskPolicy();
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
@@ -1573,6 +1588,7 @@ public final class KioskActivity extends Activity {
     private void renderSequenceRecorder(boolean forLauncher) {
         clearStatusChip();
         recorderVisible = true;
+        publishOperatorScreenState();
         recordingForLauncher = forLauncher;
         applyKioskPolicy();
         setDashboardFullscreen(true);
@@ -2068,6 +2084,7 @@ public final class KioskActivity extends Activity {
         currentScreen = this::showAbout;
         configurationVisible = true;
         recorderVisible = false;
+        publishOperatorScreenState();
         applyKioskPolicy();
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
@@ -2133,6 +2150,7 @@ public final class KioskActivity extends Activity {
         currentScreen = () -> showLegalDocument(titleRes, bodyRes);
         configurationVisible = true;
         recorderVisible = false;
+        publishOperatorScreenState();
         applyKioskPolicy();
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
@@ -2618,6 +2636,7 @@ public final class KioskActivity extends Activity {
         destroyWebView();
         configurationVisible = false;
         recorderVisible = false;
+        publishOperatorScreenState();
         setDashboardFullscreen(true);
         // Was setDashboardSystemUiRestricted(true); the shade is now handled by device-owner
         // policy, which applyKioskPolicy keeps tied to whether the lock-task pin is actually held.
@@ -2680,7 +2699,13 @@ public final class KioskActivity extends Activity {
         addNetworkWaitLabel(dashboard);
         setContentView(dashboard);
         applyKioskPolicy();
-        kioskStopped = false;
+        // Restored, not reset. This used to hard-code false, which is how both maintenance passes
+        // cancelled a deliberate kiosk.stop: the nightly restart came back through here and so did
+        // the pressure rebuild, each lighting up a panel somebody had blanked on purpose.
+        kioskStopped = KioskConfig.kioskStopped(this);
+        if (kioskStopped) {
+            blackout.setVisibility(View.VISIBLE);
+        }
         resetLoadTracking();
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
@@ -2839,6 +2864,10 @@ public final class KioskActivity extends Activity {
         switch (command) {
             case "kiosk.start":
                 kioskStopped = false;
+                // Persisted (here and in kiosk.stop/set_url) because the flag used to be process
+                // state only: the nightly restart and the pressure rebuild both forgot a
+                // deliberate stop and lit the panel back up.
+                KioskConfig.edit(this).kioskStopped(false).apply();
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -2849,6 +2878,7 @@ public final class KioskActivity extends Activity {
                 break;
             case "kiosk.set_url":
                 kioskStopped = false;
+                KioskConfig.edit(this).kioskStopped(false).apply();
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -2861,6 +2891,7 @@ public final class KioskActivity extends Activity {
                 break;
             case "kiosk.stop":
                 kioskStopped = true;
+                KioskConfig.edit(this).kioskStopped(true).apply();
                 resetLoadTracking();
                 if (webView != null) {
                     webView.stopLoading();
