@@ -718,10 +718,15 @@ public final class KioskActivity extends Activity {
      */
     private void runPrecheck(EditText field, KioskTheme theme,
             java.util.function.Supplier<SettingProbe.Verdict> probe) {
+        // Tag every probe with the field's current generation and drop a verdict that is no
+        // longer about what the box says. Without it, a slow probe on a dead host (the full 3s)
+        // could land after a fast probe on the corrected value and repaint a good field red.
+        int generation = precheckGeneration.merge(field, 1, Integer::sum);
         new Thread(() -> {
             SettingProbe.Verdict verdict = probe.get();
             mainHandler.post(() -> {
-                if (field.isAttachedToWindow()) {
+                Integer current = precheckGeneration.get(field);
+                if (field.isAttachedToWindow() && current != null && current == generation) {
                     // The verdict is the border alone, not a tinted fill: same fill and radius as
                     // themedInput, one stroke width up so the colour reads at arm's length.
                     field.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(2),
@@ -731,18 +736,32 @@ public final class KioskActivity extends Activity {
         }, "MuralisPrecheck").start();
     }
 
-    /** Back to the resting border themedInput gave the field, clearing any verdict. */
+    /** Cleared with the screen; identity-keyed because the views are rebuilt, not reused. */
+    private final java.util.Map<EditText, Integer> precheckGeneration =
+            new java.util.IdentityHashMap<>();
+
+    /**
+     * Cancels any verdict still in flight for {@code field} and restores its resting border. Also
+     * the "no verdict" state: an empty box, or a check that could not run, must not keep an old
+     * colour, because a stale verdict is worse than none.
+     */
     private void clearPrecheck(EditText field, KioskTheme theme) {
+        precheckGeneration.merge(field, 1, Integer::sum);
         field.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(1)));
     }
 
     /**
-     * The web admin status line, from live state rather than a build-time snapshot: it follows
-     * the socket while the screen sits open (liveSettingSyncTask) and refreshes right after the
-     * toggle. Green with the address while listening; silent while the operator has the surface
-     * off, since a chosen state is not news; a warning only when it should be up and is not.
+     * The web admin controls, from live state rather than a build-time snapshot: they follow the
+     * flag and the socket while the screen sits open (liveSettingSyncTask) and refresh right
+     * after the local toggle. Both together on purpose, the button's label is state exactly like
+     * the line under it, and only the line syncing made a toggle from Home Assistant flip the
+     * text while the button kept offering the wrong direction. Green with the address while
+     * listening; grey "disabled" while the operator has the surface off; a warning only when it
+     * should be up and is not.
      */
-    private void refreshHttpState(TextView httpState, KioskTheme theme) {
+    private void refreshWebAdminControls(Button toggle, TextView httpState, KioskTheme theme) {
+        boolean enabled = KioskConfig.webAdminEnabled(this);
+        toggle.setText(enabled ? "Turn web admin off" : "Turn web admin on");
         if (KioskRuntimeState.httpAdminListening()) {
             SystemStats.RuntimeFacts httpFacts = KioskRuntimeState.lastFacts();
             String address = httpFacts == null || httpFacts.ipAddress.isEmpty()
@@ -750,8 +769,16 @@ public final class KioskActivity extends Activity {
             httpState.setTextColor(theme.ok);
             httpState.setText("Listening at http://" + address + ":"
                     + KioskRuntimeState.httpAdminPort());
-        } else if (!KioskConfig.webAdminEnabled(this)) {
-            httpState.setText("");
+        } else if (!enabled) {
+            httpState.setTextColor(theme.subtext);
+            httpState.setText("Web admin disabled");
+        } else if ("port unavailable".equals(KioskRuntimeState.httpAdminDownReason())) {
+            // Named rather than guessed: this line used to blame the password for every silence,
+            // including a port another service had taken, which is the one failure this screen
+            // exists to explain.
+            httpState.setTextColor(theme.warn);
+            httpState.setText("Not listening, port " + KioskRuntimeState.httpAdminPort()
+                    + " is unavailable");
         } else {
             httpState.setTextColor(theme.warn);
             httpState.setText("Not listening, set a password of at least "
@@ -1099,6 +1126,10 @@ public final class KioskActivity extends Activity {
         }
         KioskConfig.edit(this).httpAdminPassword(typed).apply();
         KioskService.reloadConfiguration(this);
+        // The house rule for anything applied outside the dispatcher, even though no telemetry
+        // field carries the password or the listening state today: the rule is what keeps the next
+        // field that does from going stale.
+        KioskService.publishTelemetrySoon(this);
         Toast.makeText(this, "Web admin password updated", Toast.LENGTH_SHORT).show();
     }
 
@@ -1220,6 +1251,17 @@ public final class KioskActivity extends Activity {
         // the same rule the web admin's form follows; the Save path skips an empty box.
         EditText passwordInput = themedInput(theme, "", true);
         addField(mqttCard, theme, "Password (blank keeps the current one)", passwordInput);
+        // The broker verdict lives here, on the page where the address is typed, not as a toast
+        // over the dashboard: the toast was unreadable in the second before the dashboard took
+        // the screen, which is exactly where a misconfiguration must NOT be reported (Juri,
+        // 2026-08-24). Checked when the screen opens and whenever the host or port box is left.
+        TextView mqttState = new TextView(this);
+        mqttState.setTextSize(13);
+        mqttState.setTextColor(theme.subtext);
+        LinearLayout.LayoutParams mqttStateParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        mqttStateParams.topMargin = dp(10);
+        mqttCard.addView(mqttState, mqttStateParams);
 
 
 
@@ -1237,12 +1279,57 @@ public final class KioskActivity extends Activity {
                 runPrecheck(urlInput, theme, () -> SettingProbe.dashboardUrl(typed));
             }
         });
-        brokerInput.setOnFocusChangeListener((view, hasFocus) -> {
+        Runnable checkBroker = () -> {
             clearPrecheck(brokerInput, theme);
             String host = brokerInput.getText().toString().trim();
-            int brokerPort = parsePort(portInput.getText().toString(), 1883);
-            if (!hasFocus && !host.isEmpty()) {
-                runPrecheck(brokerInput, theme, () -> SettingProbe.mqttHost(host, brokerPort));
+            Integer brokerPort = parsePortStrict(portInput.getText().toString());
+            if (host.isEmpty()) {
+                mqttState.setTextColor(theme.subtext);
+                mqttState.setText("No broker configured");
+                return;
+            }
+            if (brokerPort == null) {
+                // The port is not a port, so there is nothing to probe and nothing to guess: the
+                // old code substituted 1883 and then reported on an address nobody typed.
+                clearPrecheck(portInput, theme);
+                portInput.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(2),
+                        theme.bad));
+                mqttState.setTextColor(theme.bad);
+                mqttState.setText("Broker port must be a number between 1 and 65535");
+                return;
+            }
+            mqttState.setTextColor(theme.subtext);
+            mqttState.setText("Checking " + host + ":" + brokerPort + "...");
+            int generation = precheckGeneration.merge(brokerInput, 1, Integer::sum);
+            new Thread(() -> {
+                SettingProbe.Verdict verdict = SettingProbe.mqttHost(host, brokerPort);
+                mainHandler.post(() -> {
+                    Integer current = precheckGeneration.get(brokerInput);
+                    if (!brokerInput.isAttachedToWindow() || current == null
+                            || current != generation) {
+                        return;
+                    }
+                    brokerInput.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(2),
+                            verdict.ok ? theme.ok : theme.bad));
+                    mqttState.setTextColor(verdict.ok ? theme.ok : theme.bad);
+                    mqttState.setText(verdict.ok
+                            ? "Broker reachable at " + host + ":" + brokerPort
+                            : "Broker unreachable: " + verdict.detail);
+                });
+            }, "MuralisPrecheck").start();
+        };
+        brokerInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                checkBroker.run();
+            }
+        });
+        // The port belongs to the same address, so leaving it re-checks the pair. Its own box only
+        // ever shows red, for a value that is not a port at all; whether the broker answers is the
+        // host line's verdict.
+        portInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                clearPrecheck(portInput, theme);
+                checkBroker.run();
             }
         });
         httpPortInput.setOnFocusChangeListener((view, hasFocus) -> {
@@ -1287,7 +1374,6 @@ public final class KioskActivity extends Activity {
             KioskConfig.edit(this).webAdminEnabled(enable).apply();
             KioskService.reloadConfiguration(this);
             KioskService.publishTelemetrySoon(this);
-            webAdminToggle.setText(enable ? "Turn web admin off" : "Turn web admin on");
             if (enable && current.httpAdminPassword.length() < MIN_HTTP_ADMIN_PASSWORD_LENGTH) {
                 Toast.makeText(this, "Web admin on, but it will not start until an admin "
                         + "password of at least " + MIN_HTTP_ADMIN_PASSWORD_LENGTH
@@ -1296,12 +1382,18 @@ public final class KioskActivity extends Activity {
                 Toast.makeText(this, enable ? "Web admin on" : "Web admin off",
                         Toast.LENGTH_SHORT).show();
             }
-            // The bind happens on the service's queue, so the first refresh would race it; one
-            // short beat later is enough, and the live-sync poll keeps it honest after that.
-            mainHandler.postDelayed(() -> refreshHttpState(httpState, theme), 700);
+            // The label flips at once; the state line waits a beat, the bind happens on the
+            // service's queue, and the live-sync poll keeps both honest after that.
+            refreshWebAdminControls(webAdminToggle, httpState, theme);
+            mainHandler.postDelayed(
+                    () -> refreshWebAdminControls(webAdminToggle, httpState, theme), 700);
         });
         httpCard.addView(webAdminToggle, matchWrap());
-        refreshHttpState(httpState, theme);
+        refreshWebAdminControls(webAdminToggle, httpState, theme);
+        // The broker is checked as soon as the screen opens, not only after an edit: an operator
+        // who comes here because "Home Assistant lost the panel" gets the answer without having
+        // to touch a field first.
+        checkBroker.run();
         LinearLayout.LayoutParams httpStateParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         httpStateParams.topMargin = dp(10);
@@ -1525,9 +1617,9 @@ public final class KioskActivity extends Activity {
                 } finally {
                     syncingLiveControls = false;
                 }
-                // The status line follows the socket too, so a toggle from MQTT or the web admin
-                // itself shows here without reopening the screen.
-                refreshHttpState(httpState, theme);
+                // The web admin button and status line follow the flag and the socket too, so a
+                // toggle from MQTT or the web admin itself shows here without reopening the screen.
+                refreshWebAdminControls(webAdminToggle, httpState, theme);
                 mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
             }
         };
@@ -1594,14 +1686,35 @@ public final class KioskActivity extends Activity {
                             Toast.LENGTH_LONG).show();
                     return;
                 }
-                // Floor at 1024, proven on hardware: a privileged port passes a plain range check
-                // and only fails at bind time, killing the web admin. See validateAdminPort.
-                int adminPort = parsePort(httpPortInput.getText().toString(),
-                        KioskConfig.DEFAULT_HTTP_PORT);
+                // Refused, never substituted, and the same three rules the web save applies: a
+                // number, inside 1024-65535 (a privileged port passes a plain range check and
+                // fails at bind time, killing the web admin), and not already held by another
+                // service. parsePort's clamp is for reading storage back, not for a form.
+                Integer typedAdminPort = parsePortStrict(httpPortInput.getText().toString());
+                if (typedAdminPort == null) {
+                    Toast.makeText(this, "Not saved: the web admin port must be a number "
+                            + "between 1 and 65535", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                int adminPort = typedAdminPort;
                 String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
                 if (portProblem != null) {
                     Toast.makeText(this, "Not saved: " + portProblem + ".",
                             Toast.LENGTH_LONG).show();
+                    return;
+                }
+                KioskConfig storedNow = KioskConfig.load(this);
+                if (adminPort != storedNow.httpPort && !SettingProbe.portFree(adminPort)) {
+                    // Same gate as the web save: the advisory border is a warning, this is the
+                    // refusal, so a save cannot put the admin into a bind failure.
+                    Toast.makeText(this, "Not saved: port " + adminPort + " is already in use on "
+                            + "this device", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Integer typedBrokerPort = parsePortStrict(portInput.getText().toString());
+                if (typedBrokerPort == null) {
+                    Toast.makeText(this, "Not saved: the broker port must be a number between 1 "
+                            + "and 65535", Toast.LENGTH_LONG).show();
                     return;
                 }
                 // Only the fields with a text box on this screen are written. The overlay switch,
@@ -1611,7 +1724,7 @@ public final class KioskActivity extends Activity {
                         .dashboardUrl(url)
                         .deviceId(deviceId)
                         .mqttHost(brokerInput.getText().toString())
-                        .mqttPort(parsePort(portInput.getText().toString(), 1883))
+                        .mqttPort(typedBrokerPort)
                         .mqttUsername(usernameInput.getText().toString())
                         .httpPort(adminPort);
                 String mqttPassword = passwordInput.getText().toString();
@@ -1627,24 +1740,6 @@ public final class KioskActivity extends Activity {
                 // device id ride in the telemetry document, and this save used to leave Home
                 // Assistant on the old values for up to a minute.
                 KioskService.publishTelemetrySoon(this);
-                // A broken broker address is the one misconfiguration the dashboard never shows:
-                // the panel renders fine while Home Assistant quietly loses it, which is exactly
-                // how a typo in the host went unnoticed on 2026-08-24. Saving is not blocked, the
-                // broker may merely be down right now, but the operator gets told, over the
-                // dashboard they are about to be looking at.
-                String savedHost = brokerInput.getText().toString().trim();
-                int savedBrokerPort = parsePort(portInput.getText().toString(), 1883);
-                if (!savedHost.isEmpty()) {
-                    new Thread(() -> {
-                        SettingProbe.Verdict verdict =
-                                SettingProbe.mqttHost(savedHost, savedBrokerPort);
-                        if (!verdict.ok) {
-                            mainHandler.post(() -> Toast.makeText(this,
-                                    "Saved, but the MQTT broker does not answer: "
-                                    + verdict.detail, Toast.LENGTH_LONG).show());
-                        }
-                    }, "MuralisPrecheck").start();
-                }
                 showDashboard(url);
             }
         });
@@ -3683,6 +3778,27 @@ public final class KioskActivity extends Activity {
     }
 
 
+
+    /**
+     * The number in a port box, or null when it is not one, or is outside 1-65535.
+     *
+     * <p>Separate from {@link #parsePort} on purpose. That one clamps, which is right for reading
+     * a stored value back (something usable has to come out whatever is in storage) and wrong for
+     * a form: silently substituting 8080 for the 99999 somebody typed is the quiet substitution
+     * this project keeps deleting, and it let the tablet store a different port than the operator
+     * asked for while the web form refused the identical input.
+     */
+    private static Integer parsePortStrict(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            int port = Integer.parseInt(value.trim());
+            return port >= 1 && port <= 65535 ? port : null;
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
+    }
 
     private static int parsePort(String value, int fallback) {
         try {

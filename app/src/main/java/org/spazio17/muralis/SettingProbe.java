@@ -13,7 +13,7 @@ import java.net.ServerSocket;
  * own network. Juri's design (2026-08-24), one function for every input whose validity is a
  * runtime fact rather than a spelling: the admin port (bindable here?), the dashboard URL
  * (answers HTTP from here?), the broker host (accepts TCP from here?). Both settings surfaces use
- * it, the web admin through {@code GET /api/check} and the tablet directly, so the two can never
+ * it, the web admin through {@code POST /api/check} and the tablet directly, so the two can never
  * disagree about what "reachable" means.
  *
  * <p>Advisory by nature, a port free now can be taken at the next boot, so the save paths keep
@@ -24,13 +24,25 @@ final class SettingProbe {
     /** Short enough that a blur-triggered pre-check feels immediate even when the target is dead. */
     private static final int TIMEOUT_MS = 3_000;
 
+    /**
+     * Two lengths on purpose. {@code detail} is one short clause, for a status line on a panel
+     * read from across a room; {@code reason} carries the underlying exception text for a tooltip
+     * or a log, where a full stack-trace message is useful rather than noise. The tablet's own
+     * line grew to three wrapped lines of socket internals before this split.
+     */
     static final class Verdict {
         final boolean ok;
         final String detail;
+        final String reason;
 
         Verdict(boolean ok, String detail) {
+            this(ok, detail, "");
+        }
+
+        Verdict(boolean ok, String detail, String reason) {
             this.ok = ok;
             this.detail = detail;
+            this.reason = reason == null ? "" : reason;
         }
     }
 
@@ -71,18 +83,24 @@ final class SettingProbe {
         if (problem != null) {
             return new Verdict(false, problem);
         }
+        // disconnect() in a finally, like KioskActivity.probeServerOnce: the failure path is the
+        // common one while an operator is mid-typo, and returning from the catch without it
+        // abandoned a connection object and any half-open descriptor on every red verdict, on a
+        // process meant to run unattended for months.
+        java.net.HttpURLConnection probe = null;
         try {
-            java.net.HttpURLConnection probe = (java.net.HttpURLConnection)
-                    new java.net.URL(value.trim()).openConnection();
+            probe = (java.net.HttpURLConnection) new java.net.URL(value.trim()).openConnection();
             probe.setRequestMethod("HEAD");
             probe.setConnectTimeout(TIMEOUT_MS);
             probe.setReadTimeout(TIMEOUT_MS);
             probe.setInstanceFollowRedirects(false);
-            int code = probe.getResponseCode();
-            probe.disconnect();
-            return new Verdict(true, "answered HTTP " + code);
+            return new Verdict(true, "answered HTTP " + probe.getResponseCode());
         } catch (IOException | RuntimeException unreachable) {
-            return new Verdict(false, "no HTTP answer: " + briefReason(unreachable));
+            return new Verdict(false, "no HTTP answer", briefReason(unreachable));
+        } finally {
+            if (probe != null) {
+                probe.disconnect();
+            }
         }
     }
 
@@ -99,8 +117,8 @@ final class SettingProbe {
             probe.connect(new InetSocketAddress(host.trim(), port), TIMEOUT_MS);
             return new Verdict(true, "accepts TCP on port " + port);
         } catch (IOException | RuntimeException unreachable) {
-            return new Verdict(false, "no TCP answer on port " + port + ": "
-                    + briefReason(unreachable));
+            return new Verdict(false, "no TCP answer on port " + port,
+                    briefReason(unreachable));
         }
     }
 

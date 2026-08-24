@@ -178,12 +178,12 @@ final class HttpAdminServer {
             // Off by the operator's own flag, password untouched: turning the surface off must
             // not cost the credential, and turning it back on must not require retyping one.
             Log.i(TAG, "HTTP admin disabled by the operator");
-            KioskRuntimeState.publishHttpAdminState(false, config.httpPort);
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "disabled");
             return;
         }
         if (config.httpAdminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
             Log.i(TAG, "HTTP admin disabled: no admin password of sufficient length is configured");
-            KioskRuntimeState.publishHttpAdminState(false, config.httpPort);
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "no password");
             return;
         }
         try {
@@ -193,7 +193,7 @@ final class HttpAdminServer {
         } catch (IOException exception) {
             Log.e(TAG, "Unable to bind HTTP admin port " + config.httpPort, exception);
             serverSocket = null;
-            KioskRuntimeState.publishHttpAdminState(false, config.httpPort);
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "port unavailable");
             return;
         }
         boundAdminPassword = config.httpAdminPassword;
@@ -207,13 +207,14 @@ final class HttpAdminServer {
         running = true;
         acceptThread = new Thread(this::acceptLoop, "MuralisHttpAccept");
         acceptThread.start();
-        KioskRuntimeState.publishHttpAdminState(true, config.httpPort);
+        KioskRuntimeState.publishHttpAdminState(true, config.httpPort, "");
         Log.i(TAG, "HTTP admin listening on port " + config.httpPort);
     }
 
     void stop() {
         running = false;
-        KioskRuntimeState.publishHttpAdminState(false, KioskRuntimeState.httpAdminPort());
+        KioskRuntimeState.publishHttpAdminState(false, KioskRuntimeState.httpAdminPort(),
+                "stopped");
         if (serverSocket != null) {
             try {
                 serverSocket.close();
@@ -484,11 +485,16 @@ final class HttpAdminServer {
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
-        } else if (path.equals("/api/check") && method.equals("GET")) {
-            // GET on purpose: it changes nothing, so it needs none of the cross-site defences the
-            // command verb carries, and the page can call it from a blur handler with a plain
-            // fetch. See checkValue.
-            writeResponse(output, 200, "application/json", bytes(checkValue(parseQuery(query))));
+        } else if (path.equals("/api/check") && method.equals("POST")) {
+            // POST, not GET, even though it changes nothing on this device. It makes the panel
+            // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
+            // was an SSRF and LAN-scanning primitive: Basic-auth credentials ride along
+            // automatically, and <img src=".../api/check?kind=mqtt_host&value=10.0.0.5&port=22">
+            // on any page the operator visited would have had the panel probe it and leak
+            // reachability through onload/onerror timing. POST puts it behind the same
+            // crossSiteRefusal gate as the commands, which is why that gate is keyed on the verb.
+            writeResponse(output, 200, "application/json",
+                    bytes(checkValue(checkParams(query, headers, body))));
         } else if (path.equals("/privacy") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.privacy_policy_title), R.raw.privacy_policy)));
@@ -727,9 +733,9 @@ final class HttpAdminServer {
                 // brings the service back, onCreate starts the controllers, and it throws again:
                 // a permanent crash loop that survives reboot, takes the HOME activity down with
                 // it, and cannot be undone from the panel because the panel no longer runs.
-                Integer adminPort = parsePort(form.get("http_port"), fresh.httpPort);
+                Integer adminPort = parsePortDigits(form.get("http_port"), fresh.httpPort);
                 if (adminPort == null) {
-                    return "Web admin port must be a number.";
+                    return "Not saved: the web admin port must be a number.";
                 }
                 // Floor at 1024, proven necessary on hardware; see validateAdminPort. And a port
                 // another service already holds is refused too: the pre-check paints the field red
@@ -788,6 +794,29 @@ final class HttpAdminServer {
      * sees the current values immediately. A missing baseline is treated as stale, since the only
      * pages without one are older than this check.
      */
+    private static String staleFormRefusal(Map<String, String> form, String currentBaseline) {
+        String baseline = form.get("baseline");
+        if (baseline != null && baseline.equals(currentBaseline)) {
+            return null;
+        }
+        return "Not saved: these settings were changed elsewhere after this page loaded. "
+                + "The page now shows the current values; please re-apply your edit.";
+    }
+
+    /**
+     * Query first, then a urlencoded body on top, the same shape {@code /api/command} accepts, so
+     * a scripted caller can use either and the page's own fetch can use the body.
+     */
+    private static Map<String, String> checkParams(
+            String query, Map<String, String> headers, byte[] body) {
+        Map<String, String> params = new java.util.HashMap<>(parseQuery(query));
+        if (headers.getOrDefault("content-type", "").contains("application/x-www-form-urlencoded")
+                && body.length > 0) {
+            params.putAll(parseFormBody(headers, body));
+        }
+        return params;
+    }
+
     /**
      * The JSON face of {@link SettingProbe}, for the page's green/red pre-check
      * (admin_check.js). The probing itself is shared with the tablet so the two surfaces can
@@ -815,19 +844,11 @@ final class HttpAdminServer {
         try {
             result.put("ok", verdict.ok);
             result.put("detail", verdict.detail);
+            result.put("reason", verdict.reason);
         } catch (org.json.JSONException impossible) {
             // Two puts of primitives on a fresh object cannot fail; satisfy the checked signature.
         }
         return result.toString();
-    }
-
-    private static String staleFormRefusal(Map<String, String> form, String currentBaseline) {
-        String baseline = form.get("baseline");
-        if (baseline != null && baseline.equals(currentBaseline)) {
-            return null;
-        }
-        return "Not saved: these settings were changed elsewhere after this page loaded. "
-                + "The page now shows the current values; please re-apply your edit.";
     }
 
     /** The spellings a browser form, a shell or a hand-written client is likely to send. */
@@ -1308,6 +1329,23 @@ final class HttpAdminServer {
      * thing, and silently substituting 8080 for the 99999 they typed is the quiet substitution this
      * project keeps deleting. An absent field means "not being set" and keeps the current value.
      */
+    /**
+     * The number a caller typed, or null when it is not a number at all. Range is deliberately
+     * NOT judged here: validateAdminPort owns the admin port's range and says 1024-65535, and this
+     * method conflating the two answered "must be a number" for 99999, which plainly is one.
+     * An absent field means "not being set" and keeps the current value.
+     */
+    private static Integer parsePortDigits(String value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
+    }
+
     private static Integer parsePort(String value, int fallback) {
         if (value == null) {
             return fallback;
