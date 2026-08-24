@@ -1455,12 +1455,28 @@ public final class KioskActivity extends Activity {
                     showConfiguration(current);
                     return;
                 }
+                // The dispatcher's rules, shared with the web admin: normalizeUrl already adds a
+                // missing scheme, but an over-long URL or an id MQTT cannot carry must be refused
+                // here, where the operator is, not discovered later as a logcat line.
+                String urlProblem = KioskCommandDispatcher.validateDashboardUrl(url);
+                if (urlProblem != null) {
+                    Toast.makeText(this, "Not saved: " + urlProblem + ".",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                String deviceId = deviceIdInput.getText().toString().trim();
+                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                if (idProblem != null) {
+                    Toast.makeText(this, "Not saved: " + idProblem + ".",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
                 // Only the fields with a text box on this screen are written. The overlay switch,
                 // portrait, the brightness pair and the admin password already applied themselves
                 // when touched, and the Editor cannot touch what it was not given.
                 KioskConfig.edit(this)
                         .dashboardUrl(url)
-                        .deviceId(deviceIdInput.getText().toString())
+                        .deviceId(deviceId)
                         .mqttHost(brokerInput.getText().toString())
                         .mqttPort(parsePort(portInput.getText().toString(), 1883))
                         .mqttUsername(usernameInput.getText().toString())

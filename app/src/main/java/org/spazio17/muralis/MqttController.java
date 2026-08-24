@@ -43,7 +43,6 @@ final class MqttController implements MqttCallbackExtended {
 
     private static final String TAG = "MuralisMqtt";
     private static final Pattern BROKER_HOST = Pattern.compile("[A-Za-z0-9.-]{1,253}");
-    private static final Pattern DEVICE_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private static final Pattern SAFE_COMMAND = Pattern.compile("[A-Za-z0-9._:-]{1,96}");
 
     private final KioskConfig config;
@@ -107,9 +106,13 @@ final class MqttController implements MqttCallbackExtended {
             Log.i(TAG, "MQTT is not configured");
             return;
         }
-        if (!BROKER_HOST.matcher(config.mqttHost).matches()
-                || !DEVICE_ID.matcher(config.deviceId).matches()) {
-            Log.e(TAG, "MQTT broker host or device ID is invalid");
+        // Both settings surfaces refuse a bad id before storing it (see
+        // KioskCommandDispatcher.validateDeviceId), so this is the last line of defence for ids
+        // stored before that check existed, not the place an operator ever hears about one.
+        String idProblem = KioskCommandDispatcher.validateDeviceId(config.deviceId);
+        if (!BROKER_HOST.matcher(config.mqttHost).matches() || idProblem != null) {
+            Log.e(TAG, "MQTT broker host or device ID is invalid"
+                    + (idProblem != null ? ": " + idProblem : ""));
             return;
         }
 
