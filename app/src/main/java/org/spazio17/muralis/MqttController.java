@@ -562,6 +562,14 @@ final class MqttController implements MqttCallbackExtended {
                     "{\"command\":\"display.portrait\",\"args\":{\"enabled\":true}}",
                     "{\"command\":\"display.portrait\",\"args\":{\"enabled\":false}}",
                     "{{ 'ON' if value_json.config.portrait else 'OFF' }}"));
+            // The switch reflects the operator's flag, not whether a socket is bound: with no
+            // admin password stored, "on" is an honest description of intent while the bind
+            // stays refused, and the runtime state carries the difference.
+            components.put("web_admin", toggle(
+                    "Web admin",
+                    "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":false}}",
+                    "{{ 'ON' if value_json.config.web_admin_enabled else 'OFF' }}"));
             components.put("reload", button("Reload dashboard", "kiosk.reload"));
             components.put("restart", button("Restart kiosk", "kiosk.restart"));
             components.put("wake", button("Wake display", "display.wake"));

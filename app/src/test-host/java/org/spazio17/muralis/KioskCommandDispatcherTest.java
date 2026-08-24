@@ -21,6 +21,7 @@ public final class KioskCommandDispatcherTest {
         testBrightnessRefusalIsReported();
         testDeviceIdValidation();
         testAdminPortValidation();
+        testWebAdminToggle();
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
 
@@ -150,6 +151,33 @@ public final class KioskCommandDispatcherTest {
                 "a port above 65535 must be refused");
         require(KioskCommandDispatcher.validateAdminPort(80).contains("1024"),
                 "the refusal must name the allowed range");
+    }
+
+    /**
+     * webadmin.enabled flips the surface without touching the password: the flag is required (no
+     * guessing), forwarded exactly, and the same envelope shape as every other enabled command,
+     * so the Home Assistant switch and a curl both drive it.
+     */
+    private static void testWebAdminToggle() {
+        RecordingExecutor executor = new RecordingExecutor();
+
+        KioskCommandDispatcher.Result noFlag = KioskCommandDispatcher.dispatch(
+                "webadmin.enabled", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(noFlag.status.equals("rejected"), "webadmin.enabled without a flag was accepted");
+        require(!executor.calls.contains("setWebAdminEnabled"),
+                "executor ran despite a missing flag");
+
+        KioskCommandDispatcher.Result off = KioskCommandDispatcher.dispatch(
+                "webadmin.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.FALSE), executor);
+        require(off.status.equals("accepted"), "webadmin off was rejected");
+        require(Boolean.FALSE.equals(executor.lastWebAdminEnabled), "flag not forwarded");
+
+        KioskCommandDispatcher.Result on = KioskCommandDispatcher.dispatch(
+                "webadmin.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.TRUE), executor);
+        require(on.status.equals("accepted"), "webadmin on was rejected");
+        require(Boolean.TRUE.equals(executor.lastWebAdminEnabled), "flag not forwarded");
     }
 
     /**
@@ -366,6 +394,14 @@ public final class KioskCommandDispatcherTest {
         public void setDashboardUrl(String url) {
             calls.add("setDashboardUrl");
             lastUrl = url;
+        }
+
+        Boolean lastWebAdminEnabled = null;
+
+        @Override
+        public void setWebAdminEnabled(boolean enabled) {
+            calls.add("setWebAdminEnabled");
+            lastWebAdminEnabled = enabled;
         }
 
 

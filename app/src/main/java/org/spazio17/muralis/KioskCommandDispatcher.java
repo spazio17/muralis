@@ -92,6 +92,13 @@ final class KioskCommandDispatcher {
         void setDashboardUrl(String url);
 
         /**
+         * Allows or stops the web admin surface, without touching the stored password. No return
+         * value: the flag always persists; whether a socket then binds is reported where it
+         * always was, the runtime state and the tablet's status line.
+         */
+        void setWebAdminEnabled(boolean enabled);
+
+        /**
          * Publishes the telemetry document now.
          *
          * @return null when the publish was handed to a live MQTT session, otherwise a short
@@ -175,6 +182,12 @@ final class KioskCommandDispatcher {
                     return rejected("enabled must be true or false");
                 }
                 executor.setPortrait(args.enabled);
+                return accepted();
+            case "webadmin.enabled":
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                executor.setWebAdminEnabled(args.enabled);
                 return accepted();
             case "telemetry.publish": {
                 // The executor answers for itself: with no broker configured, or a session that is

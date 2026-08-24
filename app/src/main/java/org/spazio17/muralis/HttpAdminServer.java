@@ -174,6 +174,13 @@ final class HttpAdminServer {
 
     void start() {
         KioskConfig config = KioskConfig.load(context);
+        if (!config.webAdminEnabled) {
+            // Off by the operator's own flag, password untouched: turning the surface off must
+            // not cost the credential, and turning it back on must not require retyping one.
+            Log.i(TAG, "HTTP admin disabled by the operator");
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort);
+            return;
+        }
         if (config.httpAdminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
             Log.i(TAG, "HTTP admin disabled: no admin password of sufficient length is configured");
             KioskRuntimeState.publishHttpAdminState(false, config.httpPort);

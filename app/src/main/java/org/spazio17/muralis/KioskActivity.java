@@ -736,6 +736,29 @@ public final class KioskActivity extends Activity {
         field.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(1)));
     }
 
+    /**
+     * The web admin status line, from live state rather than a build-time snapshot: it follows
+     * the socket while the screen sits open (liveSettingSyncTask) and refreshes right after the
+     * toggle. Green with the address while listening; silent while the operator has the surface
+     * off, since a chosen state is not news; a warning only when it should be up and is not.
+     */
+    private void refreshHttpState(TextView httpState, KioskTheme theme) {
+        if (KioskRuntimeState.httpAdminListening()) {
+            SystemStats.RuntimeFacts httpFacts = KioskRuntimeState.lastFacts();
+            String address = httpFacts == null || httpFacts.ipAddress.isEmpty()
+                    ? "this-tablet" : httpFacts.ipAddress;
+            httpState.setTextColor(theme.ok);
+            httpState.setText("Listening at http://" + address + ":"
+                    + KioskRuntimeState.httpAdminPort());
+        } else if (!KioskConfig.webAdminEnabled(this)) {
+            httpState.setText("");
+        } else {
+            httpState.setTextColor(theme.warn);
+            httpState.setText("Not listening, set a password of at least "
+                    + MIN_HTTP_ADMIN_PASSWORD_LENGTH + " characters");
+        }
+    }
+
     private boolean navigateBack() {
         if (recorderVisible) {
             // Same destination the recorder's own Cancel button uses, rather than a second opinion
@@ -1070,16 +1093,13 @@ public final class KioskActivity extends Activity {
             return;
         }
         if (typed.isEmpty()) {
-            // Deliberate: an explicit clear must work even if the Keystore was unreadable when this
-            // config loaded, which is exactly the case Editor.apply declines to persist.
-            KioskConfig.clearHttpAdminPassword(this);
-        } else {
-            KioskConfig.edit(this).httpAdminPassword(typed).apply();
+            // The field's only job is setting a new password; on/off is its own toggle now, so an
+            // empty value has nothing to say.
+            return;
         }
+        KioskConfig.edit(this).httpAdminPassword(typed).apply();
         KioskService.reloadConfiguration(this);
-        Toast.makeText(this,
-                typed.isEmpty() ? "Web admin switched off" : "Web admin password updated",
-                Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Web admin password updated", Toast.LENGTH_SHORT).show();
     }
 
     /**
@@ -1251,35 +1271,37 @@ public final class KioskActivity extends Activity {
                 applyHttpAdminPassword(typed);
             }
         });
-        Button webAdminOff = secondaryButton(theme, "Turn web admin off");
-        webAdminOff.setOnClickListener(view -> {
-            // applyHttpAdminPassword treats "same as stored" as a silent no-op, which is right
-            // for a blur and wrong for a button: a press must always answer.
-            if (KioskConfig.load(this).httpAdminPassword.isEmpty()) {
-                Toast.makeText(this, "The web admin is already off", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            applyHttpAdminPassword("");
-            httpAdminPasswordInput.setText("");
-        });
-        httpCard.addView(webAdminOff, matchWrap());
         // Whether the surface actually holds a socket, and at which address. It fails closed by
         // design, so without this the difference between "listening" and "silently off because the
         // password is too short" was one line in logcat, invisible from the panel itself.
         TextView httpState = new TextView(this);
         httpState.setTextSize(13);
-        SystemStats.RuntimeFacts httpFacts = KioskRuntimeState.lastFacts();
-        String address = httpFacts == null || httpFacts.ipAddress.isEmpty()
-                ? "" : httpFacts.ipAddress;
-        if (KioskRuntimeState.httpAdminListening()) {
-            httpState.setTextColor(theme.ok);
-            httpState.setText("Listening at http://" + (address.isEmpty() ? "this-tablet" : address)
-                    + ":" + KioskRuntimeState.httpAdminPort());
-        } else {
-            httpState.setTextColor(theme.warn);
-            httpState.setText("Not listening, set a password of at least "
-                    + MIN_HTTP_ADMIN_PASSWORD_LENGTH + " characters");
-        }
+        // On/off is its own stored flag, never the password: turning the surface off must not
+        // cost the credential, and turning it back on must not require retyping one. The label is
+        // the state, so the button always says what pressing it does.
+        Button webAdminToggle = secondaryButton(theme,
+                config.webAdminEnabled ? "Turn web admin off" : "Turn web admin on");
+        webAdminToggle.setOnClickListener(view -> {
+            KioskConfig current = KioskConfig.load(this);
+            boolean enable = !current.webAdminEnabled;
+            KioskConfig.edit(this).webAdminEnabled(enable).apply();
+            KioskService.reloadConfiguration(this);
+            KioskService.publishTelemetrySoon(this);
+            webAdminToggle.setText(enable ? "Turn web admin off" : "Turn web admin on");
+            if (enable && current.httpAdminPassword.length() < MIN_HTTP_ADMIN_PASSWORD_LENGTH) {
+                Toast.makeText(this, "Web admin on, but it will not start until an admin "
+                        + "password of at least " + MIN_HTTP_ADMIN_PASSWORD_LENGTH
+                        + " characters is set", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, enable ? "Web admin on" : "Web admin off",
+                        Toast.LENGTH_SHORT).show();
+            }
+            // The bind happens on the service's queue, so the first refresh would race it; one
+            // short beat later is enough, and the live-sync poll keeps it honest after that.
+            mainHandler.postDelayed(() -> refreshHttpState(httpState, theme), 700);
+        });
+        httpCard.addView(webAdminToggle, matchWrap());
+        refreshHttpState(httpState, theme);
         LinearLayout.LayoutParams httpStateParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         httpStateParams.topMargin = dp(10);
@@ -1503,6 +1525,9 @@ public final class KioskActivity extends Activity {
                 } finally {
                     syncingLiveControls = false;
                 }
+                // The status line follows the socket too, so a toggle from MQTT or the web admin
+                // itself shows here without reopening the screen.
+                refreshHttpState(httpState, theme);
                 mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
             }
         };
@@ -1628,6 +1653,14 @@ public final class KioskActivity extends Activity {
         // Settings is still reachable through the escape sequence when it is genuinely needed.
         page.addView(actionRow(java.util.Arrays.<View>asList(open)), matchWrap());
 
+        // The page itself takes the initial focus, so no field holds it uninvited. Without this,
+        // the first EditText (the dashboard URL) silently owned the focus from the moment the
+        // screen was built, and the operator's first tap into any other field blurred it, which
+        // ran a pre-check on a field they never visited: reported 2026-08-24 as the URL box
+        // turning green while resetting the admin password. A probe should only ever follow a
+        // deliberate visit.
+        page.setFocusableInTouchMode(true);
+        page.requestFocus();
         setContentView(scrollPage(theme, page));
         // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
         // from a fresh load with the boxes laid over it, which is the rule the Save button follows

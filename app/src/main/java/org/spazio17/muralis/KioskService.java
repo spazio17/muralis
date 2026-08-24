@@ -617,7 +617,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private static String httpInputsOf(KioskConfig config) {
-        return config.httpPort + FIELD_SEPARATOR + config.httpAdminPassword;
+        return config.httpPort + FIELD_SEPARATOR + config.httpAdminPassword
+                + FIELD_SEPARATOR + config.webAdminEnabled;
     }
 
     private void cancelStartupGate() {
@@ -856,6 +857,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // the tablet's own auto-brightness toggle however it was changed.
             applied.put("has_light_sensor", hasLightSensor(this));
             applied.put("auto_brightness", isAutoBrightnessOn(this));
+            // In the shared block, not behind includeAdminDetail: the Home Assistant "Web admin"
+            // switch reads this field, and a redacted field is an undefined template, which Jinja
+            // quietly renders as OFF, so the switch showed off against a running server and
+            // snapped back on every toggle (reported from HA 2026-08-24). The flag says only
+            // whether the surface is allowed to exist; the port and addresses stay admin-only.
+            applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
@@ -1267,6 +1274,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } catch (RuntimeException unavailable) {
             return false;
         }
+    }
+
+    @Override
+    public void setWebAdminEnabled(boolean enabled) {
+        KioskConfig.edit(this).webAdminEnabled(enabled).apply();
+        // Same shape as setPortrait: persist, act, republish. reloadConfiguration rebinds or
+        // stops the server through the same fingerprint path a save takes; note a caller on the
+        // web admin itself hears "accepted" and then loses the surface it asked to lose.
+        reloadConfiguration(this);
+        publishTelemetrySoon(this);
     }
 
     @Override
