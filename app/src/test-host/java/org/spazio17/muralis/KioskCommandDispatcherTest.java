@@ -19,6 +19,7 @@ public final class KioskCommandDispatcherTest {
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
+        testDeviceIdValidation();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
                 "display.brightness", new KioskCommandDispatcher.CommandArgs(150, null), executor);
@@ -121,6 +122,45 @@ public final class KioskCommandDispatcherTest {
         require(owner.status.equals("accepted"),
                 "reboot as device owner must be accepted, got: " + owner.status);
         require(owner.detail.equals("rebooting"), "reboot detail should say rebooting");
+    }
+
+    /**
+     * The device id must be refused at the surface, with a reason, for anything MQTT cannot carry.
+     *
+     * <p>Guards the audited failure mode: an id with a space or a topic metacharacter was stored
+     * by both settings surfaces, answered with success, and MQTT then refused to start with one
+     * logcat line nobody reads. An empty id is refused separately because KioskConfig.load treats
+     * it as "never provisioned" and re-mints the panel's identity, orphaning every Home Assistant
+     * entity.
+     */
+    private static void testDeviceIdValidation() {
+        require(KioskCommandDispatcher.validateDeviceId("kiosk-a1b2c3d4") == null,
+                "a provisioning-shaped id must be accepted");
+        require(KioskCommandDispatcher.validateDeviceId("wall_panel.2") == null,
+                "dot and underscore are MQTT-legal and must be accepted");
+        require(KioskCommandDispatcher.validateDeviceId("  padded-id  ") == null,
+                "surrounding whitespace is trimmed by every caller and must not refuse the id");
+
+        require(KioskCommandDispatcher.validateDeviceId(null) != null,
+                "a null id must be refused");
+        require(KioskCommandDispatcher.validateDeviceId("   ") != null,
+                "a blank id must be refused, or the panel re-mints its identity");
+        require(KioskCommandDispatcher.validateDeviceId("wall panel") != null,
+                "a space must be refused");
+        require(KioskCommandDispatcher.validateDeviceId("wall/panel") != null,
+                "a topic separator must be refused");
+        require(KioskCommandDispatcher.validateDeviceId("wall+panel") != null,
+                "an MQTT single-level wildcard must be refused");
+        require(KioskCommandDispatcher.validateDeviceId("wall#") != null,
+                "an MQTT multi-level wildcard must be refused");
+        StringBuilder tooLong = new StringBuilder();
+        for (int i = 0; i < 65; i++) {
+            tooLong.append('a');
+        }
+        require(KioskCommandDispatcher.validateDeviceId(tooLong.toString()) != null,
+                "a 65-character id must be refused");
+        require(KioskCommandDispatcher.validateDeviceId("wall panel").contains("letters"),
+                "the refusal must name the allowed characters");
     }
 
     private static void require(boolean condition, String message) {

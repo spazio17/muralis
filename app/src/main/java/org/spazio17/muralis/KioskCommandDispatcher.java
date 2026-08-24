@@ -10,6 +10,12 @@ package org.spazio17.muralis;
  */
 final class KioskCommandDispatcher {
     private static final int MAX_URL_LENGTH = 2_048;
+    /**
+     * MQTT's alphabet, not taste: the id becomes the topic prefix and every Home Assistant
+     * unique_id, so anything a topic cannot carry must never be stored as an id.
+     */
+    private static final java.util.regex.Pattern DEVICE_ID =
+            java.util.regex.Pattern.compile("[A-Za-z0-9._-]{1,64}");
 
     private KioskCommandDispatcher() {
     }
@@ -194,6 +200,28 @@ final class KioskCommandDispatcher {
         }
         if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
             return "url must start with http:// or https://";
+        }
+        return null;
+    }
+
+    /**
+     * Returns null when {@code id} is usable as this panel's identity, an error message otherwise.
+     *
+     * <p>Every surface that can write the id checks here, so the refusal happens where the
+     * operator is looking. It used to be checked only in {@code MqttController.start()}, whose
+     * whole answer was one logcat line: a space or a {@code /} typed into either settings surface
+     * was stored, answered with success, and MQTT then never started. An empty id is refused for a
+     * different reason: {@code KioskConfig.load} treats an empty id as "never provisioned" and
+     * mints a fresh one, which orphans every Home Assistant entity the old id had announced and
+     * leaves its retained topics behind.
+     */
+    static String validateDeviceId(String id) {
+        if (id == null || id.trim().isEmpty()) {
+            return "device id must not be empty";
+        }
+        if (!DEVICE_ID.matcher(id.trim()).matches()) {
+            return "device id may only use letters, digits, dot, underscore and hyphen,"
+                    + " up to 64 characters";
         }
         return null;
     }

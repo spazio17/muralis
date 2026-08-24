@@ -628,8 +628,7 @@ final class HttpAdminServer {
         // partial form read as "all checkboxes unchecked".
         switch (section) {
             case "sequences":
-                saveEscapeSequences(form, fresh);
-                return null;
+                return saveEscapeSequences(form, fresh);
             case "dashboard": {
                 String stale = staleFormRefusal(form,
                         fresh.dashboardUrl + "|" + fresh.deviceId);
@@ -637,9 +636,22 @@ final class HttpAdminServer {
                     return stale;
                 }
                 String url = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
+                // The dispatcher's rules, not local ones: this box used to store what
+                // kiosk.set_url would refuse with a reason, so a schemeless address was retried
+                // every ten seconds forever, and a bad device id was stored, answered with a
+                // success page, and then refused by MQTT with only a logcat line to show for it.
+                String urlProblem = KioskCommandDispatcher.validateDashboardUrl(url);
+                if (urlProblem != null) {
+                    return "Not saved: " + urlProblem + ".";
+                }
+                String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
+                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                if (idProblem != null) {
+                    return "Not saved: " + idProblem + ".";
+                }
                 KioskConfig.edit(context)
                         .dashboardUrl(url)
-                        .deviceId(form.getOrDefault("device_id", fresh.deviceId))
+                        .deviceId(deviceId)
                         .apply();
                 if (!url.equals(fresh.dashboardUrl)) {
                     // Saving a new URL must also navigate to it; the form path used to only save,
@@ -755,27 +767,41 @@ final class HttpAdminServer {
      * which is exactly what happened twice on 2026-08-17. A missing baseline is treated as stale
      * rather than current, because the only pages without one are older than this check.
      */
-    private void saveEscapeSequences(Map<String, String> form, KioskConfig fresh) {
+    private String saveEscapeSequences(Map<String, String> form, KioskConfig fresh) {
         String baseline = form.get("sequence_baseline");
         String current = fresh.settingsSequence + "|" + fresh.launcherSequence;
         if (baseline == null || !baseline.equals(current)) {
-            Log.i(TAG, "Ignoring escape sequences from a page that no longer matches the device");
-            return;
+            // Refused out loud, like the other three boxes. This used to be a silent Log.i, so
+            // the one form whose stale submit was actually seen twice (2026-08-17) was also the
+            // one that looked saved when it was not.
+            return "Not saved: the sequences were changed elsewhere after this page loaded. "
+                    + "The page now shows the current values; please re-apply your edit.";
         }
 
-        String settingsSequence = form.get("settings_sequence");
-        if (settingsSequence != null
-                && EscapeSequence.isValid(EscapeSequence.parse(settingsSequence))) {
-            fresh.settingsSequence = EscapeSequence.format(EscapeSequence.parse(settingsSequence));
+        // Resolve both candidates first, then compare once, in both directions. The old check
+        // only guarded the launcher field against the settings field, so the settings gesture
+        // could be set equal to the launcher gesture and become unreachable: on equal sequences
+        // the tap handler resolves to the launcher, and nothing on screen explains why settings
+        // stopped opening. The tablet recorder refuses the same collision (KioskActivity's
+        // recorder); this is the web admin's half of that rule.
+        String settingsSequence = fresh.settingsSequence;
+        String posted = form.get("settings_sequence");
+        if (posted != null && EscapeSequence.isValid(EscapeSequence.parse(posted))) {
+            settingsSequence = EscapeSequence.format(EscapeSequence.parse(posted));
         }
-        String launcherSequence = form.get("launcher_sequence");
-        if (launcherSequence != null
-                && EscapeSequence.isValid(EscapeSequence.parse(launcherSequence))
-                && !EscapeSequence.format(EscapeSequence.parse(launcherSequence))
-                        .equals(fresh.settingsSequence)) {
-            fresh.launcherSequence = EscapeSequence.format(EscapeSequence.parse(launcherSequence));
+        String launcherSequence = fresh.launcherSequence;
+        posted = form.get("launcher_sequence");
+        if (posted != null && EscapeSequence.isValid(EscapeSequence.parse(posted))) {
+            launcherSequence = EscapeSequence.format(EscapeSequence.parse(posted));
         }
+        if (settingsSequence.equals(launcherSequence)) {
+            return "Not saved: the settings and launcher sequences must be different, or the "
+                    + "settings gesture becomes unreachable.";
+        }
+        fresh.settingsSequence = settingsSequence;
+        fresh.launcherSequence = launcherSequence;
         fresh.saveEscapeSequences(context);
+        return null;
     }
 
     private boolean isAuthorized(String authorizationHeader) {
