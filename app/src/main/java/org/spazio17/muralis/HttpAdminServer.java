@@ -1003,6 +1003,7 @@ final class HttpAdminServer {
 
                 .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")
                 .append(quickAction("kiosk.reload", "Reload"))
+                .append(quickAction("kiosk.home", "Main dashboard"))
                 .append(quickAction("kiosk.restart", "Restart kiosk"))
                 .append(quickAction("system.reboot", "Reboot"))
                 .append("</div></fieldset>")
@@ -1016,12 +1017,22 @@ final class HttpAdminServer {
                 .append(portraitControl())
                 .append("</fieldset>")
 
+                // kiosk.open_url, NOT kiosk.set_url: this box is for a URL with one-off query
+                // parameters, and it used to store whatever was typed as the panel's dashboard,
+                // so the way back was retyping the original by hand (reported 2026-08-24). The
+                // Dashboard box above is where the stored URL changes.
                 .append("<fieldset><legend>Open a URL now</legend>")
                 .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
-                .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.set_url\">")
+                .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
                 .append("<input type=\"text\" name=\"url\" ")
                 .append("placeholder=\"http://homeassistant.local:8123/\">")
-                .append("<button type=\"submit\">Go</button></form></fieldset>")
+                .append("<button type=\"submit\">Go</button>")
+                .append("</form>")
+                .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
+                .append("dashboard is unchanged.</p>")
+                .append("<div class=\"actions\">")
+                .append(quickAction("kiosk.home", "Main dashboard"))
+                .append("</div></fieldset>")
 
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands

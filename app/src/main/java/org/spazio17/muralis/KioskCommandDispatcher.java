@@ -89,7 +89,18 @@ final class KioskCommandDispatcher {
          */
         void setPortrait(boolean enabled);
 
+        /** Stores {@code url} as the panel's dashboard and shows it. */
         void setDashboardUrl(String url);
+
+        /**
+         * Shows {@code url} now without storing it, so the next reload of the *kiosk* (a restart,
+         * a reboot, the nightly clean) returns to the stored dashboard. For a URL with one-off
+         * query parameters, which is what a stored dashboard URL must not become.
+         */
+        void openUrlOnce(String url);
+
+        /** Goes back to the stored dashboard URL, whatever is on screen now. */
+        void showMainDashboard();
 
         /**
          * Allows or stops the web admin surface, without touching the stored password. No return
@@ -141,6 +152,17 @@ final class KioskCommandDispatcher {
                 executor.setDashboardUrl(args.url.trim());
                 return accepted();
             }
+            case "kiosk.open_url": {
+                String error = validateDashboardUrl(args.url);
+                if (error != null) {
+                    return rejected(error);
+                }
+                executor.openUrlOnce(args.url.trim());
+                return accepted();
+            }
+            case "kiosk.home":
+                executor.showMainDashboard();
+                return accepted();
             case "display.wake":
                 executor.displayWake();
                 return accepted();

@@ -1277,6 +1277,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     @Override
+    public void openUrlOnce(String url) {
+        // Deliberately no KioskConfig write: that is the whole difference from setDashboardUrl.
+        sendUiCommand("kiosk.open_url", -1, url);
+    }
+
+    @Override
+    public void showMainDashboard() {
+        sendUiCommand("kiosk.home", -1, null);
+    }
+
+    @Override
     public void setWebAdminEnabled(boolean enabled) {
         KioskConfig.edit(this).webAdminEnabled(enabled).apply();
         // Same shape as setPortrait: persist, act, republish. reloadConfiguration rebinds or

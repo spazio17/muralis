@@ -1226,6 +1226,33 @@ public final class KioskActivity extends Activity {
         addField(dashboardCard, theme, "Dashboard URL", urlInput);
         EditText deviceIdInput = themedInput(theme, config.deviceId, false);
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
+        // Two buttons beside the aggregate Save ("Open dashboard") at the foot of the screen,
+        // because they answer a different question: that one stores what is typed as THE
+        // dashboard, these two navigate without changing what is stored. Juri, 2026-08-24: a URL
+        // with one-off query parameters is exactly what a stored dashboard URL must not become.
+        Button openOnce = secondaryButton(theme, "Open once");
+        openOnce.setOnClickListener(view -> {
+            String once = normalizeUrl(urlInput.getText().toString());
+            String problem = KioskCommandDispatcher.validateDashboardUrl(once);
+            if (problem != null) {
+                Toast.makeText(this, "Not opened: " + problem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            Toast.makeText(this, "Opened once, not saved as the dashboard",
+                    Toast.LENGTH_SHORT).show();
+            showDashboard(once);
+        });
+        dashboardCard.addView(openOnce, matchWrap());
+        Button mainDashboard = secondaryButton(theme, "Main dashboard");
+        mainDashboard.setOnClickListener(view -> {
+            String stored = KioskConfig.load(this).dashboardUrl;
+            if (stored.isEmpty()) {
+                Toast.makeText(this, "No dashboard URL is stored yet", Toast.LENGTH_LONG).show();
+                return;
+            }
+            showDashboard(stored);
+        });
+        dashboardCard.addView(mainDashboard, matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -3146,6 +3173,36 @@ public final class KioskActivity extends Activity {
                     webView.loadUrl(url);
                 }
                 break;
+            case "kiosk.open_url":
+            case "kiosk.home": {
+                // One shape for both: the only difference is which URL is loaded, and neither
+                // writes anything. kiosk.open_url shows a URL that is deliberately NOT stored, so
+                // a restart, a reboot or the nightly clean comes back to the stored dashboard;
+                // kiosk.home is the way back on demand.
+                String target = "kiosk.home".equals(command)
+                        ? KioskConfig.load(this).dashboardUrl
+                        : url;
+                if (target == null || target.trim().isEmpty()) {
+                    // Only reachable for kiosk.home on a panel with no dashboard configured yet:
+                    // loading "" would blank a working screen for nothing.
+                    Log.w(TAG, "No dashboard URL to show");
+                    break;
+                }
+                // A one-off URL also lifts a kiosk.stop, exactly as kiosk.set_url does: asking for
+                // a page is asking to see it.
+                kioskStopped = false;
+                KioskConfig.edit(this).kioskStopped(false).apply();
+                if (blackout != null) {
+                    blackout.setVisibility(View.GONE);
+                }
+                if (webView == null) {
+                    showDashboard(target);
+                } else {
+                    beginLoad();
+                    webView.loadUrl(target);
+                }
+                break;
+            }
             case "kiosk.stop":
                 kioskStopped = true;
                 KioskConfig.edit(this).kioskStopped(true).apply();

@@ -22,6 +22,7 @@ public final class KioskCommandDispatcherTest {
         testDeviceIdValidation();
         testAdminPortValidation();
         testWebAdminToggle();
+        testOneOffUrlAndHome();
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
 
@@ -151,6 +152,47 @@ public final class KioskCommandDispatcherTest {
                 "a port above 65535 must be refused");
         require(KioskCommandDispatcher.validateAdminPort(80).contains("1024"),
                 "the refusal must name the allowed range");
+    }
+
+    /**
+     * A one-off URL is shown but never stored, and there is a way back to the stored one.
+     *
+     * <p>The distinction is the whole point: kiosk.set_url replaces the panel's dashboard, while
+     * kiosk.open_url shows a URL with one-off query parameters and leaves storage alone, so a
+     * restart or the nightly clean returns to the dashboard. kiosk.open_url validates its URL
+     * exactly like set_url, because an unusable one-off is still worth refusing with a reason.
+     */
+    private static void testOneOffUrlAndHome() {
+        RecordingExecutor executor = new RecordingExecutor();
+
+        KioskCommandDispatcher.Result badUrl = KioskCommandDispatcher.dispatch(
+                "kiosk.open_url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
+                executor);
+        require(badUrl.status.equals("rejected"), "a non-http(s) one-off URL was accepted");
+        require(!executor.calls.contains("openUrlOnce"), "executor ran despite rejection");
+
+        KioskCommandDispatcher.Result blank = KioskCommandDispatcher.dispatch(
+                "kiosk.open_url", new KioskCommandDispatcher.CommandArgs(-1, "   "), executor);
+        require(blank.status.equals("rejected"), "a blank one-off URL was accepted");
+
+        KioskCommandDispatcher.Result once = KioskCommandDispatcher.dispatch(
+                "kiosk.open_url",
+                new KioskCommandDispatcher.CommandArgs(
+                        -1, "  http://ha.local:8123/lovelace/0?kiosk  "),
+                executor);
+        require(once.status.equals("accepted"), "a valid one-off URL was rejected");
+        require("http://ha.local:8123/lovelace/0?kiosk".equals(executor.lastOnceUrl),
+                "one-off URL not trimmed and forwarded: " + executor.lastOnceUrl);
+        // The one-off path must never reach the setter that persists.
+        require(!executor.calls.contains("setDashboardUrl"),
+                "a one-off URL must not be stored as the dashboard");
+
+        KioskCommandDispatcher.Result home = KioskCommandDispatcher.dispatch(
+                "kiosk.home", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(home.status.equals("accepted"), "kiosk.home was rejected");
+        require(executor.calls.contains("showMainDashboard"), "kiosk.home did not reach executor");
+        require(!executor.calls.contains("setDashboardUrl"),
+                "kiosk.home must not write anything");
     }
 
     /**
@@ -394,6 +436,19 @@ public final class KioskCommandDispatcherTest {
         public void setDashboardUrl(String url) {
             calls.add("setDashboardUrl");
             lastUrl = url;
+        }
+
+        String lastOnceUrl = null;
+
+        @Override
+        public void openUrlOnce(String url) {
+            calls.add("openUrlOnce");
+            lastOnceUrl = url;
+        }
+
+        @Override
+        public void showMainDashboard() {
+            calls.add("showMainDashboard");
         }
 
         Boolean lastWebAdminEnabled = null;
