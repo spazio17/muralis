@@ -1111,6 +1111,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     public void setDashboardUrl(String url) {
         KioskConfig.edit(this).dashboardUrl(url).apply();
         sendUiCommand("kiosk.set_url", -1, url);
+        // dashboard_url rides in the telemetry document, and the web admin calls this method
+        // directly, bypassing the dispatcher wrapper that republishes after accepted commands.
+        // Without this line a URL saved on the page stayed stale in Home Assistant for up to a
+        // minute; same rule as setPortrait below. The dispatcher path publishes twice as a
+        // result, which publishStateSoon's debounce coalesces.
+        publishTelemetrySoon(this);
     }
 
     /**
