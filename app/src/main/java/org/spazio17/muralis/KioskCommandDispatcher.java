@@ -260,6 +260,23 @@ final class KioskCommandDispatcher {
     }
 
     /**
+     * Returns null when {@code port} can serve the web admin, an error message otherwise.
+     *
+     * <p>The floor is 1024 rather than 1 because Juri proved the difference on hardware
+     * (2026-08-24): port 80 passed a 1-65535 range check, persisted, and then failed at bind
+     * time, since an unprivileged app can never bind below 1024 on Android. The server fails
+     * closed on a bind error, so the admin's own settings box was able to switch the admin off,
+     * undoable only from the tablet. This floor applies exclusively to the port this app binds
+     * itself; the broker port is a remote port and keeps the full 1-65535 range.
+     */
+    static String validateAdminPort(int port) {
+        if (port < 1024 || port > 65535) {
+            return "web admin port must be between 1024 and 65535";
+        }
+        return null;
+    }
+
+    /**
      * Returns null when {@code id} is usable as this panel's identity, an error message otherwise.
      *
      * <p>Every surface that can write the id checks here, so the refusal happens where the

@@ -118,6 +118,7 @@ final class HttpAdminServer {
      */
     private final String commandScript;
     private final String settingScript;
+    private final String checkScript;
     private final String statsScript;
     private final String themeScript;
     private final String pageCss;
@@ -152,12 +153,15 @@ final class HttpAdminServer {
     private Thread acceptThread;
     private volatile boolean running;
     private String boundAdminPassword = "";
+    /** The port the running server actually bound, or -1 while it is down; see checkValue. */
+    private volatile int boundPort = -1;
 
     HttpAdminServer(Context context, KioskService kioskService) {
         this.context = context;
         this.kioskService = kioskService;
         commandScript = script(R.raw.admin_command);
         settingScript = script(R.raw.admin_setting);
+        checkScript = script(R.raw.admin_check);
         statsScript = script(R.raw.admin_stats);
         themeScript = script(R.raw.admin_theme);
         pageCss = readRawText(R.raw.admin);
@@ -186,6 +190,7 @@ final class HttpAdminServer {
             return;
         }
         boundAdminPassword = config.httpAdminPassword;
+        boundPort = config.httpPort;
         // Deliberately not Executors.newFixedThreadPool: that helper's queue is unbounded. See
         // ACCEPT_QUEUE_DEPTH. Core and max are equal, so the queue is what absorbs a burst and
         // rejection is what stops a flood.
@@ -472,6 +477,11 @@ final class HttpAdminServer {
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
+        } else if (path.equals("/api/check") && method.equals("GET")) {
+            // GET on purpose: it changes nothing, so it needs none of the cross-site defences the
+            // command verb carries, and the page can call it from a blur handler with a plain
+            // fetch. See checkValue.
+            writeResponse(output, 200, "application/json", bytes(checkValue(parseQuery(query))));
         } else if (path.equals("/privacy") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.privacy_policy_title), R.raw.privacy_policy)));
@@ -712,7 +722,20 @@ final class HttpAdminServer {
                 // it, and cannot be undone from the panel because the panel no longer runs.
                 Integer adminPort = parsePort(form.get("http_port"), fresh.httpPort);
                 if (adminPort == null) {
-                    return "Web admin port must be between 1 and 65535.";
+                    return "Web admin port must be a number.";
+                }
+                // Floor at 1024, proven necessary on hardware; see validateAdminPort. And a port
+                // another service already holds is refused too: the pre-check paints the field red
+                // before anyone gets here, but a submit that ignored the colour must not be able
+                // to save the admin into a bind failure. Saving the port it already serves on is
+                // not a conflict, the holder is us.
+                String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
+                if (portProblem != null) {
+                    return "Not saved: " + portProblem + ".";
+                }
+                if (adminPort != fresh.httpPort && !SettingProbe.portFree(adminPort)) {
+                    return "Not saved: port " + adminPort
+                            + " is already in use by another service on this device.";
                 }
                 KioskConfig.Editor editor = KioskConfig.edit(context).httpPort(adminPort);
                 String adminPassword = form.get("http_admin_password");
@@ -758,6 +781,39 @@ final class HttpAdminServer {
      * sees the current values immediately. A missing baseline is treated as stale, since the only
      * pages without one are older than this check.
      */
+    /**
+     * The JSON face of {@link SettingProbe}, for the page's green/red pre-check
+     * (admin_check.js). The probing itself is shared with the tablet so the two surfaces can
+     * never disagree about what "reachable" means.
+     */
+    private String checkValue(Map<String, String> params) {
+        String kind = params.getOrDefault("kind", "");
+        String value = params.getOrDefault("value", "").trim();
+        SettingProbe.Verdict verdict;
+        switch (kind) {
+            case "http_port":
+                verdict = SettingProbe.adminPort(value, boundPort);
+                break;
+            case "dashboard_url":
+                verdict = SettingProbe.dashboardUrl(value);
+                break;
+            case "mqtt_host":
+                verdict = SettingProbe.mqttHost(value,
+                        parseIntOrDefault(params.get("port"), 1883));
+                break;
+            default:
+                verdict = new SettingProbe.Verdict(false, "unknown check kind");
+        }
+        org.json.JSONObject result = new org.json.JSONObject();
+        try {
+            result.put("ok", verdict.ok);
+            result.put("detail", verdict.detail);
+        } catch (org.json.JSONException impossible) {
+            // Two puts of primitives on a fresh object cannot fail; satisfy the checked signature.
+        }
+        return result.toString();
+    }
+
     private static String staleFormRefusal(Map<String, String> form, String currentBaseline) {
         String baseline = form.get("baseline");
         if (baseline != null && baseline.equals(currentBaseline)) {
@@ -960,6 +1016,7 @@ final class HttpAdminServer {
 
         html.append(commandScript);
         html.append(settingScript);
+        html.append(checkScript);
         html.append(statsScript);
         html.append(themeScript);
         html.append("</main></body></html>");

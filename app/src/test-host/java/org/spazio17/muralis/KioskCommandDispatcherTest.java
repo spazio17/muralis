@@ -20,6 +20,7 @@ public final class KioskCommandDispatcherTest {
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
         testDeviceIdValidation();
+        testAdminPortValidation();
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
 
@@ -124,6 +125,31 @@ public final class KioskCommandDispatcherTest {
         require(owner.status.equals("accepted"),
                 "reboot as device owner must be accepted, got: " + owner.status);
         require(owner.detail.equals("rebooting"), "reboot detail should say rebooting");
+    }
+
+    /**
+     * The web admin port is floored at 1024, not 1. Found by Juri on hardware: port 80 passed a
+     * 1-65535 check, persisted, and failed at bind time, because an unprivileged app can never
+     * bind below 1024 on Android, so the admin's own settings box switched the admin off. The
+     * broker port deliberately has no such floor; it is a remote port.
+     */
+    private static void testAdminPortValidation() {
+        require(KioskCommandDispatcher.validateAdminPort(8080) == null,
+                "the default port must be accepted");
+        require(KioskCommandDispatcher.validateAdminPort(1024) == null,
+                "the first unprivileged port must be accepted");
+        require(KioskCommandDispatcher.validateAdminPort(65535) == null,
+                "the last port must be accepted");
+        require(KioskCommandDispatcher.validateAdminPort(1023) != null,
+                "the last privileged port must be refused");
+        require(KioskCommandDispatcher.validateAdminPort(80) != null,
+                "a privileged port passes a range check and fails at bind; it must be refused here");
+        require(KioskCommandDispatcher.validateAdminPort(0) != null,
+                "port 0 must be refused");
+        require(KioskCommandDispatcher.validateAdminPort(65536) != null,
+                "a port above 65535 must be refused");
+        require(KioskCommandDispatcher.validateAdminPort(80).contains("1024"),
+                "the refusal must name the allowed range");
     }
 
     /**

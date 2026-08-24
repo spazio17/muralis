@@ -709,6 +709,33 @@ public final class KioskActivity extends Activity {
         KioskRuntimeState.publishOperatorOnScreen(configurationVisible || recorderVisible);
     }
 
+    /**
+     * The tablet half of the settings pre-check (see {@link SettingProbe}): probes off the main
+     * thread and answers by tinting the field, green for "would work right now", red for "would
+     * not". Advisory exactly like the web page's version (admin_check.js): the Save path keeps
+     * its own refusals. Callers capture every value they need on the UI thread before building
+     * the supplier; the supplier runs on a worker.
+     */
+    private void runPrecheck(EditText field, KioskTheme theme,
+            java.util.function.Supplier<SettingProbe.Verdict> probe) {
+        new Thread(() -> {
+            SettingProbe.Verdict verdict = probe.get();
+            mainHandler.post(() -> {
+                if (field.isAttachedToWindow()) {
+                    // The verdict is the border alone, not a tinted fill: same fill and radius as
+                    // themedInput, one stroke width up so the colour reads at arm's length.
+                    field.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(2),
+                            verdict.ok ? theme.ok : theme.bad));
+                }
+            });
+        }, "MuralisPrecheck").start();
+    }
+
+    /** Back to the resting border themedInput gave the field, clearing any verdict. */
+    private void clearPrecheck(EditText field, KioskTheme theme) {
+        field.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(1)));
+    }
+
     private boolean navigateBack() {
         if (recorderVisible) {
             // Same destination the recorder's own Cancel button uses, rather than a second opinion
@@ -1037,9 +1064,8 @@ public final class KioskActivity extends Activity {
             return;
         }
         if (!typed.isEmpty() && typed.length() < MIN_HTTP_ADMIN_PASSWORD_LENGTH) {
-            Toast.makeText(this, "The web admin password must be at least "
-                    + MIN_HTTP_ADMIN_PASSWORD_LENGTH
-                    + " characters, or blank to switch the web admin off",
+            Toast.makeText(this, "Not saved: the web admin password must be at least "
+                    + MIN_HTTP_ADMIN_PASSWORD_LENGTH + " characters",
                     Toast.LENGTH_LONG).show();
             return;
         }
@@ -1181,37 +1207,62 @@ public final class KioskActivity extends Activity {
         EditText httpPortInput = themedInput(theme, Integer.toString(config.httpPort), false);
         httpPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(httpCard, theme, "Port", httpPortInput);
-        // Rendered blank, never prefilled, same reasoning as the broker password above. Blank
-        // still means "switch the web admin off", but only once the field has actually been
-        // edited: without the edited flag, merely focusing this empty box and leaving it would
-        // have cleared the stored password and killed the web admin.
-        EditText httpAdminPasswordInput = themedInput(theme, "", true);
-        addField(httpCard, theme, "Admin password (unchanged until edited; clear to disable)",
-                httpAdminPasswordInput);
-        final boolean[] adminPasswordEdited = {false};
-        httpAdminPasswordInput.addTextChangedListener(new android.text.TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-            }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-            }
-
-            @Override
-            public void afterTextChanged(android.text.Editable s) {
-                adminPasswordEdited[0] = true;
+        // The same blur pre-checks the web admin's page runs (SettingProbe): the field's tint
+        // answers whether the value would work from this device right now. Values are captured
+        // here on the UI thread; only the probe itself runs on the worker.
+        urlInput.setOnFocusChangeListener((view, hasFocus) -> {
+            clearPrecheck(urlInput, theme);
+            String typed = normalizeUrl(urlInput.getText().toString());
+            if (!hasFocus && !typed.isEmpty()) {
+                runPrecheck(urlInput, theme, () -> SettingProbe.dashboardUrl(typed));
             }
         });
+        brokerInput.setOnFocusChangeListener((view, hasFocus) -> {
+            clearPrecheck(brokerInput, theme);
+            String host = brokerInput.getText().toString().trim();
+            int brokerPort = parsePort(portInput.getText().toString(), 1883);
+            if (!hasFocus && !host.isEmpty()) {
+                runPrecheck(brokerInput, theme, () -> SettingProbe.mqttHost(host, brokerPort));
+            }
+        });
+        httpPortInput.setOnFocusChangeListener((view, hasFocus) -> {
+            clearPrecheck(httpPortInput, theme);
+            String typed = httpPortInput.getText().toString().trim();
+            int bound = KioskRuntimeState.httpAdminListening()
+                    ? KioskRuntimeState.httpAdminPort() : -1;
+            if (!hasFocus && !typed.isEmpty()) {
+                runPrecheck(httpPortInput, theme, () -> SettingProbe.adminPort(typed, bound));
+            }
+        });
+        // Rendered blank, never prefilled, same reasoning as the broker password above, and the
+        // same words as the web admin's form so the two surfaces describe one rule. Blank means
+        // exactly what the label says, including after an edit: switching the web admin off is
+        // its own button below, not a gesture hidden inside an empty field.
+        EditText httpAdminPasswordInput = themedInput(theme, "", true);
+        addField(httpCard, theme, "Admin password (blank keeps the current one)",
+                httpAdminPasswordInput);
         // Applied on blur, not on the aggregate Save: waiting for "Open dashboard" meant the web
         // admin stayed dark, or kept an old password, until the operator happened to leave the
         // screen for an unrelated reason. Same shape as the auto-brightness checkbox above: a
         // field losing focus is as much a deliberate action as a click is.
         httpAdminPasswordInput.setOnFocusChangeListener((view, hasFocus) -> {
-            if (!hasFocus && adminPasswordEdited[0]) {
-                applyHttpAdminPassword(httpAdminPasswordInput.getText().toString());
+            String typed = httpAdminPasswordInput.getText().toString();
+            if (!hasFocus && !typed.isEmpty()) {
+                applyHttpAdminPassword(typed);
             }
         });
+        Button webAdminOff = secondaryButton(theme, "Turn web admin off");
+        webAdminOff.setOnClickListener(view -> {
+            // applyHttpAdminPassword treats "same as stored" as a silent no-op, which is right
+            // for a blur and wrong for a button: a press must always answer.
+            if (KioskConfig.load(this).httpAdminPassword.isEmpty()) {
+                Toast.makeText(this, "The web admin is already off", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            applyHttpAdminPassword("");
+            httpAdminPasswordInput.setText("");
+        });
+        httpCard.addView(webAdminOff, matchWrap());
         // Whether the surface actually holds a socket, and at which address. It fails closed by
         // design, so without this the difference between "listening" and "silently off because the
         // password is too short" was one line in logcat, invisible from the panel itself.
@@ -1518,6 +1569,16 @@ public final class KioskActivity extends Activity {
                             Toast.LENGTH_LONG).show();
                     return;
                 }
+                // Floor at 1024, proven on hardware: a privileged port passes a plain range check
+                // and only fails at bind time, killing the web admin. See validateAdminPort.
+                int adminPort = parsePort(httpPortInput.getText().toString(),
+                        KioskConfig.DEFAULT_HTTP_PORT);
+                String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
+                if (portProblem != null) {
+                    Toast.makeText(this, "Not saved: " + portProblem + ".",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
                 // Only the fields with a text box on this screen are written. The overlay switch,
                 // portrait, the brightness pair and the admin password already applied themselves
                 // when touched, and the Editor cannot touch what it was not given.
@@ -1527,8 +1588,7 @@ public final class KioskActivity extends Activity {
                         .mqttHost(brokerInput.getText().toString())
                         .mqttPort(parsePort(portInput.getText().toString(), 1883))
                         .mqttUsername(usernameInput.getText().toString())
-                        .httpPort(parsePort(httpPortInput.getText().toString(),
-                                KioskConfig.DEFAULT_HTTP_PORT));
+                        .httpPort(adminPort);
                 String mqttPassword = passwordInput.getText().toString();
                 if (!mqttPassword.isEmpty()) {
                     // The box renders blank and blank means "keep", exactly like the web admin's
@@ -1542,6 +1602,24 @@ public final class KioskActivity extends Activity {
                 // device id ride in the telemetry document, and this save used to leave Home
                 // Assistant on the old values for up to a minute.
                 KioskService.publishTelemetrySoon(this);
+                // A broken broker address is the one misconfiguration the dashboard never shows:
+                // the panel renders fine while Home Assistant quietly loses it, which is exactly
+                // how a typo in the host went unnoticed on 2026-08-24. Saving is not blocked, the
+                // broker may merely be down right now, but the operator gets told, over the
+                // dashboard they are about to be looking at.
+                String savedHost = brokerInput.getText().toString().trim();
+                int savedBrokerPort = parsePort(portInput.getText().toString(), 1883);
+                if (!savedHost.isEmpty()) {
+                    new Thread(() -> {
+                        SettingProbe.Verdict verdict =
+                                SettingProbe.mqttHost(savedHost, savedBrokerPort);
+                        if (!verdict.ok) {
+                            mainHandler.post(() -> Toast.makeText(this,
+                                    "Saved, but the MQTT broker does not answer: "
+                                    + verdict.detail, Toast.LENGTH_LONG).show());
+                        }
+                    }, "MuralisPrecheck").start();
+                }
                 showDashboard(url);
             }
         });
