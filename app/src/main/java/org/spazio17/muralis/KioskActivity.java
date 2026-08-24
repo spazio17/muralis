@@ -529,7 +529,7 @@ public final class KioskActivity extends Activity {
         // the dashboard would otherwise sit invisible behind the keyguard until somebody walked up
         // to the tablet. The product also disables the lockscreen by default; this covers the case
         // where one has been re-enabled on the device.
-        showWhenLockedAndTurnScreenOn();
+        showWhenLocked();
         watchForRevealedSystemBars();
         keepDisplayAwake();
         // hideStatusBarForKiosk() is gone: it wrote Settings.Global "policy_control" =
@@ -756,25 +756,27 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Shows over the keyguard and turns the screen on, on every supported API level.
+     * Shows over the keyguard, on every supported API level.
      *
-     * <p>{@code Activity.setShowWhenLocked} and {@code setTurnScreenOn} are <b>API 27</b>, one level
-     * above this app's minSdk, and the interim MediaPad is API 26, so calling them unconditionally
-     * threw {@code NoSuchMethodError} on the first frame. Verified on that hardware. The window
-     * flags they replaced are deprecated from API 27 but present from API 1, so each level uses the
-     * mechanism it actually has.
+     * <p>{@code Activity.setShowWhenLocked} is <b>API 27</b>, one level above this app's minSdk,
+     * and the interim MediaPad is API 26, so calling it unconditionally threw
+     * {@code NoSuchMethodError} on the first frame. Verified on that hardware. The window flags it
+     * replaced are deprecated from API 27 but present from API 1, so each level uses the mechanism
+     * it actually has.
      *
-     * <p>{@code FLAG_TURN_SCREEN_ON} is also what replaces the privileged build's
-     * {@code PowerManager.wakeUp} for {@code display.wake}; see {@code KioskService.wakeDisplay()}.
+     * <p>This window does <b>not</b> carry {@code FLAG_TURN_SCREEN_ON}/{@code setTurnScreenOn}. It
+     * did, as the unprivileged stand-in for {@code PowerManager.wakeUp}, and the price was that
+     * every relaunch of this activity switched the panel on: the nightly restart's relaunch alarm
+     * was waking screens somebody had deliberately turned off with the power button (verified by
+     * replaying the relaunch over adb on the MediaPad, 2026-08-24). Turning the screen on is a
+     * command, not a property of this window; it lives in {@code KioskService.wakeDisplay()}.
      */
     @SuppressWarnings("deprecation")
-    private void showWhenLockedAndTurnScreenOn() {
+    private void showWhenLocked() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true);
-            setTurnScreenOn(true);
         } else {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
                     | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
         }
     }

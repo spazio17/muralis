@@ -39,6 +39,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private static final long REMOTE_POWER_DELAY_MS = 2_000L;
     /** How long after System.exit the alarm brings the activity back. */
     private static final long RESTART_RELAUNCH_DELAY_MS = 3_000L;
+    /** How long display.wake's timed lock holds the screen before FLAG_KEEP_SCREEN_ON takes over. */
+    private static final long WAKE_HANDOVER_MS = 10_000L;
     /** Long enough for the log line and a pending MQTT publish to leave before the process dies. */
     private static final long RESTART_EXIT_DELAY_MS = 750L;
     private static final int RESTART_REQUEST_CODE = 7_301;
@@ -1291,24 +1293,30 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>The privileged build called {@code PowerManager.wakeUp}, which needs the signature
      * {@code DEVICE_POWER} permission and whose {@code WAKE_REASON_APPLICATION} constant is not in
-     * the public SDK at all. The replacement is entirely on the activity side: {@code
-     * setTurnScreenOn(true)} plus {@code FLAG_TURN_SCREEN_ON} on a window that is then brought
-     * forward turns the screen on with no permission whatsoever.
+     * the public SDK at all. The first unprivileged replacement was {@code FLAG_TURN_SCREEN_ON} on
+     * the activity window, brought forward by a {@code startActivity} from here. That shape had two
+     * costs: background-activity-launch restrictions (API 29+) could refuse the launch, and the
+     * flag had to sit on the window permanently, which made every relaunch of the activity turn the
+     * screen on, the nightly restart above all (see {@code KioskActivity.showWhenLocked()}).
      *
-     * <p>All this method still does is launch the activity, because a window can only turn the
-     * screen on while it is coming to the front. The {@code display.wake} broadcast that follows in
-     * {@link #displayWake()} is what clears any visual-off overlay.
+     * <p>A timed wake lock with {@link PowerManager#ACQUIRE_CAUSES_WAKEUP} has neither cost: it
+     * needs only {@code WAKE_LOCK}, which the manifest already holds, and it fires from a service
+     * with nothing to bring forward. {@code SCREEN_BRIGHT_WAKE_LOCK} is deprecated since API 13 but
+     * present and functional on every level this app supports. The lock is timed rather than held:
+     * once the screen is on, the activity's own {@code FLAG_KEEP_SCREEN_ON} takes over, the same
+     * regime as a screen switched on at the power button. The {@code display.wake} broadcast that
+     * follows in {@link #displayWake()} is what clears any visual-off overlay.
      */
+    @SuppressWarnings("deprecation")
     private void wakeDisplay() {
-        try {
-            startActivity(new Intent(this, KioskActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                            | Intent.FLAG_ACTIVITY_SINGLE_TOP));
-        } catch (RuntimeException refused) {
-            // Background-activity-launch restrictions (API 29+) can refuse this. The broadcast that
-            // follows still lifts the overlay, so a refusal costs the screen-on, not the command.
-            Log.w(TAG, "Could not bring the dashboard forward to wake the screen", refused);
+        PowerManager power = getSystemService(PowerManager.class);
+        if (power == null) {
+            Log.w(TAG, "No PowerManager; cannot wake the screen");
+            return;
         }
+        PowerManager.WakeLock screenOn = power.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "Muralis:wake");
+        screenOn.acquire(WAKE_HANDOVER_MS);
     }
 }
