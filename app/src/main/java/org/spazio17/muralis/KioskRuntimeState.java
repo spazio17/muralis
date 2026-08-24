@@ -46,6 +46,12 @@ final class KioskRuntimeState {
     private static volatile SystemStats.RuntimeFacts lastFacts;
     private static volatile boolean httpAdminListening;
     private static volatile int httpAdminPort;
+    /**
+     * Why the web admin is not listening, for the tablet's status line. A boolean could not say,
+     * so the line blamed the password for every silence, including a bind that failed because
+     * another service holds the port, which sent an operator hunting for the wrong fault.
+     */
+    private static volatile String httpAdminDownReason = "";
     private static volatile String overlayText = "";
     private static volatile String overlayHtml = "";
     private static volatile long lastRecycleAtMs = -1;
@@ -210,10 +216,19 @@ final class KioskRuntimeState {
      * Whether the web admin actually holds a socket, and on which port. The surface fails closed by
      * design, so "no password set" and "password too short" both end in silence; without this the
      * only evidence was one log line nobody reads from a wall panel.
+     *
+     * @param downReason short phrase for the tablet's status line when {@code listening} is false,
+     *                   ignored otherwise. Empty means "no reason offered".
      */
-    static void publishHttpAdminState(boolean listening, int port) {
+    static void publishHttpAdminState(boolean listening, int port, String downReason) {
         httpAdminListening = listening;
         httpAdminPort = port;
+        httpAdminDownReason = listening || downReason == null ? "" : downReason;
+    }
+
+    /** Empty while listening, or when whoever stopped the server offered no reason. */
+    static String httpAdminDownReason() {
+        return httpAdminDownReason;
     }
 
     static boolean httpAdminListening() {

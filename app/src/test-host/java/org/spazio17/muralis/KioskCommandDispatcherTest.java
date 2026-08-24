@@ -20,6 +20,9 @@ public final class KioskCommandDispatcherTest {
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
         testDeviceIdValidation();
+        testAdminPortValidation();
+        testWebAdminToggle();
+        testOneOffUrlAndHome();
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
 
@@ -124,6 +127,99 @@ public final class KioskCommandDispatcherTest {
         require(owner.status.equals("accepted"),
                 "reboot as device owner must be accepted, got: " + owner.status);
         require(owner.detail.equals("rebooting"), "reboot detail should say rebooting");
+    }
+
+    /**
+     * The web admin port is floored at 1024, not 1. Found by Juri on hardware: port 80 passed a
+     * 1-65535 check, persisted, and failed at bind time, because an unprivileged app can never
+     * bind below 1024 on Android, so the admin's own settings box switched the admin off. The
+     * broker port deliberately has no such floor; it is a remote port.
+     */
+    private static void testAdminPortValidation() {
+        require(KioskCommandDispatcher.validateAdminPort(8080) == null,
+                "the default port must be accepted");
+        require(KioskCommandDispatcher.validateAdminPort(1024) == null,
+                "the first unprivileged port must be accepted");
+        require(KioskCommandDispatcher.validateAdminPort(65535) == null,
+                "the last port must be accepted");
+        require(KioskCommandDispatcher.validateAdminPort(1023) != null,
+                "the last privileged port must be refused");
+        require(KioskCommandDispatcher.validateAdminPort(80) != null,
+                "a privileged port passes a range check and fails at bind; it must be refused here");
+        require(KioskCommandDispatcher.validateAdminPort(0) != null,
+                "port 0 must be refused");
+        require(KioskCommandDispatcher.validateAdminPort(65536) != null,
+                "a port above 65535 must be refused");
+        require(KioskCommandDispatcher.validateAdminPort(80).contains("1024"),
+                "the refusal must name the allowed range");
+    }
+
+    /**
+     * A one-off URL is shown but never stored, and there is a way back to the stored one.
+     *
+     * <p>The distinction is the whole point: kiosk.set_url replaces the panel's dashboard, while
+     * kiosk.open_url shows a URL with one-off query parameters and leaves storage alone, so a
+     * restart or the nightly clean returns to the dashboard. kiosk.open_url validates its URL
+     * exactly like set_url, because an unusable one-off is still worth refusing with a reason.
+     */
+    private static void testOneOffUrlAndHome() {
+        RecordingExecutor executor = new RecordingExecutor();
+
+        KioskCommandDispatcher.Result badUrl = KioskCommandDispatcher.dispatch(
+                "kiosk.open_url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
+                executor);
+        require(badUrl.status.equals("rejected"), "a non-http(s) one-off URL was accepted");
+        require(!executor.calls.contains("openUrlOnce"), "executor ran despite rejection");
+
+        KioskCommandDispatcher.Result blank = KioskCommandDispatcher.dispatch(
+                "kiosk.open_url", new KioskCommandDispatcher.CommandArgs(-1, "   "), executor);
+        require(blank.status.equals("rejected"), "a blank one-off URL was accepted");
+
+        KioskCommandDispatcher.Result once = KioskCommandDispatcher.dispatch(
+                "kiosk.open_url",
+                new KioskCommandDispatcher.CommandArgs(
+                        -1, "  http://ha.local:8123/lovelace/0?kiosk  "),
+                executor);
+        require(once.status.equals("accepted"), "a valid one-off URL was rejected");
+        require("http://ha.local:8123/lovelace/0?kiosk".equals(executor.lastOnceUrl),
+                "one-off URL not trimmed and forwarded: " + executor.lastOnceUrl);
+        // The one-off path must never reach the setter that persists.
+        require(!executor.calls.contains("setDashboardUrl"),
+                "a one-off URL must not be stored as the dashboard");
+
+        KioskCommandDispatcher.Result home = KioskCommandDispatcher.dispatch(
+                "kiosk.home", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(home.status.equals("accepted"), "kiosk.home was rejected");
+        require(executor.calls.contains("showMainDashboard"), "kiosk.home did not reach executor");
+        require(!executor.calls.contains("setDashboardUrl"),
+                "kiosk.home must not write anything");
+    }
+
+    /**
+     * webadmin.enabled flips the surface without touching the password: the flag is required (no
+     * guessing), forwarded exactly, and the same envelope shape as every other enabled command,
+     * so the Home Assistant switch and a curl both drive it.
+     */
+    private static void testWebAdminToggle() {
+        RecordingExecutor executor = new RecordingExecutor();
+
+        KioskCommandDispatcher.Result noFlag = KioskCommandDispatcher.dispatch(
+                "webadmin.enabled", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(noFlag.status.equals("rejected"), "webadmin.enabled without a flag was accepted");
+        require(!executor.calls.contains("setWebAdminEnabled"),
+                "executor ran despite a missing flag");
+
+        KioskCommandDispatcher.Result off = KioskCommandDispatcher.dispatch(
+                "webadmin.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.FALSE), executor);
+        require(off.status.equals("accepted"), "webadmin off was rejected");
+        require(Boolean.FALSE.equals(executor.lastWebAdminEnabled), "flag not forwarded");
+
+        KioskCommandDispatcher.Result on = KioskCommandDispatcher.dispatch(
+                "webadmin.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.TRUE), executor);
+        require(on.status.equals("accepted"), "webadmin on was rejected");
+        require(Boolean.TRUE.equals(executor.lastWebAdminEnabled), "flag not forwarded");
     }
 
     /**
@@ -340,6 +436,27 @@ public final class KioskCommandDispatcherTest {
         public void setDashboardUrl(String url) {
             calls.add("setDashboardUrl");
             lastUrl = url;
+        }
+
+        String lastOnceUrl = null;
+
+        @Override
+        public void openUrlOnce(String url) {
+            calls.add("openUrlOnce");
+            lastOnceUrl = url;
+        }
+
+        @Override
+        public void showMainDashboard() {
+            calls.add("showMainDashboard");
+        }
+
+        Boolean lastWebAdminEnabled = null;
+
+        @Override
+        public void setWebAdminEnabled(boolean enabled) {
+            calls.add("setWebAdminEnabled");
+            lastWebAdminEnabled = enabled;
         }
 
 

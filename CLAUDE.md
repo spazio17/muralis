@@ -30,10 +30,29 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
-  `display.wake/visual_off/brightness/auto_brightness`, `system.reboot`, `telemetry.publish`)
+  `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/portrait`,
+  `webadmin.enabled`, `system.reboot`, `telemetry.publish`)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
+- **The dispatcher's validators are the only validators.** `validateDashboardUrl`,
+  `validateDeviceId` and `parseEnabledFlag` live in `KioskCommandDispatcher` (host-tested), and
+  every surface calls them before storing anything: the web admin returns the refusal on the page,
+  the tablet toasts it, MQTT publishes it. The 2026-08-21 audit found each surface with its own
+  rules: the web form stored URLs and device ids the command path refused with a reason (an
+  emptied device id even re-minted the panel's identity and orphaned every Home Assistant entity),
+  and the JSON and query encodings disagreed about whether `enabled=1` meant on. A new input gets
+  its validator in the dispatcher, and the surfaces share it.
+- **A one-off URL is not the dashboard.** `kiosk.set_url` means "this is the dashboard now" and
+  persists; `kiosk.open_url` shows a URL and stores nothing; `kiosk.home` returns to the stored
+  one. The web admin's "Open a URL now" box used to send `set_url`, so looking at something once
+  replaced the panel's dashboard and the only way back was retyping the original from memory
+  (reported 2026-08-24). The rules, all host-tested and verified on hardware: **reload** reloads
+  whatever is on screen, dashboard or one-off or a page reached inside the dashboard; a **kiosk
+  restart**, a process restart and the nightly clean always come back to the stored dashboard.
+  Every surface carries both halves, including two Home Assistant text entities; the one-off
+  entity reads `runtime.last_page_url` rather than a stored field, because an entity whose state
+  cannot be read back snaps back on every edit.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
@@ -44,7 +63,17 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   is set, because broker username and password are optional, plenty of home brokers accept
   anonymous connections, and refusing to work against one would be inventing a requirement the
   protocol does not have. Authentication of individual MQTT commands is therefore the broker's job,
-  not this app's. Any new remote-control surface should be off until deliberately configured.
+  not this app's. The web admin also has an operator on/off flag (`KioskConfig.webAdminEnabled`,
+  the `webadmin.enabled` command, a tablet toggle button and a Home Assistant switch), which is
+  deliberately not the password: turning the surface off must not cost the credential, and turning
+  it back on must not require retyping one. An earlier tablet button that "switched off" by
+  erasing the stored password did exactly that damage during QA. The switch reflects the flag, not
+  the socket; a panel that is "on" with no stored password stays unbound and says so on the
+  tablet's status line. Any new remote-control surface should be off until deliberately configured.
+  Command payloads are capped at 16 KB on both transports (`HttpAdminServer.MAX_BODY_BYTES`,
+  `MqttController.MAX_COMMAND_BYTES`, deliberately equal), and the caller-supplied command id is
+  bounded to 96 characters and stripped of control characters before it is logged or echoed, so an
+  embedded newline cannot forge log lines.
 - **Fail soft everywhere else.** A missing permission or capability logs a warning and continues
   rather than crashing. This app runs across a much wider spread of Android versions and device
   policies than a build for one fixed piece of hardware would, so this matters more here, not less.
@@ -55,10 +84,18 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   dead device. Note the status is `rejected` for bad arguments and `unsupported` for a command name
   this build does not implement, two different answers on purpose. The single deliberate silence is
   an **empty** payload, because clearing a retained command is itself an empty retained publish, and
-  replying would make the cleanup trigger its own refusal.
+  replying would make the cleanup trigger its own refusal. The same rule covers success: a command
+  must not claim it either, which is why `telemetry.publish` answers `rejected` ("MQTT is not
+  configured" / "MQTT is not connected") instead of accepting a publish that went nowhere, the
+  accepted-no-op shape `system.shutdown` was deleted to avoid.
 - **Secrets are never stored in plaintext.** `SecretStore` keeps credentials as AES-GCM ciphertext in
   its own shared-preferences file, under a key that never leaves the Android Keystore and with the
-  field name bound in as additional authenticated data. MQTT has no TLS option, by design: an earlier TLS checkbox was
+  field name bound in as additional authenticated data. They are never *rendered* in plaintext
+  either: the tablet's password boxes draw blank like the web admin's always have, with blank
+  meaning "keep the current one", because a stored password prefilled into a masked EditText is
+  one input-type toggle away from readable. Every preference file, this one included, lives in
+  device-protected storage through `KioskConfig.storageContext`: the service is directBootAware,
+  and reading a credential-encrypted file before the first unlock throws. MQTT has no TLS option, by design: an earlier TLS checkbox was
   removed because it was never actually backed by trust-material handling and could only ever work
   against a publicly-trusted certificate on a matching hostname, useless for the home-broker
   audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
@@ -95,7 +132,13 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   existed on the tablet, in the web admin and over MQTT, and all of them were deleted along with the
   `kiosk.auto_recycle` and `kiosk.recycle_time` commands: these are recovery mechanisms, and a
   control whose only use is to stop a panel healing itself is surface area that can only be used to
-  break it. Both commands answer `unsupported` rather than being silently ignored.
+  break it. Both commands answer `unsupported` rather than being silently ignored. Two boundaries
+  both mechanisms respect since 2026-08-24: a deliberate `kiosk.stop` is persisted
+  (`KioskConfig.kioskStopped`) and survives them both, so neither pass lights up a panel somebody
+  blanked on purpose; and the pressure rebuild waits while the configuration screen or the
+  sequence recorder is up (`KioskRuntimeState.operatorOnScreen`), because destroying the view tree
+  mid-edit costs an operator a half-filled form. The nightly restart never waits: it runs inside
+  the quiet hour, and a screen left open must not be able to starve the calendar-day rule.
 - **The nightly rule is a calendar date, not an elapsed time.** `KioskConfig.recordNightlyRestartDay`
   stores the local day number and `commit()`s it *synchronously before* `System.exit`, that write
   being asynchronous would leave the day unrecorded, so the pass would fire again on the next tick
@@ -165,10 +208,23 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   hardcoded launcher package, since the default launcher varies by OEM.
   `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device owner, so
   HOME reliably returns to it.
+- **The escape hatch's side doors are shut.** Where the app is device owner, accessibility
+  services are restricted to the system image (the configuration screen renders both corner-tap
+  combinations in plaintext, so a service that can read the screen and synthesise taps is a
+  keyless escape) and keyboards to system ones plus whichever keyboard is active when the policy
+  applies, resolved at runtime rather than hardcoded: the MediaPad's SwiftKey lives in `/data`,
+  so a bare "system only" would have left the settings screen unable to type. The dashboard
+  WebView refuses top-level navigation to non-web schemes (`intent://`, `tel:`, `market:` hand
+  control to another app, which under lock task is an exit). Every http(s) navigation stays
+  allowed and mixed-content mode stays permissive, decided with the user 2026-08-24: Muralis is
+  dashboard-agnostic, dashboards legitimately navigate across hosts and mix plain-http LAN camera
+  streams into https pages, so origin confinement was considered and refused. Don't tighten
+  either without that conversation again.
 - **A setting changed on any surface must be visible on all of them, quickly.** Three surfaces can
   write the same settings, so the rules are: the stats-overlay switch, portrait, the brightness pair
   and the admin password apply the moment they are touched, on the
-  tablet and in the web admin alike; only
+  tablet and in the web admin alike (the admin password on blur when non-empty, because the box
+  now renders blank and its only job on either surface is setting a new one); only
   the connection fields (dashboard URL, device id, broker, ports) wait for a save button, because
   applying those per keystroke would rebind sockets and restart the MQTT client. Anything applied
   outside `KioskCommandDispatcher` must also call `KioskService.publishTelemetrySoon`, since only
@@ -182,6 +238,45 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   values they were rendered from and are refused when it no longer matches the device, the same
   rule the escape recorder pioneered, so a page or screen left open cannot silently revert a
   newer change even to its own fields.
+- **The web admin port is floored at 1024, and refused while another service holds it.** The
+  history in one line each: an out-of-range port once crash-looped a panel, so the range became
+  checked; Juri then proved on hardware (2026-08-24) that a *privileged* port like 80 passes a
+  1-65535 check and fails at bind time, since an unprivileged app can never bind below 1024, and
+  the server failing closed meant the admin's own settings box could switch the admin off. So
+  `KioskCommandDispatcher.validateAdminPort` floors the range at 1024 (this floor is for the port
+  the app binds itself; the broker port is remote and keeps 1-65535), and the web save
+  additionally test-binds a changed port and refuses one already in use. A brief hardcode of 8080
+  sat between these two designs and was rejected in review: two immovable services wanting the
+  same port would deadlock with no recourse, which is worse than the problem. Both surfaces also
+  **refuse a port rather than substituting one**: the tablet used to clamp an out-of-range admin
+  port to 8080 and a bad broker port to 1883, so an operator was told nothing while a different
+  value was stored, and the tablet now test-binds a changed admin port exactly as the web save
+  does. `KioskActivity.parsePort`'s clamp survives for reading storage back, where something
+  usable has to come out whatever is in there; it is never right for a form. Keep syntax and range
+  in separate checks, too: one parser judging both answered "must be a number" for 99999.
+- **Both settings surfaces pre-check values against the device, on blur, in colour.** Juri's
+  design (2026-08-24): validation can only test spelling, but "is this port bindable", "does this
+  URL answer HTTP", "is a broker listening there" are runtime facts only the device can know.
+  `SettingProbe` is the one implementation; the web admin reaches it through `POST /api/check`
+  with `admin_check.js` colouring the field, the tablet calls it directly and colours the same
+  way. **POST, not GET, and it must stay a POST**: the endpoint changes nothing here but makes the
+  panel connect out to a caller-chosen address, so as a GET it was an SSRF and LAN-scan primitive
+  an `<img>` tag could drive with the operator's own credentials. The verb is what puts it behind
+  `crossSiteRefusal`. The verdict is the border alone, no fill or glow, an
+  annotation rather than an alarm. Advisory by design, a port free now can be taken at the next
+  boot, so the save paths keep their own hard refusals; a check that cannot run clears the colour
+  rather than guessing, because a wrong verdict is worse than none, and every verdict carries a
+  per-field generation so a slow probe cannot repaint a value the operator has since corrected.
+  A probe only ever follows a deliberate visit: the tablet's config page takes the initial focus
+  itself, because when the first field silently owned it, the operator's first tap anywhere else
+  blurred it and painted a verdict on a box they never touched. The one probe that also runs
+  unasked: the tablet's MQTT card carries a broker verdict, probed when the settings screen opens
+  and whenever the host or port box is left, because a broker that never answers is the one
+  misconfiguration the dashboard itself never shows. It reports **on the settings page**, never as
+  a toast over the dashboard: that toast existed for one round and was unreadable in the second
+  before the dashboard took the screen, which is exactly where a misconfiguration must not be
+  reported. Any new input whose validity is a runtime fact should get a probe here rather than a
+  bespoke checker.
 - **Legal documents and app/device facts are shown in-app, not linked externally.** The About
   screen (tablet) and a matching page (web admin) render the bundled privacy policy and terms
   directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately

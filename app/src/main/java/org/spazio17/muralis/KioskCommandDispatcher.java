@@ -89,7 +89,25 @@ final class KioskCommandDispatcher {
          */
         void setPortrait(boolean enabled);
 
+        /** Stores {@code url} as the panel's dashboard and shows it. */
         void setDashboardUrl(String url);
+
+        /**
+         * Shows {@code url} now without storing it, so the next reload of the *kiosk* (a restart,
+         * a reboot, the nightly clean) returns to the stored dashboard. For a URL with one-off
+         * query parameters, which is what a stored dashboard URL must not become.
+         */
+        void openUrlOnce(String url);
+
+        /** Goes back to the stored dashboard URL, whatever is on screen now. */
+        void showMainDashboard();
+
+        /**
+         * Allows or stops the web admin surface, without touching the stored password. No return
+         * value: the flag always persists; whether a socket then binds is reported where it
+         * always was, the runtime state and the tablet's status line.
+         */
+        void setWebAdminEnabled(boolean enabled);
 
         /**
          * Publishes the telemetry document now.
@@ -134,6 +152,17 @@ final class KioskCommandDispatcher {
                 executor.setDashboardUrl(args.url.trim());
                 return accepted();
             }
+            case "kiosk.open_url": {
+                String error = validateDashboardUrl(args.url);
+                if (error != null) {
+                    return rejected(error);
+                }
+                executor.openUrlOnce(args.url.trim());
+                return accepted();
+            }
+            case "kiosk.home":
+                executor.showMainDashboard();
+                return accepted();
             case "display.wake":
                 executor.displayWake();
                 return accepted();
@@ -175,6 +204,12 @@ final class KioskCommandDispatcher {
                     return rejected("enabled must be true or false");
                 }
                 executor.setPortrait(args.enabled);
+                return accepted();
+            case "webadmin.enabled":
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                executor.setWebAdminEnabled(args.enabled);
                 return accepted();
             case "telemetry.publish": {
                 // The executor answers for itself: with no broker configured, or a session that is
@@ -255,6 +290,23 @@ final class KioskCommandDispatcher {
                 return Boolean.FALSE;
             }
             return null;
+        }
+        return null;
+    }
+
+    /**
+     * Returns null when {@code port} can serve the web admin, an error message otherwise.
+     *
+     * <p>The floor is 1024 rather than 1 because Juri proved the difference on hardware
+     * (2026-08-24): port 80 passed a 1-65535 range check, persisted, and then failed at bind
+     * time, since an unprivileged app can never bind below 1024 on Android. The server fails
+     * closed on a bind error, so the admin's own settings box was able to switch the admin off,
+     * undoable only from the tablet. This floor applies exclusively to the port this app binds
+     * itself; the broker port is a remote port and keeps the full 1-65535 range.
+     */
+    static String validateAdminPort(int port) {
+        if (port < 1024 || port > 65535) {
+            return "web admin port must be between 1024 and 65535";
         }
         return null;
     }

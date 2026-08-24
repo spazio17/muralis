@@ -22,6 +22,7 @@ final class KioskConfig {
     private static final String STATS_OVERLAY = "stats_overlay";
     private static final String PORTRAIT = "portrait";
     private static final String KIOSK_STOPPED = "kiosk_stopped";
+    private static final String WEB_ADMIN_ENABLED = "web_admin_enabled";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
@@ -64,6 +65,13 @@ final class KioskConfig {
      * wall the other way up still renders the right way round without a second setting for it.
      */
     boolean portrait = false;
+    /**
+     * Whether the web admin is allowed to serve at all, independent of the password: turning the
+     * surface off must not cost the operator their stored password, and turning it back on must
+     * not require retyping one. Enabled by default; the no-password fail-closed rule in
+     * HttpAdminServer.start still applies on top.
+     */
+    boolean webAdminEnabled = true;
     /** Corner-tap combination that opens this configuration screen. */
     String settingsSequence = DEFAULT_SETTINGS_SEQUENCE;
     /** Corner-tap combination that leaves the kiosk for the system launcher. */
@@ -97,6 +105,7 @@ final class KioskConfig {
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
+        config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
         config.statsOverlay = statsOverlayEnabled(context);
         config.portrait = portraitEnabled(context);
         config.settingsSequence = preferences.getString(
@@ -167,6 +176,11 @@ final class KioskConfig {
             return this;
         }
 
+        Editor webAdminEnabled(boolean value) {
+            plain.putBoolean(WEB_ADMIN_ENABLED, value);
+            return this;
+        }
+
         Editor mqttUsername(String value) {
             secrets.put(MQTT_USERNAME, value);
             return this;
@@ -192,23 +206,15 @@ final class KioskConfig {
                 // Writing an empty string is a delete. An empty value arriving while the stored
                 // secret is unreadable is almost certainly the echo of that unreadable read, a
                 // form prefilled blank because the Keystore was briefly unavailable, so it is
-                // skipped rather than allowed to destroy the credential. A deliberate clear of the
-                // admin password has its own path, clearHttpAdminPassword, exactly for this case.
+                // skipped rather than allowed to destroy the credential. Nothing clears a
+                // stored secret any more: the web admin's on/off is its own flag now, and the
+                // password fields only ever set a new value.
                 if (secret.getValue().isEmpty() && store.getOrNull(secret.getKey()) == null) {
                     continue;
                 }
                 store.put(secret.getKey(), secret.getValue());
             }
         }
-    }
-
-    /**
-     * Switches the web admin off, on purpose. Goes straight to {@link SecretStore#clear} rather than
-     * through {@link #save}, because save now skips a secret it could not read, correct for an
-     * incidental write, wrong for somebody deliberately clearing the field.
-     */
-    static void clearHttpAdminPassword(Context context) {
-        new SecretStore(storageContext(context)).clear(HTTP_ADMIN_PASSWORD);
     }
 
     /**
@@ -243,6 +249,17 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KIOSK_STOPPED, false);
+    }
+
+    /**
+     * Narrow reader for the web admin flag: the tablet's status line follows it on the live-sync
+     * poll, and going through {@link #load} for that would decrypt every secret per tick. Same
+     * reasoning as {@link #statsOverlayEnabled}.
+     */
+    static boolean webAdminEnabled(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(WEB_ADMIN_ENABLED, true);
     }
 
     /**

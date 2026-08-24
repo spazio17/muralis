@@ -562,6 +562,29 @@ final class MqttController implements MqttCallbackExtended {
                     "{\"command\":\"display.portrait\",\"args\":{\"enabled\":true}}",
                     "{\"command\":\"display.portrait\",\"args\":{\"enabled\":false}}",
                     "{{ 'ON' if value_json.config.portrait else 'OFF' }}"));
+            // The switch reflects the operator's flag, not whether a socket is bound: with no
+            // admin password stored, "on" is an honest description of intent while the bind
+            // stays refused, and the runtime state carries the difference.
+            components.put("web_admin", toggle(
+                    "Web admin",
+                    "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":false}}",
+                    "{{ 'ON' if value_json.config.web_admin_enabled else 'OFF' }}"));
+            // The two URLs, as text entities so both can be set from Home Assistant, which is
+            // what Juri asked for. They read different fields on purpose: the stored dashboard
+            // reads config.dashboard_url, while the one-off reads runtime.last_page_url, the page
+            // actually on the glass. A one-off has nothing stored to read back, and an entity
+            // whose state cannot be read is the entity that snaps back on every edit, which is
+            // exactly how the Web admin switch broke earlier today.
+            components.put("dashboard_url", text(
+                    "Dashboard URL",
+                    "kiosk.set_url",
+                    "{{ value_json.config.dashboard_url }}"));
+            components.put("open_url", text(
+                    "Open URL once",
+                    "kiosk.open_url",
+                    "{{ value_json.runtime.last_page_url }}"));
+            components.put("home", button("Main dashboard", "kiosk.home"));
             components.put("reload", button("Reload dashboard", "kiosk.reload"));
             components.put("restart", button("Restart kiosk", "kiosk.restart"));
             components.put("wake", button("Wake display", "display.wake"));
@@ -791,6 +814,30 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject removed = new JSONObject();
         removed.put("p", platform);
         return removed;
+    }
+
+    /**
+     * A text box. The command carries a URL, so the payload is built with {@code tojson} rather
+     * than by quoting the value into the template: a URL with a quote or a backslash in a query
+     * parameter would otherwise produce a broken envelope, and this box exists precisely for
+     * URLs with parameters.
+     *
+     * <p>{@code max} is Home Assistant's own ceiling for a text entity (255). A longer URL has to
+     * go through a command payload; the box would refuse it in the frontend before it ever
+     * reached the panel.
+     */
+    private JSONObject text(String name, String command, String valueTemplate)
+            throws JSONException {
+        JSONObject box = new JSONObject();
+        box.put("p", "text");
+        box.put("name", name);
+        box.put("unique_id", uniqueId(name));
+        box.put("command_topic", topicPrefix + "command");
+        box.put("command_template",
+                "{\"command\":\"" + command + "\",\"args\":{\"url\":{{ value | tojson }}}}");
+        box.put("value_template", valueTemplate);
+        box.put("max", 255);
+        return box;
     }
 
     /** A press. Stateless, so it needs no template and reads nothing. */

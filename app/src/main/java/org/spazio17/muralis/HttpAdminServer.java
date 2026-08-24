@@ -118,6 +118,7 @@ final class HttpAdminServer {
      */
     private final String commandScript;
     private final String settingScript;
+    private final String checkScript;
     private final String statsScript;
     private final String themeScript;
     private final String pageCss;
@@ -152,12 +153,15 @@ final class HttpAdminServer {
     private Thread acceptThread;
     private volatile boolean running;
     private String boundAdminPassword = "";
+    /** The port the running server actually bound, or -1 while it is down; see checkValue. */
+    private volatile int boundPort = -1;
 
     HttpAdminServer(Context context, KioskService kioskService) {
         this.context = context;
         this.kioskService = kioskService;
         commandScript = script(R.raw.admin_command);
         settingScript = script(R.raw.admin_setting);
+        checkScript = script(R.raw.admin_check);
         statsScript = script(R.raw.admin_stats);
         themeScript = script(R.raw.admin_theme);
         pageCss = readRawText(R.raw.admin);
@@ -170,9 +174,16 @@ final class HttpAdminServer {
 
     void start() {
         KioskConfig config = KioskConfig.load(context);
+        if (!config.webAdminEnabled) {
+            // Off by the operator's own flag, password untouched: turning the surface off must
+            // not cost the credential, and turning it back on must not require retyping one.
+            Log.i(TAG, "HTTP admin disabled by the operator");
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "disabled");
+            return;
+        }
         if (config.httpAdminPassword.length() < MIN_ADMIN_PASSWORD_LENGTH) {
             Log.i(TAG, "HTTP admin disabled: no admin password of sufficient length is configured");
-            KioskRuntimeState.publishHttpAdminState(false, config.httpPort);
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "no password");
             return;
         }
         try {
@@ -182,10 +193,11 @@ final class HttpAdminServer {
         } catch (IOException exception) {
             Log.e(TAG, "Unable to bind HTTP admin port " + config.httpPort, exception);
             serverSocket = null;
-            KioskRuntimeState.publishHttpAdminState(false, config.httpPort);
+            KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "port unavailable");
             return;
         }
         boundAdminPassword = config.httpAdminPassword;
+        boundPort = config.httpPort;
         // Deliberately not Executors.newFixedThreadPool: that helper's queue is unbounded. See
         // ACCEPT_QUEUE_DEPTH. Core and max are equal, so the queue is what absorbs a burst and
         // rejection is what stops a flood.
@@ -195,13 +207,14 @@ final class HttpAdminServer {
         running = true;
         acceptThread = new Thread(this::acceptLoop, "MuralisHttpAccept");
         acceptThread.start();
-        KioskRuntimeState.publishHttpAdminState(true, config.httpPort);
+        KioskRuntimeState.publishHttpAdminState(true, config.httpPort, "");
         Log.i(TAG, "HTTP admin listening on port " + config.httpPort);
     }
 
     void stop() {
         running = false;
-        KioskRuntimeState.publishHttpAdminState(false, KioskRuntimeState.httpAdminPort());
+        KioskRuntimeState.publishHttpAdminState(false, KioskRuntimeState.httpAdminPort(),
+                "stopped");
         if (serverSocket != null) {
             try {
                 serverSocket.close();
@@ -472,6 +485,16 @@ final class HttpAdminServer {
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
+        } else if (path.equals("/api/check") && method.equals("POST")) {
+            // POST, not GET, even though it changes nothing on this device. It makes the panel
+            // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
+            // was an SSRF and LAN-scanning primitive: Basic-auth credentials ride along
+            // automatically, and <img src=".../api/check?kind=mqtt_host&value=10.0.0.5&port=22">
+            // on any page the operator visited would have had the panel probe it and leak
+            // reachability through onload/onerror timing. POST puts it behind the same
+            // crossSiteRefusal gate as the commands, which is why that gate is keyed on the verb.
+            writeResponse(output, 200, "application/json",
+                    bytes(checkValue(checkParams(query, headers, body))));
         } else if (path.equals("/privacy") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.privacy_policy_title), R.raw.privacy_policy)));
@@ -710,9 +733,22 @@ final class HttpAdminServer {
                 // brings the service back, onCreate starts the controllers, and it throws again:
                 // a permanent crash loop that survives reboot, takes the HOME activity down with
                 // it, and cannot be undone from the panel because the panel no longer runs.
-                Integer adminPort = parsePort(form.get("http_port"), fresh.httpPort);
+                Integer adminPort = parsePortDigits(form.get("http_port"), fresh.httpPort);
                 if (adminPort == null) {
-                    return "Web admin port must be between 1 and 65535.";
+                    return "Not saved: the web admin port must be a number.";
+                }
+                // Floor at 1024, proven necessary on hardware; see validateAdminPort. And a port
+                // another service already holds is refused too: the pre-check paints the field red
+                // before anyone gets here, but a submit that ignored the colour must not be able
+                // to save the admin into a bind failure. Saving the port it already serves on is
+                // not a conflict, the holder is us.
+                String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
+                if (portProblem != null) {
+                    return "Not saved: " + portProblem + ".";
+                }
+                if (adminPort != fresh.httpPort && !SettingProbe.portFree(adminPort)) {
+                    return "Not saved: port " + adminPort
+                            + " is already in use by another service on this device.";
                 }
                 KioskConfig.Editor editor = KioskConfig.edit(context).httpPort(adminPort);
                 String adminPassword = form.get("http_admin_password");
@@ -765,6 +801,54 @@ final class HttpAdminServer {
         }
         return "Not saved: these settings were changed elsewhere after this page loaded. "
                 + "The page now shows the current values; please re-apply your edit.";
+    }
+
+    /**
+     * Query first, then a urlencoded body on top, the same shape {@code /api/command} accepts, so
+     * a scripted caller can use either and the page's own fetch can use the body.
+     */
+    private static Map<String, String> checkParams(
+            String query, Map<String, String> headers, byte[] body) {
+        Map<String, String> params = new java.util.HashMap<>(parseQuery(query));
+        if (headers.getOrDefault("content-type", "").contains("application/x-www-form-urlencoded")
+                && body.length > 0) {
+            params.putAll(parseFormBody(headers, body));
+        }
+        return params;
+    }
+
+    /**
+     * The JSON face of {@link SettingProbe}, for the page's green/red pre-check
+     * (admin_check.js). The probing itself is shared with the tablet so the two surfaces can
+     * never disagree about what "reachable" means.
+     */
+    private String checkValue(Map<String, String> params) {
+        String kind = params.getOrDefault("kind", "");
+        String value = params.getOrDefault("value", "").trim();
+        SettingProbe.Verdict verdict;
+        switch (kind) {
+            case "http_port":
+                verdict = SettingProbe.adminPort(value, boundPort);
+                break;
+            case "dashboard_url":
+                verdict = SettingProbe.dashboardUrl(value);
+                break;
+            case "mqtt_host":
+                verdict = SettingProbe.mqttHost(value,
+                        parseIntOrDefault(params.get("port"), 1883));
+                break;
+            default:
+                verdict = new SettingProbe.Verdict(false, "unknown check kind");
+        }
+        org.json.JSONObject result = new org.json.JSONObject();
+        try {
+            result.put("ok", verdict.ok);
+            result.put("detail", verdict.detail);
+            result.put("reason", verdict.reason);
+        } catch (org.json.JSONException impossible) {
+            // Two puts of primitives on a fresh object cannot fail; satisfy the checked signature.
+        }
+        return result.toString();
     }
 
     /** The spellings a browser form, a shell or a hand-written client is likely to send. */
@@ -919,6 +1003,7 @@ final class HttpAdminServer {
 
                 .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")
                 .append(quickAction("kiosk.reload", "Reload"))
+                .append(quickAction("kiosk.home", "Main dashboard"))
                 .append(quickAction("kiosk.restart", "Restart kiosk"))
                 .append(quickAction("system.reboot", "Reboot"))
                 .append("</div></fieldset>")
@@ -932,12 +1017,22 @@ final class HttpAdminServer {
                 .append(portraitControl())
                 .append("</fieldset>")
 
+                // kiosk.open_url, NOT kiosk.set_url: this box is for a URL with one-off query
+                // parameters, and it used to store whatever was typed as the panel's dashboard,
+                // so the way back was retyping the original by hand (reported 2026-08-24). The
+                // Dashboard box above is where the stored URL changes.
                 .append("<fieldset><legend>Open a URL now</legend>")
                 .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
-                .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.set_url\">")
+                .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
                 .append("<input type=\"text\" name=\"url\" ")
                 .append("placeholder=\"http://homeassistant.local:8123/\">")
-                .append("<button type=\"submit\">Go</button></form></fieldset>")
+                .append("<button type=\"submit\">Go</button>")
+                .append("</form>")
+                .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
+                .append("dashboard is unchanged.</p>")
+                .append("<div class=\"actions\">")
+                .append(quickAction("kiosk.home", "Main dashboard"))
+                .append("</div></fieldset>")
 
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands
@@ -960,6 +1055,7 @@ final class HttpAdminServer {
 
         html.append(commandScript);
         html.append(settingScript);
+        html.append(checkScript);
         html.append(statsScript);
         html.append(themeScript);
         html.append("</main></body></html>");
@@ -1244,6 +1340,23 @@ final class HttpAdminServer {
      * thing, and silently substituting 8080 for the 99999 they typed is the quiet substitution this
      * project keeps deleting. An absent field means "not being set" and keeps the current value.
      */
+    /**
+     * The number a caller typed, or null when it is not a number at all. Range is deliberately
+     * NOT judged here: validateAdminPort owns the admin port's range and says 1024-65535, and this
+     * method conflating the two answered "must be a number" for 99999, which plainly is one.
+     * An absent field means "not being set" and keeps the current value.
+     */
+    private static Integer parsePortDigits(String value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
+    }
+
     private static Integer parsePort(String value, int fallback) {
         if (value == null) {
             return fallback;
