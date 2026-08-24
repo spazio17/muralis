@@ -55,6 +55,12 @@ final class KioskRuntimeState {
     private static volatile long lastMqttOutageAtMs = -1;
     private static volatile long lastMqttOutageDurationMs = -1;
     private static volatile String lastMqttOutageCause = "";
+    /**
+     * Whether an operator screen (configuration or the sequence recorder) is on the glass. The
+     * activity writes it on every screen change; the service's maintenance tick reads it so the
+     * pressure rebuild does not destroy a half-edited form (see RecyclePolicy.decide).
+     */
+    private static volatile boolean operatorOnScreen;
 
     private KioskRuntimeState() {
     }
@@ -212,6 +218,14 @@ final class KioskRuntimeState {
 
     static boolean httpAdminListening() {
         return httpAdminListening;
+    }
+
+    static void publishOperatorOnScreen(boolean onScreen) {
+        operatorOnScreen = onScreen;
+    }
+
+    static boolean operatorOnScreen() {
+        return operatorOnScreen;
     }
 
     static int httpAdminPort() {

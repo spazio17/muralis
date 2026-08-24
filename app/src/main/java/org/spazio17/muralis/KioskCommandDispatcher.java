@@ -91,7 +91,15 @@ final class KioskCommandDispatcher {
 
         void setDashboardUrl(String url);
 
-        void publishTelemetry();
+        /**
+         * Publishes the telemetry document now.
+         *
+         * @return null when the publish was handed to a live MQTT session, otherwise a short
+         *         reason ("MQTT is not configured", "MQTT is not connected") for the caller's
+         *         rejection. Void was the audited shape: the dispatcher answered accepted while
+         *         the payload was silently dropped on a missing or disconnected client.
+         */
+        String publishTelemetry();
 
         /**
          * Reboots the device, asynchronously.
@@ -168,9 +176,16 @@ final class KioskCommandDispatcher {
                 }
                 executor.setPortrait(args.enabled);
                 return accepted();
-            case "telemetry.publish":
-                executor.publishTelemetry();
+            case "telemetry.publish": {
+                // The executor answers for itself: with no broker configured, or a session that is
+                // down, "accepted" would be the accepted no-op shape system.shutdown was deleted
+                // to avoid, a caller told its publish happened when nothing left the device.
+                String problem = executor.publishTelemetry();
+                if (problem != null) {
+                    return rejected(problem);
+                }
                 return accepted();
+            }
             // There is deliberately no "system.shutdown" case. Android exposes no public and no
             // device-owner API to power a device off at any API level; the privileged ROM build did
             // it through the hidden IPowerManager interface, which hidden-API enforcement blocks for
@@ -200,6 +215,46 @@ final class KioskCommandDispatcher {
         }
         if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
             return "url must start with http:// or https://";
+        }
+        return null;
+    }
+
+    /**
+     * Turns whatever a transport parsed for {@code enabled} into a Boolean, or null when the value
+     * cannot honestly be read as one.
+     *
+     * <p>One parser for every transport, because the transports used to disagree: the query path
+     * had its own spelling list (1/true/on meant true, anything else silently meant false), while
+     * the JSON paths used {@code optBoolean(..., false)}, which coerces any non-boolean, the
+     * number 1 included, to false. The same literal 1 therefore turned auto-brightness on over
+     * {@code ?enabled=1} and off over {@code {"enabled":1}}, and both answered accepted. Booleans,
+     * the numbers 0 and 1, and the spellings a shell, a browser form or an automation are likely
+     * to send are accepted; everything else must be rejected by the caller, never guessed at.
+     */
+    static Boolean parseEnabledFlag(Object value) {
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            double number = ((Number) value).doubleValue();
+            if (number == 1d) {
+                return Boolean.TRUE;
+            }
+            if (number == 0d) {
+                return Boolean.FALSE;
+            }
+            return null;
+        }
+        if (value instanceof String) {
+            String flag = ((String) value).trim();
+            if (flag.equals("1") || flag.equalsIgnoreCase("true") || flag.equalsIgnoreCase("on")) {
+                return Boolean.TRUE;
+            }
+            if (flag.equals("0") || flag.equalsIgnoreCase("false")
+                    || flag.equalsIgnoreCase("off")) {
+                return Boolean.FALSE;
+            }
+            return null;
         }
         return null;
     }

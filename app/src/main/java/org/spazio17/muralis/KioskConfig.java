@@ -21,6 +21,7 @@ final class KioskConfig {
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     private static final String STATS_OVERLAY = "stats_overlay";
     private static final String PORTRAIT = "portrait";
+    private static final String KIOSK_STOPPED = "kiosk_stopped";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
@@ -161,6 +162,11 @@ final class KioskConfig {
             return this;
         }
 
+        Editor kioskStopped(boolean value) {
+            plain.putBoolean(KIOSK_STOPPED, value);
+            return this;
+        }
+
         Editor mqttUsername(String value) {
             secrets.put(MQTT_USERNAME, value);
             return this;
@@ -223,6 +229,20 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(PORTRAIT, false);
+    }
+
+    /**
+     * Whether the panel was deliberately blanked with kiosk.stop and has not been started since.
+     *
+     * <p>Persisted, not process state. As a field in the activity it evaporated on the nightly
+     * restart, so a panel stopped in the evening woke up rendering the dashboard at 04:xx with
+     * nobody told, and the pressure rebuild reset it the same way. A stop is an operator's
+     * decision and holds until kiosk.start or a new URL, whatever housekeeping runs in between.
+     */
+    static boolean kioskStopped(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KIOSK_STOPPED, false);
     }
 
     /**

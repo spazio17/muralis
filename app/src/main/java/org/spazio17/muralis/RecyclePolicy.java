@@ -116,13 +116,19 @@ final class RecyclePolicy {
      *                        panel has never done one
      * @param systemLowMemory the device's own verdict, from ActivityManager.MemoryInfo.lowMemory,
      *                        whose threshold is set per device by the vendor rather than by us
+     * @param operatorOnScreen whether the configuration screen or the sequence recorder is up.
+     *                        The pressure rebuild destroys the whole view tree, a half-edited
+     *                        form included, so it waits for the operator to leave; the pressure
+     *                        is real but not instantaneous. The nightly restart ignores this on
+     *                        purpose: it runs inside the quiet hour, and deferring it would put
+     *                        the calendar-day rule at the mercy of a screen left open.
      */
     static Decision decide(long nowMs, long lastRebuildMs, int hourOfDay, int minuteOfHour,
             int scheduledHour, int scheduledMinute, long todayEpochDay, long lastRestartDay,
-            boolean systemLowMemory) {
+            boolean systemLowMemory, boolean operatorOnScreen) {
         // Pressure first: it is a response to a condition that is true right now, where the nightly
         // pass is only housekeeping and can wait for the next minute, or the next night.
-        if (systemLowMemory) {
+        if (systemLowMemory && !operatorOnScreen) {
             long sinceRebuild = nowMs - lastRebuildMs;
             // A backwards monotonic clock is treated as "just rebuilt" rather than as a very long
             // time, so a clock anomaly cannot turn into a reload loop.

@@ -680,7 +680,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 clock.get(java.util.Calendar.HOUR_OF_DAY), clock.get(java.util.Calendar.MINUTE),
                 RecyclePolicy.QUIET_HOUR, scheduledRecycleMinute(),
                 localEpochDay(clock), KioskConfig.lastNightlyRestartDay(this),
-                isSystemLowOnMemory());
+                isSystemLowOnMemory(), KioskRuntimeState.operatorOnScreen());
         if (!decision.act()) {
             return;
         }
@@ -1002,10 +1002,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private void handleMqttCommand(
             String id, String command, org.json.JSONObject arguments) {
         Log.i(TAG, "MQTT command " + command + " id=" + id);
+        Boolean enabled = null;
+        if (arguments.has("enabled")) {
+            // Shared parser, shared refusal. optBoolean(..., false) coerced any non-boolean to
+            // false, so {"enabled":1} turned auto-brightness off while ?enabled=1 over HTTP
+            // turned it on, both "accepted".
+            enabled = KioskCommandDispatcher.parseEnabledFlag(arguments.opt("enabled"));
+            if (enabled == null) {
+                mqttController.publishCommandResult(id, "rejected",
+                        "enabled must be true or false");
+                return;
+            }
+        }
         KioskCommandDispatcher.CommandArgs args = new KioskCommandDispatcher.CommandArgs(
                 arguments.optInt("percent", -1),
                 arguments.optString("url", null),
-                arguments.has("enabled") ? arguments.optBoolean("enabled", false) : null);
+                enabled);
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -1218,15 +1230,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     @Override
-    public void publishTelemetry() {
+    public String publishTelemetry() {
         MqttController mqtt = mqttController;
         if (mqtt == null) {
-            // Only reachable through HTTP, which starts alongside MQTT, so this is belt and braces
-            // rather than a state anybody has seen.
-            Log.w(TAG, "telemetry.publish before MQTT started; nothing published");
-            return;
+            // The controller object always exists once the service is up; null means the command
+            // arrived over HTTP before startControllersNow ran. With no broker configured the
+            // controller exists too, but its client never does, which publishProblem reports.
+            return "MQTT is not configured";
+        }
+        String problem = mqtt.publishProblem();
+        if (problem != null) {
+            return problem;
         }
         mqtt.publishState(telemetryJson());
+        return null;
     }
 
     @Override
