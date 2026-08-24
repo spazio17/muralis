@@ -30,8 +30,8 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
-  `display.wake/visual_off/brightness/auto_brightness/portrait`, `webadmin.enabled`,
-  `system.reboot`, `telemetry.publish`)
+  `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/portrait`,
+  `webadmin.enabled`, `system.reboot`, `telemetry.publish`)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
@@ -43,6 +43,16 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   emptied device id even re-minted the panel's identity and orphaned every Home Assistant entity),
   and the JSON and query encodings disagreed about whether `enabled=1` meant on. A new input gets
   its validator in the dispatcher, and the surfaces share it.
+- **A one-off URL is not the dashboard.** `kiosk.set_url` means "this is the dashboard now" and
+  persists; `kiosk.open_url` shows a URL and stores nothing; `kiosk.home` returns to the stored
+  one. The web admin's "Open a URL now" box used to send `set_url`, so looking at something once
+  replaced the panel's dashboard and the only way back was retyping the original from memory
+  (reported 2026-08-24). The rules, all host-tested and verified on hardware: **reload** reloads
+  whatever is on screen, dashboard or one-off or a page reached inside the dashboard; a **kiosk
+  restart**, a process restart and the nightly clean always come back to the stored dashboard.
+  Every surface carries both halves, including two Home Assistant text entities; the one-off
+  entity reads `runtime.last_page_url` rather than a stored field, because an entity whose state
+  cannot be read back snaps back on every edit.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
