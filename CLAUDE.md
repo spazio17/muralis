@@ -216,7 +216,13 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   screen corners, tail-matched with a maximum gap between taps, and recorded separately for "open
   settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture
   is worthless once someone has watched it being used, and a hardcoded one is identical on every
-  panel. It works from every screen the app shows, including its own configuration screen: it is the
+  panel. **There is no compiled-in default any more** (the fixed BL x9 / BR x9 pair was retired
+  2026-08-25, decided with Juri): a first-start wizard in `KioskActivity` records both combinations
+  before anything else, and `applyKioskPolicy` refuses to engage lock task until
+  `KioskConfig.escapeSequencesConfigured()` is true, because a pinned screen with no recorded way
+  out is a bricked panel. Deliberately unmigrated: installs that ran on the old defaults (they were
+  never persisted) see the wizard once after updating and re-record. Do not reintroduce a default,
+  and do not let any new screen bypass the wizard routing in `initializeUserInterface`. It works from every screen the app shows, including its own configuration screen: it is the
   one way out of the kiosk and has no screen-specific exceptions. Exiting releases lock task and
   launches the OEM launcher resolved at runtime via an explicit `setPackage` intent, never a
   hardcoded launcher package, since the default launcher varies by OEM.

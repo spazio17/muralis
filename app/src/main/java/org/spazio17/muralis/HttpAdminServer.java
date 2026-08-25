@@ -892,6 +892,13 @@ final class HttpAdminServer {
         if (posted != null && EscapeSequence.isValid(EscapeSequence.parse(posted))) {
             launcherSequence = EscapeSequence.format(EscapeSequence.parse(posted));
         }
+        // Both unset happens on a device still in its first-start wizard (there is no default
+        // any more); the collision message below would be nonsense for two empty fields.
+        if (settingsSequence.isEmpty() && launcherSequence.isEmpty()) {
+            return "Not saved: neither field holds a valid combination. Between "
+                    + EscapeSequence.MIN_LENGTH + " and " + EscapeSequence.MAX_LENGTH
+                    + " corner taps, TL, TR, BL, BR separated by commas.";
+        }
         if (settingsSequence.equals(launcherSequence)) {
             return "Not saved: the settings and launcher sequences must be different, or the "
                     + "settings gesture becomes unreachable.";
