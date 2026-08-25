@@ -257,14 +257,6 @@ final class TelemetryCollector {
         runtime.put("recycles", KioskRuntimeState.recycles());
         runtime.put("last_recycle_ago_ms", number(KioskRuntimeState.lastRecycleAgoMs()));
         runtime.put("last_recycle_reason", KioskRuntimeState.lastRecycleReason());
-        // Survived MQTT outages, judged on reconnect: cause is "network" (the device's own network
-        // was down during the outage) or "broker" (it was not, so the session died alone). The one
-        // question no live entity can answer, reported in hindsight; see OutageLedger.
-        runtime.put("mqtt_outages", KioskRuntimeState.mqttOutages());
-        runtime.put("last_mqtt_outage_ago_ms", number(KioskRuntimeState.lastMqttOutageAgoMs()));
-        runtime.put("last_mqtt_outage_duration_ms",
-                number(KioskRuntimeState.lastMqttOutageDurationMs()));
-        runtime.put("last_mqtt_outage_cause", KioskRuntimeState.lastMqttOutageCause());
         return runtime;
     }
 

@@ -81,22 +81,11 @@ final class MqttController implements MqttCallbackExtended {
      * see a stale non-null reference to an already-closed client.
      */
     private volatile MqttAsyncClient client;
-    /**
-     * Network downtime history, owned by the service; null-tolerated so a missing
-     * ConnectivityManager degrades to "every outage reads as a broker outage" instead of a crash.
-     */
-    private final OutageLedger outageLedger;
     private final Context appContext;
-    /**
-     * When {@link #connectionLost} last fired, on the elapsedRealtime clock, or 0 while connected.
-     * Volatile: written and read on Paho's callback threads across an outage.
-     */
-    private volatile long connectionLostAtMs;
 
-    MqttController(Context context, CommandListener commandListener, OutageLedger outageLedger) {
+    MqttController(Context context, CommandListener commandListener) {
         config = KioskConfig.load(context);
         this.commandListener = commandListener;
-        this.outageLedger = outageLedger;
         appContext = context.getApplicationContext();
         topicPrefix = "kiosk/" + config.deviceId + "/";
         deviceManufacturer = android.os.Build.MANUFACTURER;
@@ -233,22 +222,12 @@ final class MqttController implements MqttCallbackExtended {
     @Override
     public void connectComplete(boolean reconnect, String serverUri) {
         Log.i(TAG, reconnect ? "MQTT reconnected" : "MQTT connected");
-        // A survived outage is judged here, on the way back, because that is the first moment the
-        // verdict can reach anyone: "MQTT down, network up" is unreportable while it is true, the
-        // channel that would carry it is the one that is broken. The Last Will cannot say it
-        // either, its payload is frozen at connect time. So the panel reports outages in
-        // hindsight: the ledger says whether the device's network was down during the outage, and
-        // the answer separates a Wi-Fi problem from a broker one, which no live entity can.
-        long lostAt = connectionLostAtMs;
-        if (reconnect && lostAt != 0) {
-            connectionLostAtMs = 0;
-            long now = android.os.SystemClock.elapsedRealtime();
-            String cause = outageLedger == null
-                    ? OutageLedger.CAUSE_BROKER : outageLedger.causeOfMqttOutage(lostAt, now);
-            KioskRuntimeState.recordMqttOutage(cause, now - lostAt);
-            Log.i(TAG, "MQTT outage of " + (now - lostAt) + "ms attributed to: " + cause);
-            // Early publish, so Home Assistant hears the verdict seconds after the entities come
-            // back rather than at the next scheduled tick.
+        if (reconnect) {
+            // Fresh telemetry straight away: the retained snapshot on the broker is as stale as
+            // the outage was long, and the next scheduled tick can be a minute away. (Until
+            // 2026-08-25 this publish also carried an outage-cause verdict from OutageLedger;
+            // that whole attribution feature was removed as not worth knowing, the MQTT state
+            // entity's own history already says when and for how long.)
             KioskService.publishTelemetrySoon(appContext);
         }
         // Copied to a local, the way publish() already does. This runs on Paho's thread while
@@ -270,7 +249,6 @@ final class MqttController implements MqttCallbackExtended {
 
     @Override
     public void connectionLost(Throwable cause) {
-        connectionLostAtMs = android.os.SystemClock.elapsedRealtime();
         Log.w(TAG, "MQTT connection lost; automatic reconnect is enabled", cause);
     }
 
@@ -488,22 +466,15 @@ final class MqttController implements MqttCallbackExtended {
                         "Thermal status", null, null, null,
                         "{{ value_json.thermal_status }}"));
             }
-            // There is deliberately NO live "Network state" entity any more, and it must not come
-            // back: publishing "my network is down" requires the network, so a live entity could
-            // only ever say "connected" and froze there whenever anything was actually wrong. Its
-            // question, "did MQTT die alone, or did the network take it down?", is answered in
-            // hindsight instead: OutageLedger tracks the device's own connectivity continuously,
-            // connectComplete asks it for a verdict on every reconnect, and this sensor carries
-            // that verdict. "network" means Wi-Fi/router; "broker" means the network was clean and
-            // the MQTT session died alone (broker restart, Home Assistant update, credentials).
-            // "none" until the first survived outage. When it happened and for how long: the MQTT
-            // state entity's own history in Home Assistant, plus last_mqtt_outage_ago_ms and
-            // last_mqtt_outage_duration_ms in this same telemetry document.
-            JSONObject outageCause = sensor(
-                    "Last MQTT outage cause", null, null, null,
-                    "{{ value_json.runtime.last_mqtt_outage_cause or 'none' }}");
-            outageCause.put("entity_category", "diagnostic");
-            components.put("last_mqtt_outage_cause", outageCause);
+            // There is deliberately NO live "Network state" entity, and it must not come back:
+            // publishing "my network is down" requires the network, so a live entity could only
+            // ever say "connected" and froze there whenever anything was actually wrong. A "Last
+            // MQTT outage cause" diagnostic sensor answered its question in hindsight instead
+            // ("network" or "broker", judged by OutageLedger on every reconnect) and was removed
+            // too, with the whole attribution machinery, on 2026-08-25: knowing THAT the session
+            // dropped and for how long is the MQTT state entity's own history, and knowing WHY
+            // turned out not to be worth an entity. It is withdrawn under stale keys below, so
+            // upgraded panels do not strand it.
             // Four values, not two, so this one stays a text sensor: charging, discharging,
             // charged, on hold. Straight from battery.charge_state, which is
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
@@ -629,8 +600,8 @@ final class MqttController implements MqttCallbackExtended {
             stale.put("network", withdrawn("binary_sensor"));
             stale.put("charging", withdrawn("binary_sensor"));
             // network_state carried three platforms over its life: the original text sensor, then
-            // a binary_sensor, and since 2026-08-23 nothing at all (see the Last MQTT outage cause
-            // sensor above for why a live network entity cannot work). A discovered component is
+            // a binary_sensor, and since 2026-08-23 nothing at all (see the no-live-network-entity
+            // comment above for why it cannot work). A discovered component is
             // identified by platform *and* key, never by key alone, so each spelling needs its own
             // removal under its own platform, and one JSON object cannot hold two entries for the
             // same key: the sensor spelling rides in this first removal payload, the binary_sensor
@@ -638,6 +609,9 @@ final class MqttController implements MqttCallbackExtended {
             // network_state changed from sensor to binary_sensor without a withdrawal, the text
             // sensor stayed subscribed and undeletable, reported from the dashboard 2026-08-23.
             stale.put("network_state", withdrawn("sensor"));
+            // Removed 2026-08-25 with the whole outage-attribution feature: as long as the MQTT
+            // state entity updates correctly, why an outage happened was not worth an entity.
+            stale.put("last_mqtt_outage_cause", withdrawn("sensor"));
             JSONObject removal = new JSONObject(discovery.toString());
             removal.put("cmps", stale);
             publish(topic, removal.toString(), 1, true);
@@ -661,7 +635,8 @@ final class MqttController implements MqttCallbackExtended {
     /**
      * Whether the broker currently holds a session with this panel: the single live connectivity
      * entity, since the "Network state" one was removed as information-free (it could only ever
-     * publish "connected"; see the Last MQTT outage cause sensor). Two values and only ever two,
+     * publish "connected"; see the no-live-network-entity comment in the discovery components
+     * above). Two values and only ever two,
      * so the connectivity device class fits; the trade is that the rendered words come from Home
      * Assistant and are capitalised.
      *
