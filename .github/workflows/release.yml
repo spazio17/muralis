@@ -64,13 +64,12 @@ jobs:
       # main branch, not against the deployed Pages URL, which can lag behind a merge.
       - name: Legal texts must match the canonical muralis-site copies
         run: |
-          for pair in "privacy_policy.txt privacy.txt" "terms.txt terms.txt"; do
-            set -- $pair
+          for name in privacy.txt terms.txt; do
             curl -fsSL --retry 3 \
-              "https://raw.githubusercontent.com/spazio17/muralis-site/main/legal/$2" \
-              -o "$RUNNER_TEMP/$2"
-            cmp "app/src/main/res/raw/$1" "$RUNNER_TEMP/$2" || {
-              echo "res/raw/$1 differs from muralis-site legal/$2." >&2
+              "https://raw.githubusercontent.com/spazio17/muralis-site/main/legal/$name" \
+              -o "$RUNNER_TEMP/$name"
+            cmp "app/src/main/res/raw/$name" "$RUNNER_TEMP/$name" || {
+              echo "res/raw/$name differs from muralis-site legal/$name." >&2
               echo "Edit the canonical text in muralis-site, run scripts/sync-legal.sh here, and merge both before releasing." >&2
               exit 1
             }

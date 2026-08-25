@@ -23,15 +23,17 @@ if [[ ! -f "${site_dir}/legal/privacy.txt" ]]; then
 fi
 
 changed=0
-for pair in "privacy.txt privacy_policy.txt" "terms.txt terms.txt"; do
-    set -- ${pair}
-    source_file="${site_dir}/legal/$1"
-    target_file="${project_dir}/app/src/main/res/raw/$2"
+# Same file names on both sides, on purpose: res/raw/privacy_policy.txt was renamed to
+# privacy.txt (2026-08-25) so this loop, and the release workflow's check, need no name
+# mapping.
+for name in privacy.txt terms.txt; do
+    source_file="${site_dir}/legal/${name}"
+    target_file="${project_dir}/app/src/main/res/raw/${name}"
     if cmp -s "${source_file}" "${target_file}"; then
-        printf 'res/raw/%s already matches legal/%s\n' "$2" "$1"
+        printf 'res/raw/%s already matches legal/%s\n' "${name}" "${name}"
     else
         cp "${source_file}" "${target_file}"
-        printf 'res/raw/%s updated from legal/%s\n' "$2" "$1"
+        printf 'res/raw/%s updated from legal/%s\n' "${name}" "${name}"
         changed=1
     fi
 done

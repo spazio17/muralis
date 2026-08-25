@@ -2394,7 +2394,7 @@ public final class KioskActivity extends Activity {
         LinearLayout legalCard = card(theme, "Legal");
         Button privacy = secondaryButton(theme, getString(R.string.privacy_policy_title));
         privacy.setOnClickListener(view -> showLegalDocument(
-                R.string.privacy_policy_title, R.raw.privacy_policy));
+                R.string.privacy_policy_title, R.raw.privacy));
         legalCard.addView(privacy, matchWrap());
         Button terms = secondaryButton(theme, getString(R.string.terms_title));
         terms.setOnClickListener(view -> showLegalDocument(
@@ -2470,7 +2470,7 @@ public final class KioskActivity extends Activity {
         // read on another machine, not something to open here.
         TextView published = new TextView(this);
         published.setText(getString(R.string.legal_also_published, getString(
-                bodyRes == R.raw.privacy_policy
+                bodyRes == R.raw.privacy
                         ? R.string.legal_privacy_url : R.string.legal_terms_url)) + ".");
         published.setTextSize(13);
         published.setTextColor(theme.subtext);

@@ -497,7 +497,7 @@ final class HttpAdminServer {
                     bytes(checkValue(checkParams(query, headers, body))));
         } else if (path.equals("/privacy") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
-                    context.getString(R.string.privacy_policy_title), R.raw.privacy_policy)));
+                    context.getString(R.string.privacy_policy_title), R.raw.privacy)));
         } else if (path.equals("/terms") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.terms_title), R.raw.terms)));
@@ -1064,7 +1064,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * Renders one legal document ({@code res/raw/privacy_policy.txt} or {@code terms.txt}) as a
+     * Renders one legal document ({@code res/raw/privacy.txt} or {@code terms.txt}) as a
      * standalone page, for parity with the tablet's own About screen. Behind the same Basic Auth as
      * everything else on this server: whoever reaches this page already reached the rest of it.
      *
@@ -1101,7 +1101,7 @@ final class HttpAdminServer {
         // this surface and the About screen cannot drift; the %1$s placeholder is replaced by an
         // anchor, which is why the two halves are escaped separately around it.
         String template = context.getString(R.string.legal_also_published);
-        String publicUrl = context.getString(rawRes == R.raw.privacy_policy
+        String publicUrl = context.getString(rawRes == R.raw.privacy
                 ? R.string.legal_privacy_url : R.string.legal_terms_url);
         int urlAt = template.indexOf("%1$s");
         html.append("<p class=\"hint\">")

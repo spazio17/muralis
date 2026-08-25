@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Titles, the draft banner and the public URLs only. The document bodies live in
-  res/raw/privacy_policy.txt and res/raw/terms.txt, which are VERBATIM COPIES of the canonical
+  res/raw/privacy.txt and res/raw/terms.txt, which are VERBATIM COPIES of the canonical
   texts in the muralis-site repo (legal/privacy.txt, legal/terms.txt), the single source of truth
   decided 2026-08-25. Edit them there, run scripts/sync-legal.sh here; the release workflow
   byte-compares the copies and refuses to release while they differ.
