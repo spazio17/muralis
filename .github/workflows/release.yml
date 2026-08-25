@@ -82,8 +82,14 @@ jobs:
         env:
           DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
           UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          # Checked here as well as used in the build step below. The release signingConfig
+          # needs the keystore file AND this password; with the password missing it quietly
+          # leaves signingConfig unset, and the build still succeeds and still produces
+          # `muralis-<version>.aab` under the usual name. That artifact is unsigned, which
+          # Play only tells you at upload. Fail here instead, where the reason is legible.
+          MURALIS_KEYSTORE_PASSWORD: ${{ secrets.MURALIS_KEYSTORE_PASSWORD }}
         run: |
-          for name in DEBUG_KEYSTORE_B64 UPLOAD_KEYSTORE_B64; do
+          for name in DEBUG_KEYSTORE_B64 UPLOAD_KEYSTORE_B64 MURALIS_KEYSTORE_PASSWORD; do
             if [ -z "$(eval "printf '%s' \"\$$name\"")" ]; then
               echo "$name secret is missing." >&2; exit 1
             fi
@@ -98,6 +104,16 @@ jobs:
           MURALIS_KEYSTORE_PASSWORD: ${{ secrets.MURALIS_KEYSTORE_PASSWORD }}
           MURALIS_KEY_ALIAS: muralis-upload
         run: ./gradlew --no-daemon assembleDebug bundleRelease
+
+      # Checks the artifact rather than the inputs: a keystore at the wrong path or an alias
+      # that is not in it lands here too, and every one of those still produces a plausible
+      # `muralis-<version>.aab`. A bundle is JAR-signed, so a signed one carries the
+      # signature block next to the manifest.
+      - name: The AAB must be signed
+        run: |
+          unzip -l app/build/outputs/bundle/release/app-release.aab \
+            | grep -qE 'META-INF/.*\.(RSA|EC|DSA)$' || {
+              echo "The AAB is unsigned; Play would reject it at upload." >&2; exit 1; }
 
       - name: Create the GitHub Release
         env:
