@@ -2983,13 +2983,24 @@ public final class KioskActivity extends Activity {
         if (kioskStopped) {
             blackout.setVisibility(View.VISIBLE);
         }
-        // display.visual_off's 1% override, on the other hand, does NOT survive a rebuild: the
-        // blackout it belongs to was just recreated hidden, and the persisted override used to
-        // outlive both a rebuild and a reboot on its own. That stranded the panel dark with every
-        // brightness command answering accepted while a window attribute outranked the setting
-        // they write, and kept applied_brightness_percent reporting 1% so Home Assistant's slider
-        // sprang back to it. A fresh dashboard starts with the window at the system setting.
-        setWindowBrightness(-1);
+        // display.visual_off is restored the same way, but only within the boot it was engaged
+        // in: the stored value is the boot count, so the blackout survives the nightly restart
+        // and the pressure rebuild while a reboot invalidates it by construction, and the panel
+        // always boots lit. The reboot rule and restoring the WHOLE state are what separate this
+        // from the earlier persisted 1% override, which outlived reboots on its own and came back
+        // without its blackout: a panel stranded dark, every brightness command answering
+        // accepted while a window attribute outranked the setting they write, and
+        // applied_brightness_percent pinned at 1% so Home Assistant's slider sprang back to it.
+        // Here the blackout, the dimming and every exit (a tap, display.wake, showing any page)
+        // come back together.
+        int visualOffBoot = KioskConfig.visualOffBootCount(this);
+        if (visualOffBoot >= 0 && visualOffBoot == currentBootCount()) {
+            blackout.setVisibility(View.VISIBLE);
+            setWindowBrightness(1);
+        } else {
+            // A fresh dashboard starts with the window at the system setting.
+            setWindowBrightness(-1);
+        }
         resetLoadTracking();
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
@@ -3152,6 +3163,7 @@ public final class KioskActivity extends Activity {
                 // state only: the nightly restart and the pressure rebuild both forgot a
                 // deliberate stop and lit the panel back up.
                 KioskConfig.edit(this).kioskStopped(false).apply();
+                liftVisualOff();
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -3163,6 +3175,7 @@ public final class KioskActivity extends Activity {
             case "kiosk.set_url":
                 kioskStopped = false;
                 KioskConfig.edit(this).kioskStopped(false).apply();
+                liftVisualOff();
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -3188,10 +3201,11 @@ public final class KioskActivity extends Activity {
                     Log.w(TAG, "No dashboard URL to show");
                     break;
                 }
-                // A one-off URL also lifts a kiosk.stop, exactly as kiosk.set_url does: asking for
-                // a page is asking to see it.
+                // A one-off URL also lifts a kiosk.stop and a visual-off, exactly as
+                // kiosk.set_url does: asking for a page is asking to see it.
                 kioskStopped = false;
                 KioskConfig.edit(this).kioskStopped(false).apply();
+                liftVisualOff();
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -3206,6 +3220,9 @@ public final class KioskActivity extends Activity {
             case "kiosk.stop":
                 kioskStopped = true;
                 KioskConfig.edit(this).kioskStopped(true).apply();
+                // A stop supersedes a visual-off: the blackout now belongs to the stop, and the
+                // eventual kiosk.start must come back at system brightness, not at 1%.
+                liftVisualOff();
                 resetLoadTracking();
                 if (webView != null) {
                     webView.stopLoading();
@@ -3228,14 +3245,14 @@ public final class KioskActivity extends Activity {
                     blackout.setVisibility(View.VISIBLE);
                 }
                 setWindowBrightness(1);
+                // Keyed to this boot: survives the nightly restart, never a reboot.
+                KioskConfig.recordVisualOffBootCount(this, currentBootCount());
                 break;
             case "display.wake":
                 if (blackout != null && !kioskStopped) {
                     blackout.setVisibility(View.GONE);
                 }
-                // Clear the visual-off dimming and let the system brightness apply again, rather than
-                // restoring a remembered level: which level is correct is the system's business now.
-                setWindowBrightness(-1);
+                liftVisualOff();
                 break;
             case "display.portrait_on":
             case "display.portrait_off":
@@ -3257,6 +3274,34 @@ public final class KioskActivity extends Activity {
             default:
                 break;
         }
+    }
+
+    /**
+     * The device's boot counter, or -1 when it cannot be read. {@code BOOT_COUNT} is public API
+     * since 24 and always present on this app's minSdk; the -1 is fail-soft, and it fails toward
+     * a lit panel, never toward restoring a blackout that may belong to a previous boot.
+     */
+    private int currentBootCount() {
+        try {
+            return Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT);
+        } catch (Settings.SettingNotFoundException missing) {
+            Log.w(TAG, "BOOT_COUNT unavailable; a visual-off will not survive a restart");
+            return -1;
+        }
+    }
+
+    /**
+     * Lifts display.visual_off entirely: the persisted flag and the window dimming, letting the
+     * system brightness apply again rather than restoring a remembered level, because which level
+     * is correct is the system's business now. Called by display.wake and by everything that
+     * shows a page (kiosk.start/set_url/open_url/home), asking for a page is asking to see it,
+     * the same rule those commands already apply to kiosk.stop; and by kiosk.stop itself, so a
+     * stopped panel that is later started comes back at system brightness rather than at the 1%
+     * a visual-off left in force.
+     */
+    private void liftVisualOff() {
+        KioskConfig.recordVisualOffBootCount(this, -1);
+        setWindowBrightness(-1);
     }
 
     /**
