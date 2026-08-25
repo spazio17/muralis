@@ -1001,11 +1001,12 @@ final class HttpAdminServer {
                         config.launcherSequence))
                 .append(sectionFormEnd("Save"))
 
+                // Kept sorted by label; add new actions in alphabetical place.
                 .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")
-                .append(quickAction("kiosk.reload", "Reload"))
                 .append(quickAction("kiosk.home", "Main dashboard"))
-                .append(quickAction("kiosk.restart", "Restart kiosk"))
                 .append(quickAction("system.reboot", "Reboot"))
+                .append(quickAction("kiosk.reload", "Reload"))
+                .append(quickAction("kiosk.restart", "Restart kiosk"))
                 .append("</div></fieldset>")
 
                 .append("<fieldset><legend>Display</legend><div class=\"actions\">")
@@ -1021,18 +1022,18 @@ final class HttpAdminServer {
                 // parameters, and it used to store whatever was typed as the panel's dashboard,
                 // so the way back was retyping the original by hand (reported 2026-08-24). The
                 // Dashboard box above is where the stored URL changes.
+                // The hint sits above the input so what the box does is read before it is used.
+                // No "Main dashboard" button here: Quick actions already has it, and the way
+                // back does not need to exist twice on one page.
                 .append("<fieldset><legend>Open a URL now</legend>")
+                .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
+                .append("dashboard is unchanged.</p>")
                 .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
                 .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
                 .append("<input type=\"text\" name=\"url\" ")
                 .append("placeholder=\"http://homeassistant.local:8123/\">")
                 .append("<button type=\"submit\">Go</button>")
-                .append("</form>")
-                .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
-                .append("dashboard is unchanged.</p>")
-                .append("<div class=\"actions\">")
-                .append(quickAction("kiosk.home", "Main dashboard"))
-                .append("</div></fieldset>")
+                .append("</form></fieldset>")
 
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands
