@@ -22,6 +22,7 @@ final class KioskConfig {
     private static final String STATS_OVERLAY = "stats_overlay";
     private static final String PORTRAIT = "portrait";
     private static final String KIOSK_STOPPED = "kiosk_stopped";
+    private static final String VISUAL_OFF_BOOT_COUNT = "visual_off_boot_count";
     private static final String WEB_ADMIN_ENABLED = "web_admin_enabled";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
@@ -249,6 +250,31 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KIOSK_STOPPED, false);
+    }
+
+    /**
+     * The boot in which display.visual_off was engaged, or -1 while it is not engaged.
+     *
+     * <p>Stored as the boot count rather than a boolean so a reboot cannot leave the panel dark:
+     * the value only counts when it was written in the current boot. That makes the blackout
+     * survive the nightly restart and the pressure rebuild, which are process-level, and
+     * invalidate itself across a reboot by construction, with no cleanup step that could be
+     * missed. Decided 2026-08-25, after the nightly restart lit up a panel blanked with the
+     * Display off button: kiosk.stop already survived (see {@link #kioskStopped}), visual_off
+     * did not.
+     */
+    static int visualOffBootCount(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(VISUAL_OFF_BOOT_COUNT, -1);
+    }
+
+    static void recordVisualOffBootCount(Context context, int bootCount) {
+        // commit, not apply: the nightly restart ends in System.exit, which does not wait for
+        // asynchronous preference writes, and surviving exactly that restart is this field's job.
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putInt(VISUAL_OFF_BOOT_COUNT, bootCount)
+                .commit();
     }
 
     /**

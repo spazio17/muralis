@@ -132,10 +132,14 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   existed on the tablet, in the web admin and over MQTT, and all of them were deleted along with the
   `kiosk.auto_recycle` and `kiosk.recycle_time` commands: these are recovery mechanisms, and a
   control whose only use is to stop a panel healing itself is surface area that can only be used to
-  break it. Both commands answer `unsupported` rather than being silently ignored. Two boundaries
-  both mechanisms respect since 2026-08-24: a deliberate `kiosk.stop` is persisted
-  (`KioskConfig.kioskStopped`) and survives them both, so neither pass lights up a panel somebody
-  blanked on purpose; and the pressure rebuild waits while the configuration screen or the
+  break it. Both commands answer `unsupported` rather than being silently ignored. Three boundaries
+  both mechanisms respect: a deliberate `kiosk.stop` is persisted (`KioskConfig.kioskStopped`,
+  2026-08-24) and survives them both, so neither pass lights up a panel somebody blanked on
+  purpose; `display.visual_off` survives them the same way (2026-08-25, after the nightly restart
+  lit a panel blanked with the Display off button), but keyed to `BOOT_COUNT` rather than stored
+  as a bare flag, engaged-this-boot or not at all, so a reboot always comes back lit (Juri's
+  rule) and the stranded-dark bug the old persisted 1% override caused cannot return; and the
+  pressure rebuild waits while the configuration screen or the
   sequence recorder is up (`KioskRuntimeState.operatorOnScreen`), because destroying the view tree
   mid-edit costs an operator a half-filled form. The nightly restart never waits: it runs inside
   the quiet hour, and a screen left open must not be able to starve the calendar-day rule.
