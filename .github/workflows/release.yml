@@ -51,6 +51,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          # Same Gradle cache as ci.yml; a release build downloads the same wrapper and
+          # dependencies otherwise.
+          cache: 'gradle'
 
       - name: Host tests
         run: |

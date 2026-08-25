@@ -33,11 +33,19 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          # Caches ~/.gradle (wrapper distribution and dependencies), keyed on the Gradle
+          # files. Without it every run re-downloaded both inside the build steps, which
+          # was most of a minute of the ~3 the whole job takes.
+          cache: 'gradle'
 
       - name: Host tests
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libxml2-utils
+          # xmllint only; the runner image usually ships it, and apt-get update alone cost
+          # ~20 seconds per run when it does.
+          command -v xmllint >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends libxml2-utils
+          }
           scripts/test-host.sh
 
       - name: Restore the debug keystore
