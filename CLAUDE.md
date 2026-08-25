@@ -197,13 +197,21 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   cause" diagnostic sensor and `runtime.mqtt_outages`/`last_mqtt_outage_*` telemetry fields);
   Juri removed the whole chain on 2026-08-25, because as long as the MQTT state entity updates
   correctly, *why* a session dropped is not worth knowing, and *when and for how long* is that
-  entity's own history in Home Assistant. The sensor's discovery key is withdrawn under the stale
-  keys, so upgraded panels do not strand it. Do not rebuild the attribution in any form without
+  entity's own history in Home Assistant. Do not rebuild the attribution in any form without
   that conversation again, and note the reconnect still publishes telemetry early, now simply
   because the retained snapshot is as stale as the outage was long. Entity naming rule:
   discovery key, `unique_id` and name all say the same thing, so a rename changes the entity id
-  too. Renames are done by withdrawing the old key and publishing the new one, never by aliasing a
-  new name onto an old `unique_id`.
+  too. Renames and removals are done by withdrawing the old key (an empty component config
+  holding only its platform, one payload per platform the key ever had, QoS 1 for ordering) and
+  then publishing the configuration without it, never by aliasing a new name onto an old
+  `unique_id` and never by mere omission, which strands the entity. **Withdrawals are bridging
+  code with a retention rule**: they stay until every installation that ever saw the old key has
+  processed one. Pre-publication that meant Juri's own Home Assistant, so the standing stale-keys
+  block that had accumulated (recycle controls, network/charging, both `network_state` spellings,
+  `last_mqtt_outage_cause`) was retired on 2026-08-25 after he confirmed HA clean; an entity
+  removed after the app is public needs its withdrawal kept indefinitely, because the last
+  stranger's panel never announces its upgrade. The mechanics live in a comment above the
+  discovery publish in `MqttController`.
 - **The escape hatch** is a user-recorded corner-tap sequence, three to twelve taps across the four
   screen corners, tail-matched with a maximum gap between taps, and recorded separately for "open
   settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture

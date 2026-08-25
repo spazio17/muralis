@@ -473,8 +473,9 @@ final class MqttController implements MqttCallbackExtended {
             // ("network" or "broker", judged by OutageLedger on every reconnect) and was removed
             // too, with the whole attribution machinery, on 2026-08-25: knowing THAT the session
             // dropped and for how long is the MQTT state entity's own history, and knowing WHY
-            // turned out not to be worth an entity. It is withdrawn under stale keys below, so
-            // upgraded panels do not strand it.
+            // turned out not to be worth an entity. Its withdrawal was published, confirmed
+            // processed on the only installation that ever saw it, and then retired with the
+            // rest of the stale-keys block; see the removal note above the discovery publish.
             // Four values, not two, so this one stays a text sensor: charging, discharging,
             // charged, on hold. Straight from battery.charge_state, which is
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
@@ -521,7 +522,8 @@ final class MqttController implements MqttCallbackExtended {
             // No recycle controls. The panel used to announce an "Auto recycle" switch and a
             // "Recycle time" clock; both are gone, along with the commands behind them, because
             // recycling is a recovery mechanism rather than a preference and its schedule is now
-            // derived per device. They are withdrawn below rather than merely omitted. The stats
+            // derived per device. Their withdrawals ran until 2026-08-25 and were then retired as
+            // confirmed processed; see the removal note above the discovery publish. The stats
             // overlay is deliberately absent for a different reason: it changes what is drawn on
             // the panel's own glass, which is a decision for whoever is standing at it or holding
             // the admin page, not something a broker subscriber needs.
@@ -570,62 +572,19 @@ final class MqttController implements MqttCallbackExtended {
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
 
-            // Simply leaving a component out does NOT remove an entity that was announced before,
-            // which is how a panel updated in place ends up with a stranded "unavailable" entity
-            // forever. Home Assistant documents a two-step removal: publish the component with an
-            // empty config, keeping only the required platform key, then publish the whole
-            // configuration again with it omitted. Both payloads are otherwise identical and
-            // complete, so nothing else flickers.
-            //
-            // Done on every discovery run rather than once. It is idempotent, it costs one extra
-            // publish on a topic that is written when the panel connects and when Home Assistant
-            // restarts, and it self-heals a panel moved to a fresh Home Assistant.
-            //
-            // thermal_status is conditional: it is withdrawn only on hardware that cannot report
-            // it. The two recycle controls are unconditional, because this build no longer has them
-            // at all, anything upgraded from a build that did would otherwise keep a switch and a
-            // clock that answer nothing.
-            JSONObject stale = new JSONObject(components.toString());
-            if (!thermalSupported) {
-                stale.put("thermal_status", withdrawn("sensor"));
-            }
-            stale.put("auto_recycle", withdrawn("switch"));
-            stale.put("recycle_time", withdrawn("time"));
-            // Earlier spellings of the two entities above. "network" and "charging" were the
-            // original binary_sensors; both are gone, the first renamed to network_state and the
-            // second replaced by battery_state. Withdrawn under their own keys, which is safe
-            // precisely because nothing in the payload that follows uses those keys again: a key
-            // that appears withdrawn here and complete there would delete and recreate a live
-            // entity on every discovery run, a visible flicker each time Home Assistant restarts.
-            stale.put("network", withdrawn("binary_sensor"));
-            stale.put("charging", withdrawn("binary_sensor"));
-            // network_state carried three platforms over its life: the original text sensor, then
-            // a binary_sensor, and since 2026-08-23 nothing at all (see the no-live-network-entity
-            // comment above for why it cannot work). A discovered component is
-            // identified by platform *and* key, never by key alone, so each spelling needs its own
-            // removal under its own platform, and one JSON object cannot hold two entries for the
-            // same key: the sensor spelling rides in this first removal payload, the binary_sensor
-            // spelling gets a second one below. Merely omitting a component never removes it; when
-            // network_state changed from sensor to binary_sensor without a withdrawal, the text
-            // sensor stayed subscribed and undeletable, reported from the dashboard 2026-08-23.
-            stale.put("network_state", withdrawn("sensor"));
-            // Removed 2026-08-25 with the whole outage-attribution feature: as long as the MQTT
-            // state entity updates correctly, why an outage happened was not worth an entity.
-            stale.put("last_mqtt_outage_cause", withdrawn("sensor"));
-            JSONObject removal = new JSONObject(discovery.toString());
-            removal.put("cmps", stale);
-            publish(topic, removal.toString(), 1, true);
-
-            // Second removal pass: the binary_sensor spelling of network_state, the one that was
-            // live until 2026-08-23. QoS 1 publishes from one client keep their order, so Home
-            // Assistant processes sensor-removal, then binary_sensor-removal, then the complete
-            // configuration below, and nothing that is still announced ever flickers.
-            JSONObject staleBinary = new JSONObject(components.toString());
-            staleBinary.put("network_state", withdrawn("binary_sensor"));
-            JSONObject removalBinary = new JSONObject(discovery.toString());
-            removalBinary.put("cmps", staleBinary);
-            publish(topic, removalBinary.toString(), 1, true);
-
+            // If an entity is ever REMOVED from this payload, know this before shipping the
+            // removal: simply leaving a component out does NOT remove an entity Home Assistant
+            // already discovered, it strands it as "unavailable" forever. A removal must publish
+            // the component once more as an empty config holding only the platform key ("p"),
+            // then publish the full configuration without it; a component is identified by
+            // platform AND key, so a key that changed platform needs one such withdrawal per
+            // platform, in its own payload, and QoS 1 keeps their order. A standing block of
+            // those withdrawals lived here until 2026-08-25 covering every entity this app had
+            // retired (recycle controls, network/charging, both network_state spellings,
+            // last_mqtt_outage_cause); it was deleted, pre-publication, once Juri confirmed his
+            // Home Assistant, the only installation that ever saw those keys, held no trace of
+            // them. Any entity removed after the app is public needs its withdrawal kept
+            // indefinitely, because the last stranger's panel never announces its upgrade.
             publish(topic, discovery.toString(), 1, true);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
@@ -779,16 +738,6 @@ final class MqttController implements MqttCallbackExtended {
         toggle.put("state_on", "ON");
         toggle.put("state_off", "OFF");
         return toggle;
-    }
-
-    /**
-     * An empty component config, which is how Home Assistant is told to drop an entity a previous
-     * discovery payload announced. Only the platform key is required, and only it is sent.
-     */
-    private static JSONObject withdrawn(String platform) throws JSONException {
-        JSONObject removed = new JSONObject();
-        removed.put("p", platform);
-        return removed;
     }
 
     /**
