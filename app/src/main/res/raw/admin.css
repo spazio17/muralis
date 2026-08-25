@@ -16,11 +16,17 @@ label.slider input[type=range]{display:block;width:100%;min-width:0;margin-top:.
 /* Excluded from the 3D button treatment below: a segmented pill picker, not a */
 /* discrete action, and a shadowed edge on each pill would look like clutter. */
 .themepick button{margin:0;padding:.35rem .85rem;border:0;border-radius:999px;background:transparent;color:var(--subtext);font-size:.85rem;cursor:pointer;box-shadow:none;transition:none}.themepick button[aria-pressed=true]{background:var(--accent);color:var(--base);font-weight:600}
-/* The sections layout: as many columns as fit, each at least 300px, except when */
-/* the container itself is narrower than 300px, which is what min() is for. A bare */
-/* minmax(300px,1fr) is a floor the track cannot go under, so on a phone below that */
-/* width every column overhangs the viewport and the page scrolls sideways. */
-.grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));align-items:start}
+/* The sections layout, the way Home Assistant's own Sections view packs cards: */
+/* vertical stacks where each card sits directly under the one above it. This was */
+/* display:grid, which places cards in ROWS, so every row grew to its tallest card */
+/* and the shorter neighbours trailed dead space below them (Juri's sketch, */
+/* 2026-08-25). Multicol packs by column instead: ~300px columns, as many as fit, */
+/* balanced by height, and a narrow phone degrades to the same single stack as */
+/* before. break-inside goes on the fieldset as well as the wrapper form because */
+/* some engines only honour it on the box that would actually fragment. */
+.grid{columns:300px;column-gap:1rem}
+.grid>*{break-inside:avoid;margin-bottom:1rem}
+.grid fieldset{break-inside:avoid}
 /* min-width:0 is load-bearing, not tidying. A grid item defaults to min-width:auto, */
 /* meaning it refuses to be laid out narrower than its own min-content width, so one */
 /* box containing something wide and unshrinkable grows past its column and past the */
