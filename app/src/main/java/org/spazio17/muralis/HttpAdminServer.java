@@ -1096,6 +1096,19 @@ final class HttpAdminServer {
                     .append(escapeHtml(content))
                     .append(heading ? "</h2>" : "</p>");
         }
+        // Where the public copy of the same document lives, as a real link: unlike the tablet,
+        // whoever is reading this page has a browser. Sentence and URLs come from legal.xml so
+        // this surface and the About screen cannot drift; the %1$s placeholder is replaced by an
+        // anchor, which is why the two halves are escaped separately around it.
+        String template = context.getString(R.string.legal_also_published);
+        String publicUrl = context.getString(rawRes == R.raw.privacy_policy
+                ? R.string.legal_privacy_url : R.string.legal_terms_url);
+        int urlAt = template.indexOf("%1$s");
+        html.append("<p class=\"hint\">")
+                .append(escapeHtml(template.substring(0, urlAt)))
+                .append("<a href=\"").append(escapeHtml(publicUrl)).append("\">")
+                .append(escapeHtml(publicUrl)).append("</a>")
+                .append(escapeHtml(template.substring(urlAt + 4))).append(".</p>");
         html.append("</main></body></html>");
         return html.toString();
     }

@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Titles and the draft banner only. The document bodies live in res/raw/privacy_policy.txt and
-  res/raw/terms.txt.
+  Titles, the draft banner and the public URLs only. The document bodies live in
+  res/raw/privacy_policy.txt and res/raw/terms.txt, which are VERBATIM COPIES of the canonical
+  texts in the muralis-site repo (legal/privacy.txt, legal/terms.txt), the single source of truth
+  decided 2026-08-25. Edit them there, run scripts/sync-legal.sh here; the release workflow
+  byte-compares the copies and refuses to release while they differ.
 
   Why not string resources: aapt collapses literal newlines in a <string>, so the first version of
   these rendered as one unbroken wall of text with the headings absorbed mid-sentence. Escaping every
@@ -15,4 +18,10 @@
     <string name="legal_draft_warning">Draft placeholder. This text has not been reviewed and must be replaced before the app is distributed.</string>
     <string name="privacy_policy_title">Privacy policy</string>
     <string name="terms_title">Terms and conditions</string>
+    <!-- One sentence, one pair of URLs, shared by the About screen and the web admin so the two
+         surfaces cannot drift. The tablet renders the URL as plain text (no browser under lock
+         task); the web admin renders it as a link. -->
+    <string name="legal_also_published">This document is also published at %1$s</string>
+    <string name="legal_privacy_url">https://muralis.spazio17.org/privacy/</string>
+    <string name="legal_terms_url">https://muralis.spazio17.org/terms/</string>
 </resources>

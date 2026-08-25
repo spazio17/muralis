@@ -284,7 +284,18 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **Legal documents and app/device facts are shown in-app, not linked externally.** The About
   screen (tablet) and a matching page (web admin) render the bundled privacy policy and terms
   directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately
-  requires the same text at a public URL, which is a listing concern rather than an app one.
+  requires the same text at a public URL, which is a listing concern rather than an app one. Each
+  surface also states where the public copy lives (plain text on the tablet, a link on the web
+  admin; sentence and URLs shared through `res/values/legal.xml`). Since 2026-08-25 the bundled
+  texts are **verbatim copies, not sources**: the canonical documents are `legal/privacy.txt` and
+  `legal/terms.txt` in the public muralis-site repo, which also generates its HTML pages from
+  them. Edit them there, run `scripts/sync-legal.sh` here; the release workflow byte-compares
+  `res/raw` against that repo's main branch and refuses to release while they differ, so the in-app
+  copy cannot silently drift from the published one. This replaced hand-kept copies in five places,
+  which had already drifted once (a hand sentence-casing produced "If you buy muralis pro" on the
+  site). The layered setup, offline in-app text plus the public URL, is also what GDPR
+  accessibility and the Austrian guidance for commercial apps expect; researched 2026-08-25, link-
+  only was rejected on that basis.
 
 ## Platform constraints that shape the code
 
