@@ -2394,7 +2394,7 @@ public final class KioskActivity extends Activity {
         LinearLayout legalCard = card(theme, "Legal");
         Button privacy = secondaryButton(theme, getString(R.string.privacy_policy_title));
         privacy.setOnClickListener(view -> showLegalDocument(
-                R.string.privacy_policy_title, R.raw.privacy_policy));
+                R.string.privacy_policy_title, R.raw.privacy));
         legalCard.addView(privacy, matchWrap());
         Button terms = secondaryButton(theme, getString(R.string.terms_title));
         terms.setOnClickListener(view -> showLegalDocument(
@@ -2463,6 +2463,23 @@ public final class KioskActivity extends Activity {
         bodyParams.gravity = Gravity.CENTER_HORIZONTAL;
         bodyParams.topMargin = dp(16);
         page.addView(bodyCard, bodyParams);
+
+        // Where the public copy of the same document lives (canonically: the site is generated
+        // from the same text this screen renders). Plain text rather than a tappable link on
+        // purpose: under lock task there is no browser to hand it to, so this is an address to
+        // read on another machine, not something to open here.
+        TextView published = new TextView(this);
+        published.setText(getString(R.string.legal_also_published, getString(
+                bodyRes == R.raw.privacy
+                        ? R.string.legal_privacy_url : R.string.legal_terms_url)) + ".");
+        published.setTextSize(13);
+        published.setTextColor(theme.subtext);
+        published.setPadding(dp(18), 0, dp(18), 0);
+        LinearLayout.LayoutParams publishedParams = new LinearLayout.LayoutParams(
+                documentWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
+        publishedParams.gravity = Gravity.CENTER_HORIZONTAL;
+        publishedParams.topMargin = dp(8);
+        page.addView(published, publishedParams);
 
         Button back = primaryButton(theme, "Back to about");
         back.setOnClickListener(view -> showAbout());

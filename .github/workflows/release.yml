@@ -58,6 +58,23 @@ jobs:
           sudo apt-get install -y --no-install-recommends libxml2-utils
           scripts/test-host.sh
 
+      # The bundled legal texts are verbatim copies of the canonical files in the public
+      # muralis-site repo (single source of truth, decided 2026-08-25). A release must not
+      # ship with the app text behind the site, so this byte-compares against that repo's
+      # main branch, not against the deployed Pages URL, which can lag behind a merge.
+      - name: Legal texts must match the canonical muralis-site copies
+        run: |
+          for name in privacy.txt terms.txt; do
+            curl -fsSL --retry 3 \
+              "https://raw.githubusercontent.com/spazio17/muralis-site/main/legal/$name" \
+              -o "$RUNNER_TEMP/$name"
+            cmp "app/src/main/res/raw/$name" "$RUNNER_TEMP/$name" || {
+              echo "res/raw/$name differs from muralis-site legal/$name." >&2
+              echo "Edit the canonical text in muralis-site, run scripts/sync-legal.sh here, and merge both before releasing." >&2
+              exit 1
+            }
+          done
+
       - name: Restore the signing keys
         env:
           DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
