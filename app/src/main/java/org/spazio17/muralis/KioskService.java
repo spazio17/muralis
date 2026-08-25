@@ -101,9 +101,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private volatile MqttController mqttController;
     private volatile HttpAdminServer httpAdminServer;
-    /** Network downtime history, so a survived MQTT outage can be blamed correctly. */
-    private OutageLedger outageLedger;
-    private ConnectivityManager.NetworkCallback networkLedgerCallback;
     private SystemStats systemStats;
     private NetworkGate startupGate;
     /**
@@ -235,59 +232,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         startForeground(NOTIFICATION_ID, buildNotification());
         applyResourceGuarantees();
         acquireRuntimeLocks();
-        startNetworkLedger();
         startControllers();
         startTelemetry();
-    }
-
-    /**
-     * Keeps {@link OutageLedger} fed for as long as the service lives, so an MQTT reconnect can
-     * say whether the network was down during the outage. Registered before the controllers and
-     * seeded with the current state, because a service that starts while Wi-Fi is still
-     * associating is itself inside a network outage worth counting.
-     */
-    private void startNetworkLedger() {
-        outageLedger = new OutageLedger(
-                NetworkGate.isOnline(this), android.os.SystemClock.elapsedRealtime());
-        ConnectivityManager connectivity = getSystemService(ConnectivityManager.class);
-        if (connectivity == null) {
-            Log.w(TAG, "No ConnectivityManager; MQTT outages will all read as broker outages");
-            return;
-        }
-        networkLedgerCallback = new ConnectivityManager.NetworkCallback() {
-            /** The default network we last saw. Callbacks arrive serially on one thread. */
-            private android.net.Network current;
-
-            @Override
-            public void onAvailable(android.net.Network network) {
-                current = network;
-                outageLedger.networkAvailable(android.os.SystemClock.elapsedRealtime());
-            }
-
-            @Override
-            public void onLost(android.net.Network network) {
-                // On a default-network switch, onLost for the old network can arrive AFTER
-                // onAvailable for its replacement. That is a handover, not an outage; counting it
-                // would leave the ledger stuck on "down" and blame every later MQTT outage on the
-                // network. Only the loss of the network we currently hold is a real outage.
-                if (network.equals(current)) {
-                    current = null;
-                    outageLedger.networkLost(android.os.SystemClock.elapsedRealtime());
-                }
-            }
-        };
-        connectivity.registerDefaultNetworkCallback(networkLedgerCallback);
-    }
-
-    private void stopNetworkLedger() {
-        if (networkLedgerCallback == null) {
-            return;
-        }
-        ConnectivityManager connectivity = getSystemService(ConnectivityManager.class);
-        if (connectivity != null) {
-            connectivity.unregisterNetworkCallback(networkLedgerCallback);
-        }
-        networkLedgerCallback = null;
     }
 
     @Override
@@ -305,7 +251,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
     public void onDestroy() {
         stopControllers();
         stopTelemetry();
-        stopNetworkLedger();
         releaseRuntimeLocks();
         super.onDestroy();
     }
@@ -584,7 +529,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         KioskConfig config = KioskConfig.load(this);
         mqttInputs = mqttInputsOf(config);
         httpInputs = httpInputsOf(config);
-        mqttController = new MqttController(this, this::handleMqttCommand, outageLedger);
+        mqttController = new MqttController(this, this::handleMqttCommand);
         mqttController.start();
         httpAdminServer = new HttpAdminServer(this, this);
         httpAdminServer.start();
@@ -658,7 +603,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 mqttController.stop();
             }
             mqttInputs = mqttNow;
-            mqttController = new MqttController(this, this::handleMqttCommand, outageLedger);
+            mqttController = new MqttController(this, this::handleMqttCommand);
             mqttController.start();
             Log.i(TAG, "MQTT configuration changed, client restarted");
         }

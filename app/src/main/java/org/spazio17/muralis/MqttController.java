@@ -81,22 +81,11 @@ final class MqttController implements MqttCallbackExtended {
      * see a stale non-null reference to an already-closed client.
      */
     private volatile MqttAsyncClient client;
-    /**
-     * Network downtime history, owned by the service; null-tolerated so a missing
-     * ConnectivityManager degrades to "every outage reads as a broker outage" instead of a crash.
-     */
-    private final OutageLedger outageLedger;
     private final Context appContext;
-    /**
-     * When {@link #connectionLost} last fired, on the elapsedRealtime clock, or 0 while connected.
-     * Volatile: written and read on Paho's callback threads across an outage.
-     */
-    private volatile long connectionLostAtMs;
 
-    MqttController(Context context, CommandListener commandListener, OutageLedger outageLedger) {
+    MqttController(Context context, CommandListener commandListener) {
         config = KioskConfig.load(context);
         this.commandListener = commandListener;
-        this.outageLedger = outageLedger;
         appContext = context.getApplicationContext();
         topicPrefix = "kiosk/" + config.deviceId + "/";
         deviceManufacturer = android.os.Build.MANUFACTURER;
@@ -233,22 +222,12 @@ final class MqttController implements MqttCallbackExtended {
     @Override
     public void connectComplete(boolean reconnect, String serverUri) {
         Log.i(TAG, reconnect ? "MQTT reconnected" : "MQTT connected");
-        // A survived outage is judged here, on the way back, because that is the first moment the
-        // verdict can reach anyone: "MQTT down, network up" is unreportable while it is true, the
-        // channel that would carry it is the one that is broken. The Last Will cannot say it
-        // either, its payload is frozen at connect time. So the panel reports outages in
-        // hindsight: the ledger says whether the device's network was down during the outage, and
-        // the answer separates a Wi-Fi problem from a broker one, which no live entity can.
-        long lostAt = connectionLostAtMs;
-        if (reconnect && lostAt != 0) {
-            connectionLostAtMs = 0;
-            long now = android.os.SystemClock.elapsedRealtime();
-            String cause = outageLedger == null
-                    ? OutageLedger.CAUSE_BROKER : outageLedger.causeOfMqttOutage(lostAt, now);
-            KioskRuntimeState.recordMqttOutage(cause, now - lostAt);
-            Log.i(TAG, "MQTT outage of " + (now - lostAt) + "ms attributed to: " + cause);
-            // Early publish, so Home Assistant hears the verdict seconds after the entities come
-            // back rather than at the next scheduled tick.
+        if (reconnect) {
+            // Fresh telemetry straight away: the retained snapshot on the broker is as stale as
+            // the outage was long, and the next scheduled tick can be a minute away. (Until
+            // 2026-08-25 this publish also carried an outage-cause verdict from OutageLedger;
+            // that whole attribution feature was removed as not worth knowing, the MQTT state
+            // entity's own history already says when and for how long.)
             KioskService.publishTelemetrySoon(appContext);
         }
         // Copied to a local, the way publish() already does. This runs on Paho's thread while
@@ -270,7 +249,6 @@ final class MqttController implements MqttCallbackExtended {
 
     @Override
     public void connectionLost(Throwable cause) {
-        connectionLostAtMs = android.os.SystemClock.elapsedRealtime();
         Log.w(TAG, "MQTT connection lost; automatic reconnect is enabled", cause);
     }
 
@@ -488,22 +466,16 @@ final class MqttController implements MqttCallbackExtended {
                         "Thermal status", null, null, null,
                         "{{ value_json.thermal_status }}"));
             }
-            // There is deliberately NO live "Network state" entity any more, and it must not come
-            // back: publishing "my network is down" requires the network, so a live entity could
-            // only ever say "connected" and froze there whenever anything was actually wrong. Its
-            // question, "did MQTT die alone, or did the network take it down?", is answered in
-            // hindsight instead: OutageLedger tracks the device's own connectivity continuously,
-            // connectComplete asks it for a verdict on every reconnect, and this sensor carries
-            // that verdict. "network" means Wi-Fi/router; "broker" means the network was clean and
-            // the MQTT session died alone (broker restart, Home Assistant update, credentials).
-            // "none" until the first survived outage. When it happened and for how long: the MQTT
-            // state entity's own history in Home Assistant, plus last_mqtt_outage_ago_ms and
-            // last_mqtt_outage_duration_ms in this same telemetry document.
-            JSONObject outageCause = sensor(
-                    "Last MQTT outage cause", null, null, null,
-                    "{{ value_json.runtime.last_mqtt_outage_cause or 'none' }}");
-            outageCause.put("entity_category", "diagnostic");
-            components.put("last_mqtt_outage_cause", outageCause);
+            // There is deliberately NO live "Network state" entity, and it must not come back:
+            // publishing "my network is down" requires the network, so a live entity could only
+            // ever say "connected" and froze there whenever anything was actually wrong. A "Last
+            // MQTT outage cause" diagnostic sensor answered its question in hindsight instead
+            // ("network" or "broker", judged by OutageLedger on every reconnect) and was removed
+            // too, with the whole attribution machinery, on 2026-08-25: knowing THAT the session
+            // dropped and for how long is the MQTT state entity's own history, and knowing WHY
+            // turned out not to be worth an entity. Its withdrawal was published, confirmed
+            // processed on the only installation that ever saw it, and then retired with the
+            // rest of the stale-keys block; see the removal note above the discovery publish.
             // Four values, not two, so this one stays a text sensor: charging, discharging,
             // charged, on hold. Straight from battery.charge_state, which is
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
@@ -550,7 +522,8 @@ final class MqttController implements MqttCallbackExtended {
             // No recycle controls. The panel used to announce an "Auto recycle" switch and a
             // "Recycle time" clock; both are gone, along with the commands behind them, because
             // recycling is a recovery mechanism rather than a preference and its schedule is now
-            // derived per device. They are withdrawn below rather than merely omitted. The stats
+            // derived per device. Their withdrawals ran until 2026-08-25 and were then retired as
+            // confirmed processed; see the removal note above the discovery publish. The stats
             // overlay is deliberately absent for a different reason: it changes what is drawn on
             // the panel's own glass, which is a decision for whoever is standing at it or holding
             // the admin page, not something a broker subscriber needs.
@@ -599,59 +572,19 @@ final class MqttController implements MqttCallbackExtended {
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
 
-            // Simply leaving a component out does NOT remove an entity that was announced before,
-            // which is how a panel updated in place ends up with a stranded "unavailable" entity
-            // forever. Home Assistant documents a two-step removal: publish the component with an
-            // empty config, keeping only the required platform key, then publish the whole
-            // configuration again with it omitted. Both payloads are otherwise identical and
-            // complete, so nothing else flickers.
-            //
-            // Done on every discovery run rather than once. It is idempotent, it costs one extra
-            // publish on a topic that is written when the panel connects and when Home Assistant
-            // restarts, and it self-heals a panel moved to a fresh Home Assistant.
-            //
-            // thermal_status is conditional: it is withdrawn only on hardware that cannot report
-            // it. The two recycle controls are unconditional, because this build no longer has them
-            // at all, anything upgraded from a build that did would otherwise keep a switch and a
-            // clock that answer nothing.
-            JSONObject stale = new JSONObject(components.toString());
-            if (!thermalSupported) {
-                stale.put("thermal_status", withdrawn("sensor"));
-            }
-            stale.put("auto_recycle", withdrawn("switch"));
-            stale.put("recycle_time", withdrawn("time"));
-            // Earlier spellings of the two entities above. "network" and "charging" were the
-            // original binary_sensors; both are gone, the first renamed to network_state and the
-            // second replaced by battery_state. Withdrawn under their own keys, which is safe
-            // precisely because nothing in the payload that follows uses those keys again: a key
-            // that appears withdrawn here and complete there would delete and recreate a live
-            // entity on every discovery run, a visible flicker each time Home Assistant restarts.
-            stale.put("network", withdrawn("binary_sensor"));
-            stale.put("charging", withdrawn("binary_sensor"));
-            // network_state carried three platforms over its life: the original text sensor, then
-            // a binary_sensor, and since 2026-08-23 nothing at all (see the Last MQTT outage cause
-            // sensor above for why a live network entity cannot work). A discovered component is
-            // identified by platform *and* key, never by key alone, so each spelling needs its own
-            // removal under its own platform, and one JSON object cannot hold two entries for the
-            // same key: the sensor spelling rides in this first removal payload, the binary_sensor
-            // spelling gets a second one below. Merely omitting a component never removes it; when
-            // network_state changed from sensor to binary_sensor without a withdrawal, the text
-            // sensor stayed subscribed and undeletable, reported from the dashboard 2026-08-23.
-            stale.put("network_state", withdrawn("sensor"));
-            JSONObject removal = new JSONObject(discovery.toString());
-            removal.put("cmps", stale);
-            publish(topic, removal.toString(), 1, true);
-
-            // Second removal pass: the binary_sensor spelling of network_state, the one that was
-            // live until 2026-08-23. QoS 1 publishes from one client keep their order, so Home
-            // Assistant processes sensor-removal, then binary_sensor-removal, then the complete
-            // configuration below, and nothing that is still announced ever flickers.
-            JSONObject staleBinary = new JSONObject(components.toString());
-            staleBinary.put("network_state", withdrawn("binary_sensor"));
-            JSONObject removalBinary = new JSONObject(discovery.toString());
-            removalBinary.put("cmps", staleBinary);
-            publish(topic, removalBinary.toString(), 1, true);
-
+            // If an entity is ever REMOVED from this payload, know this before shipping the
+            // removal: simply leaving a component out does NOT remove an entity Home Assistant
+            // already discovered, it strands it as "unavailable" forever. A removal must publish
+            // the component once more as an empty config holding only the platform key ("p"),
+            // then publish the full configuration without it; a component is identified by
+            // platform AND key, so a key that changed platform needs one such withdrawal per
+            // platform, in its own payload, and QoS 1 keeps their order. A standing block of
+            // those withdrawals lived here until 2026-08-25 covering every entity this app had
+            // retired (recycle controls, network/charging, both network_state spellings,
+            // last_mqtt_outage_cause); it was deleted, pre-publication, once Juri confirmed his
+            // Home Assistant, the only installation that ever saw those keys, held no trace of
+            // them. Any entity removed after the app is public needs its withdrawal kept
+            // indefinitely, because the last stranger's panel never announces its upgrade.
             publish(topic, discovery.toString(), 1, true);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
@@ -661,7 +594,8 @@ final class MqttController implements MqttCallbackExtended {
     /**
      * Whether the broker currently holds a session with this panel: the single live connectivity
      * entity, since the "Network state" one was removed as information-free (it could only ever
-     * publish "connected"; see the Last MQTT outage cause sensor). Two values and only ever two,
+     * publish "connected"; see the no-live-network-entity comment in the discovery components
+     * above). Two values and only ever two,
      * so the connectivity device class fits; the trade is that the rendered words come from Home
      * Assistant and are capitalised.
      *
@@ -804,16 +738,6 @@ final class MqttController implements MqttCallbackExtended {
         toggle.put("state_on", "ON");
         toggle.put("state_off", "OFF");
         return toggle;
-    }
-
-    /**
-     * An empty component config, which is how Home Assistant is told to drop an entity a previous
-     * discovery payload announced. Only the platform key is required, and only it is sent.
-     */
-    private static JSONObject withdrawn(String platform) throws JSONException {
-        JSONObject removed = new JSONObject();
-        removed.put("p", platform);
-        return removed;
     }
 
     /**
