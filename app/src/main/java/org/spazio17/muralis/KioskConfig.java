@@ -29,9 +29,6 @@ final class KioskConfig {
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
 
     static final int DEFAULT_HTTP_PORT = 8080;
-    /** The original fixed gesture, kept as the default so nothing changes until it is recorded. */
-    static final String DEFAULT_SETTINGS_SEQUENCE = "BL,BL,BL,BL,BL,BL,BL,BL,BL";
-    static final String DEFAULT_LAUNCHER_SEQUENCE = "BR,BR,BR,BR,BR,BR,BR,BR,BR";
 
     // A loaded KioskConfig is a READ snapshot and a display model, never a write vehicle. The
     // fields stay mutable because the screens overlay half-typed values on one for redisplay, but
@@ -73,10 +70,17 @@ final class KioskConfig {
      * HttpAdminServer.start still applies on top.
      */
     boolean webAdminEnabled = true;
-    /** Corner-tap combination that opens this configuration screen. */
-    String settingsSequence = DEFAULT_SETTINGS_SEQUENCE;
-    /** Corner-tap combination that leaves the kiosk for the system launcher. */
-    String launcherSequence = DEFAULT_LAUNCHER_SEQUENCE;
+    /**
+     * Corner-tap combination that opens this configuration screen. Empty until the user records
+     * one. There is deliberately no compiled-in default any more (the fixed BL x9 / BR x9 pair
+     * was retired 2026-08-25): a default that ships in the binary also ships in the
+     * documentation, at which point it unlocks every panel in the world, and nine taps was too
+     * much to hand a new user anyway. The first-start wizard in KioskActivity refuses to hand
+     * the screen to the kiosk until both combinations exist.
+     */
+    String settingsSequence = "";
+    /** Corner-tap combination that leaves the kiosk for the system launcher. Empty until recorded. */
+    String launcherSequence = "";
 
     static KioskConfig load(Context context) {
         Context storageContext = storageContext(context);
@@ -109,11 +113,20 @@ final class KioskConfig {
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
         config.statsOverlay = statsOverlayEnabled(context);
         config.portrait = portraitEnabled(context);
-        config.settingsSequence = preferences.getString(
-                SETTINGS_SEQUENCE, DEFAULT_SETTINGS_SEQUENCE);
-        config.launcherSequence = preferences.getString(
-                LAUNCHER_SEQUENCE, DEFAULT_LAUNCHER_SEQUENCE);
+        config.settingsSequence = preferences.getString(SETTINGS_SEQUENCE, "");
+        config.launcherSequence = preferences.getString(LAUNCHER_SEQUENCE, "");
         return config;
+    }
+
+    /**
+     * True once both corner-tap combinations exist and parse as valid sequences, whether they
+     * were recorded on the glass or typed into the web admin. Until then KioskActivity shows the
+     * first-start wizard instead of a dashboard and never engages lock task: a pinned screen with
+     * no recorded way out is a bricked panel, so like visual_off this fails toward an exit.
+     */
+    boolean escapeSequencesConfigured() {
+        return EscapeSequence.isValid(EscapeSequence.parse(settingsSequence))
+                && EscapeSequence.isValid(EscapeSequence.parse(launcherSequence));
     }
 
     /** The only way to write settings; see the comment on the fields above. */

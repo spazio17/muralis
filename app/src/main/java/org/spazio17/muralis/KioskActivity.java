@@ -231,6 +231,14 @@ public final class KioskActivity extends Activity {
     private final java.util.List<EscapeSequence.Tap> escapeTaps = new java.util.ArrayList<>();
     private boolean recorderVisible;
     private boolean recordingForLauncher;
+    /**
+     * Whether the recorder was entered from the first-start wizard rather than the settings
+     * page. Same screen, different exits: Save advances to the wizard's next step (or finishes
+     * it), Back returns to the wizard's intro instead of the sequences page.
+     */
+    private boolean recordingForWizard;
+    /** Whether the first-start wizard's intro screen is up. See {@link #showFirstStartWizard}. */
+    private boolean wizardVisible;
     private final java.util.List<String> recordedZones = new java.util.ArrayList<>();
     private TextView recorderReadout;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -588,7 +596,11 @@ public final class KioskActivity extends Activity {
         // cannot arise, because an app-build Muralis only becomes HOME once it is already installed
         // and provisioned, which is necessarily after setup has finished.
         KioskConfig config = KioskConfig.load(this);
-        if (config.dashboardUrl.isEmpty()) {
+        // The wizard outranks everything: without both escape combinations the kiosk has no way
+        // out, so neither the dashboard nor the ordinary configuration screen is safe to lock.
+        if (!config.escapeSequencesConfigured()) {
+            showFirstStartWizard();
+        } else if (config.dashboardUrl.isEmpty()) {
             showConfiguration(config);
         } else {
             showDashboard(config.dashboardUrl);
@@ -702,11 +714,13 @@ public final class KioskActivity extends Activity {
     /**
      * Tells the service whether an operator screen is up, so the pressure rebuild can wait
      * instead of destroying a half-edited form (see {@code RecyclePolicy.decide}). Called after
-     * every mutation of {@link #configurationVisible}/{@link #recorderVisible}; not derived
-     * inside {@code applyKioskPolicy()} because some screens set the flags after calling it.
+     * every mutation of {@link #configurationVisible}/{@link #recorderVisible}/
+     * {@link #wizardVisible}; not derived inside {@code applyKioskPolicy()} because some screens
+     * set the flags after calling it.
      */
     private void publishOperatorScreenState() {
-        KioskRuntimeState.publishOperatorOnScreen(configurationVisible || recorderVisible);
+        KioskRuntimeState.publishOperatorOnScreen(
+                configurationVisible || recorderVisible || wizardVisible);
     }
 
     /**
@@ -788,10 +802,19 @@ public final class KioskActivity extends Activity {
 
     private boolean navigateBack() {
         if (recorderVisible) {
-            // Same destination the recorder's own Cancel button uses, rather than a second opinion
-            // about where the recorder goes back to.
+            // Same destination the recorder's own Cancel/Back button uses, rather than a second
+            // opinion about where the recorder goes back to.
             recorderVisible = false;
-            showEscapeSequences(KioskConfig.load(this));
+            if (recordingForWizard) {
+                showFirstStartWizard();
+            } else {
+                showEscapeSequences(KioskConfig.load(this));
+            }
+            return true;
+        }
+        if (wizardVisible) {
+            // Until the combinations exist the wizard IS this app's home state; there is nowhere
+            // back to go, and leaving would reveal an unlockable kiosk with no way to return.
             return true;
         }
         if (configurationVisible) {
@@ -1200,6 +1223,7 @@ public final class KioskActivity extends Activity {
         // The navigation bar is deliberately left alone so the stock keyboard stays dismissable.
         setDashboardFullscreen(true);
         recorderVisible = false;
+        wizardVisible = false;
         destroyWebView();
         kioskStopped = false;
         configurationVisible = true;
@@ -1858,7 +1882,86 @@ public final class KioskActivity extends Activity {
      */
     private void showSequenceRecorder(boolean forLauncher) {
         recordedZones.clear();
+        recordingForWizard = false;
         renderSequenceRecorder(forLauncher);
+    }
+
+    /**
+     * First start: both escape combinations must exist before anything else, because they are
+     * the only way off the kiosk once it locks and there is no compiled-in default to fall back
+     * to (see the fields in {@link KioskConfig}). So an install without them gets this wizard
+     * instead of a dashboard, and {@link #applyKioskPolicy} declines to pin until it is done.
+     *
+     * <p>Also shown once after updating an install that predates the wizard: those devices ran
+     * on the old fixed defaults, which were never persisted, so they re-record. Deliberate, not
+     * an oversight: pre-publication the installed base is the two test devices, and stamping the
+     * retired defaults into them as if a user had chosen them would defeat the removal.
+     */
+    private void showFirstStartWizard() {
+        KioskConfig config = KioskConfig.load(this);
+        if (config.escapeSequencesConfigured()) {
+            // Both combinations arrived while the wizard was up, typed into the web admin of an
+            // updated install. Nothing left to record.
+            continueAfterFirstStartWizard();
+            return;
+        }
+        wizardVisible = true;
+        recorderVisible = false;
+        configurationVisible = false;
+        publishOperatorScreenState();
+        applyKioskPolicy();
+        setDashboardFullscreen(true);
+        enterImmersiveMode();
+
+        KioskTheme theme = currentTheme();
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, "Welcome to Muralis",
+                "Two tap combinations before anything else"), matchWrap());
+
+        TextView explain = new TextView(this);
+        explain.setTextColor(theme.subtext);
+        explain.setTextSize(14);
+        explain.setText("Muralis locks this tablet to one page. The only way back out is a "
+                + "combination of taps in the corners of the screen, so those are recorded "
+                + "first: one that opens Muralis settings, one that exits to the system "
+                + "launcher. You will perform each on the real corners, and you can change "
+                + "them later in settings. Keep them to yourself, anyone who watches you "
+                + "perform one can repeat it.");
+        page.addView(explain, matchWrap());
+
+        Button start = primaryButton(theme, "Record the first combination");
+        start.setOnClickListener(view -> showWizardRecorder(false));
+        page.addView(start, matchWrap());
+
+        setContentView(scrollPage(theme, page));
+        currentScreen = this::showFirstStartWizard;
+    }
+
+    /**
+     * Wizard entry to the recorder: the same screen as {@link #showSequenceRecorder}, but Save
+     * advances to the next step or finishes the wizard, and Back returns to the wizard's intro.
+     */
+    private void showWizardRecorder(boolean forLauncher) {
+        recordedZones.clear();
+        recordingForWizard = true;
+        wizardVisible = false;
+        renderSequenceRecorder(forLauncher);
+    }
+
+    /**
+     * Where the wizard hands over once both combinations exist: the same routing
+     * {@link #initializeUserInterface} applies, minus the wizard check that just passed. On a
+     * fresh install the dashboard URL is still empty, so this lands on the configuration screen;
+     * on an updated install it goes straight back to the dashboard.
+     */
+    private void continueAfterFirstStartWizard() {
+        wizardVisible = false;
+        KioskConfig config = KioskConfig.load(this);
+        if (config.dashboardUrl.isEmpty()) {
+            showConfiguration(config);
+        } else {
+            showDashboard(config.dashboardUrl);
+        }
     }
 
     /** Draws the recorder from whatever has been tapped so far. See {@link #showSequenceRecorder}. */
@@ -1887,6 +1990,15 @@ public final class KioskActivity extends Activity {
         panel.setBackground(theme.outlinedPanel(theme.surface, dp(18), dp(1)));
         int pad = dp(24);
         panel.setPadding(pad, pad, pad, pad);
+
+        if (recordingForWizard) {
+            TextView step = new TextView(this);
+            step.setText(forLauncher ? "Step 2 of 2" : "Step 1 of 2");
+            step.setTextColor(theme.accentAlt);
+            step.setTextSize(13);
+            step.setGravity(Gravity.CENTER);
+            panel.addView(step, matchWrap());
+        }
 
         TextView title = new TextView(this);
         title.setText(forLauncher ? "Exit to the system launcher" : "Open Muralis settings");
@@ -1922,10 +2034,14 @@ public final class KioskActivity extends Activity {
         });
         panel.addView(clear, matchWrap());
 
-        Button cancel = secondaryButton(theme, "Cancel");
+        Button cancel = secondaryButton(theme, recordingForWizard ? "Back" : "Cancel");
         cancel.setOnClickListener(view -> {
             recorderVisible = false;
-            showEscapeSequences(KioskConfig.load(this));
+            if (recordingForWizard) {
+                showFirstStartWizard();
+            } else {
+                showEscapeSequences(KioskConfig.load(this));
+            }
         });
         panel.addView(cancel, matchWrap());
 
@@ -2014,6 +2130,16 @@ public final class KioskActivity extends Activity {
         recorderVisible = false;
         Toast.makeText(this, "Saved: " + EscapeSequence.describe(recordedZones),
                 Toast.LENGTH_LONG).show();
+        if (recordingForWizard) {
+            if (recordingForLauncher) {
+                // Both combinations exist now; the wizard is done and the pin may engage.
+                recordingForWizard = false;
+                continueAfterFirstStartWizard();
+            } else {
+                showWizardRecorder(true);
+            }
+            return;
+        }
         showEscapeSequences(KioskConfig.load(this));
     }
 
@@ -2930,6 +3056,7 @@ public final class KioskActivity extends Activity {
         destroyWebView();
         configurationVisible = false;
         recorderVisible = false;
+        wizardVisible = false;
         publishOperatorScreenState();
         setDashboardFullscreen(true);
         // Was setDashboardSystemUiRestricted(true); the shade is now handled by device-owner
@@ -3772,6 +3899,16 @@ public final class KioskActivity extends Activity {
             policy.setKeyguardDisabled(admin, true);
         } catch (SecurityException notOwner) {
             Log.w(TAG, "Device-owner policy refused; kiosk hardening unavailable", notOwner);
+            return;
+        }
+        // No recorded way out, no pin. The escape combinations have no compiled-in default any
+        // more (see KioskConfig), so until the first-start wizard has recorded both, a pinned
+        // screen would be a bricked panel: the tap handler matches nothing and Back is inert by
+        // design. Everything above still applies, HOME stays ours and the allowlist stays
+        // current, so the pin engages on the first applyKioskPolicy after the wizard finishes.
+        // The status bar is left alone for the same reason disableStatusBarIfPinned exists: it
+        // only ever acts once the pin is actually held.
+        if (!KioskConfig.load(this).escapeSequencesConfigured()) {
             return;
         }
         ActivityManager activityManager = getSystemService(ActivityManager.class);
