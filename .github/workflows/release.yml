@@ -88,8 +88,15 @@ jobs:
           # `muralis-<version>.aab` under the usual name. That artifact is unsigned, which
           # Play only tells you at upload. Fail here instead, where the reason is legible.
           MURALIS_KEYSTORE_PASSWORD: ${{ secrets.MURALIS_KEYSTORE_PASSWORD }}
+          # The app's licensing PUBLIC key (Play Console, Monetization setup, Licensing). Checked
+          # here for the same reason as the password above: a signed release built without it can
+          # never verify a purchase, so nobody could unlock Pro, and nothing but this check would
+          # ever say so. The Gradle build refuses a signed keyless release too; this one just
+          # fails earlier and names the missing secret.
+          MURALIS_LICENSE_KEY: ${{ secrets.MURALIS_LICENSE_KEY }}
         run: |
-          for name in DEBUG_KEYSTORE_B64 UPLOAD_KEYSTORE_B64 MURALIS_KEYSTORE_PASSWORD; do
+          for name in DEBUG_KEYSTORE_B64 UPLOAD_KEYSTORE_B64 MURALIS_KEYSTORE_PASSWORD \
+                      MURALIS_LICENSE_KEY; do
             if [ -z "$(eval "printf '%s' \"\$$name\"")" ]; then
               echo "$name secret is missing." >&2; exit 1
             fi
@@ -103,6 +110,7 @@ jobs:
           MURALIS_KEYSTORE: ${{ runner.temp }}/muralis-upload.p12
           MURALIS_KEYSTORE_PASSWORD: ${{ secrets.MURALIS_KEYSTORE_PASSWORD }}
           MURALIS_KEY_ALIAS: muralis-upload
+          MURALIS_LICENSE_KEY: ${{ secrets.MURALIS_LICENSE_KEY }}
         run: ./gradlew --no-daemon assembleDebug bundleRelease
 
       # Checks the artifact rather than the inputs: a keystore at the wrong path or an alias

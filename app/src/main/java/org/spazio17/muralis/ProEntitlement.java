@@ -78,8 +78,24 @@ final class ProEntitlement {
             return known;
         }
         boolean active = verifyStored(context);
-        cachedAnswer = active;
+        // A negative computed before the user's first unlock is not memoised. Before the unlock
+        // the keystore cannot decrypt anything, so "no purchase" is not a finding, it is the
+        // keystore being closed, and the service is directBootAware so this genuinely runs then.
+        // Caching that false would hold the paid surfaces off until the next process restart on
+        // any device with a secure lock screen, which is exactly the panel-stays-broken shape the
+        // credential-loss fix in SecretStore exists to prevent. A positive is always safe to keep,
+        // and a negative computed after the unlock is a real answer.
+        if (active || isUserUnlocked(context)) {
+            cachedAnswer = active;
+        }
         return active;
+    }
+
+    private static boolean isUserUnlocked(Context context) {
+        android.os.UserManager users = context.getSystemService(android.os.UserManager.class);
+        // No manager, no way to tell, so do not memoise: one extra verification per call is the
+        // cheap side of this mistake.
+        return users != null && users.isUserUnlocked();
     }
 
     /**
@@ -115,9 +131,9 @@ final class ProEntitlement {
      *
      * <p>A read failure is indistinguishable from an absent purchase here on purpose. The one case
      * worth naming: before the first unlock of a device with a secure lock screen, the keystore
-     * cannot decrypt, so this answers false. The paid surfaces come up on the unlock, which is the
-     * same moment the rest of the app's credentials become readable, so nothing needs a retry of
-     * its own.
+     * cannot decrypt, so this answers false. {@link #isActive} deliberately does not memoise that
+     * pre-unlock false, so the first ask after the unlock recomputes against a readable keystore
+     * and nothing needs a retry of its own.
      */
     private static boolean verifyStored(Context context) {
         SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));

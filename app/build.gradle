@@ -40,9 +40,14 @@ def muralisVersionCode = (System.getenv('MURALIS_VERSION_CODE')
 // is about provenance rather than secrecy.
 //
 // Absent means no purchase can be verified, which means Pro never unlocks. That is correct for a
-// development build and catastrophic for a release, so assembleRelease refuses below rather than
-// shipping an app nobody can ever unlock.
-def muralisLicenseKey = System.getenv('MURALIS_LICENSE_KEY') ?: ''
+// development build and catastrophic for a shipped one, so a SIGNED release refuses below rather
+// than shipping an app nobody can ever unlock.
+//
+// Whitespace is stripped because Play Console prints the key wrapped across lines: pasted into a
+// CI secret verbatim, the newlines would otherwise land inside the generated BuildConfig string
+// literal, which is a syntax error three steps removed from its cause. Base64 has no whitespace,
+// so this cannot damage a correct value.
+def muralisLicenseKey = (System.getenv('MURALIS_LICENSE_KEY') ?: '').replaceAll(/\s+/, '')
 
 // Debug-only override to force the entitlement on or off ("on"/"off"), so both the free and the
 // paid paths can be exercised on real hardware. Read by ProEntitlement inside a BuildConfig.DEBUG
@@ -152,15 +157,21 @@ android {
     // upload-key password the release workflow already refuses, so it is refused the same way:
     // here, where the reason is legible, rather than in a review of why nobody is buying.
     //
-    // Checked only when a release task is actually being run, so a debug build on a machine that
-    // has never seen the key stays a one-command build.
+    // Only a SIGNED release is refused, which is what separates "shippable" from "reproducible":
+    // this repo's stated design is that anyone can build the release variant with no secrets at
+    // all (CI does, on every push, and it produces an unsigned APK nobody can ship). The first
+    // version of this guard checked the task name alone and broke exactly that build. The
+    // keystore being configured is the mark of an artifact headed for users, so it is also the
+    // mark of an artifact that must be able to unlock Pro.
     gradle.taskGraph.whenReady { graph ->
         boolean releasing = graph.allTasks.any { it.name.toLowerCase().contains('release') }
-        if (releasing && muralisLicenseKey.isEmpty()) {
+        boolean shippable = android.signingConfigs.release.storeFile != null
+        if (releasing && shippable && muralisLicenseKey.isEmpty()) {
             throw new GradleException(
-                    'MURALIS_LICENSE_KEY is not set, so this release could never unlock Muralis '
-                    + 'Pro. Take the Base64-encoded RSA public key from Play Console '
-                    + '(Monetization setup, Licensing) and pass it in the environment.')
+                    'MURALIS_LICENSE_KEY is not set, so this signed release could never unlock '
+                    + 'Muralis Pro. Take the Base64-encoded RSA public key from Play Console '
+                    + '(Monetization setup, Licensing) and pass it in the environment, or unset '
+                    + 'the keystore to build an unsigned, non-shippable release.')
         }
     }
 
