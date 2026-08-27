@@ -173,6 +173,23 @@ android {
                     + '(Monetization setup, Licensing) and pass it in the environment, or unset '
                     + 'the keystore to build an unsigned, non-shippable release.')
         }
+        // A key that is present but mispasted (truncated, PEM header lines, the certificate
+        // fingerprint instead of the key) ships the exact same unfixable app as a missing one,
+        // just without tripping the check above: every purchase verification returns false and
+        // nothing anywhere says why. Gradle runs on a JVM, so the key can simply be parsed here,
+        // with the same decoder and KeyFactory the app itself will use. Any variant, not only
+        // releases: a wrong key in a debug build wastes an afternoon of on-device testing instead.
+        if (!muralisLicenseKey.isEmpty()) {
+            try {
+                java.security.KeyFactory.getInstance('RSA').generatePublic(
+                        new java.security.spec.X509EncodedKeySpec(
+                                java.util.Base64.decoder.decode(muralisLicenseKey)))
+            } catch (Exception notAKey) {
+                throw new GradleException('MURALIS_LICENSE_KEY is set but is not a valid '
+                        + 'Base64-encoded RSA public key (' + notAKey.message + '). Re-copy it '
+                        + 'from Play Console, Monetization setup, Licensing.', notAKey)
+            }
+        }
     }
 
     // Host-runnable unit tests for the pure-Java logic
