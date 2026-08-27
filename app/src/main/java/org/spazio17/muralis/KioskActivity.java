@@ -223,9 +223,11 @@ public final class KioskActivity extends Activity {
      */
     private String connectionBaseline = "";
     /**
-     * The Play Billing spike, created the first time the configuration screen is shown and kept
-     * for the activity's life: the client holds a service binding, and rebuilding it on every
-     * screen rebuild would churn connections for nothing. Gates nothing yet; see {@link ProBilling}.
+     * The Play Billing client, created at startup in {@link #initializeUserInterface} and kept for
+     * the activity's life: the client holds a service binding, and rebuilding it on every screen
+     * rebuild would churn connections for nothing. Asked at startup rather than when the
+     * configuration screen opens, because what it finds is stored by {@link ProEntitlement} and
+     * that is what gates MQTT and the web admin, which start with nobody looking at a screen.
      */
     private ProBilling proBilling;
     /**

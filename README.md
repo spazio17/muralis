@@ -24,7 +24,7 @@ inside the same container.
 
 ## Status
 
-Pre-release. Runs on real hardware; not yet published, and there is no release signing config.
+Pre-release. Runs on real hardware; release signing is in place, and it is not published yet.
 
 ## License
 

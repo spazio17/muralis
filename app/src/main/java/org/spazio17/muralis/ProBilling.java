@@ -24,11 +24,14 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * The Play Billing spike: proves that this panel can see the Pro product, complete a purchase,
- * and read it back. Deliberately gates nothing yet: MQTT and the web admin stay open regardless
- * of what this reports, because the entitlement layer (signature verification, the SecretStore
- * cache, the development bypass) is a separate step that only makes sense once this one is proven
- * on hardware. See "Prove the QR plus Billing path" in TODO-muralis-release.md.
+ * The Play Billing client: sees the Pro product, runs a purchase, and reads back what the
+ * signed-in Google account owns.
+ *
+ * <p><b>It decides nothing itself.</b> Every purchase it sees in the {@code PURCHASED} state goes
+ * to {@link ProEntitlement#record}, which verifies Play's signature over the document and caches
+ * what survives; that cached answer, not anything here, is what gates MQTT and the web admin in
+ * {@link KioskService}. This class asks Play and reports, which is why it can be wrong, offline or
+ * absent without a panel changing behaviour.
  *
  * <p><b>What a signature does and does not gate, measured rather than assumed 2026-08-27.</b> This
  * class used to claim that only a Play-signed install could get any answer but "unavailable",
