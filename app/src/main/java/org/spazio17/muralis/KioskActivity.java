@@ -1763,6 +1763,17 @@ public final class KioskActivity extends Activity {
         Button aboutButton = secondaryButton(theme, "Version, privacy and terms");
         aboutButton.setOnClickListener(view -> showAbout());
         aboutCard.addView(aboutButton, matchWrap());
+        // Ordinary installs only. On a device-owner panel "close" is meaningless (Muralis is HOME,
+        // the system relaunches it immediately) and the escape sequence is the deliberate exit, so
+        // a close button there is a control whose only use is breaking the panel, the same class
+        // of surface the auto-recycle switches were deleted for. Deliberately NOT on the web admin
+        // or MQTT either, for the reason system.shutdown was deleted: a remote close has no remote
+        // undo, because the thing that would receive the reopen command is what was just closed.
+        if (!isDeviceOwner()) {
+            Button closeApp = secondaryButton(theme, "Close Muralis");
+            closeApp.setOnClickListener(view -> closeCompletely());
+            aboutCard.addView(closeApp, matchWrap());
+        }
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 dashboardCard, mqttCard, httpCard, displayCard, statsCard, escapeCard,
@@ -3332,6 +3343,18 @@ public final class KioskActivity extends Activity {
         CharSequence rendered = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY);
         return rendered == null || rendered.length() == 0
                 ? KioskRuntimeState.overlayText() : rendered;
+    }
+
+    /**
+     * Actually closes the app, which takes two calls, and both matter. {@code stopService} takes
+     * down {@link KioskService}, whose foreground notification and open sockets are what makes a
+     * finished activity still read as "Muralis is running"; {@code finishAndRemoveTask} ends this
+     * activity and drops the recents card. Reachable only from the ordinary-install Close button,
+     * never on a device-owner panel; see the button's comment in showConfiguration.
+     */
+    private void closeCompletely() {
+        stopService(new Intent(this, KioskService.class));
+        finishAndRemoveTask();
     }
 
     private void destroyWebView() {

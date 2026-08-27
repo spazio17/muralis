@@ -107,11 +107,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- No excludeFromRecents, since 2026-08-27 (it was true). On the kiosk it never mattered:
+             lock task disables the Overview button, so the panel shows no recents either way. On an
+             ordinary install it did exactly the wrong thing: the recents card is the one close
+             mechanism every Android user already knows, and hiding it made the app feel
+             unkillable. KioskService.onTaskRemoved is the other half: swiping the card also stops
+             the service on a non-device-owner install, so the swipe genuinely closes the app. -->
         <activity
             android:name=".KioskActivity"
             android:configChanges="density|fontScale|keyboard|keyboardHidden|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
             android:directBootAware="false"
-            android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
