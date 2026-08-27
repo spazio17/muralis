@@ -41,12 +41,19 @@ import java.util.List;
  *
  * <p>Billing Library 8, not 7: Play requires 8+ for every new app and update from 2026-08-31.
  *
- * <p><b>One deliberate divergence from Google's integration guide</b>, which recommends connecting
- * when the app comes to the foreground and re-querying purchases in {@code onResume}. This class
- * connects when the configuration screen opens and re-queries whenever it is rebuilt, because the
- * foreground here is a dashboard that stays up for months: holding a Play service binding for that
- * whole time would be a permanent cost for a question nobody is asking. The entitlement layer will
- * need its own refresh policy, and that is the place to revisit this, not here.
+ * <p><b>Asked at startup, as Google's guide recommends</b>, from
+ * {@code KioskActivity.initializeUserInterface}, and again whenever the configuration screen is
+ * built. On this app "startup" is not a rare event: the nightly pass exits the process and an alarm
+ * relaunches the activity, so the query runs at least daily and a connection opened at startup
+ * lives a day at most. An earlier version of this class deferred the whole thing to the
+ * configuration screen, on the reasoning that the panel's foreground lasts months and a Play
+ * binding should not; that reasoning was wrong, because the process does not last months. Juri
+ * caught it 2026-08-27.
+ *
+ * <p>Two things follow from asking at startup, and both are the point rather than side effects: a
+ * purchase made on another device on the same account is picked up by the next nightly restart with
+ * nobody touching the panel, and the entitlement will be known before MQTT and the web admin decide
+ * whether to come up, which is a thing the gate cannot work without.
  */
 final class ProBilling implements PurchasesUpdatedListener {
 
@@ -231,10 +238,32 @@ final class ProBilling implements PurchasesUpdatedListener {
                 reasons.append("; ");
             }
             reasons.append(entry.getProductId())
-                    .append(" status ")
-                    .append(entry.getStatusCode());
+                    .append(": ")
+                    .append(statusName(entry.getStatusCode()));
         }
         return reasons.toString();
+    }
+
+    /**
+     * Words rather than a number. These are {@link UnfetchedProduct.StatusCode} values, which are
+     * their own set and are NOT {@code BillingResponseCode} values however similar the numbers
+     * look; read off the 8.3.0 artifact rather than assumed. The distinction matters because the
+     * one this panel actually reports, 3, is BILLING_UNAVAILABLE under the other set, which would
+     * send somebody debugging the device instead of creating the product.
+     */
+    private static String statusName(int statusCode) {
+        switch (statusCode) {
+            case UnfetchedProduct.StatusCode.PRODUCT_NOT_FOUND:
+                return "no such product on this Play listing yet";
+            case UnfetchedProduct.StatusCode.INVALID_PRODUCT_ID_FORMAT:
+                return "the product id is not a valid one";
+            case UnfetchedProduct.StatusCode.NO_ELIGIBLE_OFFER:
+                return "no offer this account is eligible for";
+            case UnfetchedProduct.StatusCode.UNKNOWN:
+                return "Google Play gave no reason";
+            default:
+                return "status " + statusCode;
+        }
     }
 
     /** One sentence for an empty product list, carrying Play's reason when it gave one. */

@@ -601,6 +601,22 @@ public final class KioskActivity extends Activity {
         // Settings.Secure.USER_SETUP_COMPLETE is not public API. More importantly the situation
         // cannot arise, because an app-build Muralis only becomes HOME once it is already installed
         // and provisioned, which is necessarily after setup has finished.
+        // Asked once per process start, which on this app means at least nightly: the pass at
+        // QUIET_HOUR ends in System.exit and the relaunch alarm brings this activity back, so
+        // "when the app is launched", which is where Google's guide puts this, is a recurring
+        // event here rather than a once-per-boot one. Deliberately after the user-unlock gate
+        // above, because Play cannot answer for a locked user.
+        //
+        // Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
+        // and both start at boot without anybody opening a screen, so an answer that only arrives
+        // when somebody taps their way into settings arrives too late to gate anything. It also
+        // means a purchase made on another device is picked up by the next nightly restart on its
+        // own. Juri, 2026-08-27.
+        if (proBilling == null) {
+            proBilling = new ProBilling(this);
+        }
+        proBilling.refresh();
+
         KioskConfig config = KioskConfig.load(this);
         // The wizard outranks everything: without both escape combinations the kiosk has no way
         // out, so neither the dashboard nor the ordinary configuration screen is safe to lock.
@@ -1709,9 +1725,9 @@ public final class KioskActivity extends Activity {
         buyPro.setVisibility(View.GONE);
         buyPro.setOnClickListener(view -> proBilling.buy(this));
         proCard.addView(buyPro, matchWrap());
-        if (proBilling == null) {
-            proBilling = new ProBilling(this);
-        }
+        // Created at startup, not here: this screen only attaches its card to it. setListener
+        // publishes what is already known before re-asking, so the card shows the last answer
+        // immediately rather than flashing "Checking Google Play…" on every rebuild.
         proBilling.setListener((proDetail, owned, buyable) -> {
             // This screen is rebuilt wholesale on rotation and after every save; a result that
             // arrives for a replaced view tree must not touch it. Same attachment rule as the
