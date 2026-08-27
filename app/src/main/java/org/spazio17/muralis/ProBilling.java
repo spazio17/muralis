@@ -30,11 +30,24 @@ import java.util.List;
  * cache, the development bypass) is a separate step that only makes sense once this one is proven
  * on hardware. See "Prove the QR plus Billing path" in TODO-muralis-release.md.
  *
- * <p>What "proven" means, and why it needs real hardware: Play Billing validates the installed
- * app's signature against the published listing, so only a Play-signed install (from Play itself,
- * or QR-provisioned from the Play-signed universal APK) can ever get an answer other than
- * "unavailable" out of this class. A debug build shows the card and reports why it cannot ask,
- * which is itself useful: it is the same thing a user on a de-Googled device would see.
+ * <p><b>What a signature does and does not gate, measured rather than assumed 2026-08-27.</b> This
+ * class used to claim that only a Play-signed install could get any answer but "unavailable",
+ * because Play Billing validates the installed app's signature against the published listing. That
+ * claim was wrong. On the API 26 tablet, running a <i>debug-signed</i> APK installed by adb
+ * ({@code installer=null}, certificate {@code CN=Android Debug}, not Google's app signing key),
+ * with the package published and the signed-in account on the licence-tester list, Play returned
+ * full product details, opened the purchase sheet, answered {@code ITEM_ALREADY_OWNED}, and served
+ * the existing purchase back through {@code queryPurchasesAsync}. So neither a matching signature
+ * nor {@code com.android.vending} as the installer is required to <i>read</i> an entitlement.
+ *
+ * <p>Do not over-read that. The account was on the licence-tester list, and licence testers are
+ * the likeliest reason Play was lenient about the signature at all, so this may not generalise to
+ * an ordinary buyer. Two things therefore stay untested, and neither can be tested with this
+ * developer's own accounts: completing a <i>new</i> purchase from a locally-signed install, and any
+ * of this for a stranger's account. The shipped QR therefore still points at the Play-signed
+ * universal APK, now for the reasons that remain sound (Play updates, and not shipping a product
+ * that rests on licence-tester behaviour) rather than because Billing was thought impossible
+ * otherwise.
  *
  * <p>Results are surfaced on the configuration screen, never only in logcat: logd prunes this
  * app's lines silently under load, so a log line that matters is a log line that may not exist.
