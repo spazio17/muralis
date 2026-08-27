@@ -223,6 +223,12 @@ public final class KioskActivity extends Activity {
      */
     private String connectionBaseline = "";
     /**
+     * The Play Billing spike, created the first time the configuration screen is shown and kept
+     * for the activity's life: the client holds a service binding, and rebuilding it on every
+     * screen rebuild would churn connections for nothing. Gates nothing yet; see {@link ProBilling}.
+     */
+    private ProBilling proBilling;
+    /**
      * How to draw the screen that is currently up, so a rotation can redraw it. Null on the
      * dashboard, which needs no redraw: a WebView reflows itself, and rebuilding it would reload
      * the page. See {@link #onConfigurationChanged}.
@@ -667,6 +673,10 @@ public final class KioskActivity extends Activity {
         if (unlockReceiverRegistered) {
             unregisterReceiver(unlockReceiver);
             unlockReceiverRegistered = false;
+        }
+        if (proBilling != null) {
+            proBilling.release();
+            proBilling = null;
         }
         destroyWebView();
         super.onDestroy();
@@ -1689,6 +1699,30 @@ public final class KioskActivity extends Activity {
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(manageSequences, matchWrap());
 
+        LinearLayout proCard = card(theme, "Muralis Pro");
+        TextView proState = new TextView(this);
+        proState.setTextColor(theme.subtext);
+        proState.setTextSize(14);
+        proState.setText("Checking Google Play…");
+        proCard.addView(proState, matchWrap());
+        Button buyPro = secondaryButton(theme, "Buy Muralis Pro");
+        buyPro.setVisibility(View.GONE);
+        buyPro.setOnClickListener(view -> proBilling.buy(this));
+        proCard.addView(buyPro, matchWrap());
+        if (proBilling == null) {
+            proBilling = new ProBilling(this);
+        }
+        proBilling.setListener((proDetail, owned, buyable) -> {
+            // This screen is rebuilt wholesale on rotation and after every save; a result that
+            // arrives for a replaced view tree must not touch it. Same attachment rule as the
+            // live-settings sync above.
+            if (!proState.isAttachedToWindow()) {
+                return;
+            }
+            proState.setText(proDetail);
+            buyPro.setVisibility(buyable ? View.VISIBLE : View.GONE);
+        });
+
         LinearLayout aboutCard = card(theme, "About");
         TextView buildLine = new TextView(this);
         buildLine.setTextColor(theme.subtext);
@@ -1701,7 +1735,7 @@ public final class KioskActivity extends Activity {
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 dashboardCard, mqttCard, httpCard, displayCard, statsCard, escapeCard,
-                aboutCard)),
+                proCard, aboutCard)),
                 matchWrap());
 
         Button open = primaryButton(theme, "Open dashboard");

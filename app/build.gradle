@@ -135,5 +135,9 @@ dependencies {
     // of copying sources across.
     implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
 
+    // Play Billing, for the Pro unlock. The 8.x line is the floor Play enforces for every
+    // new app and update from 2026-08-31, which is why this starts on 8 rather than 7.
+    implementation 'com.android.billingclient:billing:8.3.0'
+
     testImplementation 'junit:junit:4.13.2'
 }
