@@ -128,7 +128,12 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   allocations and any leaked handler in a way rebuilding in place cannot. And a **WebView rebuild
   when the OS reports low memory**, which is a response to a live condition, floored at once per 30
   minutes so a dashboard simply too big for the device cannot reload in a loop. Renderer death is
-  handled separately by `onRenderProcessGone`. An "Auto recycle" switch and a "Recycle time" clock
+  handled separately by `onRenderProcessGone`. Every WebView teardown (`destroyWebView`, so
+  `kiosk.restart`, the pressure rebuild and the nightly clean alike) also clears the WebView's
+  HTTP disk cache, which is app-global and otherwise survives even the process exit; cache only,
+  never cookies or WebStorage, those hold the dashboard's login and clearing them would log the
+  panel out. There is no separate "clear cache" command or button, by the same no-user-control
+  rule. An "Auto recycle" switch and a "Recycle time" clock
   existed on the tablet, in the web admin and over MQTT, and all of them were deleted along with the
   `kiosk.auto_recycle` and `kiosk.recycle_time` commands: these are recovery mechanisms, and a
   control whose only use is to stop a panel healing itself is surface area that can only be used to

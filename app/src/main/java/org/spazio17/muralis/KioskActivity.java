@@ -3290,6 +3290,12 @@ public final class KioskActivity extends Activity {
             if (parent != null) {
                 parent.removeView(webView);
             }
+            // Drop the HTTP disk cache while a WebView still exists to do it: the cache is
+            // app-global and survives even the nightly process exit, so without this every
+            // restart path rebuilt the view on the same stale files. Cache only, deliberately:
+            // cookies and WebStorage hold the dashboard's login, and clearing those would turn
+            // a routine restart into a logged-out panel.
+            webView.clearCache(true);
             webView.destroy();
             webView = null;
         }
