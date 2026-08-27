@@ -41,14 +41,21 @@ import java.util.List;
  *
  * <p>Billing Library 8, not 7: Play requires 8+ for every new app and update from 2026-08-31.
  *
+ * <p><b>Every field in this class belongs to the main thread.</b> The billing library does not say
+ * which thread its callbacks arrive on, and different callbacks are not promised the same one, so
+ * each callback hops to the main handler before touching anything. That is what makes the plain
+ * (unsynchronized, non-volatile) fields correct, and it is also what honours the
+ * {@link StatusListener} contract below without a second mechanism.
+ *
  * <p><b>Asked at startup, as Google's guide recommends</b>, from
- * {@code KioskActivity.initializeUserInterface}, and again whenever the configuration screen is
+ * {@code KioskActivity.initializeUserInterface}, again in {@code onResume} (Google's
+ * recommendation too, and on this app it is what re-asks after the Play purchase sheet closes,
+ * since coming back from the sheet is exactly a resume), and whenever the configuration screen is
  * built. On this app "startup" is not a rare event: the nightly pass exits the process and an alarm
  * relaunches the activity, so the query runs at least daily and a connection opened at startup
- * lives a day at most. An earlier version of this class deferred the whole thing to the
- * configuration screen, on the reasoning that the panel's foreground lasts months and a Play
- * binding should not; that reasoning was wrong, because the process does not last months. Juri
- * caught it 2026-08-27.
+ * lives a day at most. An earlier version deferred everything to the configuration screen, on the
+ * reasoning that the panel's foreground lasts months and a Play binding should not; that reasoning
+ * was wrong, because the process does not last months. Juri caught it 2026-08-27.
  *
  * <p>Two things follow from asking at startup, and both are the point rather than side effects: a
  * purchase made on another device on the same account is picked up by the next nightly restart with
@@ -66,13 +73,13 @@ final class ProBilling implements PurchasesUpdatedListener {
     interface StatusListener {
         /**
          * @param detail one plain sentence fit to show an operator
-         * @param owned  the signed-in account holds an acknowledged (or pending-free) purchase
+         * @param owned  a purchase of the product in the PURCHASED state exists for the signed-in
+         *               account, acknowledged or not; never true for a merely PENDING one
          * @param buyable product details are in hand and a purchase could be launched now
          */
         void onProStatus(String detail, boolean owned, boolean buyable);
     }
 
-    private final Context context;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final BillingClient client;
 
@@ -82,8 +89,13 @@ final class ProBilling implements PurchasesUpdatedListener {
      * {@code launchBillingFlow} fail, so the purchase path re-queries and uses the fresh object.
      */
     private ProductDetails productForDisplay;
-    /** Play's own reason for an empty product list, when it gave one. See {@link #unfetchedStatus}. */
-    private String unfetchedDetail;
+    /**
+     * Why there are no details to show, as a full sentence, or null while details are in hand:
+     * either Play's own per-product reason (see {@link #unfetchedStatus}) or the refusal the
+     * details query got. Kept so the purchases result, which lands after the details result and
+     * also repaints the card, cannot overwrite the explanation with a generic "not offered yet".
+     */
+    private String productProblem;
     private boolean owned;
     private boolean buyable;
     private String detail = "Checking Google Play…";
@@ -91,12 +103,11 @@ final class ProBilling implements PurchasesUpdatedListener {
     private boolean connecting;
 
     ProBilling(Context context) {
-        this.context = context.getApplicationContext();
         // enableOneTimeProducts is billing-8 for "this app handles pending purchases", which a
         // physical-store code purchase can produce; without declaring it the client refuses to
         // build. Auto-reconnection because the Play service connection is routinely dropped on an
         // idle panel, and this class would otherwise have to rebuild it by hand on every query.
-        client = BillingClient.newBuilder(this.context)
+        client = BillingClient.newBuilder(context.getApplicationContext())
                 .setListener(this)
                 .enablePendingPurchases(PendingPurchasesParams.newBuilder()
                         .enableOneTimeProducts()
@@ -105,14 +116,18 @@ final class ProBilling implements PurchasesUpdatedListener {
                 .build();
     }
 
-    /** The configuration screen registers itself here each time it is (re)built. */
+    /**
+     * The configuration screen registers itself here each time it is (re)built. Main thread. The
+     * current state is published to the new listener synchronously, before Play is re-asked, so
+     * the card paints the last known answer while its view tree is still being built.
+     */
     void setListener(StatusListener statusListener) {
         listener = statusListener;
         publish();
         refresh();
     }
 
-    /** Re-asks Play for the product and the account's purchases. Safe to call repeatedly. */
+    /** Re-asks Play for the product and the account's purchases. Main thread; safe to repeat. */
     void refresh() {
         if (client.isReady()) {
             query();
@@ -125,19 +140,24 @@ final class ProBilling implements PurchasesUpdatedListener {
         client.startConnection(new BillingClientStateListener() {
             @Override
             public void onBillingSetupFinished(BillingResult result) {
-                connecting = false;
-                if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
-                    query();
-                } else {
-                    report(unavailableSentence(result), false, false);
-                }
+                mainHandler.post(() -> {
+                    connecting = false;
+                    if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
+                        query();
+                    } else {
+                        // owned stays: a setup failure is transient knowledge about Play, not
+                        // knowledge that the purchase went away. When the gate reuses this state,
+                        // wiping it here would drop the remote surfaces on a network blip.
+                        report(unavailableSentence(result), owned, false);
+                    }
+                });
             }
 
             @Override
             public void onBillingServiceDisconnected() {
                 // Auto-reconnection is enabled on the client; nothing to rebuild here. The next
                 // refresh() finds isReady() false and connects again if the automatic path lost.
-                connecting = false;
+                mainHandler.post(() -> connecting = false);
             }
         });
     }
@@ -151,34 +171,45 @@ final class ProBilling implements PurchasesUpdatedListener {
      * <p>The purchase result arrives at {@link #onPurchasesUpdated}, not here.
      */
     void buy(Activity activity) {
-        client.queryProductDetailsAsync(productQuery(), (result, detailsResult) -> {
-            if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                report(unavailableSentence(result), owned, buyable);
-                return;
-            }
-            List<ProductDetails> found = detailsResult.getProductDetailsList();
-            if (found.isEmpty()) {
-                productForDisplay = null;
-                report(unfetchedSentence(detailsResult), owned, false);
-                return;
-            }
-            ProductDetails fresh = found.get(0);
-            productForDisplay = fresh;
-            BillingFlowParams params = BillingFlowParams.newBuilder()
-                    .setProductDetailsParamsList(Collections.singletonList(
+        client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
+                mainHandler.post(() -> {
+                    if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                        report(unavailableSentence(result), owned, buyable);
+                        return;
+                    }
+                    List<ProductDetails> found = detailsResult.getProductDetailsList();
+                    if (found.isEmpty()) {
+                        productForDisplay = null;
+                        productProblem = unfetchedSentence(detailsResult);
+                        report(productProblem, owned, false);
+                        return;
+                    }
+                    ProductDetails fresh = found.get(0);
+                    productForDisplay = fresh;
+                    productProblem = null;
+                    BillingFlowParams.ProductDetailsParams.Builder line =
                             BillingFlowParams.ProductDetailsParams.newBuilder()
-                                    .setProductDetails(fresh)
-                                    .build()))
-                    .build();
-            // launchBillingFlow must run on the main thread; the billing callback does not
-            // promise one.
-            mainHandler.post(() -> {
-                BillingResult launch = client.launchBillingFlow(activity, params);
-                if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    report(unavailableSentence(launch), owned, buyable);
-                }
-            });
-        });
+                                    .setProductDetails(fresh);
+                    // Google's billing-8 flow takes the offer token from the one-time offer list,
+                    // the same as it always has for subscriptions. This app sells one product with
+                    // its default purchase option, so the first offer is the offer; a product page
+                    // configured with several offers would need a chooser, not a different token.
+                    // Only set when present and non-empty: billing 8 throws on an empty token, and
+                    // a details object with no offer list launches on the product alone.
+                    String offerToken = offerTokenOf(fresh);
+                    if (offerToken != null) {
+                        line.setOfferToken(offerToken);
+                    }
+                    BillingFlowParams params = BillingFlowParams.newBuilder()
+                            .setProductDetailsParamsList(
+                                    Collections.singletonList(line.build()))
+                            .build();
+                    // Already on the main thread, which launchBillingFlow requires.
+                    BillingResult launch = client.launchBillingFlow(activity, params);
+                    if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                        report(unavailableSentence(launch), owned, buyable);
+                    }
+                }));
     }
 
     /** Called by the activity's onDestroy; the client holds a service binding. */
@@ -199,31 +230,31 @@ final class ProBilling implements PurchasesUpdatedListener {
     }
 
     private void query() {
-        client.queryProductDetailsAsync(productQuery(), (result, detailsResult) -> {
-            List<ProductDetails> found = detailsResult.getProductDetailsList();
-            if (result.getResponseCode() == BillingClient.BillingResponseCode.OK
-                    && !found.isEmpty()) {
-                productForDisplay = found.get(0);
-                unfetchedDetail = null;
-            } else {
-                productForDisplay = null;
-                if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    unfetchedDetail = null;
-                    Log.w(TAG, "Product details refused: " + result.getResponseCode()
-                            + " " + result.getDebugMessage());
-                } else {
-                    // The v8 API that says WHY a product came back empty, rather than leaving
-                    // "not offered yet" as the only thing anyone can report. This is the
-                    // difference between "the Play Console product does not exist" and "this
-                    // install cannot be matched to the listing", which look identical without it.
-                    unfetchedDetail = unfetchedStatus(detailsResult);
-                    if (unfetchedDetail != null) {
-                        Log.w(TAG, "Product " + PRODUCT_ID + " unfetched: " + unfetchedDetail);
+        client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
+                mainHandler.post(() -> {
+                    List<ProductDetails> found = detailsResult.getProductDetailsList();
+                    if (result.getResponseCode() == BillingClient.BillingResponseCode.OK
+                            && !found.isEmpty()) {
+                        productForDisplay = found.get(0);
+                        productProblem = null;
+                    } else if (result.getResponseCode()
+                            != BillingClient.BillingResponseCode.OK) {
+                        productForDisplay = null;
+                        productProblem = unavailableSentence(result);
+                        Log.w(TAG, "Product details refused: " + result.getResponseCode()
+                                + " " + result.getDebugMessage());
+                    } else {
+                        productForDisplay = null;
+                        // The v8 API that says WHY a product came back empty, rather than leaving
+                        // "not offered yet" as the only thing anyone can report. This is the
+                        // difference between "the Play Console product does not exist" and "this
+                        // install cannot be matched to the listing", which look identical
+                        // without it.
+                        productProblem = unfetchedSentence(detailsResult);
+                        Log.w(TAG, "Product " + PRODUCT_ID + " unfetched: " + productProblem);
                     }
-                }
-            }
-            queryPurchases();
-        });
+                    queryPurchases();
+                }));
     }
 
     /** The per-product reason Play gives for not returning details, or null if it gave none. */
@@ -274,35 +305,72 @@ final class ProBilling implements PurchasesUpdatedListener {
                 : "Google Play did not return the product (" + status + ").";
     }
 
+    /**
+     * The offer this app sells, from the billing-8 offer list with the legacy single-offer shape
+     * as the fallback. Null when the details carry neither, which is a details object this app has
+     * never actually seen but must not crash on.
+     */
+    private static ProductDetails.OneTimePurchaseOfferDetails offerOf(ProductDetails details) {
+        List<ProductDetails.OneTimePurchaseOfferDetails> offers =
+                details.getOneTimePurchaseOfferDetailsList();
+        if (offers != null && !offers.isEmpty()) {
+            return offers.get(0);
+        }
+        return details.getOneTimePurchaseOfferDetails();
+    }
+
+    /** The token of {@link #offerOf}'s offer, or null when there is no token to pass. */
+    private static String offerTokenOf(ProductDetails details) {
+        ProductDetails.OneTimePurchaseOfferDetails offer = offerOf(details);
+        if (offer == null) {
+            return null;
+        }
+        String token = offer.getOfferToken();
+        return token == null || token.isEmpty() ? null : token;
+    }
+
     private void queryPurchases() {
         client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder()
                         .setProductType(BillingClient.ProductType.INAPP)
                         .build(),
-                (result, purchases) -> {
+                (result, purchases) -> mainHandler.post(() -> {
                     if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                        report(unavailableSentence(result), false, productForDisplay != null);
+                        // owned stays, same reasoning as the setup failure above: a query that
+                        // could not run says nothing about the purchase.
+                        report(unavailableSentence(result), owned,
+                                productForDisplay != null && !owned);
                         return;
                     }
                     handlePurchases(purchases);
-                });
+                }));
     }
 
     @Override
     public void onPurchasesUpdated(BillingResult result, List<Purchase> purchases) {
-        int code = result.getResponseCode();
-        if (code == BillingClient.BillingResponseCode.OK && purchases != null) {
-            handlePurchases(purchases);
-        } else if (code == BillingClient.BillingResponseCode.USER_CANCELED) {
-            report(statusSentence(), owned, buyable);
-        } else if (code == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED) {
-            // Play's cache and ours disagree; the query is the tiebreaker.
-            queryPurchases();
-        } else {
-            report(unavailableSentence(result), owned, buyable);
-        }
+        mainHandler.post(() -> {
+            int code = result.getResponseCode();
+            if (code == BillingClient.BillingResponseCode.OK) {
+                if (purchases != null) {
+                    handlePurchases(purchases);
+                } else {
+                    // Documented combination: success with nothing attached. The query is the
+                    // tiebreaker, exactly as for ITEM_ALREADY_OWNED below; reporting a refusal
+                    // here would print a failure sentence over a success code.
+                    queryPurchases();
+                }
+            } else if (code == BillingClient.BillingResponseCode.USER_CANCELED) {
+                report(statusSentence(), owned, buyable);
+            } else if (code == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED) {
+                // Play's cache and ours disagree; the query is the tiebreaker.
+                queryPurchases();
+            } else {
+                report(unavailableSentence(result), owned, buyable);
+            }
+        });
     }
 
+    /** Main thread only, like every state touch in this class. */
     private void handlePurchases(List<Purchase> purchases) {
         boolean nowOwned = false;
         boolean pending = false;
@@ -314,13 +382,16 @@ final class ProBilling implements PurchasesUpdatedListener {
                 nowOwned = true;
                 // Unacknowledged purchases are refunded by Play after three days, so a panel
                 // that bought Pro and was then left alone would silently lose it. Acknowledged
-                // here rather than after the entitlement work lands for exactly that reason.
+                // here rather than after the entitlement work lands for exactly that reason; a
+                // refused acknowledgement is retried by the next query, which is at latest the
+                // nightly restart, well inside the three days.
                 if (!purchase.isAcknowledged()) {
                     client.acknowledgePurchase(
                             AcknowledgePurchaseParams.newBuilder()
                                     .setPurchaseToken(purchase.getPurchaseToken())
                                     .build(),
                             ackResult -> {
+                                // Log only: no state is touched, so no main-thread hop either.
                                 if (ackResult.getResponseCode()
                                         != BillingClient.BillingResponseCode.OK) {
                                     Log.w(TAG, "Purchase acknowledgement refused: "
@@ -349,15 +420,14 @@ final class ProBilling implements PurchasesUpdatedListener {
         }
         ProductDetails details = productForDisplay;
         if (details != null) {
-            ProductDetails.OneTimePurchaseOfferDetails offer =
-                    details.getOneTimePurchaseOfferDetails();
+            ProductDetails.OneTimePurchaseOfferDetails offer = offerOf(details);
             return offer == null
                     ? "Muralis Pro is available."
                     : "Muralis Pro is available: " + offer.getFormattedPrice() + ", one time.";
         }
-        return unfetchedDetail == null
+        return productProblem == null
                 ? "Google Play does not offer Muralis Pro to this device yet."
-                : "Google Play did not return the product (" + unfetchedDetail + ").";
+                : productProblem;
     }
 
     /**
@@ -379,6 +449,7 @@ final class ProBilling implements PurchasesUpdatedListener {
         }
     }
 
+    /** Main thread only: every caller is either a main-thread entry point or a hopped callback. */
     private void report(String sentence, boolean nowOwned, boolean nowBuyable) {
         owned = nowOwned;
         buyable = nowBuyable;
@@ -387,11 +458,9 @@ final class ProBilling implements PurchasesUpdatedListener {
     }
 
     private void publish() {
-        mainHandler.post(() -> {
-            StatusListener current = listener;
-            if (current != null) {
-                current.onProStatus(detail, owned, buyable);
-            }
-        });
+        StatusListener current = listener;
+        if (current != null) {
+            current.onProStatus(detail, owned, buyable);
+        }
     }
 }

@@ -666,6 +666,15 @@ public final class KioskActivity extends Activity {
         if (webView != null) {
             webView.onResume();
         }
+        // Google's guide asks for a purchases re-query in onResume, and on this app the case that
+        // makes it matter is concrete: closing the Play purchase sheet resumes this activity, so
+        // this is what confirms a purchase the moment the sheet closes, including one that
+        // completed while onPurchasesUpdated was not delivered. At startup this runs right after
+        // onCreate while the first connection is still being made, and the connecting guard in
+        // refresh() deduplicates that for free. Null while a direct-boot start waits for unlock.
+        if (proBilling != null) {
+            proBilling.refresh();
+        }
     }
 
     @Override
@@ -1726,18 +1735,24 @@ public final class KioskActivity extends Activity {
         buyPro.setOnClickListener(view -> proBilling.buy(this));
         proCard.addView(buyPro, matchWrap());
         // Created at startup, not here: this screen only attaches its card to it. setListener
-        // publishes what is already known before re-asking, so the card shows the last answer
-        // immediately rather than flashing "Checking Google Play…" on every rebuild.
+        // publishes what is already known, synchronously, before re-asking, so the card shows the
+        // last answer immediately rather than flashing "Checking Google Play…" on every rebuild.
+        // That synchronous call arrives while this tree is still being built and not yet attached
+        // to the window, which is why the staleness guard below must not run for it: an
+        // attachment test alone would silently eat exactly the paint the synchronous publish
+        // exists to deliver (and did, before the flag).
+        final boolean[] proCardBuilt = {false};
         proBilling.setListener((proDetail, owned, buyable) -> {
             // This screen is rebuilt wholesale on rotation and after every save; a result that
-            // arrives for a replaced view tree must not touch it. Same attachment rule as the
-            // live-settings sync above.
-            if (!proState.isAttachedToWindow()) {
+            // arrives later for a replaced view tree must not touch it. Same attachment rule as
+            // the live-settings sync above, skipped only for the build-time paint.
+            if (proCardBuilt[0] && !proState.isAttachedToWindow()) {
                 return;
             }
             proState.setText(proDetail);
             buyPro.setVisibility(buyable ? View.VISIBLE : View.GONE);
         });
+        proCardBuilt[0] = true;
 
         LinearLayout aboutCard = card(theme, "About");
         TextView buildLine = new TextView(this);
