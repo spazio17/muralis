@@ -255,6 +255,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
         super.onDestroy();
     }
 
+    /**
+     * The other half of showing Muralis in recents (see the manifest comment on KioskActivity):
+     * on an ordinary install, swiping the card away must close the app the way it closes any app,
+     * and without this it only removed the task while this foreground service, START_STICKY and
+     * notification and all, carried on as if nothing happened. On a device-owner panel the swipe
+     * is not reachable (lock task disables Overview) and a kiosk must survive anything short of a
+     * deliberate exit, so the service stays.
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        android.app.admin.DevicePolicyManager policy =
+                getSystemService(android.app.admin.DevicePolicyManager.class);
+        if (policy == null || !policy.isDeviceOwnerApp(getPackageName())) {
+            Log.i(TAG, "Task removed on a non-kiosk install; stopping with it");
+            stopSelf();
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
