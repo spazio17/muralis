@@ -74,6 +74,27 @@ if version_code=$(git -C "${project_dir}" rev-list --count HEAD 2>/dev/null); th
     version_args+=(--env "MURALIS_VERSION_CODE=${version_code}")
 fi
 
+# The licensing public key and the debug-only Pro override, forwarded when set. The container
+# inherits nothing from this shell, so a key exported on the host is invisible to Gradle without
+# this. Absent is a normal development state: the build succeeds, purchases cannot be verified,
+# and app/build.gradle refuses a *release* built that way. The key is read from a file beside the
+# upload key when the variable is not already exported, so an unattended release build works the
+# same way the keystore password does.
+entitlement_args=()
+license_key=${MURALIS_LICENSE_KEY:-}
+if [[ -z ${license_key} && -f "${key_dir}/license-key.txt" ]]; then
+    license_key=$(<"${key_dir}/license-key.txt")
+fi
+# Play Console prints the key wrapped across lines; base64 of a DER key has no newlines in it, so
+# strip all whitespace rather than trusting however it was pasted.
+license_key=${license_key//[[:space:]]/}
+if [[ -n ${license_key} ]]; then
+    entitlement_args+=(--env "MURALIS_LICENSE_KEY=${license_key}")
+fi
+if [[ -n ${MURALIS_PRO_OVERRIDE:-} ]]; then
+    entitlement_args+=(--env "MURALIS_PRO_OVERRIDE=${MURALIS_PRO_OVERRIDE}")
+fi
+
 # --no-daemon: each invocation is a fresh short-lived container, so a lingering
 # daemon would be killed with it anyway and only costs startup work.
 podman run --rm --interactive \
@@ -84,5 +105,6 @@ podman run --rm --interactive \
     --volume "${project_dir}/.gradle:/gradle" \
     "${key_args[@]+"${key_args[@]}"}" \
     "${version_args[@]+"${version_args[@]}"}" \
+    "${entitlement_args[@]+"${entitlement_args[@]}"}" \
     "${image_name}" \
     gradle --project-dir /src --no-daemon "$@"

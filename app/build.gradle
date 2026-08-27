@@ -31,6 +31,29 @@ def muralisVersionCode = (System.getenv('MURALIS_VERSION_CODE')
         ?: execGit(['rev-list', '--count', 'HEAD'])
         ?: '1') as Integer
 
+// The app's licensing PUBLIC key, from Play Console (Monetization setup, Licensing). Used by
+// PurchaseSignature to check that a purchase document really came from Play.
+//
+// Passed in rather than committed, the same way the version and the upload key are, and for the
+// same reason: it is an account-specific value that a fork or a rebuild should not silently
+// inherit. It is genuinely public (it ships inside every APK and anyone can extract it), so this
+// is about provenance rather than secrecy.
+//
+// Absent means no purchase can be verified, which means Pro never unlocks. That is correct for a
+// development build and catastrophic for a shipped one, so a SIGNED release refuses below rather
+// than shipping an app nobody can ever unlock.
+//
+// Whitespace is stripped because Play Console prints the key wrapped across lines: pasted into a
+// CI secret verbatim, the newlines would otherwise land inside the generated BuildConfig string
+// literal, which is a syntax error three steps removed from its cause. Base64 has no whitespace,
+// so this cannot damage a correct value.
+def muralisLicenseKey = (System.getenv('MURALIS_LICENSE_KEY') ?: '').replaceAll(/\s+/, '')
+
+// Debug-only override to force the entitlement on or off ("on"/"off"), so both the free and the
+// paid paths can be exercised on real hardware. Read by ProEntitlement inside a BuildConfig.DEBUG
+// branch, so R8 strips it from a release build entirely.
+def muralisProOverride = System.getenv('MURALIS_PRO_OVERRIDE') ?: ''
+
 android {
     namespace 'org.spazio17.muralis'
 
@@ -81,6 +104,12 @@ android {
     // 36 is Google Play's floor for new apps and updates from 2026-08-31.
     compileSdk 36
 
+    buildFeatures {
+        // Off by default since AGP 8, and this project needs it for LICENSE_KEY and PRO_OVERRIDE
+        // below. Nothing else uses BuildConfig.
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId 'org.spazio17.muralis'
 
@@ -93,6 +122,9 @@ android {
 
         versionCode muralisVersionCode
         versionName muralisVersionName
+
+        buildConfigField 'String', 'LICENSE_KEY', "\"${muralisLicenseKey}\""
+        buildConfigField 'String', 'PRO_OVERRIDE', "\"${muralisProOverride}\""
     }
 
     buildTypes {
@@ -118,6 +150,46 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // A release with no licensing key builds, signs and uploads perfectly, and then no customer
+    // can ever unlock Pro, with no error anywhere to say why. Same failure shape as the missing
+    // upload-key password the release workflow already refuses, so it is refused the same way:
+    // here, where the reason is legible, rather than in a review of why nobody is buying.
+    //
+    // Only a SIGNED release is refused, which is what separates "shippable" from "reproducible":
+    // this repo's stated design is that anyone can build the release variant with no secrets at
+    // all (CI does, on every push, and it produces an unsigned APK nobody can ship). The first
+    // version of this guard checked the task name alone and broke exactly that build. The
+    // keystore being configured is the mark of an artifact headed for users, so it is also the
+    // mark of an artifact that must be able to unlock Pro.
+    gradle.taskGraph.whenReady { graph ->
+        boolean releasing = graph.allTasks.any { it.name.toLowerCase().contains('release') }
+        boolean shippable = android.signingConfigs.release.storeFile != null
+        if (releasing && shippable && muralisLicenseKey.isEmpty()) {
+            throw new GradleException(
+                    'MURALIS_LICENSE_KEY is not set, so this signed release could never unlock '
+                    + 'Muralis Pro. Take the Base64-encoded RSA public key from Play Console '
+                    + '(Monetization setup, Licensing) and pass it in the environment, or unset '
+                    + 'the keystore to build an unsigned, non-shippable release.')
+        }
+        // A key that is present but mispasted (truncated, PEM header lines, the certificate
+        // fingerprint instead of the key) ships the exact same unfixable app as a missing one,
+        // just without tripping the check above: every purchase verification returns false and
+        // nothing anywhere says why. Gradle runs on a JVM, so the key can simply be parsed here,
+        // with the same decoder and KeyFactory the app itself will use. Any variant, not only
+        // releases: a wrong key in a debug build wastes an afternoon of on-device testing instead.
+        if (!muralisLicenseKey.isEmpty()) {
+            try {
+                java.security.KeyFactory.getInstance('RSA').generatePublic(
+                        new java.security.spec.X509EncodedKeySpec(
+                                java.util.Base64.decoder.decode(muralisLicenseKey)))
+            } catch (Exception notAKey) {
+                throw new GradleException('MURALIS_LICENSE_KEY is set but is not a valid '
+                        + 'Base64-encoded RSA public key (' + notAKey.message + '). Re-copy it '
+                        + 'from Play Console, Monetization setup, Licensing.', notAKey)
+            }
+        }
     }
 
     // Host-runnable unit tests for the pure-Java logic

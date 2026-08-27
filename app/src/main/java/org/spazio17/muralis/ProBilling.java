@@ -93,6 +93,7 @@ final class ProBilling implements PurchasesUpdatedListener {
         void onProStatus(String detail, boolean owned, boolean buyable);
     }
 
+    private final Context context;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final BillingClient client;
 
@@ -135,7 +136,8 @@ final class ProBilling implements PurchasesUpdatedListener {
         // physical-store code purchase can produce; without declaring it the client refuses to
         // build. Auto-reconnection because the Play service connection is routinely dropped on an
         // idle panel, and this class would otherwise have to rebuild it by hand on every query.
-        client = BillingClient.newBuilder(context.getApplicationContext())
+        this.context = context.getApplicationContext();
+        client = BillingClient.newBuilder(this.context)
                 .setListener(this)
                 .enablePendingPurchases(PendingPurchasesParams.newBuilder()
                         .enableOneTimeProducts()
@@ -408,6 +410,12 @@ final class ProBilling implements PurchasesUpdatedListener {
             }
             if (purchase.getPurchaseState() == Purchase.PurchaseState.PURCHASED) {
                 nowOwned = true;
+                // Verify Play's signature over the purchase and cache it, so the panel keeps Pro
+                // offline and after the Google account is removed. Every sighting is recorded, not
+                // only the first: the write is idempotent and this keeps one path rather than a
+                // "have I seen this before" flag that could disagree with what is stored.
+                ProEntitlement.record(context, purchase.getOriginalJson(),
+                        purchase.getSignature());
                 // Unacknowledged purchases are refunded by Play after three days, so a panel
                 // that bought Pro and was then left alone would silently lose it. Acknowledged
                 // here rather than after the entitlement work lands for exactly that reason; a
