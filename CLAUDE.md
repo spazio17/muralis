@@ -74,7 +74,23 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `MqttController.MAX_COMMAND_BYTES`, deliberately equal), and the caller-supplied command id is
   bounded to 96 characters and stripped of control characters before it is logged or echoed, so an
   embedded newline cannot forge log lines.
-- **Fail soft everywhere else.** A missing permission or capability logs a warning and continues
+- **The remote surfaces are the paid tier, gated in exactly two places.** Muralis Pro (Play
+  product `muralis_pro`, one-time, account-wide) unlocks MQTT and the web admin together; the
+  kiosk, recovery, the stats overlay and the local `TelemetryCollector` feeding it stay free and
+  ungated forever (DDA 3.7: what ships free must stay free, which is why the gate had to exist
+  before the first public release). The gate is `ProEntitlement.isActive` consulted at the top of
+  `KioskService.startControllersNow` and `restartControllers`, the only two places a controller is
+  ever built; do not add a third gate site or a third construction site. The entitlement is Play's
+  signed purchase document, verified on-device by `PurchaseSignature` (pure, host-tested; see its
+  javadoc for why there is deliberately no verification server) and cached in `SecretStore`, where
+  a negative answer never erases it: an empty `queryPurchasesAsync` cannot distinguish "never
+  bought" from "no account, no network", so a bought panel that is later de-Googled stays unlocked,
+  and, accepted knowingly, so does a refunded one. A free panel is never nagged: the surfaces
+  simply do not come up, and the configuration screen's dimmed MQTT and web-admin cards (visible,
+  inert, one line and a Buy button each) are the whole story. A purchase completing at the panel
+  starts the surfaces immediately via `reloadConfiguration`, no restart needed. Debug builds accept
+  `MURALIS_PRO_OVERRIDE=on|off` to force either path (R8-stripped from release); a signed release
+  refuses to build without `MURALIS_LICENSE_KEY`, or with one that does not parse.
   rather than crashing. This app runs across a much wider spread of Android versions and device
   policies than a build for one fixed piece of hardware would, so this matters more here, not less.
 - **A refused command is never silent.** Malformed input, an unusable command name, or a retained

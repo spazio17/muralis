@@ -1711,6 +1711,18 @@ public final class KioskActivity extends Activity {
         };
         mainHandler.postDelayed(liveSettingSyncTask, LIVE_SETTING_SYNC_INTERVAL_MS);
 
+        // The Pro gate's face. Juri's chosen shape (2026-08-27): the paid cards stay visible and
+        // complete but inert, each carrying one line and its own Buy button, because a feature
+        // nobody can see is a feature nobody buys, and a hidden card would also make a bought
+        // panel and a free one different screens. Evaluated once per build; the ProBilling
+        // listener below rebuilds this screen when the answer changes, so a purchase made at the
+        // panel unlocks the cards while the buyer is still standing there.
+        boolean proActive = ProEntitlement.isActive(this);
+        if (!proActive) {
+            lockCardForPro(theme, mqttCard);
+            lockCardForPro(theme, httpCard);
+        }
+
         LinearLayout escapeCard = card(theme, "Escape sequences");
         TextView escapeSummary = new TextView(this);
         escapeSummary.setTextColor(theme.subtext);
@@ -1747,6 +1759,14 @@ public final class KioskActivity extends Activity {
             // arrives later for a replaced view tree must not touch it. Same attachment rule as
             // the live-settings sync above, skipped only for the build-time paint.
             if (proCardBuilt[0] && !proState.isAttachedToWindow()) {
+                return;
+            }
+            // The entitlement changed while this screen was up, which outside a debug override
+            // means the purchase just completed: rebuild so the locked cards open. Only on a real
+            // transition, because a rebuild re-registers this listener and re-publishes, and a
+            // rebuild on every publish would loop.
+            if (proCardBuilt[0] && ProEntitlement.isActive(KioskActivity.this) != proActive) {
+                showConfiguration(KioskConfig.load(KioskActivity.this));
                 return;
             }
             proState.setText(proDetail);
@@ -3343,6 +3363,45 @@ public final class KioskActivity extends Activity {
         CharSequence rendered = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY);
         return rendered == null || rendered.length() == 0
                 ? KioskRuntimeState.overlayText() : rendered;
+    }
+
+    /**
+     * Makes a paid card inert without hiding what it is: every control it holds so far is
+     * disabled and dimmed, and one plain line plus a Buy button is appended at full strength.
+     * The fields keep their stored values on purpose, since a broker configured before the gate
+     * landed (or on another panel) is a real state the operator should see, not a secret.
+     *
+     * <p>Appending the button after the disable pass is what keeps it tappable; order matters.
+     */
+    private void lockCardForPro(KioskTheme theme, LinearLayout cardView) {
+        for (int i = 0; i < cardView.getChildCount(); i++) {
+            View child = cardView.getChildAt(i);
+            setEnabledDeeply(child, false);
+            // Dimmed, not recolored: alpha grays whatever a control draws, including the themed
+            // field backgrounds and the card title, without a second palette to maintain.
+            child.setAlpha(0.45f);
+        }
+        TextView needs = new TextView(this);
+        needs.setTextColor(theme.subtext);
+        needs.setTextSize(14);
+        needs.setText("Needs Muralis Pro.");
+        LinearLayout.LayoutParams needsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        needsParams.topMargin = dp(10);
+        cardView.addView(needs, needsParams);
+        Button unlock = secondaryButton(theme, "Buy Muralis Pro");
+        unlock.setOnClickListener(view -> proBilling.buy(this));
+        cardView.addView(unlock, matchWrap());
+    }
+
+    private static void setEnabledDeeply(View view, boolean enabled) {
+        view.setEnabled(enabled);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                setEnabledDeeply(group.getChildAt(i), enabled);
+            }
+        }
     }
 
     /**

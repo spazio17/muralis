@@ -402,6 +402,7 @@ final class ProBilling implements PurchasesUpdatedListener {
 
     /** Main thread only, like every state touch in this class. */
     private void handlePurchases(List<Purchase> purchases) {
+        boolean activeBefore = ProEntitlement.isActive(context);
         boolean nowOwned = false;
         boolean pending = false;
         for (Purchase purchase : purchases) {
@@ -444,6 +445,14 @@ final class ProBilling implements PurchasesUpdatedListener {
         }
         owned = nowOwned;
         buyable = productForDisplay != null && !nowOwned;
+        // The moment Pro arrives, the paid surfaces come up, without waiting for a restart:
+        // buying at the panel should visibly work while the buyer is still standing there. The
+        // reload takes the same path a settings save takes (restartControllers), which finds both
+        // controllers null and starts them, now past the gate.
+        if (!activeBefore && ProEntitlement.isActive(context)) {
+            Log.i(TAG, "Muralis Pro arrived; starting the remote surfaces");
+            KioskService.reloadConfiguration(context);
+        }
         if (pending && !nowOwned) {
             report("A Pro purchase is pending; Google Play will complete it.", false, false);
         } else {

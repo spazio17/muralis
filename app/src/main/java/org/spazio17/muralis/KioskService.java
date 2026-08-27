@@ -545,6 +545,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void startControllersNow() {
+        // The Pro gate, and the only two places it exists in this service (here and in
+        // restartControllers, the only two places a controller is ever built). MQTT and the web
+        // admin are the paid surfaces; everything else, the kiosk itself, recovery, the stats
+        // overlay, the local TelemetryCollector feeding it, stays free and untouched. A free panel
+        // is a finished product, not a nagged one: nothing here retries, warns or phones anywhere,
+        // the surfaces simply do not come up, and the configuration screen is where that is
+        // explained and where the purchase lives.
+        if (!ProEntitlement.isActive(this)) {
+            Log.i(TAG, "MQTT and the web admin stay off: Muralis Pro is not on this panel");
+            return;
+        }
         KioskConfig config = KioskConfig.load(this);
         mqttInputs = mqttInputsOf(config);
         httpInputs = httpInputsOf(config);
@@ -611,6 +622,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // gate, because whenOnline never returns null and fires inline when already online, a
         // non-null gate is the normal running state, not evidence that anything is pending.
         if (startupGate != null && startupGate.isPending()) {
+            return;
+        }
+        // The other half of the Pro gate (see startControllersNow). Checked before the
+        // input-fingerprint logic because a purchase completing is itself a "reload configuration"
+        // event (ProBilling sends one), and on that reload both controllers are null and must
+        // start. The reverse transition does not exist outside a debug override: the entitlement
+        // never revokes itself, so there is nothing to tear down here, and a debug build testing
+        // the free path gets the gate at the next process start.
+        if (!ProEntitlement.isActive(this)) {
+            Log.i(TAG, "MQTT and the web admin stay off: Muralis Pro is not on this panel");
             return;
         }
         KioskConfig config = KioskConfig.load(this);
