@@ -31,6 +31,24 @@ def muralisVersionCode = (System.getenv('MURALIS_VERSION_CODE')
         ?: execGit(['rev-list', '--count', 'HEAD'])
         ?: '1') as Integer
 
+// The app's licensing PUBLIC key, from Play Console (Monetization setup, Licensing). Used by
+// PurchaseSignature to check that a purchase document really came from Play.
+//
+// Passed in rather than committed, the same way the version and the upload key are, and for the
+// same reason: it is an account-specific value that a fork or a rebuild should not silently
+// inherit. It is genuinely public (it ships inside every APK and anyone can extract it), so this
+// is about provenance rather than secrecy.
+//
+// Absent means no purchase can be verified, which means Pro never unlocks. That is correct for a
+// development build and catastrophic for a release, so assembleRelease refuses below rather than
+// shipping an app nobody can ever unlock.
+def muralisLicenseKey = System.getenv('MURALIS_LICENSE_KEY') ?: ''
+
+// Debug-only override to force the entitlement on or off ("on"/"off"), so both the free and the
+// paid paths can be exercised on real hardware. Read by ProEntitlement inside a BuildConfig.DEBUG
+// branch, so R8 strips it from a release build entirely.
+def muralisProOverride = System.getenv('MURALIS_PRO_OVERRIDE') ?: ''
+
 android {
     namespace 'org.spazio17.muralis'
 
@@ -81,6 +99,12 @@ android {
     // 36 is Google Play's floor for new apps and updates from 2026-08-31.
     compileSdk 36
 
+    buildFeatures {
+        // Off by default since AGP 8, and this project needs it for LICENSE_KEY and PRO_OVERRIDE
+        // below. Nothing else uses BuildConfig.
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId 'org.spazio17.muralis'
 
@@ -93,6 +117,9 @@ android {
 
         versionCode muralisVersionCode
         versionName muralisVersionName
+
+        buildConfigField 'String', 'LICENSE_KEY', "\"${muralisLicenseKey}\""
+        buildConfigField 'String', 'PRO_OVERRIDE', "\"${muralisProOverride}\""
     }
 
     buildTypes {
@@ -118,6 +145,23 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // A release with no licensing key builds, signs and uploads perfectly, and then no customer
+    // can ever unlock Pro, with no error anywhere to say why. Same failure shape as the missing
+    // upload-key password the release workflow already refuses, so it is refused the same way:
+    // here, where the reason is legible, rather than in a review of why nobody is buying.
+    //
+    // Checked only when a release task is actually being run, so a debug build on a machine that
+    // has never seen the key stays a one-command build.
+    gradle.taskGraph.whenReady { graph ->
+        boolean releasing = graph.allTasks.any { it.name.toLowerCase().contains('release') }
+        if (releasing && muralisLicenseKey.isEmpty()) {
+            throw new GradleException(
+                    'MURALIS_LICENSE_KEY is not set, so this release could never unlock Muralis '
+                    + 'Pro. Take the Base64-encoded RSA public key from Play Console '
+                    + '(Monetization setup, Licensing) and pass it in the environment.')
+        }
     }
 
     // Host-runnable unit tests for the pure-Java logic
