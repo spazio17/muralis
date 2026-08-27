@@ -101,6 +101,21 @@ final class ProBilling implements PurchasesUpdatedListener {
     private String detail = "Checking Google Play…";
     private StatusListener listener;
     private boolean connecting;
+    /**
+     * Purchase tokens with an acknowledgement in flight, so the same purchase is never
+     * acknowledged twice at once.
+     *
+     * <p>Not hypothetical: on the first real test purchase (phone, 2026-08-27) two acknowledgements
+     * fired 14ms apart and Play refused both with "Server error, please try again". Completing a
+     * purchase delivers it through {@code onPurchasesUpdated} AND resumes this activity, which
+     * re-queries, and neither path saw {@code isAcknowledged} yet because Play had not processed
+     * the first call. The retry on the next query then succeeded, so nothing was lost, but one
+     * write per token is what should have been sent.
+     *
+     * <p>Cleared when the call completes, whatever the outcome, so a genuine failure is retried by
+     * the next query rather than being latched off. Main thread only, like every field here.
+     */
+    private final java.util.Set<String> acknowledging = new java.util.HashSet<>();
 
     ProBilling(Context context) {
         // enableOneTimeProducts is billing-8 for "this app handles pending purchases", which a
@@ -385,20 +400,22 @@ final class ProBilling implements PurchasesUpdatedListener {
                 // here rather than after the entitlement work lands for exactly that reason; a
                 // refused acknowledgement is retried by the next query, which is at latest the
                 // nightly restart, well inside the three days.
-                if (!purchase.isAcknowledged()) {
+                String token = purchase.getPurchaseToken();
+                if (!purchase.isAcknowledged() && acknowledging.add(token)) {
                     client.acknowledgePurchase(
                             AcknowledgePurchaseParams.newBuilder()
-                                    .setPurchaseToken(purchase.getPurchaseToken())
+                                    .setPurchaseToken(token)
                                     .build(),
-                            ackResult -> {
-                                // Log only: no state is touched, so no main-thread hop either.
+                            ackResult -> mainHandler.post(() -> {
+                                acknowledging.remove(token);
                                 if (ackResult.getResponseCode()
                                         != BillingClient.BillingResponseCode.OK) {
                                     Log.w(TAG, "Purchase acknowledgement refused: "
                                             + ackResult.getResponseCode()
-                                            + " " + ackResult.getDebugMessage());
+                                            + " " + ackResult.getDebugMessage()
+                                            + "; the next query retries it");
                                 }
-                            });
+                            }));
                 }
             } else if (purchase.getPurchaseState() == Purchase.PurchaseState.PENDING) {
                 pending = true;
