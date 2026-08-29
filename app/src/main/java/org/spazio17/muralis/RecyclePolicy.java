@@ -61,8 +61,20 @@ final class RecyclePolicy {
     enum Action {
         /** Nothing to do. */
         NONE,
-        /** Restart the whole app. Once a day, in the quiet hour. */
+        /** Restart the whole app. Once a day, in the quiet hour. Device-owner panels only. */
         NIGHTLY_RESTART,
+        /**
+         * The nightly pass on an ordinary (non-device-owner) install: rebuild the dashboard
+         * WebView in place instead of exiting the process. An ordinary install cannot survive
+         * {@code System.exit}: the relaunch alarm needs an exact-alarm permission from Android 12
+         * that this app deliberately does not hold ({@code SCHEDULE_EXACT_ALARM} needs a user
+         * grant and a Play declaration, {@code USE_EXACT_ALARM} is reserved for alarm-clock and
+         * calendar apps), so {@code setExact} throws, the catch swallows it, and the exit that
+         * follows is death with nothing scheduled to bring the app back. A device-owner panel is
+         * HOME and the system relaunches it regardless; an ordinary install has no such door
+         * holder, so it keeps its process and settles for reclaiming what a rebuild reclaims.
+         */
+        NIGHTLY_REBUILD,
         /** Rebuild the dashboard WebView in place, because the OS reported low memory. */
         REBUILD_DASHBOARD
     }
@@ -119,13 +131,19 @@ final class RecyclePolicy {
      * @param operatorOnScreen whether the configuration screen or the sequence recorder is up.
      *                        The pressure rebuild destroys the whole view tree, a half-edited
      *                        form included, so it waits for the operator to leave; the pressure
-     *                        is real but not instantaneous. The nightly restart ignores this on
-     *                        purpose: it runs inside the quiet hour, and deferring it would put
-     *                        the calendar-day rule at the mercy of a screen left open.
+     *                        is real but not instantaneous. The nightly pass ignores this on
+     *                        purpose, in both its shapes: it runs inside the quiet hour, and
+     *                        deferring it would put the calendar-day rule at the mercy of a
+     *                        screen left open.
+     * @param deviceOwner    whether this app is the device owner, which decides the nightly
+     *                        pass's shape: a process restart where the system is guaranteed to
+     *                        relaunch HOME, an in-place rebuild everywhere else. See
+     *                        {@link Action#NIGHTLY_REBUILD} for why an ordinary install must
+     *                        never take the exit.
      */
     static Decision decide(long nowMs, long lastRebuildMs, int hourOfDay, int minuteOfHour,
             int scheduledHour, int scheduledMinute, long todayEpochDay, long lastRestartDay,
-            boolean systemLowMemory, boolean operatorOnScreen) {
+            boolean systemLowMemory, boolean operatorOnScreen, boolean deviceOwner) {
         // Pressure first: it is a response to a condition that is true right now, where the nightly
         // pass is only housekeeping and can wait for the next minute, or the next night.
         if (systemLowMemory && !operatorOnScreen) {
@@ -140,7 +158,10 @@ final class RecyclePolicy {
 
         if (hourOfDay == scheduledHour && minuteOfHour == scheduledMinute
                 && todayEpochDay != lastRestartDay) {
-            return new Decision(Action.NIGHTLY_RESTART, "nightly restart");
+            return deviceOwner
+                    ? new Decision(Action.NIGHTLY_RESTART, "nightly restart")
+                    : new Decision(Action.NIGHTLY_REBUILD,
+                            "nightly rebuild, ordinary install");
         }
 
         return Decision.NOTHING;

@@ -699,7 +699,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 clock.get(java.util.Calendar.HOUR_OF_DAY), clock.get(java.util.Calendar.MINUTE),
                 RecyclePolicy.QUIET_HOUR, scheduledRecycleMinute(),
                 localEpochDay(clock), KioskConfig.lastNightlyRestartDay(this),
-                isSystemLowOnMemory(), KioskRuntimeState.operatorOnScreen());
+                isSystemLowOnMemory(), KioskRuntimeState.operatorOnScreen(), isDeviceOwner());
         if (!decision.act()) {
             return;
         }
@@ -708,6 +708,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (decision.action == RecyclePolicy.Action.NIGHTLY_RESTART) {
             restartApplication(localEpochDay(clock));
             return;
+        }
+        if (decision.action == RecyclePolicy.Action.NIGHTLY_REBUILD) {
+            // The date first, same rule as restartApplication: an unrecorded pass fires again on
+            // every following tick. The process survives this branch, but the write must not wait
+            // for anything that could fail after the rebuild starts.
+            KioskConfig.recordNightlyRestartDay(this, localEpochDay(clock));
         }
         lastRebuildAtMs = nowMs;
         // A rebuild is rare and worth knowing about promptly rather than at the next scheduled
@@ -755,8 +761,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     android.app.PendingIntent.FLAG_ONE_SHOT
                             | android.app.PendingIntent.FLAG_IMMUTABLE);
             if (alarms != null) {
-                alarms.setExact(android.app.AlarmManager.RTC_WAKEUP,
-                        System.currentTimeMillis() + RESTART_RELAUNCH_DELAY_MS, relaunch);
+                // From Android 12, setExact needs an exact-alarm permission this app does not
+                // hold and never will: SCHEDULE_EXACT_ALARM needs a user grant plus a Play
+                // declaration, USE_EXACT_ALARM is reserved for alarm-clock and calendar apps
+                // (see RecyclePolicy.Action.NIGHTLY_REBUILD). Where setExact would throw
+                // SecurityException, a plain set() needs nothing; it may fire minutes late,
+                // which is fine at 04:xx for an alarm that is belt and braces under the HOME
+                // relaunch, this path being device-owner-only since the same change.
+                if (android.os.Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
+                    alarms.setExact(android.app.AlarmManager.RTC_WAKEUP,
+                            System.currentTimeMillis() + RESTART_RELAUNCH_DELAY_MS, relaunch);
+                } else {
+                    alarms.set(android.app.AlarmManager.RTC_WAKEUP,
+                            System.currentTimeMillis() + RESTART_RELAUNCH_DELAY_MS, relaunch);
+                }
             }
         } catch (RuntimeException refused) {
             // Fail soft, and say so. START_STICKY plus being the HOME activity is the fallback, and
@@ -773,6 +791,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** This panel's minute within {@link RecyclePolicy#QUIET_HOUR}, fixed for the device. */
     private int scheduledRecycleMinute() {
         return RecyclePolicy.scheduledMinuteOf(KioskConfig.deviceIdOf(this));
+    }
+
+    /** Whether this app is the device owner, which decides the nightly pass's shape. */
+    private boolean isDeviceOwner() {
+        DevicePolicyManager policy = getSystemService(DevicePolicyManager.class);
+        return policy != null && policy.isDeviceOwnerApp(getPackageName());
     }
 
     /**

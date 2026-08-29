@@ -18,6 +18,7 @@ public final class RecyclePolicyTest {
         testPressureBeatsTheSchedule();
         testScheduleJitter();
         testOperatorScreenDefersTheRebuild();
+        testOrdinaryInstallRebuildsInsteadOfExiting();
         System.out.println("RecyclePolicyTest passed");
     }
 
@@ -58,26 +59,27 @@ public final class RecyclePolicyTest {
         long now = 100 * HOUR;
         // Nothing rebuilt yet this process: act immediately, do not wait out the floor.
         RecyclePolicy.Decision first = RecyclePolicy.decide(now, 0, 13, 0, 4, 37,
-                TODAY, YESTERDAY, true, false);
+                TODAY, YESTERDAY, true, false, true);
         require(first.action == RecyclePolicy.Action.REBUILD_DASHBOARD,
                 "system low memory did not trigger a rebuild");
 
         // Rate limited: a dashboard simply too big for the device would otherwise reload in a loop,
         // which is worse than the pressure it reacts to.
-        require(RecyclePolicy.decide(now, now - MINUTE, 13, 0, 4, 37, TODAY, YESTERDAY, true, false)
+        require(RecyclePolicy.decide(now, now - MINUTE, 13, 0, 4, 37, TODAY, YESTERDAY, true, false,
+                true)
                 .action == RecyclePolicy.Action.NONE, "pressure rebuilds must be rate limited");
         require(RecyclePolicy.decide(now, now - 31 * MINUTE, 13, 0, 4, 37, TODAY, YESTERDAY, true,
-                false)
+                false, true)
                 .action == RecyclePolicy.Action.REBUILD_DASHBOARD,
                 "a rebuild should be allowed again once the floor has passed");
         // Exactly at the floor counts as elapsed.
         require(RecyclePolicy.decide(now, now - RecyclePolicy.PRESSURE_MIN_INTERVAL_MS,
-                13, 0, 4, 37, TODAY, YESTERDAY, true, false).action
+                13, 0, 4, 37, TODAY, YESTERDAY, true, false, true).action
                 == RecyclePolicy.Action.REBUILD_DASHBOARD,
                 "the floor should be inclusive");
 
         // A backwards monotonic clock must not read as "a very long time ago".
-        require(RecyclePolicy.decide(now, now + HOUR, 13, 0, 4, 37, TODAY, YESTERDAY, true, false)
+        require(RecyclePolicy.decide(now, now + HOUR, 13, 0, 4, 37, TODAY, YESTERDAY, true, false, true)
                 .action == RecyclePolicy.Action.NONE, "a backwards clock triggered a rebuild");
     }
 
@@ -128,11 +130,15 @@ public final class RecyclePolicyTest {
                 "ids barely spread across the hour: " + distinct + " of " + ids.length);
     }
 
-    /** No pressure history, so the pressure floor is out of the way; hours and dates vary. */
+    /**
+     * No pressure history, so the pressure floor is out of the way; hours and dates vary. Device
+     * owner, because that is the shape every pre-2026-08-29 expectation in this file was written
+     * against; the ordinary-install shape has its own test below.
+     */
     private static RecyclePolicy.Decision decide(int hour, int minute, int scheduledHour,
             int scheduledMinute, long today, long lastRestartDay, boolean lowMemory) {
         return RecyclePolicy.decide(100 * HOUR, 0, hour, minute, scheduledHour, scheduledMinute,
-                today, lastRestartDay, lowMemory, false);
+                today, lastRestartDay, lowMemory, false, true);
     }
 
     /**
@@ -143,16 +149,45 @@ public final class RecyclePolicyTest {
      */
     private static void testOperatorScreenDefersTheRebuild() {
         long now = 100 * HOUR;
-        require(RecyclePolicy.decide(now, 0, 13, 0, 4, 37, TODAY, YESTERDAY, true, true)
+        require(RecyclePolicy.decide(now, 0, 13, 0, 4, 37, TODAY, YESTERDAY, true, true, true)
                 .action == RecyclePolicy.Action.NONE,
                 "the rebuild tore down an operator's open screen");
         // The same tick without the operator acts, so the deferral is the only thing holding it.
-        require(RecyclePolicy.decide(now, 0, 13, 0, 4, 37, TODAY, YESTERDAY, true, false)
+        require(RecyclePolicy.decide(now, 0, 13, 0, 4, 37, TODAY, YESTERDAY, true, false, true)
                 .action == RecyclePolicy.Action.REBUILD_DASHBOARD,
                 "the rebuild should fire as soon as the operator screen is gone");
-        require(RecyclePolicy.decide(now, 0, 4, 37, 4, 37, TODAY, YESTERDAY, false, true)
+        require(RecyclePolicy.decide(now, 0, 4, 37, 4, 37, TODAY, YESTERDAY, false, true, true)
                 .action == RecyclePolicy.Action.NIGHTLY_RESTART,
                 "the nightly restart must not be starved by a screen left open");
+    }
+
+    /**
+     * An ordinary install must never take the nightly process exit: the relaunch alarm needs an
+     * exact-alarm permission this app does not hold (Android 12+), and without device-owner HOME
+     * status nothing else brings the app back, so System.exit at 04:xx is a panel that dies every
+     * night, silently. The nightly pass rebuilds the WebView in place instead.
+     */
+    private static void testOrdinaryInstallRebuildsInsteadOfExiting() {
+        long now = 100 * HOUR;
+        require(RecyclePolicy.decide(now, 0, 4, 37, 4, 37, TODAY, YESTERDAY, false, false, false)
+                .action == RecyclePolicy.Action.NIGHTLY_REBUILD,
+                "an ordinary install should rebuild in place, never exit");
+        // The calendar rule is the same one: the service records the day for this shape too, and
+        // a recorded day answers NONE, so the pass cannot loop within the minute.
+        require(RecyclePolicy.decide(now, 0, 4, 37, 4, 37, TODAY, TODAY, false, false, false)
+                .action == RecyclePolicy.Action.NONE,
+                "the nightly rebuild looped within one night");
+        // Like the restart, the nightly rebuild must not be starved by a screen left open;
+        // operatorOnScreen defers only the pressure rebuild.
+        require(RecyclePolicy.decide(now, 0, 4, 37, 4, 37, TODAY, YESTERDAY, false, true, false)
+                .action == RecyclePolicy.Action.NIGHTLY_REBUILD,
+                "the nightly rebuild must not be starved by a screen left open");
+        // And it does not consult the pressure floor: a pressure rebuild minutes earlier does not
+        // cost the panel its nightly clean.
+        require(RecyclePolicy.decide(now, now - MINUTE, 4, 37, 4, 37, TODAY, YESTERDAY, false,
+                false, false)
+                .action == RecyclePolicy.Action.NIGHTLY_REBUILD,
+                "a recent pressure rebuild should not skip the nightly pass");
     }
 
     private static void require(boolean condition, String message) {
