@@ -31,21 +31,28 @@ final class KioskCommandDispatcher {
     }
 
     static final class CommandArgs {
-        static final CommandArgs EMPTY = new CommandArgs(-1, null, null);
+        static final CommandArgs EMPTY = new CommandArgs(-1, null, null, null);
 
         final int brightnessPercent;
         final String url;
         /** Null when the caller did not say, which is rejected rather than guessed at. */
         final Boolean enabled;
+        /** A named choice, for commands whose argument is a vocabulary rather than a flag. */
+        final String value;
 
         CommandArgs(int brightnessPercent, String url) {
-            this(brightnessPercent, url, null);
+            this(brightnessPercent, url, null, null);
         }
 
         CommandArgs(int brightnessPercent, String url, Boolean enabled) {
+            this(brightnessPercent, url, enabled, null);
+        }
+
+        CommandArgs(int brightnessPercent, String url, Boolean enabled, String value) {
             this.brightnessPercent = brightnessPercent;
             this.url = url;
             this.enabled = enabled;
+            this.value = value;
         }
     }
 
@@ -82,12 +89,16 @@ final class KioskCommandDispatcher {
         boolean setAutoBrightness(boolean enabled);
 
         /**
-         * Mounts the dashboard upright or on its side.
+         * Mounts the dashboard: "landscape", "portrait", or "auto", which follows the
+         * accelerometer until a fixed one is chosen. The strings mirror KioskConfig's
+         * ORIENTATION_* constants; they are spelled out here because this class is also compiled
+         * for the host test suite, where the Android side does not exist.
          *
-         * <p>No return value, unlike the brightness pair: every Android device can be asked to
-         * change orientation, so there is no failure to report.
+         * @return false only when "auto" is asked of a device with no accelerometer, so the
+         *         caller can refuse rather than report success for something that cannot happen;
+         *         the same contract as {@link #setAutoBrightness}
          */
-        void setPortrait(boolean enabled);
+        boolean setOrientation(String value);
 
         /** Stores {@code url} as the panel's dashboard and shows it. */
         void setDashboardUrl(String url);
@@ -199,11 +210,14 @@ final class KioskCommandDispatcher {
             // turn a panel's self-healing off, and the schedule is derived per device rather than
             // chosen. Both fall through to "unsupported", which is the honest answer for a control
             // this build does not have. See RecyclePolicy.
-            case "display.portrait":
-                if (args.enabled == null) {
-                    return rejected("enabled must be true or false");
+            case "display.orientation":
+                if (!"auto".equals(args.value) && !"landscape".equals(args.value)
+                        && !"portrait".equals(args.value)) {
+                    return rejected("value must be auto, landscape or portrait");
                 }
-                executor.setPortrait(args.enabled);
+                if (!executor.setOrientation(args.value)) {
+                    return rejected("this device has no accelerometer to follow");
+                }
                 return accepted();
             case "webadmin.enabled":
                 if (args.enabled == null) {

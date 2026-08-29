@@ -47,6 +47,8 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -1256,6 +1258,38 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** One orientation option, carrying its stored spelling as the tag the listener reads back. */
+    private RadioButton orientationChoice(
+            KioskTheme theme, RadioGroup group, String label, String value) {
+        RadioButton radio = new RadioButton(this);
+        radio.setText(label);
+        radio.setTextColor(theme.text);
+        radio.setTextSize(15);
+        radio.setId(View.generateViewId());
+        radio.setTag(value);
+        group.addView(radio, matchWrap());
+        return radio;
+    }
+
+    /**
+     * The radio-group spelling of {@link #setCheckedIfChanged}: checks the option whose tag
+     * matches, and only when it is not already checked, so following an external change never
+     * fires the listener for a value that was already correct. A stored "auto" on a device whose
+     * group does not offer it (no accelerometer) matches nothing and changes nothing, which
+     * mirrors what {@code applyOrientation} does with the same value.
+     */
+    private static void checkOrientationIfChanged(RadioGroup group, String value) {
+        for (int index = 0; index < group.getChildCount(); index++) {
+            View child = group.getChildAt(index);
+            if (value.equals(child.getTag())) {
+                if (group.getCheckedRadioButtonId() != child.getId()) {
+                    group.check(child.getId());
+                }
+                return;
+            }
+        }
+    }
+
     private KioskTheme currentTheme() {
         return KioskTheme.of(KioskConfig.storageContext(this)
                 .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
@@ -1639,14 +1673,34 @@ public final class KioskActivity extends Activity {
         brightnessModeNote = brightnessNote;
         applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
 
-        CheckBox portraitInput = themedCheckBox(theme, "Use portrait mode", config.portrait);
-        portraitInput.setOnCheckedChangeListener((button, checked) -> {
-            applyLiveSetting(editor -> editor.portrait(checked));
+        TextView orientationLabel = new TextView(this);
+        orientationLabel.setText("Orientation");
+        orientationLabel.setTextColor(theme.subtext);
+        orientationLabel.setTextSize(12);
+        displayCard.addView(orientationLabel, matchWrap());
+
+        RadioGroup orientationInput = new RadioGroup(this);
+        // "Follow the sensor" is offered only where a sensor exists to follow, the same gate the
+        // auto-brightness checkbox sits behind just above.
+        if (KioskService.hasAccelerometer(this)) {
+            orientationChoice(theme, orientationInput, "Follow the sensor",
+                    KioskConfig.ORIENTATION_AUTO);
+        }
+        orientationChoice(theme, orientationInput, "Landscape", KioskConfig.ORIENTATION_LANDSCAPE);
+        orientationChoice(theme, orientationInput, "Portrait", KioskConfig.ORIENTATION_PORTRAIT);
+        checkOrientationIfChanged(orientationInput, config.orientation);
+        orientationInput.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null) {
+                return;
+            }
+            String value = (String) checked.getTag();
+            applyLiveSetting(editor -> editor.orientation(value));
             // Applied here as well as saved, because this screen is the one surface that does not go
             // through KioskService and so never receives the broadcast that turns the window.
             applyOrientation();
         });
-        displayCard.addView(portraitInput, matchWrap());
+        displayCard.addView(orientationInput, matchWrap());
 
         // Kept in UI preferences rather than KioskConfig, and so deliberately outside
         // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
@@ -1729,8 +1783,8 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(statsOverlayInput,
                             KioskConfig.statsOverlayEnabled(KioskActivity.this));
-                    setCheckedIfChanged(portraitInput,
-                            KioskConfig.portraitEnabled(KioskActivity.this));
+                    checkOrientationIfChanged(orientationInput,
+                            KioskConfig.orientationOf(KioskActivity.this));
                 } finally {
                     syncingLiveControls = false;
                 }
@@ -3679,11 +3733,10 @@ public final class KioskActivity extends Activity {
                 }
                 liftVisualOff();
                 break;
-            case "display.portrait_on":
-            case "display.portrait_off":
-                // Both directions call the same method, which reads the setting KioskService has
-                // already stored, so there is one source of truth rather than a boolean carried in
-                // the broadcast that could disagree with what was saved.
+            case "display.orientation":
+                // The method reads the setting KioskService has already stored, so there is one
+                // source of truth rather than a value carried in the broadcast that could
+                // disagree with what was saved.
                 applyOrientation();
                 break;
             case "display.auto_brightness_on":
@@ -3957,25 +4010,43 @@ public final class KioskActivity extends Activity {
      * window level, so there is nothing left to reveal.
      */
     /**
-     * Turns the panel upright or on its side, from the stored setting.
+     * Turns the panel to the stored orientation: a fixed landscape or portrait, or "auto", which
+     * follows the accelerometer around all four ways up until the operator fixes one, the same
+     * shape auto-brightness has with the light sensor.
      *
      * <p>Applies unconditionally, not behind the device-owner gate the immersive chrome sits behind:
-     * a wall panel is mounted one way whether or not it is provisioned, and an operator who ticks
-     * "use portrait mode" means it on any install.
+     * a wall panel is mounted one way whether or not it is provisioned, and an operator who picks
+     * an orientation means it on any install.
      *
-     * <p>The *sensor* variants rather than the fixed ones, matching the manifest's own
-     * {@code sensorLandscape}: a panel screwed to the wall the other way up then still renders the
-     * right way round, and neither variant lets the dashboard flip between landscape and portrait on
-     * its own, which is the behaviour a wall mount actually wants.
+     * <p>The fixed choices are the *sensor* variants rather than truly fixed ones, matching the
+     * manifest's own default: a panel screwed to the wall the other way up then still renders the
+     * right way round, and neither variant lets the dashboard flip between landscape and portrait
+     * on its own, which is the behaviour a wall mount actually wants.
      *
      * <p>Cheap to call repeatedly. Android ignores a request for the orientation already in force,
      * and {@code configChanges} in the manifest already covers {@code orientation|screenSize}, so a
      * change rotates the window without recreating the activity or reloading the dashboard.
      */
     private void applyOrientation() {
-        setRequestedOrientation(KioskConfig.portraitEnabled(this)
-                ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        String orientation = KioskConfig.orientationOf(this);
+        int request;
+        switch (orientation) {
+            case KioskConfig.ORIENTATION_PORTRAIT:
+                request = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
+                break;
+            case KioskConfig.ORIENTATION_LANDSCAPE:
+                request = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+                break;
+            default:
+                // Auto. FULL_SENSOR is the four-way follow; a device with no accelerometer has
+                // nothing to follow, so the stored default falls back to the fixed landscape a
+                // wall panel would have had anyway rather than to a wrong reading.
+                request = KioskService.hasAccelerometer(this)
+                        ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                        : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+                break;
+        }
+        setRequestedOrientation(request);
     }
 
     private void setDashboardFullscreen(boolean fullscreen) {

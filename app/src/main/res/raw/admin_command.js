@@ -39,11 +39,11 @@ if(auto){auto.addEventListener('change',function(){
 auto.dataset.pending='1';
 send('cmnd=display.auto_brightness&enabled='+(auto.checked?'1':'0'),'display.auto_brightness')
 .then(function(){setTimeout(function(){delete auto.dataset.pending;},1500);});});}
-var portrait=document.getElementById('portrait');
-if(portrait){portrait.addEventListener('change',function(){
-portrait.dataset.pending='1';
-send('cmnd=display.portrait&enabled='+(portrait.checked?'1':'0'),'display.portrait')
-.then(function(){setTimeout(function(){delete portrait.dataset.pending;},1500);});});}
+var orientation=document.getElementById('orientation');
+if(orientation){orientation.addEventListener('change',function(){
+orientation.dataset.pending='1';
+send('cmnd=display.orientation&value='+encodeURIComponent(orientation.value),'display.orientation')
+.then(function(){setTimeout(function(){delete orientation.dataset.pending;},1500);});});}
 var slider=document.getElementById('brightness');
 if(slider){var label=document.getElementById('brightness-value'),timer=null;
 slider.addEventListener('input',function(){

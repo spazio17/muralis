@@ -35,7 +35,7 @@ function follow(id,value){var el=document.getElementById(id);
 if(!el||el.dataset.pending||value==null){return;}
 if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){el.value=value;}}
 follow('stats-overlay',cfg.stats_overlay);
-follow('portrait',cfg.portrait);
+follow('orientation',cfg.orientation);
 // The slider follows the real backlight, except while the operator is actually dragging it.
 var disp=data.display||{},sl=document.getElementById('brightness');
 if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){

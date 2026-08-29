@@ -530,11 +530,20 @@ final class MqttController implements MqttCallbackExtended {
 
             // A bare command name is a valid payload, which MqttController accepts deliberately so
             // that `mosquitto_pub -m kiosk.reload` works, so a button needs nothing more than this.
-            components.put("portrait", toggle(
-                    "Portrait mode",
-                    "{\"command\":\"display.portrait\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"display.portrait\",\"args\":{\"enabled\":false}}",
-                    "{{ 'ON' if value_json.config.portrait else 'OFF' }}"));
+            // "auto" is offered only where an accelerometer exists to drive it, the same gate
+            // the auto-brightness switch sits behind above. The spellings mirror KioskConfig's
+            // ORIENTATION_* constants.
+            org.json.JSONArray orientationOptions = new org.json.JSONArray();
+            if (KioskService.hasAccelerometer(appContext)) {
+                orientationOptions.put("auto");
+            }
+            orientationOptions.put("landscape");
+            orientationOptions.put("portrait");
+            components.put("orientation", select(
+                    "Orientation",
+                    "display.orientation",
+                    orientationOptions,
+                    "{{ value_json.config.orientation }}"));
             // The switch reflects the operator's flag, not whether a socket is bound: with no
             // admin password stored, "on" is an honest description of intent while the bind
             // stays refused, and the runtime state carries the difference.
@@ -568,6 +577,13 @@ final class MqttController implements MqttCallbackExtended {
             components.put("reboot", button("Reboot tablet", "system.reboot"));
             discovery.put("cmps", components);
 
+            // The "Portrait mode" switch became the "Orientation" select on 2026-08-29, and per
+            // the removal rule below, leaving it out of the payload would strand it as
+            // "unavailable" forever: it must be withdrawn once as an empty config holding only
+            // its platform, then the full configuration published without it. Keep this until no
+            // panel can still be announcing the switch; today that is only Juri's installation.
+            components.put("portrait", new JSONObject().put("p", "switch"));
+
             publishMqttStateEntity(device, origin);
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
@@ -585,6 +601,8 @@ final class MqttController implements MqttCallbackExtended {
             // Home Assistant, the only installation that ever saw those keys, held no trace of
             // them. Any entity removed after the app is public needs its withdrawal kept
             // indefinitely, because the last stranger's panel never announces its upgrade.
+            publish(topic, discovery.toString(), 1, true);
+            components.remove("portrait");
             publish(topic, discovery.toString(), 1, true);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
@@ -762,6 +780,28 @@ final class MqttController implements MqttCallbackExtended {
         box.put("value_template", valueTemplate);
         box.put("max", 255);
         return box;
+    }
+
+    /**
+     * A named choice among fixed options. The command template wraps the picked option into the
+     * same JSON envelope every other entity sends, and {@code tojson} quotes it, so the panel
+     * parses one shape.
+     */
+    private JSONObject select(
+            String name,
+            String command,
+            org.json.JSONArray options,
+            String valueTemplate) throws JSONException {
+        JSONObject select = new JSONObject();
+        select.put("p", "select");
+        select.put("name", name);
+        select.put("unique_id", uniqueId(name));
+        select.put("command_topic", topicPrefix + "command");
+        select.put("command_template",
+                "{\"command\":\"" + command + "\",\"args\":{\"value\":{{ value | tojson }}}}");
+        select.put("options", options);
+        select.put("value_template", valueTemplate);
+        return select;
     }
 
     /** A press. Stateless, so it needs no template and reads nothing. */

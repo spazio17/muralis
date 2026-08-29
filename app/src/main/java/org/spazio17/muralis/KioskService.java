@@ -837,7 +837,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("launcher_sequence", config.launcherSequence);
             }
             applied.put("stats_overlay", config.statsOverlay);
-            applied.put("portrait", config.portrait);
+            applied.put("orientation", config.orientation);
             // Live system state rather than a stored preference, so the web admin's checkbox tracks
             // the tablet's own auto-brightness toggle however it was changed.
             applied.put("has_light_sensor", hasLightSensor(this));
@@ -1043,7 +1043,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         KioskCommandDispatcher.CommandArgs args = new KioskCommandDispatcher.CommandArgs(
                 arguments.optInt("percent", -1),
                 arguments.optString("url", null),
-                enabled);
+                enabled,
+                arguments.has("value") ? arguments.optString("value", null) : null);
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -1140,7 +1141,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // dashboard_url rides in the telemetry document, and the web admin calls this method
         // directly, bypassing the dispatcher wrapper that republishes after accepted commands.
         // Without this line a URL saved on the page stayed stale in Home Assistant for up to a
-        // minute; same rule as setPortrait below. The dispatcher path publishes twice as a
+        // minute; same rule as setOrientation below. The dispatcher path publishes twice as a
         // result, which publishStateSoon's debounce coalesces.
         publishTelemetrySoon(this);
     }
@@ -1148,15 +1149,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * Stores the orientation and tells the activity to turn.
      *
-     * <p>The activity owns the window, so it has to be told. Telemetry is republished immediately
-     * because this is applied outside the dispatcher's own republish path, and without it Home
-     * Assistant would show the old value for up to a full publish interval.
+     * <p>The activity owns the window, so it has to be told; it reads the stored setting back
+     * rather than trusting a value carried in the broadcast, so there is one source of truth.
+     * Telemetry is republished immediately because this is applied outside the dispatcher's own
+     * republish path, and without it Home Assistant would show the old value for up to a full
+     * publish interval.
+     *
+     * @return false when "auto" is asked of a device with no accelerometer, before anything is
+     *         stored, so a rejected command leaves no half-applied state behind
      */
     @Override
-    public void setPortrait(boolean enabled) {
-        KioskConfig.edit(this).portrait(enabled).apply();
-        sendUiCommand(enabled ? "display.portrait_on" : "display.portrait_off", -1, null);
+    public boolean setOrientation(String value) {
+        if (KioskConfig.ORIENTATION_AUTO.equals(value) && !hasAccelerometer(this)) {
+            return false;
+        }
+        KioskConfig.edit(this).orientation(value).apply();
+        sendUiCommand("display.orientation", -1, null);
         publishTelemetrySoon(this);
+        return true;
     }
 
     /**
@@ -1249,6 +1259,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return sensors != null && sensors.getDefaultSensor(Sensor.TYPE_LIGHT) != null;
     }
 
+    /**
+     * True when this hardware can tell which way up it is, which is what the "auto" orientation
+     * follows. The same gate {@link #hasLightSensor} is for auto-brightness: a device without the
+     * sensor is never offered the mode.
+     */
+    static boolean hasAccelerometer(Context context) {
+        SensorManager sensors = context.getSystemService(SensorManager.class);
+        return sensors != null && sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null;
+    }
+
     /** Whether Android is currently tracking the light sensor. */
     static boolean isAutoBrightnessOn(Context context) {
         try {
@@ -1275,7 +1295,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public void setWebAdminEnabled(boolean enabled) {
         KioskConfig.edit(this).webAdminEnabled(enabled).apply();
-        // Same shape as setPortrait: persist, act, republish. reloadConfiguration rebinds or
+        // Same shape as setOrientation: persist, act, republish. reloadConfiguration rebinds or
         // stops the server through the same fingerprint path a save takes; note a caller on the
         // web admin itself hears "accepted" and then loses the surface it asked to lose.
         reloadConfiguration(this);

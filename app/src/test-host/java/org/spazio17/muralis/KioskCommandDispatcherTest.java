@@ -60,6 +60,32 @@ public final class KioskCommandDispatcherTest {
                 + noSensor.detail);
         executor.lightSensorPresent = true;
 
+        // display.orientation: the vocabulary is closed, forwarded verbatim, and "auto" on a
+        // device with no accelerometer is refused rather than silently accepted, the same
+        // contract auto_brightness has with the light sensor.
+        KioskCommandDispatcher.Result noValue = KioskCommandDispatcher.dispatch(
+                "display.orientation", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(noValue.status.equals("rejected"), "orientation without a value was accepted");
+        KioskCommandDispatcher.Result badValue = KioskCommandDispatcher.dispatch(
+                "display.orientation",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "upside-down"), executor);
+        require(badValue.status.equals("rejected"), "an unknown orientation was accepted");
+        require(executor.lastOrientation == null, "executor ran despite a bad value");
+        KioskCommandDispatcher.Result upright = KioskCommandDispatcher.dispatch(
+                "display.orientation",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "portrait"), executor);
+        require(upright.status.equals("accepted"), "portrait was rejected");
+        require("portrait".equals(executor.lastOrientation), "orientation not forwarded");
+        executor.accelerometerPresent = false;
+        KioskCommandDispatcher.Result noAccelerometer = KioskCommandDispatcher.dispatch(
+                "display.orientation",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "auto"), executor);
+        require(noAccelerometer.status.equals("rejected"),
+                "a device with no accelerometer must not report success for auto");
+        require(noAccelerometer.detail.contains("accelerometer"), "rejection should say why: "
+                + noAccelerometer.detail);
+        executor.accelerometerPresent = true;
+
         KioskCommandDispatcher.Result badUrl = KioskCommandDispatcher.dispatch(
                 "kiosk.set_url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
                 executor);
@@ -427,9 +453,14 @@ public final class KioskCommandDispatcherTest {
             return lightSensorPresent;
         }
 
+        boolean accelerometerPresent = true;
+        String lastOrientation = null;
+
         @Override
-        public void setPortrait(boolean enabled) {
-            calls.add("setPortrait:" + enabled);
+        public boolean setOrientation(String value) {
+            calls.add("setOrientation:" + value);
+            lastOrientation = value;
+            return accelerometerPresent || !"auto".equals(value);
         }
 
         @Override
