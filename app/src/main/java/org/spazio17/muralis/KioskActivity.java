@@ -1564,9 +1564,47 @@ public final class KioskActivity extends Activity {
 
 
         // Everything about how the glass looks, in one card: the backlight, which way up the
-        // panel is, and the colours of this screen itself. The web admin splits the last of those
-        // into the header pill because it has a header to put it in; this screen does not.
-        LinearLayout displayCard = card(theme, "Display");
+        // panel is, and the colours of this screen itself. That last one sits in the card's
+        // header as a sun/moon toggle, the same corner the web admin keeps its theme pick in: it
+        // is a view control for whoever is reading this screen, not one more device setting, and
+        // as a checkbox at the bottom of the card it read as an orphan.
+        LinearLayout displayCard = card(theme, null);
+        LinearLayout displayHeader = new LinearLayout(this);
+        displayHeader.setOrientation(LinearLayout.HORIZONTAL);
+        displayHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView displayTitle = new TextView(this);
+        displayTitle.setText("Display");
+        displayTitle.setTextColor(theme.text);
+        displayTitle.setTextSize(18);
+        displayHeader.addView(displayTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // Kept in UI preferences rather than KioskConfig, and so deliberately outside
+        // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
+        // screen, not a property of the device, and nothing else has any business following it.
+        TextView themeToggle = new TextView(this);
+        themeToggle.setText(theme.light ? "☾" : "☀︎");
+        themeToggle.setContentDescription(theme.light
+                ? "Switch this screen to the dark theme"
+                : "Switch this screen to the light theme");
+        themeToggle.setTextColor(theme.accentAlt);
+        themeToggle.setTextSize(17);
+        themeToggle.setGravity(Gravity.CENTER);
+        themeToggle.setMinWidth(dp(48));
+        themeToggle.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(18), dp(1)));
+        themeToggle.setPadding(dp(14), dp(6), dp(14), dp(6));
+        themeToggle.setOnClickListener(view -> {
+            KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(LIGHT_CONFIGURATION_THEME, !theme.light)
+                    .apply();
+            // Loaded fresh, not the snapshot this screen was built from; same rule the rotation
+            // redraw and the save button follow.
+            showConfiguration(KioskConfig.load(this));
+        });
+        displayHeader.addView(themeToggle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        displayCard.addView(displayHeader, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         final CheckBox autoBrightnessInput;
         // Remembered so saving the form can tell an actual change from an unchanged checkbox. Without
         // this, every save re-applied the current value, and on a device without the WRITE_SETTINGS
@@ -1577,6 +1615,13 @@ public final class KioskActivity extends Activity {
         // the checkbox because the checkbox enables and disables it.
         final SeekBar brightnessInput = new SeekBar(this);
         final TextView brightnessValue = new TextView(this);
+        // Caption first, then the sensor checkbox, then the slider: every cluster in this card
+        // leads with its heading, so nothing reads as a control floating on its own.
+        TextView brightnessCaption = fieldCaption(theme, "Brightness");
+        LinearLayout.LayoutParams brightnessCaptionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        brightnessCaptionParams.topMargin = dp(14);
+        displayCard.addView(brightnessCaption, brightnessCaptionParams);
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedCheckBox(theme,
                     "Adjust brightness automatically",
@@ -1607,7 +1652,7 @@ public final class KioskActivity extends Activity {
                 }
                 applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
             });
-            displayCard.addView(autoBrightnessInput, matchWrap());
+            displayCard.addView(autoBrightnessInput, matchWrapClose());
         } else {
             // No sensor, so no control: a toggle that cannot work is worse than no toggle.
             autoBrightnessInput = null;
@@ -1616,18 +1661,12 @@ public final class KioskActivity extends Activity {
             noSensor.setTextSize(13);
             noSensor.setText("This tablet has no ambient light sensor, so brightness is manual "
                     + "only. Set it remotely with display.brightness.");
-            displayCard.addView(noSensor, matchWrap());
+            displayCard.addView(noSensor, matchWrapClose());
         }
 
         // Brightness, applied as it moves, exactly like the web admin's slider and for the same
         // reason: it is a standalone control, so a Save button between the operator and the panel
         // getting brighter is pure ceremony.
-        TextView brightnessCaption = fieldCaption(theme, "Brightness");
-        LinearLayout.LayoutParams brightnessCaptionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        brightnessCaptionParams.topMargin = dp(14);
-        displayCard.addView(brightnessCaption, brightnessCaptionParams);
-
         LinearLayout brightnessRow = new LinearLayout(this);
         brightnessRow.setOrientation(LinearLayout.HORIZONTAL);
         brightnessRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -1673,12 +1712,12 @@ public final class KioskActivity extends Activity {
         brightnessRow.addView(brightnessInput, barParams);
         brightnessRow.addView(brightnessValue, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        displayCard.addView(brightnessRow, matchWrap());
+        displayCard.addView(brightnessRow, matchWrapClose());
 
         TextView brightnessNote = new TextView(this);
         brightnessNote.setTextColor(theme.subtext);
         brightnessNote.setTextSize(12);
-        displayCard.addView(brightnessNote, matchWrap());
+        displayCard.addView(brightnessNote, matchWrapClose());
         brightnessModeNote = brightnessNote;
         applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
 
@@ -1709,24 +1748,7 @@ public final class KioskActivity extends Activity {
             // through KioskService and so never receives the broadcast that turns the window.
             applyOrientation();
         });
-        displayCard.addView(orientationInput, matchWrap());
-
-        // Kept in UI preferences rather than KioskConfig, and so deliberately outside
-        // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
-        // screen, not a property of the device, and nothing else has any business following it.
-        CheckBox lightThemeInput = themedCheckBox(theme, "Light theme", theme.light);
-        lightThemeInput.setOnCheckedChangeListener((button, checked) -> {
-            KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(LIGHT_CONFIGURATION_THEME, checked)
-                    .apply();
-            // Loaded fresh, not the snapshot this screen was built from. Redrawing from a stale
-            // snapshot put old text in the URL and broker fields, and "Open dashboard" then wrote
-            // those back over whatever another surface had changed meanwhile. Same rule the
-            // rotation redraw and the save button already follow.
-            showConfiguration(KioskConfig.load(this));
-        });
-        displayCard.addView(lightThemeInput, matchWrap());
+        displayCard.addView(orientationInput, matchWrapClose());
 
         // The web admin's System stats box, on the tablet: the same eight rows from the same
         // formatter, with the switch that puts them on the dashboard directly under them. A switch
@@ -4476,6 +4498,18 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(16);
+        return params;
+    }
+
+    /**
+     * {@link #matchWrap()}'s spacing separates whole controls; this one keeps a control visually
+     * attached to the caption or sibling directly above it, inside one captioned cluster.
+     */
+    private LinearLayout.LayoutParams matchWrapClose() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(6);
         return params;
     }
 
