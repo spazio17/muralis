@@ -1855,17 +1855,33 @@ public final class KioskActivity extends Activity {
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(manageSequences, matchWrap());
 
-        LinearLayout proCard = card(theme, "Muralis Pro");
+        // The Pro state lives in About (moved 2026-08-29, Juri's call): it is a fact about this
+        // installation, like the version line beside it, not a card-sized feature of its own.
+        // The purchase still lives where the features it unlocks are: the locked MQTT and web
+        // admin cards stay visible, complete and inert, each with its own Buy button. The button
+        // here only appears while Play says the product is buyable, so a bought panel shows one
+        // quiet status line.
+        LinearLayout aboutCard = card(theme, "About");
+        TextView buildLine = new TextView(this);
+        buildLine.setTextColor(theme.subtext);
+        buildLine.setTextSize(13);
+        buildLine.setText(appVersionSummary());
+        aboutCard.addView(buildLine, matchWrap());
+        TextView proCaption = fieldCaption(theme, "Muralis Pro");
+        LinearLayout.LayoutParams proCaptionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        proCaptionParams.topMargin = dp(14);
+        aboutCard.addView(proCaption, proCaptionParams);
         TextView proState = new TextView(this);
         proState.setTextColor(theme.subtext);
         proState.setTextSize(14);
         proState.setText("Checking Google Play…");
-        proCard.addView(proState, matchWrap());
+        aboutCard.addView(proState, matchWrapClose());
         Button buyPro = secondaryButton(theme, "Buy Muralis Pro");
         buyPro.setVisibility(View.GONE);
         buyPro.setOnClickListener(view -> proBilling.buy(this));
-        proCard.addView(buyPro, matchWrap());
-        // Created at startup, not here: this screen only attaches its card to it. setListener
+        aboutCard.addView(buyPro, matchWrapClose());
+        // Created at startup, not here: this screen only attaches its row to it. setListener
         // publishes what is already known, synchronously, before re-asking, so the card shows the
         // last answer immediately rather than flashing "Checking Google Play…" on every rebuild.
         // That synchronous call arrives while this tree is still being built and not yet attached
@@ -1893,12 +1909,6 @@ public final class KioskActivity extends Activity {
         });
         proCardBuilt[0] = true;
 
-        LinearLayout aboutCard = card(theme, "About");
-        TextView buildLine = new TextView(this);
-        buildLine.setTextColor(theme.subtext);
-        buildLine.setTextSize(13);
-        buildLine.setText(appVersionSummary());
-        aboutCard.addView(buildLine, matchWrap());
         Button aboutButton = secondaryButton(theme, "Version, privacy and terms");
         aboutButton.setOnClickListener(view -> showAbout());
         aboutCard.addView(aboutButton, matchWrap());
@@ -1916,7 +1926,7 @@ public final class KioskActivity extends Activity {
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 dashboardCard, mqttCard, httpCard, displayCard, statsCard, escapeCard,
-                proCard, aboutCard)),
+                aboutCard)),
                 matchWrap());
 
         Button open = primaryButton(theme, "Open dashboard");
