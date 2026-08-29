@@ -20,6 +20,12 @@ final class KioskConfig {
     private static final String HTTP_PORT = "http_port";
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     private static final String STATS_OVERLAY = "stats_overlay";
+    private static final String ORIENTATION = "orientation";
+    /**
+     * Retired 2026-08-29, when the two-way portrait switch became the three-way orientation
+     * setting. Read only by the migration in {@link #orientationOf} and removed by the first
+     * orientation write; never written any more.
+     */
     private static final String PORTRAIT = "portrait";
     private static final String KIOSK_STOPPED = "kiosk_stopped";
     private static final String VISUAL_OFF_BOOT_COUNT = "visual_off_boot_count";
@@ -29,6 +35,11 @@ final class KioskConfig {
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
 
     static final int DEFAULT_HTTP_PORT = 8080;
+
+    /** Follow the accelerometer around all four ways up, until the operator fixes one. */
+    static final String ORIENTATION_AUTO = "auto";
+    static final String ORIENTATION_LANDSCAPE = "landscape";
+    static final String ORIENTATION_PORTRAIT = "portrait";
 
     // A loaded KioskConfig is a READ snapshot and a display model, never a write vehicle. The
     // fields stay mutable because the screens overlay half-typed values on one for redisplay, but
@@ -56,13 +67,16 @@ final class KioskConfig {
      */
     boolean statsOverlay = true;
     /**
-     * Whether the panel is mounted upright. Landscape by default, because that is how a wall
-     * dashboard is normally hung and it matches the manifest's own {@code sensorLandscape}.
+     * How the panel is mounted: {@link #ORIENTATION_LANDSCAPE}, {@link #ORIENTATION_PORTRAIT},
+     * or {@link #ORIENTATION_AUTO}, which follows the accelerometer until the operator picks a
+     * fixed one, the same shape auto-brightness has with the light sensor. Auto by default,
+     * because a fresh install is a device in somebody's hands, not yet a panel on a wall.
      *
-     * <p>Both states are the *sensor* variants rather than fixed ones, so a panel screwed to the
-     * wall the other way up still renders the right way round without a second setting for it.
+     * <p>The fixed states are still the *sensor* variants rather than truly fixed ones, so a
+     * panel screwed to the wall the other way up renders the right way round without a second
+     * setting for it; what they never do is flip between landscape and portrait on their own.
      */
-    boolean portrait = false;
+    String orientation = ORIENTATION_AUTO;
     /**
      * Whether the web admin is allowed to serve at all, independent of the password: turning the
      * surface off must not cost the operator their stored password, and turning it back on must
@@ -112,7 +126,7 @@ final class KioskConfig {
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
         config.statsOverlay = statsOverlayEnabled(context);
-        config.portrait = portraitEnabled(context);
+        config.orientation = orientationOf(context);
         config.settingsSequence = preferences.getString(SETTINGS_SEQUENCE, "");
         config.launcherSequence = preferences.getString(LAUNCHER_SEQUENCE, "");
         return config;
@@ -180,8 +194,11 @@ final class KioskConfig {
             return this;
         }
 
-        Editor portrait(boolean value) {
-            plain.putBoolean(PORTRAIT, value);
+        Editor orientation(String value) {
+            plain.putString(ORIENTATION, value);
+            // Completes the 2026-08-29 migration: the retired boolean stays readable until the
+            // first orientation write, then nothing is left to migrate.
+            plain.remove(PORTRAIT);
             return this;
         }
 
@@ -242,13 +259,28 @@ final class KioskConfig {
     }
 
     /**
-     * Narrow reader for the orientation, so callers that only need this one flag do not load and
-     * risk re-saving a whole snapshot. Same reasoning as {@link #statsOverlayEnabled}.
+     * Narrow reader for the orientation, so callers that only need this one value do not load
+     * and risk re-saving a whole snapshot. Same reasoning as {@link #statsOverlayEnabled}.
+     *
+     * <p>Migration lives here and only here: the setting was a "portrait" boolean until
+     * 2026-08-29, so a stored boolean is read as the fixed orientation it meant and an installed
+     * panel keeps its mount. Only an install that never stored either key gets the
+     * follow-the-sensor default. Anything unrecognised also falls to auto, which is the value
+     * that never strands a device sideways.
      */
-    static boolean portraitEnabled(Context context) {
-        return storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(PORTRAIT, false);
+    static String orientationOf(Context context) {
+        SharedPreferences preferences = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String stored = preferences.getString(ORIENTATION, null);
+        if (ORIENTATION_LANDSCAPE.equals(stored) || ORIENTATION_PORTRAIT.equals(stored)
+                || ORIENTATION_AUTO.equals(stored)) {
+            return stored;
+        }
+        if (preferences.contains(PORTRAIT)) {
+            return preferences.getBoolean(PORTRAIT, false)
+                    ? ORIENTATION_PORTRAIT : ORIENTATION_LANDSCAPE;
+        }
+        return ORIENTATION_AUTO;
     }
 
     /**

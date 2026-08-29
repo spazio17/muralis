@@ -527,6 +527,7 @@ final class HttpAdminServer {
         int percent = -1;
         String url = null;
         Boolean enabled = null;
+        String value = null;
 
         String contentType = headers.getOrDefault("content-type", "");
         if (method.equals("POST") && contentType.contains("application/json") && body.length > 0) {
@@ -537,6 +538,7 @@ final class HttpAdminServer {
                 if (args != null) {
                     percent = args.optInt("percent", -1);
                     url = args.has("url") ? args.optString("url", null) : null;
+                    value = args.has("value") ? args.optString("value", null) : null;
                     if (args.has("enabled")) {
                         // Shared parser, shared refusal: optBoolean(..., false) coerced any
                         // non-boolean, the number 1 included, to false, so the JSON and query
@@ -574,6 +576,7 @@ final class HttpAdminServer {
                 }
             }
             url = params.get("url");
+            value = params.get("value");
             if (params.containsKey("enabled")) {
                 // The same parser the JSON path uses. The old spelling list here treated every
                 // unrecognized value as false, so ?enabled=yes silently turned things off.
@@ -594,7 +597,7 @@ final class HttpAdminServer {
         }
 
         KioskCommandDispatcher.Result result = kioskService.dispatch(
-                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled));
+                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value));
         JSONObject response = new JSONObject();
         try {
             response.put("status", result.status);
@@ -1022,7 +1025,7 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append(brightnessControl())
                 .append(autoBrightnessControl())
-                .append(portraitControl())
+                .append(orientationControl())
                 .append("</fieldset>")
 
                 // kiosk.open_url, NOT kiosk.set_url: this box is for a URL with one-off query
@@ -1216,10 +1219,23 @@ final class HttpAdminServer {
      * post only persists, while this has to turn the panel now, and the command path already carries
      * the change through KioskService to the activity that owns the window.
      */
-    private String portraitControl() {
-        return "<label class=\"check\"><input type=\"checkbox\" id=\"portrait\""
-                + (KioskConfig.portraitEnabled(context) ? " checked" : "")
-                + "> Use portrait mode</label>";
+    private String orientationControl() {
+        String current = KioskConfig.orientationOf(context);
+        StringBuilder options = new StringBuilder();
+        // "auto" only where an accelerometer exists to drive it, the same gate the
+        // auto-brightness checkbox above sits behind.
+        if (KioskService.hasAccelerometer(context)) {
+            options.append(orientationOption("auto", "Auto-rotate", current));
+        }
+        options.append(orientationOption("landscape", "Landscape", current));
+        options.append(orientationOption("portrait", "Portrait", current));
+        return "<label class=\"check\">Orientation <select id=\"orientation\">"
+                + options + "</select></label>";
+    }
+
+    private static String orientationOption(String value, String label, String current) {
+        return "<option value=\"" + value + "\"" + (value.equals(current) ? " selected" : "")
+                + ">" + label + "</option>";
     }
 
     /**

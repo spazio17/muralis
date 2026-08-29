@@ -25,6 +25,9 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.text.Html;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.inputmethod.InputMethodManager;
@@ -45,8 +48,11 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -101,6 +107,23 @@ public final class KioskActivity extends Activity {
     private static final long LIVE_SETTING_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
     private static final int ADMIN_ESCAPE_ZONE_DP = 96;
+
+    /**
+     * Returns the loaded page's background luminance, 0 dark to 255 light, or -1 when the page
+     * gave no usable colour. Body first, then the document root for pages whose body is
+     * transparent; a fully transparent answer counts as no answer. The perceptual weights are
+     * the ordinary Rec. 601 ones. See {@link #probePageLuminance}.
+     */
+    private static final String PAGE_LUMINANCE_PROBE =
+            "(function(){function c(e){if(!e)return null;"
+            + "var m=getComputedStyle(e).backgroundColor"
+            + ".match(/rgba?\\(([\\d.]+)[ ,]+([\\d.]+)[ ,]+([\\d.]+)"
+            + "(?:[ ,\\/]+([\\d.]+%?))?\\)/);"
+            + "if(!m)return null;"
+            + "if(m[4]!==undefined&&parseFloat(m[4])===0)return null;"
+            + "return 0.299*m[1]+0.587*m[2]+0.114*m[3];}"
+            + "var v=c(document.body);if(v===null)v=c(document.documentElement);"
+            + "return v===null?-1:Math.round(v);})()";
     /**
      * Smallest visible-frame reduction treated as a keyboard rather than a system bar or cutout.
      * The software keyboard on this hardware is several hundred dp even in landscape; a navigation
@@ -247,6 +270,12 @@ public final class KioskActivity extends Activity {
     private boolean recordingForWizard;
     /** Whether the first-start wizard's intro screen is up. See {@link #showFirstStartWizard}. */
     private boolean wizardVisible;
+    /**
+     * Whether the loaded page told {@link #probePageLuminance} its background is light, which is
+     * what decides the status bar icon shade on an ordinary install. False until a page answers,
+     * which keeps the default light icons this app's own dark screens want.
+     */
+    private boolean dashboardPageIsLight;
     private final java.util.List<String> recordedZones = new java.util.ArrayList<>();
     private TextView recorderReadout;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -758,6 +787,10 @@ public final class KioskActivity extends Activity {
     private void publishOperatorScreenState() {
         KioskRuntimeState.publishOperatorOnScreen(
                 configurationVisible || recorderVisible || wizardVisible);
+        // Rides along here because this is already the choke point every screen transition
+        // passes through: the app's own screens are dark and want light icons, the dashboard
+        // wants whatever probePageLuminance last measured.
+        applyBarIconContrast();
     }
 
     /**
@@ -1060,10 +1093,14 @@ public final class KioskActivity extends Activity {
             return null;
         }
         int zone = dp(ADMIN_ESCAPE_ZONE_DP);
-        boolean left = x <= zone;
-        boolean right = x >= content.getWidth() - zone;
-        boolean top = y <= zone;
-        boolean bottom = y >= content.getHeight() - zone;
+        // Shifted by however far the system's tap-eating chrome intrudes into the content view,
+        // so the listening band starts where a tap can actually land. Same measurement the drawn
+        // targets are offset by in offsetCornerTargets; see systemBarOverlap for the why.
+        Rect overlap = systemBarOverlap();
+        boolean left = x <= overlap.left + zone;
+        boolean right = x >= content.getWidth() - overlap.right - zone;
+        boolean top = y <= overlap.top + zone;
+        boolean bottom = y >= content.getHeight() - overlap.bottom - zone;
         if (left && top) {
             return EscapeSequence.TOP_LEFT;
         }
@@ -1224,6 +1261,47 @@ public final class KioskActivity extends Activity {
     private static void setCheckedIfChanged(CheckBox box, boolean value) {
         if (box.isChecked() != value) {
             box.setChecked(value);
+        }
+    }
+
+    /** One orientation option, carrying its stored spelling as the tag the listener reads back. */
+    private RadioButton orientationChoice(
+            KioskTheme theme, RadioGroup group, String label, String value) {
+        RadioButton radio = new RadioButton(this);
+        radio.setText(label);
+        radio.setTextColor(theme.text);
+        radio.setTextSize(15);
+        // The platform default is a 48dp row, which stacked three high reads as a slab next to
+        // the card's other controls; 36dp keeps a real touch target without the dead band.
+        radio.setMinHeight(dp(36));
+        radio.setMinimumHeight(dp(36));
+        radio.setId(View.generateViewId());
+        radio.setTag(value);
+        // Not matchWrap(): its 16dp gap separates controls in a card, and between the rows of one
+        // radio group it read as three separate controls with room for a fourth in each gap.
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.topMargin = dp(2);
+        group.addView(radio, rowParams);
+        return radio;
+    }
+
+    /**
+     * The radio-group spelling of {@link #setCheckedIfChanged}: checks the option whose tag
+     * matches, and only when it is not already checked, so following an external change never
+     * fires the listener for a value that was already correct. A stored "auto" on a device whose
+     * group does not offer it (no accelerometer) matches nothing and changes nothing, which
+     * mirrors what {@code applyOrientation} does with the same value.
+     */
+    private static void checkOrientationIfChanged(RadioGroup group, String value) {
+        for (int index = 0; index < group.getChildCount(); index++) {
+            View child = group.getChildAt(index);
+            if (value.equals(child.getTag())) {
+                if (group.getCheckedRadioButtonId() != child.getId()) {
+                    group.check(child.getId());
+                }
+                return;
+            }
         }
     }
 
@@ -1489,9 +1567,49 @@ public final class KioskActivity extends Activity {
 
 
         // Everything about how the glass looks, in one card: the backlight, which way up the
-        // panel is, and the colours of this screen itself. The web admin splits the last of those
-        // into the header pill because it has a header to put it in; this screen does not.
-        LinearLayout displayCard = card(theme, "Display");
+        // panel is, and the colours of this screen itself. That last one sits in the card's
+        // header as a sun/moon toggle, the same corner the web admin keeps its theme pick in: it
+        // is a view control for whoever is reading this screen, not one more device setting, and
+        // as a checkbox at the bottom of the card it read as an orphan.
+        LinearLayout displayCard = card(theme, null);
+        LinearLayout displayHeader = new LinearLayout(this);
+        displayHeader.setOrientation(LinearLayout.HORIZONTAL);
+        displayHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView displayTitle = new TextView(this);
+        displayTitle.setText("Display");
+        displayTitle.setTextColor(theme.text);
+        displayTitle.setTextSize(18);
+        displayHeader.addView(displayTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // Kept in UI preferences rather than KioskConfig, and so deliberately outside
+        // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
+        // screen, not a property of the device, and nothing else has any business following it.
+        ImageView themeToggle = new ImageView(this);
+        themeToggle.setImageResource(theme.light
+                ? R.drawable.ic_theme_moon : R.drawable.ic_theme_sun);
+        // The sun in the palette's yellow, the moon in the neutral subtext grey: shapes and
+        // colours people already read as day and night, where the accent-blue font glyphs read
+        // as neither.
+        themeToggle.setColorFilter(theme.light ? theme.subtext : theme.warn);
+        themeToggle.setContentDescription(theme.light
+                ? "Switch this screen to the dark theme"
+                : "Switch this screen to the light theme");
+        themeToggle.setMinimumWidth(dp(48));
+        themeToggle.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(18), dp(1)));
+        themeToggle.setPadding(dp(14), dp(6), dp(14), dp(6));
+        themeToggle.setOnClickListener(view -> {
+            KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(LIGHT_CONFIGURATION_THEME, !theme.light)
+                    .apply();
+            // Loaded fresh, not the snapshot this screen was built from; same rule the rotation
+            // redraw and the save button follow.
+            showConfiguration(KioskConfig.load(this));
+        });
+        displayHeader.addView(themeToggle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        displayCard.addView(displayHeader, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         final CheckBox autoBrightnessInput;
         // Remembered so saving the form can tell an actual change from an unchanged checkbox. Without
         // this, every save re-applied the current value, and on a device without the WRITE_SETTINGS
@@ -1502,6 +1620,13 @@ public final class KioskActivity extends Activity {
         // the checkbox because the checkbox enables and disables it.
         final SeekBar brightnessInput = new SeekBar(this);
         final TextView brightnessValue = new TextView(this);
+        // Caption first, then the sensor checkbox, then the slider: every cluster in this card
+        // leads with its heading, so nothing reads as a control floating on its own.
+        TextView brightnessCaption = fieldCaption(theme, "Brightness");
+        LinearLayout.LayoutParams brightnessCaptionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        brightnessCaptionParams.topMargin = dp(14);
+        displayCard.addView(brightnessCaption, brightnessCaptionParams);
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedCheckBox(theme,
                     "Adjust brightness automatically",
@@ -1532,7 +1657,7 @@ public final class KioskActivity extends Activity {
                 }
                 applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
             });
-            displayCard.addView(autoBrightnessInput, matchWrap());
+            displayCard.addView(autoBrightnessInput, matchWrapClose());
         } else {
             // No sensor, so no control: a toggle that cannot work is worse than no toggle.
             autoBrightnessInput = null;
@@ -1541,21 +1666,12 @@ public final class KioskActivity extends Activity {
             noSensor.setTextSize(13);
             noSensor.setText("This tablet has no ambient light sensor, so brightness is manual "
                     + "only. Set it remotely with display.brightness.");
-            displayCard.addView(noSensor, matchWrap());
+            displayCard.addView(noSensor, matchWrapClose());
         }
 
         // Brightness, applied as it moves, exactly like the web admin's slider and for the same
         // reason: it is a standalone control, so a Save button between the operator and the panel
         // getting brighter is pure ceremony.
-        TextView brightnessCaption = new TextView(this);
-        brightnessCaption.setText("Brightness");
-        brightnessCaption.setTextColor(theme.subtext);
-        brightnessCaption.setTextSize(13);
-        LinearLayout.LayoutParams brightnessCaptionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        brightnessCaptionParams.topMargin = dp(14);
-        displayCard.addView(brightnessCaption, brightnessCaptionParams);
-
         LinearLayout brightnessRow = new LinearLayout(this);
         brightnessRow.setOrientation(LinearLayout.HORIZONTAL);
         brightnessRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -1601,40 +1717,43 @@ public final class KioskActivity extends Activity {
         brightnessRow.addView(brightnessInput, barParams);
         brightnessRow.addView(brightnessValue, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        displayCard.addView(brightnessRow, matchWrap());
+        displayCard.addView(brightnessRow, matchWrapClose());
 
         TextView brightnessNote = new TextView(this);
         brightnessNote.setTextColor(theme.subtext);
         brightnessNote.setTextSize(12);
-        displayCard.addView(brightnessNote, matchWrap());
+        displayCard.addView(brightnessNote, matchWrapClose());
         brightnessModeNote = brightnessNote;
         applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
 
-        CheckBox portraitInput = themedCheckBox(theme, "Use portrait mode", config.portrait);
-        portraitInput.setOnCheckedChangeListener((button, checked) -> {
-            applyLiveSetting(editor -> editor.portrait(checked));
+        TextView orientationLabel = fieldCaption(theme, "Orientation");
+        LinearLayout.LayoutParams orientationLabelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        orientationLabelParams.topMargin = dp(14);
+        displayCard.addView(orientationLabel, orientationLabelParams);
+
+        RadioGroup orientationInput = new RadioGroup(this);
+        // "Auto-rotate", the platform's own name for it, is offered only where a sensor exists to
+        // follow, the same gate the auto-brightness checkbox sits behind just above.
+        if (KioskService.hasAccelerometer(this)) {
+            orientationChoice(theme, orientationInput, "Auto-rotate",
+                    KioskConfig.ORIENTATION_AUTO);
+        }
+        orientationChoice(theme, orientationInput, "Landscape", KioskConfig.ORIENTATION_LANDSCAPE);
+        orientationChoice(theme, orientationInput, "Portrait", KioskConfig.ORIENTATION_PORTRAIT);
+        checkOrientationIfChanged(orientationInput, config.orientation);
+        orientationInput.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null) {
+                return;
+            }
+            String value = (String) checked.getTag();
+            applyLiveSetting(editor -> editor.orientation(value));
             // Applied here as well as saved, because this screen is the one surface that does not go
             // through KioskService and so never receives the broadcast that turns the window.
             applyOrientation();
         });
-        displayCard.addView(portraitInput, matchWrap());
-
-        // Kept in UI preferences rather than KioskConfig, and so deliberately outside
-        // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
-        // screen, not a property of the device, and nothing else has any business following it.
-        CheckBox lightThemeInput = themedCheckBox(theme, "Light theme", theme.light);
-        lightThemeInput.setOnCheckedChangeListener((button, checked) -> {
-            KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(LIGHT_CONFIGURATION_THEME, checked)
-                    .apply();
-            // Loaded fresh, not the snapshot this screen was built from. Redrawing from a stale
-            // snapshot put old text in the URL and broker fields, and "Open dashboard" then wrote
-            // those back over whatever another surface had changed meanwhile. Same rule the
-            // rotation redraw and the save button already follow.
-            showConfiguration(KioskConfig.load(this));
-        });
-        displayCard.addView(lightThemeInput, matchWrap());
+        displayCard.addView(orientationInput, matchWrapClose());
 
         // The web admin's System stats box, on the tablet: the same eight rows from the same
         // formatter, with the switch that puts them on the dashboard directly under them. A switch
@@ -1700,8 +1819,8 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(statsOverlayInput,
                             KioskConfig.statsOverlayEnabled(KioskActivity.this));
-                    setCheckedIfChanged(portraitInput,
-                            KioskConfig.portraitEnabled(KioskActivity.this));
+                    checkOrientationIfChanged(orientationInput,
+                            KioskConfig.orientationOf(KioskActivity.this));
                 } finally {
                     syncingLiveControls = false;
                 }
@@ -1738,17 +1857,33 @@ public final class KioskActivity extends Activity {
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(manageSequences, matchWrap());
 
-        LinearLayout proCard = card(theme, "Muralis Pro");
+        // The Pro state lives in About (moved 2026-08-29, Juri's call): it is a fact about this
+        // installation, like the version line beside it, not a card-sized feature of its own.
+        // The purchase still lives where the features it unlocks are: the locked MQTT and web
+        // admin cards stay visible, complete and inert, each with its own Buy button. The button
+        // here only appears while Play says the product is buyable, so a bought panel shows one
+        // quiet status line.
+        LinearLayout aboutCard = card(theme, "About");
+        TextView buildLine = new TextView(this);
+        buildLine.setTextColor(theme.subtext);
+        buildLine.setTextSize(13);
+        buildLine.setText(appVersionSummary());
+        aboutCard.addView(buildLine, matchWrap());
+        TextView proCaption = fieldCaption(theme, "Muralis Pro");
+        LinearLayout.LayoutParams proCaptionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        proCaptionParams.topMargin = dp(14);
+        aboutCard.addView(proCaption, proCaptionParams);
         TextView proState = new TextView(this);
         proState.setTextColor(theme.subtext);
         proState.setTextSize(14);
         proState.setText("Checking Google Play…");
-        proCard.addView(proState, matchWrap());
+        aboutCard.addView(proState, matchWrapClose());
         Button buyPro = secondaryButton(theme, "Buy Muralis Pro");
         buyPro.setVisibility(View.GONE);
         buyPro.setOnClickListener(view -> proBilling.buy(this));
-        proCard.addView(buyPro, matchWrap());
-        // Created at startup, not here: this screen only attaches its card to it. setListener
+        aboutCard.addView(buyPro, matchWrapClose());
+        // Created at startup, not here: this screen only attaches its row to it. setListener
         // publishes what is already known, synchronously, before re-asking, so the card shows the
         // last answer immediately rather than flashing "Checking Google Play…" on every rebuild.
         // That synchronous call arrives while this tree is still being built and not yet attached
@@ -1776,12 +1911,6 @@ public final class KioskActivity extends Activity {
         });
         proCardBuilt[0] = true;
 
-        LinearLayout aboutCard = card(theme, "About");
-        TextView buildLine = new TextView(this);
-        buildLine.setTextColor(theme.subtext);
-        buildLine.setTextSize(13);
-        buildLine.setText(appVersionSummary());
-        aboutCard.addView(buildLine, matchWrap());
         Button aboutButton = secondaryButton(theme, "Version, privacy and terms");
         aboutButton.setOnClickListener(view -> showAbout());
         aboutCard.addView(aboutButton, matchWrap());
@@ -1799,7 +1928,7 @@ public final class KioskActivity extends Activity {
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 dashboardCard, mqttCard, httpCard, displayCard, statsCard, escapeCard,
-                proCard, aboutCard)),
+                aboutCard)),
                 matchWrap());
 
         Button open = primaryButton(theme, "Open dashboard");
@@ -2081,6 +2210,13 @@ public final class KioskActivity extends Activity {
         addCornerTarget(root, theme, Gravity.TOP | Gravity.END, size, "top-right");
         addCornerTarget(root, theme, Gravity.BOTTOM | Gravity.START, size, "bottom-left");
         addCornerTarget(root, theme, Gravity.BOTTOM | Gravity.END, size, "bottom-right");
+        // Once now for the common case where the window is already attached and the insets are
+        // known, and again from the listener for the first-ever render, where they are not yet.
+        offsetCornerTargets(root);
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            offsetCornerTargets(root);
+            return insets;
+        });
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -2180,7 +2316,97 @@ public final class KioskActivity extends Activity {
         params.gravity = gravity;
         int margin = dp(8);
         params.setMargins(margin, margin, margin, margin);
+        // The gravity doubles as the tag so offsetCornerTargets can tell which edges this
+        // square hangs from without keeping a parallel list of views.
+        target.setTag(gravity);
         root.addView(target, params);
+    }
+
+    /**
+     * Pushes the drawn corner squares clear of the system bars, so the corner a person aims at
+     * is a corner that can hear the tap.
+     *
+     * <p>On a device-owner panel the bars are hidden and this moves nothing. On an ordinary
+     * install from Android 15 the platform lays the app out edge to edge, the status bar is drawn
+     * over the top band of both top squares, and the system eats every tap in that band: measured
+     * on the Pixel 9 Pro XL on 2026-08-29, three taps inside the drawn top-left square at the
+     * bar's height recorded nothing while the same taps below it recorded normally. The same
+     * class of bug as the drawn-versus-listening drift documented on {@link #cornerZoneAt}, with
+     * the platform's own chrome as the cause this time.
+     */
+    private void offsetCornerTargets(FrameLayout root) {
+        Rect overlap = systemBarOverlap();
+        int margin = dp(8);
+        for (int index = 0; index < root.getChildCount(); index++) {
+            View child = root.getChildAt(index);
+            if (!(child.getTag() instanceof Integer)) {
+                continue;
+            }
+            int gravity = (Integer) child.getTag();
+            boolean top = (gravity & Gravity.VERTICAL_GRAVITY_MASK) == Gravity.TOP;
+            boolean start = (gravity & Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK) == Gravity.START;
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) child.getLayoutParams();
+            params.setMargins(
+                    margin + (start ? overlap.left : 0),
+                    margin + (top ? overlap.top : 0),
+                    margin + (start ? 0 : overlap.right),
+                    margin + (top ? 0 : overlap.bottom));
+            child.setLayoutParams(params);
+        }
+    }
+
+    /**
+     * How far the system's tap-eating chrome intrudes into the content view, in content
+     * coordinates, all four edges.
+     *
+     * <p>Zero on a device-owner panel, where the bars are hidden, and zero wherever the window is
+     * laid out below the bars, which is every ordinary install before the platform's Android 15
+     * edge-to-edge enforcement. The tappable-element insets are asked rather than the bar heights
+     * because they answer the actual question: gesture navigation's bottom strip passes taps
+     * through and reports zero, a three-button bar eats them and reports its height.
+     */
+    @SuppressWarnings("deprecation")
+    private Rect systemBarOverlap() {
+        Rect overlap = new Rect();
+        View content = findViewById(android.R.id.content);
+        View decor = getWindow().getDecorView();
+        android.view.WindowInsets insets = decor.getRootWindowInsets();
+        if (content == null || insets == null || content.getWidth() == 0) {
+            return overlap;
+        }
+        int left;
+        int top;
+        int right;
+        int bottom;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.graphics.Insets bars = insets.getInsets(
+                    android.view.WindowInsets.Type.tappableElement()
+                            | android.view.WindowInsets.Type.displayCutout());
+            left = bars.left;
+            top = bars.top;
+            right = bars.right;
+            bottom = bars.bottom;
+        } else {
+            // Deprecated from API 30 but the only spelling below it, the same both-paths rule as
+            // enterImmersiveMode. Hidden bars report zero here too.
+            left = insets.getSystemWindowInsetLeft();
+            top = insets.getSystemWindowInsetTop();
+            right = insets.getSystemWindowInsetRight();
+            bottom = insets.getSystemWindowInsetBottom();
+        }
+        int[] contentOrigin = new int[2];
+        int[] decorOrigin = new int[2];
+        content.getLocationOnScreen(contentOrigin);
+        decor.getLocationOnScreen(decorOrigin);
+        // The insets are window-relative. Where the content view already sits below a bar, the
+        // subtraction lands at zero and nothing moves.
+        overlap.left = Math.max(0, decorOrigin[0] + left - contentOrigin[0]);
+        overlap.top = Math.max(0, decorOrigin[1] + top - contentOrigin[1]);
+        overlap.right = Math.max(0, contentOrigin[0] + content.getWidth()
+                - (decorOrigin[0] + decor.getWidth() - right));
+        overlap.bottom = Math.max(0, contentOrigin[1] + content.getHeight()
+                - (decorOrigin[1] + decor.getHeight() - bottom));
+        return overlap;
     }
 
     private void recordZone(String zone) {
@@ -3052,11 +3278,30 @@ public final class KioskActivity extends Activity {
         return group;
     }
 
-    private void addField(LinearLayout parent, KioskTheme theme, String label, EditText input) {
+    /**
+     * A field caption, e.g. "Dashboard URL": a third-level heading, so a step bigger than the
+     * informational 13sp lines it used to be indistinguishable from ("Web admin disabled",
+     * "Rendering engine: ..."). A parenthetical tail like " (blank keeps the current one)" is
+     * itself information rather than heading, so it stays at the informational size.
+     */
+    private TextView fieldCaption(KioskTheme theme, String label) {
         TextView caption = new TextView(this);
-        caption.setText(label);
+        int aside = label.indexOf(" (");
+        if (aside >= 0) {
+            SpannableString styled = new SpannableString(label);
+            styled.setSpan(new RelativeSizeSpan(13f / 15f), aside, label.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            caption.setText(styled);
+        } else {
+            caption.setText(label);
+        }
         caption.setTextColor(theme.subtext);
-        caption.setTextSize(13);
+        caption.setTextSize(15);
+        return caption;
+    }
+
+    private void addField(LinearLayout parent, KioskTheme theme, String label, EditText input) {
+        TextView caption = fieldCaption(theme, label);
         LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         captionParams.topMargin = dp(14);
@@ -3553,11 +3798,10 @@ public final class KioskActivity extends Activity {
                 }
                 liftVisualOff();
                 break;
-            case "display.portrait_on":
-            case "display.portrait_off":
-                // Both directions call the same method, which reads the setting KioskService has
-                // already stored, so there is one source of truth rather than a boolean carried in
-                // the broadcast that could disagree with what was saved.
+            case "display.orientation":
+                // The method reads the setting KioskService has already stored, so there is one
+                // source of truth rather than a value carried in the broadcast that could
+                // disagree with what was saved.
                 applyOrientation();
                 break;
             case "display.auto_brightness_on":
@@ -3746,6 +3990,9 @@ public final class KioskActivity extends Activity {
             if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
                 KioskRuntimeState.recordPageFinished(url);
             }
+            // Asked whatever the policy decided: the icons sit over what is actually on the
+            // glass, success or not.
+            probePageLuminance(view);
         }
 
         @Override
@@ -3828,25 +4075,43 @@ public final class KioskActivity extends Activity {
      * window level, so there is nothing left to reveal.
      */
     /**
-     * Turns the panel upright or on its side, from the stored setting.
+     * Turns the panel to the stored orientation: a fixed landscape or portrait, or "auto", which
+     * follows the accelerometer around all four ways up until the operator fixes one, the same
+     * shape auto-brightness has with the light sensor.
      *
      * <p>Applies unconditionally, not behind the device-owner gate the immersive chrome sits behind:
-     * a wall panel is mounted one way whether or not it is provisioned, and an operator who ticks
-     * "use portrait mode" means it on any install.
+     * a wall panel is mounted one way whether or not it is provisioned, and an operator who picks
+     * an orientation means it on any install.
      *
-     * <p>The *sensor* variants rather than the fixed ones, matching the manifest's own
-     * {@code sensorLandscape}: a panel screwed to the wall the other way up then still renders the
-     * right way round, and neither variant lets the dashboard flip between landscape and portrait on
-     * its own, which is the behaviour a wall mount actually wants.
+     * <p>The fixed choices are the *sensor* variants rather than truly fixed ones, matching the
+     * manifest's own default: a panel screwed to the wall the other way up then still renders the
+     * right way round, and neither variant lets the dashboard flip between landscape and portrait
+     * on its own, which is the behaviour a wall mount actually wants.
      *
      * <p>Cheap to call repeatedly. Android ignores a request for the orientation already in force,
      * and {@code configChanges} in the manifest already covers {@code orientation|screenSize}, so a
      * change rotates the window without recreating the activity or reloading the dashboard.
      */
     private void applyOrientation() {
-        setRequestedOrientation(KioskConfig.portraitEnabled(this)
-                ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        String orientation = KioskConfig.orientationOf(this);
+        int request;
+        switch (orientation) {
+            case KioskConfig.ORIENTATION_PORTRAIT:
+                request = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
+                break;
+            case KioskConfig.ORIENTATION_LANDSCAPE:
+                request = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+                break;
+            default:
+                // Auto. FULL_SENSOR is the four-way follow; a device with no accelerometer has
+                // nothing to follow, so the stored default falls back to the fixed landscape a
+                // wall panel would have had anyway rather than to a wrong reading.
+                request = KioskService.hasAccelerometer(this)
+                        ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                        : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+                break;
+        }
+        setRequestedOrientation(request);
     }
 
     private void setDashboardFullscreen(boolean fullscreen) {
@@ -3928,6 +4193,69 @@ public final class KioskActivity extends Activity {
             }
         }
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        applyBarIconContrast();
+    }
+
+    /**
+     * Asks the loaded page how light its background is, so the status bar icons can be flipped
+     * dark over a light dashboard. Without this an ordinary install showing a light page renders
+     * the bar white on white, clock and icons gone, only the battery fill surviving; found on the
+     * Pixel 9 Pro XL over the Home Assistant demo, 2026-08-29.
+     *
+     * <p>The page's computed background colour is the honest source: this app does not choose
+     * the dashboard's palette and must not guess it from a URL. Body first, the document root as
+     * the fallback for pages whose body is transparent, and no answer at all leaves the icons
+     * where they are.
+     */
+    private void probePageLuminance(WebView view) {
+        if (isDeviceOwner()) {
+            // The panel hides its bars; there are no icons to contrast.
+            return;
+        }
+        view.evaluateJavascript(PAGE_LUMINANCE_PROBE, result -> {
+            double luminance;
+            try {
+                luminance = Double.parseDouble(result);
+            } catch (NumberFormatException | NullPointerException unanswered) {
+                return;
+            }
+            if (luminance < 0) {
+                return;
+            }
+            dashboardPageIsLight = luminance >= 128;
+            applyBarIconContrast();
+        });
+    }
+
+    /**
+     * Dark status and navigation icons over a light dashboard, the default light icons
+     * everywhere else. The app's own screens are dark by design, so only the WebView, the one
+     * surface whose colour this app does not choose, ever earns the flip.
+     *
+     * <p>Both API paths for the same reason as {@link #enterImmersiveMode}: the flags are all
+     * that exists below API 30, the controller is the only non-deprecated spelling from it.
+     */
+    @SuppressWarnings("deprecation")
+    private void applyBarIconContrast() {
+        if (isDeviceOwner()) {
+            return;
+        }
+        boolean dashboardShowing = !configurationVisible && !recorderVisible && !wizardVisible;
+        boolean darkIcons = dashboardShowing && dashboardPageIsLight;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController insets = getWindow().getInsetsController();
+            if (insets != null) {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                insets.setSystemBarsAppearance(darkIcons ? mask : 0, mask);
+                return;
+            }
+        }
+        View decor = getWindow().getDecorView();
+        int visibility = decor.getSystemUiVisibility();
+        int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        decor.setSystemUiVisibility(darkIcons ? visibility | flags : visibility & ~flags);
     }
 
     /**
@@ -4185,6 +4513,18 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(16);
+        return params;
+    }
+
+    /**
+     * {@link #matchWrap()}'s spacing separates whole controls; this one keeps a control visually
+     * attached to the caption or sibling directly above it, inside one captioned cluster.
+     */
+    private LinearLayout.LayoutParams matchWrapClose() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(6);
         return params;
     }
 

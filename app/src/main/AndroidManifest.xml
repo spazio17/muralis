@@ -119,7 +119,7 @@
             android:directBootAware="false"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullSensor"
             android:windowSoftInputMode="adjustResize">
             <!-- No android:priority here, unlike the ROM build: priority on a HOME filter only
                  works for a platform-signed app in the system image, and there is no Lineage
