@@ -141,7 +141,16 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **Two self-maintenance mechanisms, deliberately different in scale, and no user control over
   either.** `RecyclePolicy` decides between them. A **nightly restart of the whole app**, once a day
   at `QUIET_HOUR` (04) plus a per-device offset derived from `String.hashCode()` of the device id, routine cleaning, and because the process actually exits it reclaims the heap, the renderer, native
-  allocations and any leaked handler in a way rebuilding in place cannot. And a **WebView rebuild
+  allocations and any leaked handler in a way rebuilding in place cannot. **The full process exit
+  is device-owner-only** (2026-08-29): an ordinary install gets a nightly WebView rebuild in place
+  instead (`Action.NIGHTLY_REBUILD`, same calendar-day rule, same recorded day). The exit cannot
+  be survived without device-owner status, for two independent reasons: the relaunch alarm calls
+  `setExact`, which from Android 12 needs an exact-alarm permission this app deliberately does not
+  hold (`SCHEDULE_EXACT_ALARM` needs a user grant plus a Play declaration; `USE_EXACT_ALARM` is
+  reserved for alarm-clock/calendar apps), and even a scheduled activity start from a dead process
+  is a background start on modern Android. A device-owner panel is HOME, so the system relaunches
+  it regardless. Where `setExact` would throw, `restartApplication` now falls back to an inexact
+  `set()`, belt and braces under the HOME relaunch. And a **WebView rebuild
   when the OS reports low memory**, which is a response to a live condition, floored at once per 30
   minutes so a dashboard simply too big for the device cannot reload in a loop. Renderer death is
   handled separately by `onRenderProcessGone`. Every WebView teardown (`destroyWebView`, so
