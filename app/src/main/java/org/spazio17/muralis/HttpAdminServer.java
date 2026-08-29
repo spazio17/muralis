@@ -1229,7 +1229,11 @@ final class HttpAdminServer {
         }
         options.append(orientationOption("landscape", "Landscape", current));
         options.append(orientationOption("portrait", "Portrait", current));
-        return "<label class=\"check\">Orientation <select id=\"orientation\">"
+        // A plain label, not label.check: that class is display:flex for a checkbox and its text,
+        // and a select carries width:100%, so the two fought over one line and the caption ended
+        // up beside the control instead of above it, alone among this page's fields. The default
+        // block label is what Port, Broker host and every other field here already use.
+        return "<label>Orientation<select id=\"orientation\">"
                 + options + "</select></label>";
     }
 
