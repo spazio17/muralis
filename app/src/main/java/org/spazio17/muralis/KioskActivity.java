@@ -48,6 +48,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
@@ -1581,15 +1582,17 @@ public final class KioskActivity extends Activity {
         // Kept in UI preferences rather than KioskConfig, and so deliberately outside
         // applyLiveSetting: it is a preference of whoever is standing at the tablet reading this
         // screen, not a property of the device, and nothing else has any business following it.
-        TextView themeToggle = new TextView(this);
-        themeToggle.setText(theme.light ? "☾" : "☀︎");
+        ImageView themeToggle = new ImageView(this);
+        themeToggle.setImageResource(theme.light
+                ? R.drawable.ic_theme_moon : R.drawable.ic_theme_sun);
+        // The sun in the palette's yellow, the moon in the neutral subtext grey: shapes and
+        // colours people already read as day and night, where the accent-blue font glyphs read
+        // as neither.
+        themeToggle.setColorFilter(theme.light ? theme.subtext : theme.warn);
         themeToggle.setContentDescription(theme.light
                 ? "Switch this screen to the dark theme"
                 : "Switch this screen to the light theme");
-        themeToggle.setTextColor(theme.accentAlt);
-        themeToggle.setTextSize(17);
-        themeToggle.setGravity(Gravity.CENTER);
-        themeToggle.setMinWidth(dp(48));
+        themeToggle.setMinimumWidth(dp(48));
         themeToggle.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(18), dp(1)));
         themeToggle.setPadding(dp(14), dp(6), dp(14), dp(6));
         themeToggle.setOnClickListener(view -> {
