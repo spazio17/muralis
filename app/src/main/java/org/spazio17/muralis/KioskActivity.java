@@ -101,6 +101,23 @@ public final class KioskActivity extends Activity {
     private static final long LIVE_SETTING_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
     private static final int ADMIN_ESCAPE_ZONE_DP = 96;
+
+    /**
+     * Returns the loaded page's background luminance, 0 dark to 255 light, or -1 when the page
+     * gave no usable colour. Body first, then the document root for pages whose body is
+     * transparent; a fully transparent answer counts as no answer. The perceptual weights are
+     * the ordinary Rec. 601 ones. See {@link #probePageLuminance}.
+     */
+    private static final String PAGE_LUMINANCE_PROBE =
+            "(function(){function c(e){if(!e)return null;"
+            + "var m=getComputedStyle(e).backgroundColor"
+            + ".match(/rgba?\\(([\\d.]+)[ ,]+([\\d.]+)[ ,]+([\\d.]+)"
+            + "(?:[ ,\\/]+([\\d.]+%?))?\\)/);"
+            + "if(!m)return null;"
+            + "if(m[4]!==undefined&&parseFloat(m[4])===0)return null;"
+            + "return 0.299*m[1]+0.587*m[2]+0.114*m[3];}"
+            + "var v=c(document.body);if(v===null)v=c(document.documentElement);"
+            + "return v===null?-1:Math.round(v);})()";
     /**
      * Smallest visible-frame reduction treated as a keyboard rather than a system bar or cutout.
      * The software keyboard on this hardware is several hundred dp even in landscape; a navigation
@@ -245,6 +262,12 @@ public final class KioskActivity extends Activity {
     private boolean recordingForWizard;
     /** Whether the first-start wizard's intro screen is up. See {@link #showFirstStartWizard}. */
     private boolean wizardVisible;
+    /**
+     * Whether the loaded page told {@link #probePageLuminance} its background is light, which is
+     * what decides the status bar icon shade on an ordinary install. False until a page answers,
+     * which keeps the default light icons this app's own dark screens want.
+     */
+    private boolean dashboardPageIsLight;
     private final java.util.List<String> recordedZones = new java.util.ArrayList<>();
     private TextView recorderReadout;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -756,6 +779,10 @@ public final class KioskActivity extends Activity {
     private void publishOperatorScreenState() {
         KioskRuntimeState.publishOperatorOnScreen(
                 configurationVisible || recorderVisible || wizardVisible);
+        // Rides along here because this is already the choke point every screen transition
+        // passes through: the app's own screens are dark and want light icons, the dashboard
+        // wants whatever probePageLuminance last measured.
+        applyBarIconContrast();
     }
 
     /**
@@ -1058,10 +1085,14 @@ public final class KioskActivity extends Activity {
             return null;
         }
         int zone = dp(ADMIN_ESCAPE_ZONE_DP);
-        boolean left = x <= zone;
-        boolean right = x >= content.getWidth() - zone;
-        boolean top = y <= zone;
-        boolean bottom = y >= content.getHeight() - zone;
+        // Shifted by however far the system's tap-eating chrome intrudes into the content view,
+        // so the listening band starts where a tap can actually land. Same measurement the drawn
+        // targets are offset by in offsetCornerTargets; see systemBarOverlap for the why.
+        Rect overlap = systemBarOverlap();
+        boolean left = x <= overlap.left + zone;
+        boolean right = x >= content.getWidth() - overlap.right - zone;
+        boolean top = y <= overlap.top + zone;
+        boolean bottom = y >= content.getHeight() - overlap.bottom - zone;
         if (left && top) {
             return EscapeSequence.TOP_LEFT;
         }
@@ -2079,6 +2110,13 @@ public final class KioskActivity extends Activity {
         addCornerTarget(root, theme, Gravity.TOP | Gravity.END, size, "top-right");
         addCornerTarget(root, theme, Gravity.BOTTOM | Gravity.START, size, "bottom-left");
         addCornerTarget(root, theme, Gravity.BOTTOM | Gravity.END, size, "bottom-right");
+        // Once now for the common case where the window is already attached and the insets are
+        // known, and again from the listener for the first-ever render, where they are not yet.
+        offsetCornerTargets(root);
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            offsetCornerTargets(root);
+            return insets;
+        });
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -2178,7 +2216,97 @@ public final class KioskActivity extends Activity {
         params.gravity = gravity;
         int margin = dp(8);
         params.setMargins(margin, margin, margin, margin);
+        // The gravity doubles as the tag so offsetCornerTargets can tell which edges this
+        // square hangs from without keeping a parallel list of views.
+        target.setTag(gravity);
         root.addView(target, params);
+    }
+
+    /**
+     * Pushes the drawn corner squares clear of the system bars, so the corner a person aims at
+     * is a corner that can hear the tap.
+     *
+     * <p>On a device-owner panel the bars are hidden and this moves nothing. On an ordinary
+     * install from Android 15 the platform lays the app out edge to edge, the status bar is drawn
+     * over the top band of both top squares, and the system eats every tap in that band: measured
+     * on the Pixel 9 Pro XL on 2026-08-29, three taps inside the drawn top-left square at the
+     * bar's height recorded nothing while the same taps below it recorded normally. The same
+     * class of bug as the drawn-versus-listening drift documented on {@link #cornerZoneAt}, with
+     * the platform's own chrome as the cause this time.
+     */
+    private void offsetCornerTargets(FrameLayout root) {
+        Rect overlap = systemBarOverlap();
+        int margin = dp(8);
+        for (int index = 0; index < root.getChildCount(); index++) {
+            View child = root.getChildAt(index);
+            if (!(child.getTag() instanceof Integer)) {
+                continue;
+            }
+            int gravity = (Integer) child.getTag();
+            boolean top = (gravity & Gravity.VERTICAL_GRAVITY_MASK) == Gravity.TOP;
+            boolean start = (gravity & Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK) == Gravity.START;
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) child.getLayoutParams();
+            params.setMargins(
+                    margin + (start ? overlap.left : 0),
+                    margin + (top ? overlap.top : 0),
+                    margin + (start ? 0 : overlap.right),
+                    margin + (top ? 0 : overlap.bottom));
+            child.setLayoutParams(params);
+        }
+    }
+
+    /**
+     * How far the system's tap-eating chrome intrudes into the content view, in content
+     * coordinates, all four edges.
+     *
+     * <p>Zero on a device-owner panel, where the bars are hidden, and zero wherever the window is
+     * laid out below the bars, which is every ordinary install before the platform's Android 15
+     * edge-to-edge enforcement. The tappable-element insets are asked rather than the bar heights
+     * because they answer the actual question: gesture navigation's bottom strip passes taps
+     * through and reports zero, a three-button bar eats them and reports its height.
+     */
+    @SuppressWarnings("deprecation")
+    private Rect systemBarOverlap() {
+        Rect overlap = new Rect();
+        View content = findViewById(android.R.id.content);
+        View decor = getWindow().getDecorView();
+        android.view.WindowInsets insets = decor.getRootWindowInsets();
+        if (content == null || insets == null || content.getWidth() == 0) {
+            return overlap;
+        }
+        int left;
+        int top;
+        int right;
+        int bottom;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.graphics.Insets bars = insets.getInsets(
+                    android.view.WindowInsets.Type.tappableElement()
+                            | android.view.WindowInsets.Type.displayCutout());
+            left = bars.left;
+            top = bars.top;
+            right = bars.right;
+            bottom = bars.bottom;
+        } else {
+            // Deprecated from API 30 but the only spelling below it, the same both-paths rule as
+            // enterImmersiveMode. Hidden bars report zero here too.
+            left = insets.getSystemWindowInsetLeft();
+            top = insets.getSystemWindowInsetTop();
+            right = insets.getSystemWindowInsetRight();
+            bottom = insets.getSystemWindowInsetBottom();
+        }
+        int[] contentOrigin = new int[2];
+        int[] decorOrigin = new int[2];
+        content.getLocationOnScreen(contentOrigin);
+        decor.getLocationOnScreen(decorOrigin);
+        // The insets are window-relative. Where the content view already sits below a bar, the
+        // subtraction lands at zero and nothing moves.
+        overlap.left = Math.max(0, decorOrigin[0] + left - contentOrigin[0]);
+        overlap.top = Math.max(0, decorOrigin[1] + top - contentOrigin[1]);
+        overlap.right = Math.max(0, contentOrigin[0] + content.getWidth()
+                - (decorOrigin[0] + decor.getWidth() - right));
+        overlap.bottom = Math.max(0, contentOrigin[1] + content.getHeight()
+                - (decorOrigin[1] + decor.getHeight() - bottom));
+        return overlap;
     }
 
     private void recordZone(String zone) {
@@ -3744,6 +3872,9 @@ public final class KioskActivity extends Activity {
             if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
                 KioskRuntimeState.recordPageFinished(url);
             }
+            // Asked whatever the policy decided: the icons sit over what is actually on the
+            // glass, success or not.
+            probePageLuminance(view);
         }
 
         @Override
@@ -3926,6 +4057,69 @@ public final class KioskActivity extends Activity {
             }
         }
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        applyBarIconContrast();
+    }
+
+    /**
+     * Asks the loaded page how light its background is, so the status bar icons can be flipped
+     * dark over a light dashboard. Without this an ordinary install showing a light page renders
+     * the bar white on white, clock and icons gone, only the battery fill surviving; found on the
+     * Pixel 9 Pro XL over the Home Assistant demo, 2026-08-29.
+     *
+     * <p>The page's computed background colour is the honest source: this app does not choose
+     * the dashboard's palette and must not guess it from a URL. Body first, the document root as
+     * the fallback for pages whose body is transparent, and no answer at all leaves the icons
+     * where they are.
+     */
+    private void probePageLuminance(WebView view) {
+        if (isDeviceOwner()) {
+            // The panel hides its bars; there are no icons to contrast.
+            return;
+        }
+        view.evaluateJavascript(PAGE_LUMINANCE_PROBE, result -> {
+            double luminance;
+            try {
+                luminance = Double.parseDouble(result);
+            } catch (NumberFormatException | NullPointerException unanswered) {
+                return;
+            }
+            if (luminance < 0) {
+                return;
+            }
+            dashboardPageIsLight = luminance >= 128;
+            applyBarIconContrast();
+        });
+    }
+
+    /**
+     * Dark status and navigation icons over a light dashboard, the default light icons
+     * everywhere else. The app's own screens are dark by design, so only the WebView, the one
+     * surface whose colour this app does not choose, ever earns the flip.
+     *
+     * <p>Both API paths for the same reason as {@link #enterImmersiveMode}: the flags are all
+     * that exists below API 30, the controller is the only non-deprecated spelling from it.
+     */
+    @SuppressWarnings("deprecation")
+    private void applyBarIconContrast() {
+        if (isDeviceOwner()) {
+            return;
+        }
+        boolean dashboardShowing = !configurationVisible && !recorderVisible && !wizardVisible;
+        boolean darkIcons = dashboardShowing && dashboardPageIsLight;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController insets = getWindow().getInsetsController();
+            if (insets != null) {
+                int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                insets.setSystemBarsAppearance(darkIcons ? mask : 0, mask);
+                return;
+            }
+        }
+        View decor = getWindow().getDecorView();
+        int visibility = decor.getSystemUiVisibility();
+        int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        decor.setSystemUiVisibility(darkIcons ? visibility | flags : visibility & ~flags);
     }
 
     /**
