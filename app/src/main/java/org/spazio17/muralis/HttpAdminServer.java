@@ -1225,7 +1225,7 @@ final class HttpAdminServer {
         // "auto" only where an accelerometer exists to drive it, the same gate the
         // auto-brightness checkbox above sits behind.
         if (KioskService.hasAccelerometer(context)) {
-            options.append(orientationOption("auto", "Follow the sensor", current));
+            options.append(orientationOption("auto", "Auto-rotate", current));
         }
         options.append(orientationOption("landscape", "Landscape", current));
         options.append(orientationOption("portrait", "Portrait", current));

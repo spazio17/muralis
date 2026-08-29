@@ -1265,6 +1265,10 @@ public final class KioskActivity extends Activity {
         radio.setText(label);
         radio.setTextColor(theme.text);
         radio.setTextSize(15);
+        // The platform default is a 48dp row, which stacked three high reads as a slab next to
+        // the card's other controls; 36dp keeps a real touch target without the dead band.
+        radio.setMinHeight(dp(36));
+        radio.setMinimumHeight(dp(36));
         radio.setId(View.generateViewId());
         radio.setTag(value);
         group.addView(radio, matchWrap());
@@ -1676,14 +1680,17 @@ public final class KioskActivity extends Activity {
         TextView orientationLabel = new TextView(this);
         orientationLabel.setText("Orientation");
         orientationLabel.setTextColor(theme.subtext);
-        orientationLabel.setTextSize(12);
-        displayCard.addView(orientationLabel, matchWrap());
+        orientationLabel.setTextSize(13);
+        LinearLayout.LayoutParams orientationLabelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        orientationLabelParams.topMargin = dp(14);
+        displayCard.addView(orientationLabel, orientationLabelParams);
 
         RadioGroup orientationInput = new RadioGroup(this);
-        // "Follow the sensor" is offered only where a sensor exists to follow, the same gate the
-        // auto-brightness checkbox sits behind just above.
+        // "Auto-rotate", the platform's own name for it, is offered only where a sensor exists to
+        // follow, the same gate the auto-brightness checkbox sits behind just above.
         if (KioskService.hasAccelerometer(this)) {
-            orientationChoice(theme, orientationInput, "Follow the sensor",
+            orientationChoice(theme, orientationInput, "Auto-rotate",
                     KioskConfig.ORIENTATION_AUTO);
         }
         orientationChoice(theme, orientationInput, "Landscape", KioskConfig.ORIENTATION_LANDSCAPE);
