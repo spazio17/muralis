@@ -25,6 +25,9 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.text.Html;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.inputmethod.InputMethodManager;
@@ -1271,7 +1274,12 @@ public final class KioskActivity extends Activity {
         radio.setMinimumHeight(dp(36));
         radio.setId(View.generateViewId());
         radio.setTag(value);
-        group.addView(radio, matchWrap());
+        // Not matchWrap(): its 16dp gap separates controls in a card, and between the rows of one
+        // radio group it read as three separate controls with room for a fourth in each gap.
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.topMargin = dp(2);
+        group.addView(radio, rowParams);
         return radio;
     }
 
@@ -1614,10 +1622,7 @@ public final class KioskActivity extends Activity {
         // Brightness, applied as it moves, exactly like the web admin's slider and for the same
         // reason: it is a standalone control, so a Save button between the operator and the panel
         // getting brighter is pure ceremony.
-        TextView brightnessCaption = new TextView(this);
-        brightnessCaption.setText("Brightness");
-        brightnessCaption.setTextColor(theme.subtext);
-        brightnessCaption.setTextSize(13);
+        TextView brightnessCaption = fieldCaption(theme, "Brightness");
         LinearLayout.LayoutParams brightnessCaptionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         brightnessCaptionParams.topMargin = dp(14);
@@ -1677,10 +1682,7 @@ public final class KioskActivity extends Activity {
         brightnessModeNote = brightnessNote;
         applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
 
-        TextView orientationLabel = new TextView(this);
-        orientationLabel.setText("Orientation");
-        orientationLabel.setTextColor(theme.subtext);
-        orientationLabel.setTextSize(13);
+        TextView orientationLabel = fieldCaption(theme, "Orientation");
         LinearLayout.LayoutParams orientationLabelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         orientationLabelParams.topMargin = dp(14);
@@ -3239,11 +3241,30 @@ public final class KioskActivity extends Activity {
         return group;
     }
 
-    private void addField(LinearLayout parent, KioskTheme theme, String label, EditText input) {
+    /**
+     * A field caption, e.g. "Dashboard URL": a third-level heading, so a step bigger than the
+     * informational 13sp lines it used to be indistinguishable from ("Web admin disabled",
+     * "Rendering engine: ..."). A parenthetical tail like " (blank keeps the current one)" is
+     * itself information rather than heading, so it stays at the informational size.
+     */
+    private TextView fieldCaption(KioskTheme theme, String label) {
         TextView caption = new TextView(this);
-        caption.setText(label);
+        int aside = label.indexOf(" (");
+        if (aside >= 0) {
+            SpannableString styled = new SpannableString(label);
+            styled.setSpan(new RelativeSizeSpan(13f / 15f), aside, label.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            caption.setText(styled);
+        } else {
+            caption.setText(label);
+        }
         caption.setTextColor(theme.subtext);
-        caption.setTextSize(13);
+        caption.setTextSize(15);
+        return caption;
+    }
+
+    private void addField(LinearLayout parent, KioskTheme theme, String label, EditText input) {
+        TextView caption = fieldCaption(theme, label);
         LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         captionParams.topMargin = dp(14);
