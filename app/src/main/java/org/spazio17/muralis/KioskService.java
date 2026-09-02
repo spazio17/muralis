@@ -17,6 +17,8 @@ import android.hardware.SensorManager;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
+import android.net.NetworkCapabilities;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Handler;
@@ -478,7 +480,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire();
 
+        // Null on a device with no Wi-Fi radio, which the manifest now admits (an Ethernet-only
+        // wall panel). There is nothing to hold awake in that case; the release path already
+        // tolerates a lock that was never created.
         WifiManager wifi = getSystemService(WifiManager.class);
+        if (wifi == null) {
+            Log.i(TAG, "Runtime wake lock acquired; no Wi-Fi radio, so no Wi-Fi lock");
+            return;
+        }
         wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Muralis:wifi");
         wifiLock.setReferenceCounted(false);
         wifiLock.acquire();
@@ -1004,19 +1013,38 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     facts.batteryPercent = level >= 0 && scale > 0 ? level * 100.0 / scale : -1;
                 }
             }
-            WifiManager wifi = getSystemService(WifiManager.class);
-            if (wifi != null && wifi.getConnectionInfo() != null) {
-                // Signal strength only. The SSID is deliberately not read: Android 10 redacts it
-                // unless the caller holds a location permission or one of the network-settings
-                // signature permissions, and a wall panel should need neither. The IP address is
-                // the identifier that actually matters here, and it needs no permission.
-                facts.wifiRssiDbm = wifi.getConnectionInfo().getRssi();
+            // Signal strength, and only while Wi-Fi is the network carrying the traffic. Asked
+            // regardless, WifiManager still answers: a panel on Ethernet with its radio idle gets
+            // -127 dBm, the platform's "no signal" marker, which the overlay would paint red as a
+            // terrible signal, and one with the radio still associated gets the strength of a
+            // link carrying nothing. The telemetry snapshot has gated on the transport all along.
+            // The SSID is deliberately not read: Android 10 redacts it unless the caller holds a
+            // location permission or one of the network-settings signature permissions, and a wall
+            // panel should need neither. The IP address is the identifier that actually matters
+            // here, and it needs no permission.
+            if (activeNetworkHasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                WifiManager wifi = getSystemService(WifiManager.class);
+                WifiInfo info = wifi == null ? null : wifi.getConnectionInfo();
+                if (info != null) {
+                    facts.wifiRssiDbm = info.getRssi();
+                }
             }
             facts.ipAddress = activeIpAddress();
         } catch (RuntimeException unavailable) {
             // Same rule as the procfs reads: an unavailable figure stays unknown.
         }
         return facts;
+    }
+
+    /** Whether the network currently carrying traffic runs over the given transport. */
+    private boolean activeNetworkHasTransport(int transport) {
+        ConnectivityManager connectivity = getSystemService(ConnectivityManager.class);
+        if (connectivity == null) {
+            return false;
+        }
+        NetworkCapabilities capabilities =
+                connectivity.getNetworkCapabilities(connectivity.getActiveNetwork());
+        return capabilities != null && capabilities.hasTransport(transport);
     }
 
     /**
