@@ -259,6 +259,11 @@ public final class KioskActivity extends Activity {
      * the page. See {@link #onConfigurationChanged}.
      */
     private Runnable currentScreen;
+    /**
+     * The scroll offset a redraw is carrying across, or -1 when the next screen is a genuine
+     * arrival and belongs at the top. See {@link #redrawInPlace}.
+     */
+    private int carriedScrollY = -1;
     private final java.util.List<EscapeSequence.Tap> escapeTaps = new java.util.ArrayList<>();
     private boolean recorderVisible;
     private boolean recordingForLauncher;
@@ -997,7 +1002,7 @@ public final class KioskActivity extends Activity {
         // measures against it once and reads as stretched all over again.
         mainHandler.post(() -> {
             if (currentScreen == redraw) {
-                redraw.run();
+                redrawInPlace(redraw);
             }
         });
     }
@@ -1603,8 +1608,9 @@ public final class KioskActivity extends Activity {
                     .putBoolean(LIGHT_CONFIGURATION_THEME, !theme.light)
                     .apply();
             // Loaded fresh, not the snapshot this screen was built from; same rule the rotation
-            // redraw and the save button follow.
-            showConfiguration(KioskConfig.load(this));
+            // redraw and the save button follow. In place, because the operator is looking at the
+            // Display card and a new palette is no reason to take it away from them.
+            redrawInPlace(() -> showConfiguration(KioskConfig.load(this)));
         });
         displayHeader.addView(themeToggle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -1903,7 +1909,8 @@ public final class KioskActivity extends Activity {
             // transition, because a rebuild re-registers this listener and re-publishes, and a
             // rebuild on every publish would loop.
             if (proCardBuilt[0] && ProEntitlement.isActive(KioskActivity.this) != proActive) {
-                showConfiguration(KioskConfig.load(KioskActivity.this));
+                redrawInPlace(() ->
+                        showConfiguration(KioskConfig.load(KioskActivity.this)));
                 return;
             }
             proState.setText(proDetail);
@@ -1945,7 +1952,7 @@ public final class KioskActivity extends Activity {
                     Toast.makeText(this, "Not saved: these settings were changed from another "
                             + "surface while this screen was open. Showing the current values.",
                             Toast.LENGTH_LONG).show();
-                    showConfiguration(current);
+                    redrawInPlace(() -> showConfiguration(current));
                     return;
                 }
                 // The dispatcher's rules, shared with the web admin: normalizeUrl already adds a
@@ -2496,7 +2503,66 @@ public final class KioskActivity extends Activity {
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         keepFocusedFieldAboveKeyboard(scroll);
+        restoreCarriedScroll(scroll);
         return scroll;
+    }
+
+    /**
+     * Redraws the screen that is already up without losing the reader's place.
+     *
+     * <p>These screens are rebuilt rather than repainted because every view is coloured at
+     * construction, so a palette change cannot be applied to views that already exist. Rebuilding
+     * is the right call; discarding the scroll offset with it is not, and it reads as the app
+     * reloading itself. Only redraws that mean "same screen, new appearance" come through here.
+     * Real navigation does not, because arriving somewhere should start at the top.
+     */
+    private void redrawInPlace(Runnable redraw) {
+        carriedScrollY = currentPageScrollY();
+        try {
+            redraw.run();
+        } finally {
+            // Cleared whether or not it was used: a screen that does not scroll, or one reached
+            // by a redraw that navigated away instead, must not inherit an offset from this one.
+            carriedScrollY = -1;
+        }
+    }
+
+    /** How far the page on screen is scrolled, or -1 when what is up is not one of these pages. */
+    private int currentPageScrollY() {
+        View content = findViewById(android.R.id.content);
+        if (content instanceof ViewGroup && ((ViewGroup) content).getChildCount() > 0) {
+            View top = ((ViewGroup) content).getChildAt(0);
+            if (top instanceof ScrollView) {
+                return ((ScrollView) top).getScrollY();
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Puts a rebuilt page back where the outgoing one was, once it has been laid out.
+     *
+     * <p>After layout rather than in {@link View#post}: a view runs its queued runnables when it
+     * is attached to the window, which happens before the first measure, and a ScrollView whose
+     * content has no measured height clamps every offset it is given to zero. The listener takes
+     * itself off on its first call, which is the removal the comment in {@link #trackKeyboardInset}
+     * is about: these observers belong to the window and outlive the view that registered them.
+     */
+    private void restoreCarriedScroll(ScrollView scroll) {
+        if (carriedScrollY <= 0) {
+            return;
+        }
+        final int offset = carriedScrollY;
+        scroll.getViewTreeObserver().addOnGlobalLayoutListener(
+                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        scroll.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                        // ScrollView clamps this to the content it ended up with, so a page that
+                        // came back shorter lands at its own end rather than out of range.
+                        scroll.scrollTo(0, offset);
+                    }
+                });
     }
 
     /**
