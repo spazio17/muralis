@@ -478,7 +478,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire();
 
+        // Null on a device with no Wi-Fi radio, which the manifest now admits (an Ethernet-only
+        // wall panel). There is nothing to hold awake in that case; the release path already
+        // tolerates a lock that was never created.
         WifiManager wifi = getSystemService(WifiManager.class);
+        if (wifi == null) {
+            Log.i(TAG, "Runtime wake lock acquired; no Wi-Fi radio, so no Wi-Fi lock");
+            return;
+        }
         wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Muralis:wifi");
         wifiLock.setReferenceCounted(false);
         wifiLock.acquire();

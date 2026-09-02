@@ -67,6 +67,11 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
     <uses-feature android:name="android.software.webview" android:required="true" />
+    <!-- Not required, said out loud because Play would otherwise infer the opposite: holding
+         ACCESS_WIFI_STATE (for the signal-strength stat) makes Play treat android.hardware.wifi
+         as required and hide the app from any device without a Wi-Fi radio. A wall panel on
+         PoE Ethernet is exactly such a device. The service copes with a missing WifiManager. -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
 
     <application
         android:name=".MuralisApplication"
