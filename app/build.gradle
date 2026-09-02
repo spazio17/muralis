@@ -211,5 +211,26 @@ dependencies {
     // new app and update from 2026-08-31, which is why this starts on 8 rather than 7.
     implementation 'com.android.billingclient:billing:8.3.0'
 
+    // Not used by a line of this app, and pulled in three levels down: Play Billing needs
+    // play-services-basement, which needs androidx.fragment for the invisible fragment GMS
+    // attaches to an activity to hear about its lifecycle. Basement asks for 1.1.0, which
+    // Google's own SDK Index marks outdated and the Play Console then reports against every
+    // upload. Raised as a constraint rather than an implementation dependency, because this
+    // is a floor for something arriving transitively, not something this app depends on.
+    //
+    // 1.3.6 on purpose, the lowest release that clears the reported version and the last of
+    // the line with no Kotlin in it. Every later minor brings the Kotlin runtime and
+    // coroutines, and from 1.9 also androidx.startup's InitializationProvider and an EXPORTED
+    // ProfileInstallReceiver, which are startup code and an intent surface this kiosk never
+    // had. Measured on the shrunk release APK: 1.3.6 adds 3 KB and changes nothing in the
+    // merged manifest; 1.9.0 added 57 KB and all of the above. 1.6.x and 1.8.x fail
+    // checkDuplicateClasses. If Play ever reports 1.3.6 as outdated too, step up deliberately
+    // and re-read the merged manifest diff before merging.
+    constraints {
+        implementation('androidx.fragment:fragment:1.3.6') {
+            because 'Play Console reports fragment 1.1.0, which billing drags in, as outdated'
+        }
+    }
+
     testImplementation 'junit:junit:4.13.2'
 }
