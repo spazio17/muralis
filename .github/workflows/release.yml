@@ -5,17 +5,22 @@
 # of a new app must go through the Console UI anyway because it is what creates the app and
 # enrols Play App Signing.
 #
-# The version is typed by a human on purpose: the semver digits carry meaning (breaking, feature,
-# fix) that automation cannot know. The tag this creates is what git describe then reports on
-# every later build, so the version installed on a device always names its commit.
+# The version is optional. Left empty, the release is the next patch of the latest one, because
+# most releases are fixes and typing 0.4.3 after 0.4.2 is a chance to mistype it and nothing
+# more. Typed, it is used as typed: the middle digit is the one that carries meaning (something
+# gained or lost that a person would notice) and only a person knows when that happened, so
+# 0.5.0 is always a decision. The patch counter then continues from whatever was typed. The tag
+# this creates is what git describe then reports on every later build, so the version installed
+# on a device always names its commit.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semantic version to release, e.g. 0.2.0 (tags this commit as v0.2.0)'
-        required: true
+        description: 'Leave empty for the next patch of the latest release. Type e.g. 0.5.0 for anything more than a fix.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -36,12 +41,32 @@ jobs:
             exit 1
           fi
 
-      - name: Validate and create the tag
+      - name: Decide the version
+        id: version
         env:
-          VERSION: ${{ inputs.version }}
+          TYPED: ${{ inputs.version }}
         run: |
-          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
-            echo "Not a semantic version: $VERSION (expected e.g. 0.2.0)" >&2; exit 1; }
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n 1 | sed 's/^v//')
+          if [ -n "$TYPED" ]; then
+            echo "$TYPED" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+              echo "Not a semantic version: $TYPED (expected e.g. 0.5.0)" >&2; exit 1; }
+            version=$TYPED
+          else
+            [ -n "$latest" ] || { echo "No release exists yet; type the first version." >&2; exit 1; }
+            version=$(echo "$latest" | awk -F. '{ print $1 "." $2 "." $3 + 1 }')
+          fi
+          # Newer than the latest release, or the tag would either already exist or sort behind
+          # one that does; both are a typo, and a typo here becomes a version on a device.
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -n 1)" != "$version" -o "$latest" = "$version" ]; then
+            echo "$version is not newer than the latest release, $latest." >&2; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (latest was ${latest:-none})."
+
+      - name: Create the tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
           git config user.name 'Juri Calleri'
           git config user.email 'juricalleri@gmail.com'
           git tag -a "v$VERSION" -m "Muralis $VERSION"
@@ -126,7 +151,7 @@ jobs:
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk "muralis-$VERSION-debug.apk"
           cp app/build/outputs/bundle/release/app-release.aab "muralis-$VERSION.aab"
