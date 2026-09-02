@@ -370,8 +370,9 @@ are pinned deliberately (AGP, Gradle, cmdline-tools), this app is meant to run u
 months at a time, and an unplanned toolchain upgrade on rebuild is a liability, not a convenience.
 A Gradle wrapper pinned to the same version exists for GitHub Actions (`.github/workflows/`): CI
 builds a debug APK on every push, the manual release workflow tags main and attaches the APK and
-the upload-key-signed AAB to a GitHub Release. **The app's version is derived from git, never
-edited in `app/build.gradle`**: versionName from `git describe` against the latest `v*` tag,
+the upload-key-signed AAB to a GitHub Release. The release's description is the list of pull request titles merged since the previous tag,
+read from the merge commits; there is no changelog file to keep in step. **The app's version is
+derived from git, never edited in `app/build.gradle`**: versionName from `git describe` against the latest `v*` tag,
 versionCode from the commit count, passed into the container by `scripts/gradle.sh` since the
 image has no git. Semantic versions are humans pushing tags; CI never bumps anything. The CI debug
 keystore secret must remain byte-identical to `.gradle/kiosk-debug.keystore`, because the tablet

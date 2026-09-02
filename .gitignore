@@ -7,3 +7,6 @@
 /.gradle-build/
 /app/build/
 local.properties
+
+# scripts/changelog.py is imported by its own tests and leaves a cache beside it.
+__pycache__/
