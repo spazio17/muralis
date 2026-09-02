@@ -90,6 +90,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     static final String APPLIED_BRIGHTNESS_KEY = "applied_brightness_percent";
 
+    /** When {@link #onCreate} ran, on the monotonic clock, for {@link RelaunchPolicy#SETTLE_MS}. */
+    private long createdAtMs;
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
     private HandlerThread telemetryThread;
@@ -199,6 +201,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 lastPublishedWatch = telemetryCollector == null
                         ? lastPublishedWatch : telemetryCollector.readWatch();
             }
+            // The same cadence also carries the one check that keeps a kiosk a kiosk. Cheap when
+            // the dashboard is there, and a minute is the floor RelaunchPolicy wants anyway. The
+            // first tick runs the instant the service is up; the policy's settling rule is what
+            // stops it judging before the activity queued behind the service has been created.
+            ensureDashboardOnScreen("periodic check");
             telemetryHandler.postDelayed(this, TELEMETRY_INTERVAL_MS);
         }
     };
@@ -230,12 +237,59 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public void onCreate() {
         super.onCreate();
+        createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification());
         applyResourceGuarantees();
         acquireRuntimeLocks();
         startControllers();
         startTelemetry();
+        new Handler(Looper.getMainLooper()).postDelayed(
+                () -> ensureDashboardOnScreen("service started"), RelaunchPolicy.SETTLE_MS);
+    }
+
+    /**
+     * Puts the dashboard back on screen when a device-owner panel has lost it.
+     *
+     * <p>The loss this was written for, measured 2026-09-03 on the MediaPad: on battery with the
+     * screen off at the power button, EMUI's PowerGenie force-stopped Muralis after five and a half
+     * minutes. The system's own HOME relaunch died in the force-stop's finishing pass and the OEM
+     * launcher's task, still underneath from the last manual launch, was resumed instead. A
+     * force-stop leaves nothing of this app's own scheduling alive, so the only mechanism that can
+     * work is the one that runs when the process next exists, which is why {@code MuralisApplication}
+     * starts this service on a kiosk and why this runs from {@link #onCreate} and on every telemetry
+     * tick. The decision itself is {@link RelaunchPolicy}, pure and host-tested; this method only
+     * gathers its inputs and acts. Starting an activity from a service is unrestricted below
+     * Android 10 and exempt for the device owner from Android 10 on (the platform's
+     * background-start check returns early for the device owner's uid; the developer page on
+     * background starts does not list it, the source does).
+     */
+    private void ensureDashboardOnScreen(String why) {
+        long now = System.currentTimeMillis();
+        RelaunchPolicy.Verdict verdict = RelaunchPolicy.decide(isDeviceOwner(),
+                SystemClock.elapsedRealtime() - createdAtMs, KioskRuntimeState.dashboardAlive(),
+                BootReceiver.deviceReadyForDashboard(this), now,
+                KioskConfig.lastDashboardRelaunchAt(this));
+        if (verdict == RelaunchPolicy.Verdict.NOT_READY
+                || verdict == RelaunchPolicy.Verdict.TOO_SOON) {
+            Log.i(TAG, "Dashboard is not on screen (" + why + "): " + verdict
+                    + ", checking again at the next tick");
+            return;
+        }
+        if (verdict != RelaunchPolicy.Verdict.RELAUNCH) {
+            return;
+        }
+        // Recorded before the start, the same rule as the nightly date: if the start itself is
+        // what gets this process killed, the floor must already be in force.
+        KioskConfig.recordDashboardRelaunch(this, now);
+        try {
+            startActivity(new Intent(this, KioskActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            Log.w(TAG, "Dashboard was not on screen (" + why + "); relaunched it");
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Dashboard was not on screen (" + why + ") and could not be relaunched",
+                    refused);
+        }
     }
 
     @Override
@@ -355,10 +409,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private void applyResourceGuarantees() {
         PowerManager power = getSystemService(PowerManager.class);
         if (power != null && !power.isIgnoringBatteryOptimizations(getPackageName())) {
-            // Worth logging rather than prompting: REQUEST_IGNORE_BATTERY_OPTIMIZATIONS opens a
-            // dialog, and Play restricts declaring it. As device owner the exemption can be set
-            // below without any prompt, which is why this is only a diagnostic.
-            Log.i(TAG, "Not exempt from battery optimisation yet");
+            // A diagnostic, and an honest one: nothing below grants this. There is no device-owner
+            // API for the Doze allowlist; the only in-app route is REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+            // plus a user dialog, which Play restricts. It matters on this hardware: on battery with
+            // the screen off, EMUI's PowerGenie force-stopped the app after five minutes
+            // (2026-09-03), and whether the allowlist would have spared it is being measured.
+            Log.i(TAG, "Not exempt from battery optimisation");
         }
 
         DevicePolicyManager policy = getSystemService(DevicePolicyManager.class);
@@ -753,7 +809,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * usually follow because it is HOME, but "usually" is doing too much work for the mechanism
      * that has to survive unattended for months. An {@link android.app.AlarmManager} one-shot is
      * held by the system, not by this process, so it fires whether or not anything here comes back
-     * by itself.
+     * by itself. "Usually" was measured on 2026-09-03: the system relaunches HOME only when no other
+     * task in the home stack can be resumed, and an OEM launcher task underneath wins. Since then
+     * the recreated service also relaunches the dashboard itself, see
+     * {@link #ensureDashboardOnScreen}; the alarm stays as the belt to that brace.
      *
      * <p>{@code System.exit} rather than a graceful teardown: reclaiming everything is the entire
      * point, and a tidy shutdown that leaves the process alive would reclaim nothing.

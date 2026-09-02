@@ -6,9 +6,9 @@
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
 # Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run ten suites: dispatcher, provisioning, request origin,
+# compile and run eleven suites: dispatcher, provisioning, request origin,
 # auth throttle, system stats, recycle policy, recovery policy, server probe
-# policy, escape sequence and telemetry interval.
+# policy, escape sequence, relaunch policy and telemetry interval.
 
 set -euo pipefail
 
@@ -118,16 +118,19 @@ javac -d "${test_dir}/stats" \
     "${pure_java_dir}/RecoveryPolicy.java" \
     "${pure_java_dir}/ServerProbePolicy.java" \
     "${pure_java_dir}/EscapeSequence.java" \
+    "${pure_java_dir}/RelaunchPolicy.java" \
     "${host_test_dir}/SystemStatsTest.java" \
     "${host_test_dir}/RecyclePolicyTest.java" \
     "${host_test_dir}/RecoveryPolicyTest.java" \
     "${host_test_dir}/ServerProbePolicyTest.java" \
-    "${host_test_dir}/EscapeSequenceTest.java"
+    "${host_test_dir}/EscapeSequenceTest.java" \
+    "${host_test_dir}/RelaunchPolicyTest.java"
 java -cp "${test_dir}/stats" org.spazio17.muralis.SystemStatsTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.RecyclePolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.RecoveryPolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.ServerProbePolicyTest
 java -cp "${test_dir}/stats" org.spazio17.muralis.EscapeSequenceTest
+java -cp "${test_dir}/stats" org.spazio17.muralis.RelaunchPolicyTest
 
 # The admin page's JavaScript lives in res/raw as real files (it used to be Java string
 # literals, where a syntax error or a name collision shipped and only showed up as a blank box

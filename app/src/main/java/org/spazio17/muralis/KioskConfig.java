@@ -29,6 +29,7 @@ final class KioskConfig {
     private static final String PORTRAIT = "portrait";
     private static final String KIOSK_STOPPED = "kiosk_stopped";
     private static final String VISUAL_OFF_BOOT_COUNT = "visual_off_boot_count";
+    private static final String LAST_DASHBOARD_RELAUNCH_AT = "last_dashboard_relaunch_at";
     private static final String WEB_ADMIN_ENABLED = "web_admin_enabled";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
@@ -312,6 +313,21 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getInt(VISUAL_OFF_BOOT_COUNT, -1);
+    }
+
+    /** Wall-clock time of the last relaunch {@link RelaunchPolicy} ordered, or 0 for never. */
+    static long lastDashboardRelaunchAt(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getLong(LAST_DASHBOARD_RELAUNCH_AT, 0L);
+    }
+
+    static void recordDashboardRelaunch(Context context, long atMs) {
+        // commit, not apply: the floor this feeds is meant to survive the very kill that follows a
+        // relaunch, and an asynchronous write may not have landed by then.
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putLong(LAST_DASHBOARD_RELAUNCH_AT, atMs)
+                .commit();
     }
 
     static void recordVisualOffBootCount(Context context, int bootCount) {

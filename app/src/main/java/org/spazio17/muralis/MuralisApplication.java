@@ -6,6 +6,7 @@ package org.spazio17.muralis;
 
 import android.app.Application;
 import android.os.SystemClock;
+import android.util.Log;
 
 /**
  * Process-wide setup that must happen before any component runs.
@@ -23,9 +24,28 @@ import android.os.SystemClock;
  * first reading anyone takes.
  */
 public final class MuralisApplication extends Application {
+    private static final String TAG = "MuralisApp";
+
     @Override
     public void onCreate() {
         super.onCreate();
         KioskRuntimeState.useClock(SystemClock::elapsedRealtime);
+        // On a device-owner panel the service runs whenever this process does, whatever started
+        // the process. The case that needs this is a force-stop, which cancels every alarm, job
+        // and sticky service the app owns, but the system still starts this process on its own
+        // account, for its attempt to relaunch Muralis as HOME or for the lock-task-exiting
+        // broadcast to the admin receiver, and that process is the only foothold left. The
+        // service then finds no dashboard and brings it back
+        // (RelaunchPolicy). Ordinary installs are untouched: they start the service from the
+        // activity, and a closed Muralis stays closed. Starting a foreground service from here is
+        // unrestricted below Android 12 and exempt for device owners from Android 12 on; the catch
+        // is for any device that disagrees, where the boot receiver and the activity still start it.
+        if (KioskDeviceAdminReceiver.isDeviceOwner(this)) {
+            try {
+                KioskService.start(this);
+            } catch (IllegalStateException refused) {
+                Log.w(TAG, "Could not start the service from the process start", refused);
+            }
+        }
     }
 }

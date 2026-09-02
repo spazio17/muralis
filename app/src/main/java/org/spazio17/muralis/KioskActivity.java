@@ -579,6 +579,9 @@ public final class KioskActivity extends Activity {
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        // First, before anything here can fail: the service's supervisor relaunches the dashboard
+        // when no instance exists, and must not do so over one that is halfway through onCreate.
+        KioskRuntimeState.publishDashboardAlive(true);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // A wall kiosk has nothing to protect behind a swipe-to-unlock screen, and after a reboot
         // the dashboard would otherwise sit invisible behind the keyguard until somebody walked up
@@ -725,6 +728,7 @@ public final class KioskActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        KioskRuntimeState.publishDashboardAlive(false);
         mainHandler.removeCallbacksAndMessages(null);
         // No screen means no operator screen; without this, exiting to the launcher from the
         // configuration screen would leave the pressure rebuild deferred until the app returns.

@@ -149,7 +149,8 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   hold (`SCHEDULE_EXACT_ALARM` needs a user grant plus a Play declaration; `USE_EXACT_ALARM` is
   reserved for alarm-clock/calendar apps), and even a scheduled activity start from a dead process
   is a background start on modern Android. A device-owner panel is HOME, so the system relaunches
-  it regardless. Where `setExact` would throw, `restartApplication` now falls back to an inexact
+  it when nothing else can be resumed, and its own service relaunches it otherwise (next bullet).
+  Where `setExact` would throw, `restartApplication` now falls back to an inexact
   `set()`, belt and braces under the HOME relaunch. And a **WebView rebuild
   when the OS reports low memory**, which is a response to a live condition, floored at once per 30
   minutes so a dashboard simply too big for the device cannot reload in a loop. Renderer death is
@@ -179,6 +180,34 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   after the restart, forever. It is a date rather than a monotonic floor for two reasons: the process
   dies, so any "time since the last one" resets with it; and the twelve-hour floor this replaced meant
   a panel restarted for any other reason at 20:00 silently skipped that night's clean.
+- **The service supervises the dashboard's presence, because "the system relaunches HOME" is only
+  half true.** Measured on the MediaPad 2026-09-03: on battery with the screen turned off at the
+  power button, EMUI's PowerGenie (`com.huawei.powergenie`, uid system, persistent) force-stopped
+  Muralis 5 min 36 s after screen-off, 80 s after light Doze went idle. Android then started Muralis
+  as HOME, the force-stop's own finishing pass killed that activity 7 ms later, and the system
+  resumed the OEM launcher's task, still underneath from the last manual launch. Wake: launcher.
+  With no launcher task the system retries and Muralis comes back, so the failure needs a launcher
+  task in the home stack, which any escape to the launcher or manual launch leaves behind until a
+  reboot. A force-stop cancels every alarm, job and sticky service the app owns, so the only foothold
+  is the process the system starts anyway (for the HOME attempt, or for the lock-task-exiting
+  broadcast to the admin receiver): `MuralisApplication` starts `KioskService` on a device-owner
+  install, and the service, at 1.5 s after its creation and on every 60 s telemetry tick, asks
+  `RelaunchPolicy` (pure, host-tested) whether to start `KioskActivity`. Verdicts: not a kiosk,
+  settling (younger than 1.5 s: at boot and after an update the activity's creation is queued
+  right behind the service's, and judging early relaunched a dashboard milliseconds from existing
+  and stamped the floor that then blocked the real relaunch), on screen (`KioskRuntimeState.
+  dashboardAlive`, set in the activity's onCreate/onDestroy; paused behind Settings counts as
+  alive), not ready (same DEVICE_PROVISIONED + unlocked rule as `BootReceiver`, so it never pops up
+  over the setup wizard during QR enrolment), too soon (a persisted 60 s floor against a killer
+  that strikes back instantly), relaunch. Verified over adb with `am force-stop` and a launcher task
+  underneath: back and locked within 2 s; with no launcher task the system's own relaunch wins and
+  the check finds the activity alive. Starting an activity from a service is exempt for the device
+  owner from Android 10 on: the platform's background-start check returns early for the device
+  owner's uid (`ActivityStarter`/`BackgroundActivityStartController`, "don't abort if the
+  callingUid is the device owner"); the developer page on background starts does not list it.
+  Whether PowerGenie honours the Doze allowlist is being measured; the app is not on it and has no
+  device-owner API to put itself there, contrary to what an older comment in
+  `applyResourceGuarantees` claimed.
 - **The restart relaunches through an `AlarmManager` one-shot, not by trusting `START_STICKY`.** The
   service would come back on its own and the activity usually follows because it is HOME, but
   "usually" is doing too much work for the mechanism that has to survive unattended for months. An
