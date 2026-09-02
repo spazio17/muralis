@@ -27,6 +27,11 @@ label.slider input[type=range]{display:block;width:100%;min-width:0;margin-top:.
 .grid{columns:300px;column-gap:1rem}
 .grid>*{break-inside:avoid;margin-bottom:1rem}
 .grid fieldset{break-inside:avoid}
+/* Each Save posts to this page with the box's own fragment, so the reply lands on the */
+/* box rather than at the top. scroll-margin keeps it off the very edge, and a message */
+/* about the save sits under the legend, which is where the operator is now looking. */
+fieldset{scroll-margin-top:1rem}
+fieldset .notice{margin:.7rem 0 0}
 /* min-width:0 is load-bearing, not tidying. A grid item defaults to min-width:auto, */
 /* meaning it refuses to be laid out narrower than its own min-content width, so one */
 /* box containing something wide and unshrinkable grows past its column and past the */

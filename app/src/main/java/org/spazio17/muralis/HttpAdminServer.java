@@ -39,6 +39,13 @@ import java.util.concurrent.TimeUnit;
 final class HttpAdminServer {
     private static final String TAG = "MuralisHttp";
     private static final int MIN_ADMIN_PASSWORD_LENGTH = 8;
+    /**
+     * The sections that have a box of their own on the settings page, and can therefore show
+     * their own message. Anything else falls back to the banner above the grid.
+     */
+    private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
+            new java.util.HashSet<>(java.util.Arrays.asList(
+                    "dashboard", "mqtt", "webadmin", "sequences")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
     /** Long enough for a socket close to land, short enough that a reload never looks like a hang. */
     private static final int SHUTDOWN_WAIT_MS = 1_000;
@@ -455,9 +462,10 @@ final class HttpAdminServer {
         if (path.equals("/") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage()));
         } else if (path.equals("/") && method.equals("POST")) {
-            String refusal = saveSettings(parseFormBody(headers, body));
+            Map<String, String> form = parseFormBody(headers, body);
+            String refusal = saveSettings(form);
             writeResponse(output, refusal == null ? 200 : 400, "text/html; charset=utf-8",
-                    bytes(buildSettingsPage(refusal)));
+                    bytes(buildSettingsPage(refusal, form.getOrDefault("section", ""))));
             if (refusal == null) {
                 // Reload asynchronously through the service's own message queue: doing it inline
                 // here would have this worker thread join the very executor it is running on.
@@ -938,10 +946,20 @@ final class HttpAdminServer {
     }
 
     private String buildSettingsPage() {
-        return buildSettingsPage(null);
+        return buildSettingsPage(null, "");
     }
 
-    private String buildSettingsPage(String notice) {
+    /**
+     * The settings page, optionally carrying one message about the box named by {@code
+     * noticeSection}.
+     *
+     * <p>The message goes inside that box rather than at the top of the page. Each box is its own
+     * form posting to this same page, so a save re-renders everything and the browser lands
+     * wherever the fragment in the form's action points: at the box that was saved. A banner above
+     * the first box would then be off screen, which is how the operator used to lose both their
+     * place and the reason their save was refused.
+     */
+    private String buildSettingsPage(String notice, String noticeSection) {
         KioskConfig config = KioskConfig.load(context);
         StringBuilder html = new StringBuilder();
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
@@ -960,7 +978,9 @@ final class HttpAdminServer {
                 .append("<button type=\"button\" data-theme=\"dark\">Dark</button>")
                 .append("</div></div>");
 
-        if (notice != null) {
+        // Only what no box on this page can carry: everything posted from a Save button names a
+        // section, and that message is drawn in the section instead.
+        if (notice != null && !BOXED_SECTIONS.contains(noticeSection)) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
 
@@ -968,7 +988,7 @@ final class HttpAdminServer {
         // stranded away from the thing that saves it.
         html.append("<div class=\"grid\">")
 
-                .append(sectionFormStart("dashboard", "Dashboard"))
+                .append(sectionFormStart("dashboard", "Dashboard", notice, noticeSection))
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
@@ -977,7 +997,7 @@ final class HttpAdminServer {
                 .append(field("text", "device_id", "Device ID", config.deviceId))
                 .append(sectionFormEnd("Save"))
 
-                .append(sectionFormStart("mqtt", "MQTT"))
+                .append(sectionFormStart("mqtt", "MQTT", notice, noticeSection))
                 .append(baselineField(
                         config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername))
                 .append(field("text", "mqtt_host", "Broker host", config.mqttHost))
@@ -988,7 +1008,7 @@ final class HttpAdminServer {
                         "Password (blank keeps the current one)", ""))
                 .append(sectionFormEnd("Save"))
 
-                .append(sectionFormStart("webadmin", "Local web admin"))
+                .append(sectionFormStart("webadmin", "Local web admin", notice, noticeSection))
                 .append(baselineField(Integer.toString(config.httpPort)))
                 .append(field("number", "http_port", "Port", Integer.toString(config.httpPort)))
                 .append(field("password", "http_admin_password",
@@ -997,7 +1017,7 @@ final class HttpAdminServer {
                 .append(" characters. No username.</p>")
                 .append(sectionFormEnd("Save"))
 
-                .append(sectionFormStart("sequences", "Escape sequences"))
+                .append(sectionFormStart("sequences", "Escape sequences", notice, noticeSection))
                 .append("<input type=\"hidden\" name=\"sequence_baseline\" value=\"")
                 .append(escapeHtml(config.settingsSequence + "|" + config.launcherSequence))
                 .append("\">")
@@ -1331,10 +1351,23 @@ final class HttpAdminServer {
             + "<circle cx=\"12\" cy=\"16\" r=\"1.5\" fill=\"currentColor\" "
             + "stroke=\"none\"/></svg>";
 
-    /** Opens a box that is itself a form, so its save button sits inside it. */
-    private static String sectionFormStart(String section, String legend) {
-        return "<form method=\"post\" action=\"/\"><fieldset><legend>" + escapeHtml(legend)
-                + "</legend><input type=\"hidden\" name=\"section\" value=\"" + section + "\">";
+    /**
+     * Opens a box that is itself a form, so its save button sits inside it.
+     *
+     * <p>The action carries the box's own fragment. A browser applies the fragment of the URL it
+     * posted to when it renders the reply, so a save comes back to the box it was made in instead
+     * of at the top of the page, which on a phone is several screens away from the MQTT fields.
+     * Confirmed against Chrome rather than assumed. {@code notice}, when it is about this box,
+     * is drawn under the legend for the same reason.
+     */
+    private static String sectionFormStart(String section, String legend, String notice,
+            String noticeSection) {
+        String message = notice != null && section.equals(noticeSection)
+                ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>"
+                : "";
+        return "<form method=\"post\" action=\"/#box-" + section + "\"><fieldset id=\"box-"
+                + section + "\"><legend>" + escapeHtml(legend) + "</legend>" + message
+                + "<input type=\"hidden\" name=\"section\" value=\"" + section + "\">";
     }
 
     private static String sectionFormEnd(String label) {
