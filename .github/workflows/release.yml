@@ -130,7 +130,27 @@ jobs:
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk "muralis-$VERSION-debug.apk"
           cp app/build/outputs/bundle/release/app-release.aab "muralis-$VERSION.aab"
+          # The description is what landed since the previous release: one line per pull
+          # request, in the order they were merged. main is merge-only and GitHub writes each
+          # pull request's title into its merge commit, so the titles are read from there. A
+          # branch catching up with main is a merge with an empty body and drops out. The
+          # nearest tag behind this one is the previous release; the first release ever has
+          # none and lists everything.
+          previous=$(git describe --tags --match 'v*' --abbrev=0 "v$VERSION^" 2>/dev/null || true)
+          range=${previous:+$previous..}v$VERSION
+          git log --merges --reverse --format='%b' "$range" | grep -v '^$' | sed 's/^/- /' > release-notes.md
+          # A release cut from direct commits, with no pull requests in it, lists those instead.
+          if [ ! -s release-notes.md ]; then
+            git log --no-merges --reverse --format='- %s' "$range" > release-notes.md
+          fi
           gh release create "v$VERSION" \
             --title "Muralis $VERSION" \
-            --notes "Debug APK for the panels (adb install -r), AAB for Play Console." \
+            --notes-file release-notes.md \
             "muralis-$VERSION-debug.apk" "muralis-$VERSION.aab"
+
+      # The description is pasted into Play Console's What's new box by hand, and that box
+      # takes 500 characters. One line in the run summary says whether it fits.
+      - name: Note the description's length for Play Console
+        run: |
+          count=$(wc -m < release-notes.md)
+          echo "Release description: $count characters. Play Console's What's new box takes 500." >> "$GITHUB_STEP_SUMMARY"
