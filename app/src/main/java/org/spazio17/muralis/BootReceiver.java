@@ -25,16 +25,27 @@ public final class BootReceiver extends BroadcastReceiver {
             return;
         }
         KioskService.start(context);
-        UserManager users = context.getSystemService(UserManager.class);
-        // Only DEVICE_PROVISIONED is checked, not the pair. Settings.Secure.USER_SETUP_COMPLETE is
-        // not in the public SDK, and the second half of the test existed to avoid racing LineageOS's
-        // SetupWizard, which does not exist here. DEVICE_PROVISIONED alone still answers the one
-        // question that matters on boot: has this device finished first-run setup at all.
-        boolean provisioned = Settings.Global.getInt(context.getContentResolver(),
-                Settings.Global.DEVICE_PROVISIONED, 0) == 1;
-        if (users != null && users.isUserUnlocked() && provisioned) {
+        if (deviceReadyForDashboard(context)) {
             context.startActivity(new Intent(context, KioskActivity.class)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         }
+    }
+
+    /**
+     * Whether the dashboard may be put on screen at all: first-run setup finished and the user
+     * unlocked. Shared with {@code KioskService}'s supervisor, which relaunches the dashboard after
+     * a force-stop and must apply the same rule, or it would pop the panel up over the setup wizard
+     * during QR enrolment.
+     *
+     * <p>Only DEVICE_PROVISIONED is checked, not the pair. Settings.Secure.USER_SETUP_COMPLETE is
+     * not in the public SDK, and the second half of the test existed to avoid racing LineageOS's
+     * SetupWizard, which does not exist here. DEVICE_PROVISIONED alone still answers the one
+     * question that matters on boot: has this device finished first-run setup at all.
+     */
+    static boolean deviceReadyForDashboard(Context context) {
+        UserManager users = context.getSystemService(UserManager.class);
+        boolean provisioned = Settings.Global.getInt(context.getContentResolver(),
+                Settings.Global.DEVICE_PROVISIONED, 0) == 1;
+        return users != null && users.isUserUnlocked() && provisioned;
     }
 }

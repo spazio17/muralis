@@ -36,6 +36,12 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
         return new ComponentName(context, KioskDeviceAdminReceiver.class);
     }
 
+    /** Whether Muralis is this device's owner, which is what "kiosk" means everywhere in this app. */
+    static boolean isDeviceOwner(Context context) {
+        DevicePolicyManager policy = context.getSystemService(DevicePolicyManager.class);
+        return policy != null && policy.isDeviceOwnerApp(context.getPackageName());
+    }
+
     @Override
     public void onEnabled(Context context, android.content.Intent intent) {
         Log.i(TAG, "Muralis device admin enabled");

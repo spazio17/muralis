@@ -71,7 +71,8 @@ final class RecyclePolicy {
          * grant and a Play declaration, {@code USE_EXACT_ALARM} is reserved for alarm-clock and
          * calendar apps), so {@code setExact} throws, the catch swallows it, and the exit that
          * follows is death with nothing scheduled to bring the app back. A device-owner panel is
-         * HOME and the system relaunches it regardless; an ordinary install has no such door
+         * HOME, so the system relaunches it when nothing else can be resumed, and its service
+         * relaunches it otherwise ({@code RelaunchPolicy}); an ordinary install has no such door
          * holder, so it keeps its process and settles for reclaiming what a rebuild reclaims.
          */
         NIGHTLY_REBUILD,
@@ -136,8 +137,8 @@ final class RecyclePolicy {
      *                        deferring it would put the calendar-day rule at the mercy of a
      *                        screen left open.
      * @param deviceOwner    whether this app is the device owner, which decides the nightly
-     *                        pass's shape: a process restart where the system is guaranteed to
-     *                        relaunch HOME, an in-place rebuild everywhere else. See
+     *                        pass's shape: a process restart where the system or the service is
+     *                        there to relaunch HOME, an in-place rebuild everywhere else. See
      *                        {@link Action#NIGHTLY_REBUILD} for why an ordinary install must
      *                        never take the exit.
      */

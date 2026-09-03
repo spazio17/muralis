@@ -54,6 +54,7 @@ final class KioskRuntimeState {
     private static volatile String httpAdminDownReason = "";
     private static volatile String overlayText = "";
     private static volatile String overlayHtml = "";
+    private static volatile boolean dashboardAlive;
     private static volatile long lastRecycleAtMs = -1;
     private static volatile String lastRecycleReason = "";
     private static final AtomicInteger recycles = new AtomicInteger();
@@ -204,6 +205,20 @@ final class KioskRuntimeState {
 
     static void publishOperatorOnScreen(boolean onScreen) {
         operatorOnScreen = onScreen;
+    }
+
+    /**
+     * Whether a {@code KioskActivity} instance exists in this process, resumed or paused. Written
+     * by its onCreate and onDestroy; read by {@code KioskService}, which relaunches the dashboard
+     * on a device-owner panel when this is false (see {@link RelaunchPolicy}). Paused behind
+     * Settings or the launcher counts as alive: that is the operator's doing, not a loss.
+     */
+    static void publishDashboardAlive(boolean alive) {
+        dashboardAlive = alive;
+    }
+
+    static boolean dashboardAlive() {
+        return dashboardAlive;
     }
 
     static boolean operatorOnScreen() {
