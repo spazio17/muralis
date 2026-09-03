@@ -178,9 +178,11 @@ final class ProBilling implements PurchasesUpdatedListener {
                     if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
                         query();
                     } else {
-                        // owned stays: a setup failure is transient knowledge about Play, not
-                        // knowledge that the purchase went away. When the gate reuses this state,
-                        // wiping it here would drop the remote surfaces on a network blip.
+                        // owned stays: a setup failure is knowledge about the moment, not about
+                        // the purchase, and wiping the gate here would drop the remote surfaces
+                        // on a network blip. The one exception is the code that is about this
+                        // device or account rather than the moment; see the helper.
+                        closeGateIfPlayWillNotServe(result);
                         report(unavailableSentence(result), owned, false);
                     }
                 });
@@ -370,13 +372,58 @@ final class ProBilling implements PurchasesUpdatedListener {
                 (result, purchases) -> mainHandler.post(() -> {
                     if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
                         // owned stays, same reasoning as the setup failure above: a query that
-                        // could not run says nothing about the purchase.
+                        // could not run says nothing about the purchase, with the same exception.
+                        closeGateIfPlayWillNotServe(result);
                         report(unavailableSentence(result), owned,
                                 productForDisplay != null && !owned);
                         return;
                     }
-                    handlePurchases(purchases);
+                    // The one caller that speaks for the whole account, and so the only one that
+                    // may read an absent purchase as "this account does not own Pro".
+                    handlePurchases(purchases, true);
                 }));
+    }
+
+    /**
+     * {@code BILLING_UNAVAILABLE} is the one refusal that is about this device or account rather
+     * than about the moment. Google lists an out-of-date Store, an unsupported country, an
+     * enterprise that disabled purchases and a blocked Store; in practice it is also what a device
+     * with no Google account signed in gets, which under Juri's rule is the case that matters. Play
+     * will not vouch for anything here until the operator changes something, so Pro is off until
+     * it does, and comes back by itself when Play answers again. Every other refusal, service
+     * unavailable, disconnected, network, timeout, is about the moment and leaves the gate alone,
+     * which is what keeps a panel with its account signed in and its internet down on Pro.
+     */
+    private void closeGateIfPlayWillNotServe(BillingResult result) {
+        if (result.getResponseCode() != BillingClient.BillingResponseCode.BILLING_UNAVAILABLE) {
+            return;
+        }
+        boolean activeBefore = ProEntitlement.isActive(context);
+        ProEntitlement.drop(context, "Google Play billing is unavailable on this device or "
+                + "account (" + result.getDebugMessage() + ")");
+        // Play's raw answer is "no" too: the callers report this state, and a stale "owned" from
+        // before the account went away would otherwise read as Pro being on the account.
+        owned = false;
+        applyGate(activeBefore);
+    }
+
+    /**
+     * Runs the service's rebuild when the gate has just moved, in either direction.
+     *
+     * <p>Opening: the paid surfaces come up without waiting for a restart, because buying at the
+     * panel should visibly work while the buyer is still standing there; the reload takes the
+     * path a settings save takes (restartControllers), which finds both controllers null and
+     * starts them. Closing: the same call tears them down, which it did not do before Pro could
+     * end.
+     */
+    private void applyGate(boolean activeBefore) {
+        boolean activeAfter = ProEntitlement.isActive(context);
+        if (activeBefore != activeAfter) {
+            Log.i(TAG, activeAfter
+                    ? "Muralis Pro arrived; starting the remote surfaces"
+                    : "Muralis Pro is gone; stopping the remote surfaces");
+            KioskService.reloadConfiguration(context);
+        }
     }
 
     @Override
@@ -385,7 +432,9 @@ final class ProBilling implements PurchasesUpdatedListener {
             int code = result.getResponseCode();
             if (code == BillingClient.BillingResponseCode.OK) {
                 if (purchases != null) {
-                    handlePurchases(purchases);
+                    // One flow's purchases, not the account's: a buyer who backed out arrives here
+                    // with nothing attached and must not be read as "this account owns nothing".
+                    handlePurchases(purchases, false);
                 } else {
                     // Documented combination: success with nothing attached. The query is the
                     // tiebreaker, exactly as for ITEM_ALREADY_OWNED below; reporting a refusal
@@ -403,8 +452,14 @@ final class ProBilling implements PurchasesUpdatedListener {
         });
     }
 
-    /** Main thread only, like every state touch in this class. */
-    private void handlePurchases(List<Purchase> purchases) {
+    /**
+     * Main thread only, like every state touch in this class.
+     *
+     * @param fullAccountQuery whether {@code purchases} is a {@code queryPurchasesAsync} answer for
+     *                         the whole account, the only kind of list whose silence about the
+     *                         purchase means the account does not own it
+     */
+    private void handlePurchases(List<Purchase> purchases, boolean fullAccountQuery) {
         boolean activeBefore = ProEntitlement.isActive(context);
         boolean nowOwned = false;
         boolean pending = false;
@@ -448,14 +503,15 @@ final class ProBilling implements PurchasesUpdatedListener {
         }
         owned = nowOwned;
         buyable = productForDisplay != null && !nowOwned;
-        // The moment Pro arrives, the paid surfaces come up, without waiting for a restart:
-        // buying at the panel should visibly work while the buyer is still standing there. The
-        // reload takes the same path a settings save takes (restartControllers), which finds both
-        // controllers null and starts them, now past the gate.
-        if (!activeBefore && ProEntitlement.isActive(context)) {
-            Log.i(TAG, "Muralis Pro arrived; starting the remote surfaces");
-            KioskService.reloadConfiguration(context);
+        // Play has spoken for the whole account and the purchase was not in it: a refund, or an
+        // account that never bought Pro. At once, not after a grace, which is how client-only apps
+        // on Play behave in general and what Juri asked for; a wrong empty answer from Play, which
+        // does happen right after a boot before the Store has synced, costs a brief outage of the
+        // paid surfaces and is corrected by the next query.
+        if (fullAccountQuery && !nowOwned) {
+            ProEntitlement.drop(context, "Google Play says this account does not own it");
         }
+        applyGate(activeBefore);
         if (pending && !nowOwned) {
             report("A Pro purchase is pending; Google Play will complete it.", false, false);
         } else {
@@ -501,7 +557,8 @@ final class ProBilling implements PurchasesUpdatedListener {
     private String unavailableSentence(BillingResult result) {
         switch (result.getResponseCode()) {
             case BillingClient.BillingResponseCode.BILLING_UNAVAILABLE:
-                return "Google Play billing is not available on this device or account.";
+                return "Google Play billing is not available on this device or account: sign in "
+                        + "to a Google account, or update Google Play.";
             case BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE:
             case BillingClient.BillingResponseCode.NETWORK_ERROR:
                 return "Google Play could not be reached; check the network and try again.";

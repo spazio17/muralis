@@ -692,11 +692,31 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // The other half of the Pro gate (see startControllersNow). Checked before the
         // input-fingerprint logic because a purchase completing is itself a "reload configuration"
         // event (ProBilling sends one), and on that reload both controllers are null and must
-        // start. The reverse transition does not exist outside a debug override: the entitlement
-        // never revokes itself, so there is nothing to tear down here, and a debug build testing
-        // the free path gets the gate at the next process start.
+        // start.
+        //
+        // The reverse transition is real as of 2026-09-03 and this block used to deny it: Pro now
+        // follows Google Play's answer, so a refund, a signed-out Google account or a device Play
+        // will not serve all close the gate (see ProEntitlement), and ProBilling sends the same
+        // reload for that. Left as a bare return, a panel that had just lost Pro kept serving MQTT
+        // and the web admin until something else restarted the process.
         if (!ProEntitlement.isActive(this)) {
-            Log.i(TAG, "MQTT and the web admin stay off: Muralis Pro is not on this panel");
+            if (mqttController == null && httpAdminServer == null) {
+                Log.i(TAG, "MQTT and the web admin stay off: Muralis Pro is not on this panel");
+                return;
+            }
+            Log.i(TAG, "Muralis Pro is no longer on this panel; stopping MQTT and the web admin");
+            if (mqttController != null) {
+                mqttController.stop();
+                mqttController = null;
+            }
+            if (httpAdminServer != null) {
+                httpAdminServer.stop();
+                httpAdminServer = null;
+            }
+            // The fingerprints go with them. Kept, they would match on a later purchase and the
+            // restart above would decide nothing had changed and start nothing.
+            mqttInputs = null;
+            httpInputs = null;
             return;
         }
         KioskConfig config = KioskConfig.load(this);

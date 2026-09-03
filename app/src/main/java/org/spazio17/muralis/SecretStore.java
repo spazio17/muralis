@@ -41,9 +41,24 @@ final class SecretStore {
      * Clearing the admin password is a real feature, it switches the web admin off, and must work
      * even while the Keystore is unavailable. An incidental write of a value that could not be read
      * must not delete anything; see {@link #getOrNull}.
+     *
+     * <p>Committed rather than applied, because both callers want the deletion to survive the next
+     * instant. This panel is force-stopped without notice by OEM battery managers, and {@code apply}
+     * only promises the write eventually: a Pro entitlement dropped after a refund
+     * ({@link ProEntitlement}) would come back, and a switched-off web admin would switch itself
+     * back on. One small preferences write, so the synchronous cost is not worth the hole.
      */
     void clear(String name) {
-        preferences.edit().remove(name).apply();
+        preferences.edit().remove(name).commit();
+    }
+
+    /**
+     * Whether anything is stored under {@code name}, without decrypting it. Plain preferences, so it
+     * answers before the first unlock and costs no Keystore round trip; it says nothing about
+     * whether the value would verify.
+     */
+    boolean has(String name) {
+        return preferences.contains(name);
     }
 
     void put(String name, String value) {
