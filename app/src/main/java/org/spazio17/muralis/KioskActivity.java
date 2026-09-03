@@ -2936,8 +2936,14 @@ public final class KioskActivity extends Activity {
      * to, and a policy an operator cannot read is not a policy. Play requires the same text at a public
      * URL as well, which is a listing task rather than an app one.
      *
-     * <p>The draft banner is not decoration. Until real reviewed text replaces
-     * {@code res/values/legal.xml}, anyone reading these screens must be able to tell.
+     * <p>Nothing is added to the document here. What this screen shows is the canonical text
+     * byte for byte, so the panel, the web admin and the published page cannot say different
+     * things; the only line this app contributes is the "also published at" address below, which
+     * is about where to find the document rather than part of it. A banner that lived here said
+     * the text was a draft placeholder that must be replaced before distribution, and it outlived
+     * both halves of that claim: the real text landed on 2026-09-02 and the app is on Play. It is
+     * gone rather than reworded, because any sentence about the document belongs in the document,
+     * in the muralis-site repo, where one edit reaches every surface at once.
      */
     private void showLegalDocument(int titleRes, int bodyRes) {
         currentScreen = () -> showLegalDocument(titleRes, bodyRes);
@@ -2951,22 +2957,9 @@ public final class KioskActivity extends Activity {
         // on the About screen", and a document should say which build it belongs to.
         page.addView(pageHeading(theme, getString(titleRes), appVersionSummary()), matchWrap());
 
-        // Both the banner and the document below use this width, so they read as one column rather
-        // than a full-bleed banner sitting over a centred body.
+        // The document and the line under it share this width, so they read as one column.
         int documentWidth = getResources().getConfiguration().screenWidthDp >= 720
                 ? dp(640) : ViewGroup.LayoutParams.MATCH_PARENT;
-
-        TextView draft = new TextView(this);
-        draft.setText(getString(R.string.legal_draft_warning));
-        draft.setTextSize(14);
-        draft.setTextColor(theme.warn);
-        draft.setPadding(dp(18), dp(14), dp(18), dp(14));
-        draft.setBackground(theme.outlinedPanel(theme.surface, dp(12), dp(1)));
-        LinearLayout.LayoutParams draftParams = new LinearLayout.LayoutParams(
-                documentWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
-        draftParams.gravity = Gravity.CENTER_HORIZONTAL;
-        draftParams.topMargin = dp(16);
-        page.addView(draft, draftParams);
 
         LinearLayout bodyCard = card(theme, "");
         addDocumentBlocks(bodyCard, theme, readRawText(bodyRes));

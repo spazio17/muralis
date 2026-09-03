@@ -1100,6 +1100,10 @@ final class HttpAdminServer {
      *
      * <p>Blocks are separated by blank lines; an ALL-CAPS block is a heading, matching the format
      * {@code KioskActivity#addDocumentBlocks} renders on the tablet.
+     *
+     * <p>Nothing is added to the document, for the reason {@code KioskActivity#showLegalDocument}
+     * gives: this page and that screen render the canonical text and nothing else, so a reader
+     * cannot be told one thing here and another on the published page.
      */
     private String renderLegalPage(String title, int rawRes) {
         StringBuilder html = new StringBuilder();
@@ -1111,10 +1115,7 @@ final class HttpAdminServer {
                         + "letter-spacing:.04em;margin:1.6rem 0 .4rem}"
                         + "p.doc{margin:.2rem 0}</style></head><body><main>")
                 .append(navButton("/", "← Back"))
-                .append("<h1>").append(escapeHtml(title)).append("</h1>")
-                .append("<p class=\"notice\">")
-                .append(escapeHtml(context.getString(R.string.legal_draft_warning)))
-                .append("</p>");
+                .append("<h1>").append(escapeHtml(title)).append("</h1>");
         for (String block : readRawText(rawRes).trim().split("\n\\s*\n")) {
             String content = block.trim();
             if (content.isEmpty()) {

@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Titles, the draft banner and the public URLs only. The document bodies live in
+  Titles and the public URLs only, and deliberately nothing a reader could mistake for part of a
+  document: a "draft placeholder" banner lived here until 2026-09-03 and went on claiming the text
+  was unreviewed and undistributed long after both had stopped being true. Anything to be said
+  about a document is said inside it, in the muralis-site repo. The document bodies live in
   res/raw/privacy.txt and res/raw/terms.txt, which are VERBATIM COPIES of the canonical
   texts in the muralis-site repo (legal/privacy.txt, legal/terms.txt), the single source of truth
   decided 2026-08-25. Edit them there, run scripts/sync-legal.sh here; the release workflow
@@ -15,7 +18,6 @@
   Format the renderer expects: blocks separated by blank lines; a block in ALL CAPS is a heading.
 -->
 <resources>
-    <string name="legal_draft_warning">Draft placeholder. This text has not been reviewed and must be replaced before the app is distributed.</string>
     <string name="privacy_policy_title">Privacy policy</string>
     <string name="terms_title">Terms and conditions</string>
     <!-- One sentence, one pair of URLs, shared by the About screen and the web admin so the two
