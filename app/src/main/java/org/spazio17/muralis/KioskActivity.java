@@ -631,32 +631,49 @@ public final class KioskActivity extends Activity {
         // Settings.Secure.USER_SETUP_COMPLETE is not public API. More importantly the situation
         // cannot arise, because an app-build Muralis only becomes HOME once it is already installed
         // and provisioned, which is necessarily after setup has finished.
-        // Asked once per process start, which on this app means at least nightly: the pass at
-        // QUIET_HOUR ends in System.exit and the relaunch alarm brings this activity back, so
-        // "when the app is launched", which is where Google's guide puts this, is a recurring
-        // event here rather than a once-per-boot one. Deliberately after the user-unlock gate
-        // above, because Play cannot answer for a locked user.
-        //
-        // Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
-        // and both start at boot without anybody opening a screen, so an answer that only arrives
-        // when somebody taps their way into settings arrives too late to gate anything. It also
-        // means a purchase made on another device is picked up by the next nightly restart on its
-        // own. Juri, 2026-08-27.
-        if (proBilling == null) {
-            proBilling = new ProBilling(this);
-        }
-        proBilling.refresh();
-
         KioskConfig config = KioskConfig.load(this);
-        // The wizard outranks everything: without both escape combinations the kiosk has no way
-        // out, so neither the dashboard nor the ordinary configuration screen is safe to lock.
+        // The wizard outranks everything, Google included: without both escape combinations the
+        // kiosk has no way out, so neither the dashboard nor the ordinary configuration screen is
+        // safe to show, and nothing that can put a window in front of it may run first.
         if (!config.escapeSequencesConfigured()) {
             showFirstStartWizard();
-        } else if (config.dashboardUrl.isEmpty()) {
+            return;
+        }
+        startProBilling();
+        if (config.dashboardUrl.isEmpty()) {
             showConfiguration(config);
         } else {
             showDashboard(config.dashboardUrl);
         }
+    }
+
+    /**
+     * Asks Play what this Google account owns, once the panel is a panel.
+     *
+     * <p>Asked once per process start, which on this app means at least nightly: the pass at
+     * QUIET_HOUR ends in System.exit and the relaunch alarm brings this activity back, so "when the
+     * app is launched", which is where Google's guide puts this, is a recurring event here rather
+     * than a once-per-boot one. Deliberately after the user-unlock gate in
+     * {@link #initializeUserInterface}, because Play cannot answer for a locked user.
+     *
+     * <p>Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
+     * and both start at boot without anybody opening a screen, so an answer that only arrives when
+     * somebody taps their way into settings arrives too late to gate anything. It also means a
+     * purchase made on another device is picked up by the next nightly restart on its own. Juri,
+     * 2026-08-27.
+     *
+     * <p><b>Never before the first-start wizard has recorded both escape combinations.</b> Muralis
+     * is free with or without a Google account, so a panel nobody has set up yet has no business
+     * asking Google anything, and somebody who cannot leave Muralis yet must not be shown a Google
+     * screen on the way in. This is ordering only, not a new capability: the wizard finishes,
+     * {@link #continueAfterFirstStartWizard} starts this, and every later launch takes the path
+     * above. Juri, 2026-09-03.
+     */
+    private void startProBilling() {
+        if (proBilling == null) {
+            proBilling = new ProBilling(this);
+        }
+        proBilling.refresh();
     }
 
     /**
@@ -2185,6 +2202,8 @@ public final class KioskActivity extends Activity {
      */
     private void continueAfterFirstStartWizard() {
         wizardVisible = false;
+        // There is a way out of the kiosk now, so Play may be asked. See startProBilling.
+        startProBilling();
         KioskConfig config = KioskConfig.load(this);
         if (config.dashboardUrl.isEmpty()) {
             showConfiguration(config);
@@ -3459,6 +3478,10 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
+        // The dashboard draws no price, so Play stops being asked for one. See ProBilling.askPlay.
+        if (proBilling != null) {
+            proBilling.detachListener();
+        }
         recorderVisible = false;
         wizardVisible = false;
         publishOperatorScreenState();

@@ -94,7 +94,13 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   assumption that it cannot happen. Do not add an `AccountManager` check (deprecated broadcast, a
   "Contacts" permission on the listing, visibility rules that changed at API 26) or a grace period:
   both were built on 2026-09-03 and removed the same day because Play already answers the question
-  and that is how client-only apps behave. A free panel is never nagged: the surfaces
+  and that is how client-only apps behave. **Play is not asked anything until the first-start
+  wizard has recorded both escape combinations** (`KioskActivity.startProBilling`, which the
+  wizard's exit calls): Muralis is free without a Google account, so a panel nobody has finished
+  setting up has no business talking to Play, and somebody who cannot leave Muralis yet must not be
+  shown a Google screen on the way in. `ProBilling` also asks for the *price* only while the
+  configuration screen is attached as a `StatusListener`; a panel sitting on its dashboard queries
+  purchases alone. A free panel is never nagged: the surfaces
   simply do not come up, and the configuration screen's dimmed MQTT and web-admin cards (visible,
   inert, one line and a Buy button each) are the whole story. A purchase completing at the panel
   starts the surfaces immediately via `reloadConfiguration`, no restart needed. Debug builds accept

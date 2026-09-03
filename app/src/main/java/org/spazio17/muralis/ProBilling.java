@@ -64,10 +64,13 @@ import java.util.List;
  * {@link StatusListener} contract below without a second mechanism.
  *
  * <p><b>Asked at startup, as Google's guide recommends</b>, from
- * {@code KioskActivity.initializeUserInterface}, again in {@code onResume} (Google's
+ * {@code KioskActivity.startProBilling}, again in {@code onResume} (Google's
  * recommendation too, and on this app it is what re-asks after the Play purchase sheet closes,
  * since coming back from the sheet is exactly a resume), and whenever the configuration screen is
- * built. On this app "startup" is not a rare event: the nightly pass exits the process and an alarm
+ * built. <b>Startup means after the first-start wizard, never before it</b>: a panel with no
+ * recorded way out is a panel nobody can leave, and until it has one, Muralis asks Google nothing.
+ * See {@code KioskActivity.startProBilling} for why that ordering is the product rule rather than
+ * caution. On this app "startup" is not a rare event: the nightly pass exits the process and an alarm
  * relaunches the activity, so the query runs at least daily and a connection opened at startup
  * lives a day at most. An earlier version deferred everything to the configuration screen, on the
  * reasoning that the panel's foreground lasts months and a Play binding should not; that reasoning
@@ -113,6 +116,16 @@ final class ProBilling implements PurchasesUpdatedListener {
      * also repaints the card, cannot overwrite the explanation with a generic "not offered yet".
      */
     private String productProblem;
+    /**
+     * Whether Play has ever answered a product-details query on this client, with details or with a
+     * refusal. False is not a problem to report, it is the ordinary state of a running panel: the
+     * price is only fetched while a screen is showing it, so {@link #statusSentence} must not read
+     * an absent {@link #productForDisplay} as Play refusing to offer the product. Set when the
+     * answer lands, not when the question goes out: the purchases answer usually arrives first, and
+     * a flag set on asking made that first repaint say "not offered" for the half second before the
+     * price came in.
+     */
+    private boolean productAnswered;
     private boolean owned;
     private boolean buyable;
     private String detail = "Checking Google Play…";
@@ -163,7 +176,7 @@ final class ProBilling implements PurchasesUpdatedListener {
     /** Re-asks Play for the product and the account's purchases. Main thread; safe to repeat. */
     void refresh() {
         if (client.isReady()) {
-            query();
+            askPlay();
             return;
         }
         if (connecting) {
@@ -176,7 +189,7 @@ final class ProBilling implements PurchasesUpdatedListener {
                 mainHandler.post(() -> {
                     connecting = false;
                     if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
-                        query();
+                        askPlay();
                     } else {
                         // owned stays: a setup failure is knowledge about the moment, not about
                         // the purchase, and wiping the gate here would drop the remote surfaces
@@ -209,9 +222,13 @@ final class ProBilling implements PurchasesUpdatedListener {
         client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
                 mainHandler.post(() -> {
                     if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                        // Not an answer about the product, so productAnswered stays as it was: a
+                        // Buy that failed on transport must not leave statusSentence with the
+                        // flag set and neither details nor a problem to show for it.
                         report(unavailableSentence(result), owned, buyable);
                         return;
                     }
+                    productAnswered = true;
                     List<ProductDetails> found = detailsResult.getProductDetailsList();
                     if (found.isEmpty()) {
                         productForDisplay = null;
@@ -247,6 +264,16 @@ final class ProBilling implements PurchasesUpdatedListener {
                 }));
     }
 
+    /**
+     * The configuration screen has been left for the dashboard. Nothing is drawing the price now,
+     * so {@link #askPlay} stops asking for it; the entitlement query is unaffected. Without this the
+     * listener outlived its screen, and every refresh after the first visit to settings, nightly
+     * included, fetched a price for a card that no longer existed.
+     */
+    void detachListener() {
+        listener = null;
+    }
+
     /** Called by the activity's onDestroy; the client holds a service binding. */
     void release() {
         listener = null;
@@ -264,9 +291,31 @@ final class ProBilling implements PurchasesUpdatedListener {
                 .build();
     }
 
-    private void query() {
+    /**
+     * The two questions, and the rule for which of them to ask.
+     *
+     * <p>What the account owns is asked every time, because that is the entitlement and it gates
+     * MQTT and the web admin whether or not anybody is looking at a screen.
+     *
+     * <p>What the product costs is asked only while a {@link StatusListener} is attached, which
+     * means only while the configuration screen is up to show a price. A panel spends its life on
+     * the dashboard, where the price is drawn nowhere and asked by nobody, so asking anyway was one
+     * needless conversation with Play per launch on every panel in the world. {@link #buy} does not
+     * depend on this either way: it re-queries for itself, deliberately, because Google's guidance
+     * is that a cached {@code ProductDetails} goes stale.
+     */
+    private void askPlay() {
+        if (listener != null) {
+            queryProductForDisplay();
+        }
+        queryPurchases();
+    }
+
+    /** The price, for the card that shows it. Reports on its own; see {@link #askPlay}. */
+    private void queryProductForDisplay() {
         client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
                 mainHandler.post(() -> {
+                    productAnswered = true;
                     List<ProductDetails> found = detailsResult.getProductDetailsList();
                     if (result.getResponseCode() == BillingClient.BillingResponseCode.OK
                             && !found.isEmpty()) {
@@ -288,7 +337,10 @@ final class ProBilling implements PurchasesUpdatedListener {
                         productProblem = unfetchedSentence(detailsResult);
                         Log.w(TAG, "Product " + PRODUCT_ID + " unfetched: " + productProblem);
                     }
-                    queryPurchases();
+                    // Used to fall through to queryPurchases and let that one line report for both.
+                    // The two are independent now, so this one says what it found rather than
+                    // leaving the card on whatever the purchases answer happened to paint.
+                    report(statusSentence(), owned, productForDisplay != null && !owned);
                 }));
     }
 
@@ -544,6 +596,12 @@ final class ProBilling implements PurchasesUpdatedListener {
             return offer == null
                     ? "Muralis Pro is available."
                     : "Muralis Pro is available: " + offer.getFormattedPrice() + ", one time.";
+        }
+        if (!productAnswered) {
+            // No answer about the product yet, either because nothing is showing a price or because
+            // the question is still in flight. Saying "not offered yet" here would be inventing a
+            // refusal Play never gave; this is the one thing the panel does know.
+            return "Muralis Pro is not on this Google account.";
         }
         return productProblem == null
                 ? "Google Play does not offer Muralis Pro to this device yet."
