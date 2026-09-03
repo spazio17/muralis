@@ -14,20 +14,21 @@ import android.util.Log;
  * web admin together. The rules below are the ones that make that work on a wall panel, and each
  * exists because the obvious alternative breaks something.
  *
- * <p><b>The answer is cached, and a negative answer never erases it.</b> {@link #record} writes a
- * verified purchase into {@link SecretStore} (keystore-backed AES-GCM, the same envelope the broker
- * and admin credentials use) and nothing removes it automatically. That asymmetry is the whole
- * design: {@code queryPurchasesAsync} returns an empty list both for "this account never bought
- * Pro" and for "there is no account signed in and no network to ask", and those must not have the
- * same consequence. A panel that bought Pro and was then de-Googled, or unplugged from the
- * internet, or simply asked at the wrong moment, keeps working. Juri's stated intent is that people
- * buy once and may then run the tablet with no Google account at all.
+ * <p><b>Google Play's answer is the truth, and the stored copy is only a bridge.</b> {@link #record}
+ * writes a verified purchase into {@link SecretStore} (keystore-backed AES-GCM, the same envelope
+ * the broker and admin credentials use) so the paid surfaces can come up at boot, before Play has
+ * been asked, and stay up while Play cannot be asked: the service unreachable, the network down,
+ * the Store mid-update. Those answers change nothing. What Play says clearly does: an {@code OK}
+ * answer for the whole account that does not contain the purchase, or {@code BILLING_UNAVAILABLE},
+ * which is what a device with no Google account signed in gets, both make {@link ProBilling} call
+ * {@link #drop}, at once. This is Juri's rule of 2026-09-03, absolute: Muralis works with or without
+ * a Google account, Muralis Pro only with one, and a refund ends it. It is also how client-only
+ * apps on Play behave in general, which is why the account check and the day-long grace that
+ * briefly stood here are gone: Play already answers both questions.
  *
- * <p><b>A refund therefore leaves the panel unlocked, knowingly.</b> Play can refund and revoke at
- * its discretion, and this cache does not follow it. That was accepted deliberately (see the DDA
- * notes in TODO-muralis-release.md) as the price of offline survival, and it is a consequence to
- * live with rather than a hole to close: closing it means a panel that goes dark because a broker
- * check failed on a Tuesday.
+ * <p><b>Reversible by design.</b> Signing back in, or Play recovering, returns the purchase on the
+ * next query and {@link #record} stores it again. Nothing but Play's own answer is needed to get
+ * Pro back, and nothing is asked of the operator.
  *
  * <p><b>Nothing here trusts storage on its own.</b> The cached document is re-verified against
  * Play's signature on read, not merely read back, so tampering with the preferences file is not a
@@ -139,7 +140,14 @@ final class ProEntitlement {
         SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
         String json = secrets.getOrNull(PURCHASE_JSON);
         String signature = secrets.getOrNull(PURCHASE_SIGNATURE);
-        if (json == null || signature == null) {
+        // Two different nothings, and both mean "not unlocked here". Null is the Keystore being
+        // unavailable, which SecretStore reports separately so a caller does not mistake it for an
+        // absent value. Empty is genuinely nothing stored: a panel that never bought Pro, or one
+        // {@link #drop} has cleared. The empty case used to fall through to a signature check over
+        // two empty strings, which failed and logged "a stored purchase did not verify", a sentence
+        // that reads like tampering on a panel that simply owns nothing. Unreachable until drop()
+        // existed; seen on the tablet the day it did, 2026-09-03.
+        if (json == null || signature == null || json.isEmpty() || signature.isEmpty()) {
             return false;
         }
         boolean verified = PurchaseSignature.verify(BuildConfig.LICENSE_KEY, json, signature);
@@ -150,6 +158,25 @@ final class ProEntitlement {
             Log.w(TAG, "A stored purchase did not verify in this build; Pro stays off here");
         }
         return verified;
+    }
+
+    /**
+     * Erases the stored purchase, because Google Play has just said clearly that this device does
+     * not hold it. The only path that deletes, and {@link ProBilling} is its only caller.
+     *
+     * <p>Quiet when there was nothing to erase, which is every query on a free panel; the warning
+     * is for the panel that had Pro and has just lost it.
+     *
+     * @param why one line for the log: which answer from Play this was
+     */
+    static void drop(Context context, String why) {
+        SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+        if (secrets.has(PURCHASE_JSON) || secrets.has(PURCHASE_SIGNATURE)) {
+            secrets.clear(PURCHASE_JSON);
+            secrets.clear(PURCHASE_SIGNATURE);
+            Log.w(TAG, "Muralis Pro is off on this panel: " + why);
+        }
+        cachedAnswer = Boolean.FALSE;
     }
 
     /** Drops the memoised answer, so the next {@link #isActive} recomputes it. */

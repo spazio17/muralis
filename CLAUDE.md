@@ -82,10 +82,19 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `KioskService.startControllersNow` and `restartControllers`, the only two places a controller is
   ever built; do not add a third gate site or a third construction site. The entitlement is Play's
   signed purchase document, verified on-device by `PurchaseSignature` (pure, host-tested; see its
-  javadoc for why there is deliberately no verification server) and cached in `SecretStore`, where
-  a negative answer never erases it: an empty `queryPurchasesAsync` cannot distinguish "never
-  bought" from "no account, no network", so a bought panel that is later de-Googled stays unlocked,
-  and, accepted knowingly, so does a refunded one. A free panel is never nagged: the surfaces
+  javadoc for why there is deliberately no verification server) and cached in `SecretStore` as a
+  bridge, not as a right: Google Play's answer is the truth. **Juri's rule, 2026-09-03, absolute:
+  Muralis works with or without a Google account, Muralis Pro only with one, and a refund ends it.**
+  So `ProBilling` calls `ProEntitlement.drop` at once on a full-account `queryPurchasesAsync` that
+  answers `OK` without the purchase, and on `BILLING_UNAVAILABLE` from setup or query, which is
+  what a signed-out device gets; every other refusal (service unavailable, disconnected, network,
+  timeout) is about the moment and leaves the gate alone, so a panel with its account signed in
+  and its internet down keeps Pro. Reversible by Play's next answer alone. The gate closing tears
+  the controllers down in `restartControllers`; that direction is real now, do not reintroduce the
+  assumption that it cannot happen. Do not add an `AccountManager` check (deprecated broadcast, a
+  "Contacts" permission on the listing, visibility rules that changed at API 26) or a grace period:
+  both were built on 2026-09-03 and removed the same day because Play already answers the question
+  and that is how client-only apps behave. A free panel is never nagged: the surfaces
   simply do not come up, and the configuration screen's dimmed MQTT and web-admin cards (visible,
   inert, one line and a Buy button each) are the whole story. A purchase completing at the panel
   starts the surfaces immediately via `reloadConfiguration`, no restart needed. Debug builds accept
