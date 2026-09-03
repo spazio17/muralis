@@ -450,16 +450,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
         }
 
-        // Deliberately NOT inside the API 28 branch above, where it used to sit. DISALLOW_SAFE_BOOT
-        // is API 25, so gating it on 28 meant it never applied on the API 26/27 hardware this app is
-        // actually built for, and safe mode starts the device with third-party apps disabled: no
-        // Muralis, no lock task, no foreground service. That is an escape from the kiosk needing
-        // neither the corner-tap sequence nor a cable, on the primary target device.
-        try {
-            policy.addUserRestriction(admin, android.os.UserManager.DISALLOW_SAFE_BOOT);
-        } catch (SecurityException | IllegalArgumentException refused) {
-            Log.w(TAG, "Could not block safe-mode boot", refused);
-        }
+        // DISALLOW_SAFE_BOOT used to be applied here, at every service start. It moved to
+        // KioskActivity.applyKioskPolicy on 2026-09-03, behind the escape-combination gate with HOME
+        // and lock task: until the wizard has recorded a way out, safe mode is one, and blocking it
+        // at boot on a panel nobody had set up yet bought nothing. A user restriction persists, so
+        // one application after the wizard covers every later boot.
 
         // Accessibility services: system-only. The configuration screen renders both corner-tap
         // combinations in plaintext, and an enabled accessibility service could read them and

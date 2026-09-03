@@ -359,10 +359,16 @@ final class KioskConfig {
      * the recorder keeps one obvious write path for its pair of fields.
      */
     void saveEscapeSequences(Context context) {
+        // commit, not apply: these two strings are the precondition for everything irreversible the
+        // device owner does. The wizard's last save is followed within milliseconds by
+        // applyKioskPolicy pinning HOME, blocking safe mode and starting lock task, all of which the
+        // system persists at once. An asynchronous write here could lose the combinations to a kill
+        // or a power cut in that window and leave a panel pinned with no recorded way out, which is
+        // the one state this app must never reach. Synchronous, on a button press, costs nothing.
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(SETTINGS_SEQUENCE, settingsSequence)
                 .putString(LAUNCHER_SEQUENCE, launcherSequence)
-                .apply();
+                .commit();
     }
 
     /**

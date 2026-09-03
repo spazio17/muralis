@@ -631,32 +631,49 @@ public final class KioskActivity extends Activity {
         // Settings.Secure.USER_SETUP_COMPLETE is not public API. More importantly the situation
         // cannot arise, because an app-build Muralis only becomes HOME once it is already installed
         // and provisioned, which is necessarily after setup has finished.
-        // Asked once per process start, which on this app means at least nightly: the pass at
-        // QUIET_HOUR ends in System.exit and the relaunch alarm brings this activity back, so
-        // "when the app is launched", which is where Google's guide puts this, is a recurring
-        // event here rather than a once-per-boot one. Deliberately after the user-unlock gate
-        // above, because Play cannot answer for a locked user.
-        //
-        // Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
-        // and both start at boot without anybody opening a screen, so an answer that only arrives
-        // when somebody taps their way into settings arrives too late to gate anything. It also
-        // means a purchase made on another device is picked up by the next nightly restart on its
-        // own. Juri, 2026-08-27.
-        if (proBilling == null) {
-            proBilling = new ProBilling(this);
-        }
-        proBilling.refresh();
-
         KioskConfig config = KioskConfig.load(this);
-        // The wizard outranks everything: without both escape combinations the kiosk has no way
-        // out, so neither the dashboard nor the ordinary configuration screen is safe to lock.
+        // The wizard outranks everything, Google included: without both escape combinations the
+        // kiosk has no way out, so neither the dashboard nor the ordinary configuration screen is
+        // safe to show, and nothing that can put a window in front of it may run first.
         if (!config.escapeSequencesConfigured()) {
             showFirstStartWizard();
-        } else if (config.dashboardUrl.isEmpty()) {
+            return;
+        }
+        startProBilling();
+        if (config.dashboardUrl.isEmpty()) {
             showConfiguration(config);
         } else {
             showDashboard(config.dashboardUrl);
         }
+    }
+
+    /**
+     * Asks Play what this Google account owns, once the panel is a panel.
+     *
+     * <p>Asked once per process start, which on this app means at least nightly: the pass at
+     * QUIET_HOUR ends in System.exit and the relaunch alarm brings this activity back, so "when the
+     * app is launched", which is where Google's guide puts this, is a recurring event here rather
+     * than a once-per-boot one. Deliberately after the user-unlock gate in
+     * {@link #initializeUserInterface}, because Play cannot answer for a locked user.
+     *
+     * <p>Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
+     * and both start at boot without anybody opening a screen, so an answer that only arrives when
+     * somebody taps their way into settings arrives too late to gate anything. It also means a
+     * purchase made on another device is picked up by the next nightly restart on its own. Juri,
+     * 2026-08-27.
+     *
+     * <p><b>Never before the first-start wizard has recorded both escape combinations.</b> Muralis
+     * is free with or without a Google account, so a panel nobody has set up yet has no business
+     * asking Google anything, and somebody who cannot leave Muralis yet must not be shown a Google
+     * screen on the way in. This is ordering only, not a new capability: the wizard finishes,
+     * {@link #continueAfterFirstStartWizard} starts this, and every later launch takes the path
+     * above. Juri, 2026-09-03.
+     */
+    private void startProBilling() {
+        if (proBilling == null) {
+            proBilling = new ProBilling(this);
+        }
+        proBilling.refresh();
     }
 
     /**
@@ -2185,6 +2202,8 @@ public final class KioskActivity extends Activity {
      */
     private void continueAfterFirstStartWizard() {
         wizardVisible = false;
+        // There is a way out of the kiosk now, so Play may be asked. See startProBilling.
+        startProBilling();
         KioskConfig config = KioskConfig.load(this);
         if (config.dashboardUrl.isEmpty()) {
             showConfiguration(config);
@@ -2764,7 +2783,14 @@ public final class KioskActivity extends Activity {
      * button for something already done.
      */
     private View defaultLauncherPrompt(KioskTheme theme) {
-        if (getPackageName().equals(resolvedHomePackage())) {
+        // The device-owner half of the javadoc above used to be true only by coincidence: HOME was
+        // pinned at enrolment, so by the time this screen existed the resolution check below already
+        // said "ours". The pin now happens in applyKioskPolicy, twenty lines before this is built,
+        // and whether the check sees it depends on the package manager having applied the policy by
+        // then. It does today, synchronously, but a button that is hidden by statement order is not
+        // hidden by design. Device owner means the policy pins HOME itself; there is never a prompt.
+        if (KioskDeviceAdminReceiver.isDeviceOwner(this)
+                || getPackageName().equals(resolvedHomePackage())) {
             return null;
         }
         Button setDefault = secondaryButton(theme, getString(R.string.set_default_launcher));
@@ -3452,6 +3478,10 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
+        // The dashboard draws no price, so Play stops being asked for one. See ProBilling.askPlay.
+        if (proBilling != null) {
+            proBilling.detachListener();
+        }
         recorderVisible = false;
         wizardVisible = false;
         publishOperatorScreenState();
@@ -4400,15 +4430,6 @@ public final class KioskActivity extends Activity {
             return;
         }
         ComponentName admin = KioskDeviceAdminReceiver.componentName(this);
-        // Only claimed when it is not already ours. applyKioskPolicy runs from onResume, and
-        // addPersistentPreferredActivity appends rather than replaces, so calling it unconditionally
-        // added an entry to the package manager's persistent-preferred list on every resume and grew
-        // package-restrictions.xml without bound. The guard also keeps the normal case free: this is
-        // needed once, after ownership is granted to an already-running app, which is what happened
-        // on the MediaPad where lock task only engaged after a restart.
-        if (!getPackageName().equals(resolvedHomePackage())) {
-            KioskDeviceAdminReceiver.pinAsHomeActivity(this);
-        }
         try {
             policy.setLockTaskPackages(admin, lockTaskPackages());
             // setLockTaskFeatures and LOCK_TASK_FEATURE_NONE are both API 28. The interim MediaPad
@@ -4438,15 +4459,51 @@ public final class KioskActivity extends Activity {
             Log.w(TAG, "Device-owner policy refused; kiosk hardening unavailable", notOwner);
             return;
         }
-        // No recorded way out, no pin. The escape combinations have no compiled-in default any
-        // more (see KioskConfig), so until the first-start wizard has recorded both, a pinned
-        // screen would be a bricked panel: the tap handler matches nothing and Back is inert by
-        // design. Everything above still applies, HOME stays ours and the allowlist stays
-        // current, so the pin engages on the first applyKioskPolicy after the wizard finishes.
-        // The status bar is left alone for the same reason disableStatusBarIfPinned exists: it
-        // only ever acts once the pin is actually held.
+        // No recorded way out, no pin and no HOME. The escape combinations have no compiled-in
+        // default any more (see KioskConfig), so until the first-start wizard has recorded both, a
+        // pinned screen would be a bricked panel: the tap handler matches nothing and Back is inert
+        // by design.
+        //
+        // Becoming the device's persistent HOME sits behind the same gate, and for the same reason
+        // rather than a related one. It used to run above, unconditionally, and the admin receiver
+        // ran it earlier still, during QR enrolment, before the app had ever been opened. That is
+        // what turned a bad first launch into a wiped tablet on 2026-09-03: the Play-signed 0.4.5 on
+        // a panel with no Google account met Google's own injected licence check, which finished
+        // KioskActivity about a second after every launch, and because Muralis was already the only
+        // HOME, Android started it straight back into the same wall. The wrapper that did it is
+        // switched off now, but this guard is not about that wrapper. Anything at all can go wrong
+        // before an operator has finished setting a panel up, and while HOME still belongs to the
+        // shipped launcher, every one of those is a bad afternoon rather than a factory reset.
+        //
+        // The rule, then: Muralis does not make itself the only way out of the device before the
+        // operator has a way out of Muralis. Everything above still applies, the lock-task
+        // allowlist stays current, and HOME, the safe-mode block and the pin all engage on the
+        // first applyKioskPolicy after the wizard finishes. The status bar is left alone for the same reason
+        // disableStatusBarIfPinned exists: it only ever acts once the pin is actually held.
         if (!KioskConfig.load(this).escapeSequencesConfigured()) {
             return;
+        }
+        // Only claimed when it is not already ours. applyKioskPolicy runs from onResume, and
+        // addPersistentPreferredActivity appends rather than replaces, so calling it unconditionally
+        // added an entry to the package manager's persistent-preferred list on every resume and grew
+        // package-restrictions.xml without bound. The guard also keeps the normal case free: this is
+        // needed once, after ownership is granted to an already-running app, which is what happened
+        // on the MediaPad where lock task only engaged after a restart.
+        if (!getPackageName().equals(resolvedHomePackage())) {
+            KioskDeviceAdminReceiver.pinAsHomeActivity(this);
+        }
+        // Safe mode starts the device with every installed app disabled: no Muralis, no lock task,
+        // no service. On a finished panel that is an escape needing neither the combination nor a
+        // cable, so the device owner blocks it. Behind this gate for the same reason HOME is: until
+        // the wizard has recorded a way out, safe mode IS one, and blocking it earlier, which the
+        // service used to do at every boot, bought nothing and cost a recovery route. A user
+        // restriction persists across reboots, so setting it on the first resume after the wizard
+        // covers every later boot; it is idempotent, so re-setting it on every resume costs one
+        // binder call and nothing else. DISALLOW_SAFE_BOOT is API 23, so no version gate.
+        try {
+            policy.addUserRestriction(admin, android.os.UserManager.DISALLOW_SAFE_BOOT);
+        } catch (SecurityException | IllegalArgumentException refused) {
+            Log.w(TAG, "Could not block safe-mode boot", refused);
         }
         ActivityManager activityManager = getSystemService(ActivityManager.class);
         if (activityManager != null
