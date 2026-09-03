@@ -466,7 +466,21 @@ final class ProBilling implements PurchasesUpdatedListener {
     /** The steady-state sentence for the card, from what the last queries established. */
     private String statusSentence() {
         if (owned) {
-            return "Muralis Pro is on this Google account.";
+            // Two different questions, and this line used to answer only the first. "owned" is
+            // Play's raw answer: a PURCHASED purchase exists for the signed-in account, and
+            // reading that needs no signature. Whether the paid surfaces actually run is the
+            // stricter question ProEntitlement answers, by verifying Play's signature over the
+            // purchase against this build's licensing key. They agree on any correctly built
+            // release. They diverge when the purchase cannot be verified here, and then the About
+            // line claimed Pro was on the account while the MQTT and web-admin cards beside it
+            // stayed locked and their Buy buttons answered ITEM_ALREADY_OWNED, which is an
+            // operator being told everything is fine by the one surface that should have said
+            // what was wrong (seen 2026-09-03 on a locally built panel whose build carried no
+            // licensing key). The gate is right and stays; this sentence now reports it.
+            return ProEntitlement.isActive(context)
+                    ? "Muralis Pro is on this Google account."
+                    : "Muralis Pro is on this Google account, but this panel could not verify the "
+                            + "purchase, so the paid features stay locked.";
         }
         ProductDetails details = productForDisplay;
         if (details != null) {
