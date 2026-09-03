@@ -135,34 +135,25 @@ public final class KioskActivity extends Activity {
     /** Grace for the lock-task pin to actually land before the status-bar policy is judged. */
     private static final long LOCK_TASK_SETTLE_MS = 750L;
     /**
-     * Apps allowed to run while lock-task mode is on. Muralis itself plus the two escape hatches, so
-     * a locked-down tablet is still recoverable by hand at the glass.
-     */
-    /**
-     * Lock-task allowlist, resolved at runtime rather than hardcoded.
+     * Lock-task allowlist: this package, and deliberately nothing else.
      *
-     * <p>The privileged build could hardcode {@code com.android.launcher3} because it shipped the
-     * launcher in its own ROM. This build runs on whatever stock Android it is installed on, and the
-     * interim device is a Huawei tablet whose launcher is {@code com.huawei.android.launcher}, so a
-     * fixed list would silently omit the launcher and turn the nine-tap escape hatch into a dead
-     * end. That is the worst failure this hardening can produce, so the launcher is looked up.
+     * <p>The allowlist is the list of packages Android will let run <em>while lock task is held</em>.
+     * Anything on it can be brought to the front over the kiosk and stays there, because lock task is
+     * doing what it was told. It used to name the launcher and Settings as "second lines of
+     * recovery", and that made Settings exactly such a door: measured 2026-09-03,
+     * {@code am start -a android.settings.SETTINGS} put the whole Settings app on screen over a
+     * locked panel and Muralis did not take the screen back, while Chrome, the Play Store and the
+     * dialer were all refused by the platform. Everything a wall panel must refuse was refused; the
+     * two packages this method volunteered were not.
      *
-     * <p>Settings stays on the list as the second line of recovery, also resolved rather than
-     * assumed.
+     * <p>Neither entry bought anything, which is why removing them costs nothing. Every sanctioned
+     * hand-over, the launcher escape and the two Settings screens Muralis itself offers, calls
+     * {@link #releaseForOtherApp()} first, and that <em>ends</em> lock task; an app started after
+     * that needs no allowlist entry at all. The entries were only ever reachable by something else
+     * starting them, which is the case they had to prevent.
      */
     private String[] lockTaskPackages() {
-        java.util.LinkedHashSet<String> packages = new java.util.LinkedHashSet<>();
-        packages.add(getPackageName());
-        String launcher = systemLauncherPackage();
-        if (launcher != null) {
-            packages.add(launcher);
-        }
-        android.content.pm.ResolveInfo settings = getPackageManager().resolveActivity(
-                new Intent(android.provider.Settings.ACTION_SETTINGS), 0);
-        if (settings != null && settings.activityInfo != null) {
-            packages.add(settings.activityInfo.packageName);
-        }
-        return packages.toArray(new String[0]);
+        return new String[] {getPackageName()};
     }
 
     /**

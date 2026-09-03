@@ -287,6 +287,18 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   hardcoded launcher package, since the default launcher varies by OEM.
   `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device owner, so
   HOME reliably returns to it.
+- **The lock-task allowlist is this package and nothing else, and must stay that way.** An
+  allowlisted package is exactly one Android will let run *over* the kiosk while lock task is held,
+  so every name added there is a door. `lockTaskPackages()` used to volunteer the launcher and
+  Settings as "second lines of recovery"; measured 2026-09-03 on the panel,
+  `am start -a android.settings.SETTINGS` then put the whole Settings app on screen over a locked
+  panel and kept it, while Chrome, the Play Store and the dialer were refused by the platform with
+  code 101. The supervisor did not intervene, correctly, because `KioskActivity` was alive behind
+  it. Neither entry bought anything: every sanctioned hand-over (`openSystemLauncher`, the
+  WRITE_SETTINGS grant screen, the HOME-settings screen) calls `releaseForOtherApp()` first, and
+  that *ends* lock task, after which no allowlist entry is needed. Verified after the change:
+  Settings refused with 101, and releasing lock task then starting Settings still works. If a future
+  screen needs another app, release lock task for it; do not widen this list.
 - **The escape hatch's side doors are shut.** Where the app is device owner, accessibility
   services are restricted to the system image (the configuration screen renders both corner-tap
   combinations in plaintext, so a service that can read the screen and synthesise taps is a
