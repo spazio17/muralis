@@ -295,7 +295,16 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   launches the OEM launcher resolved at runtime via an explicit `setPackage` intent, never a
   hardcoded launcher package, since the default launcher varies by OEM.
   `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device owner, so
-  HOME reliably returns to it.
+  HOME reliably returns to it, **but not before the wizard has recorded both combinations**, the
+  same gate lock task sits behind and for the same reason one step removed: becoming the device's
+  only HOME means every later failure relaunches into itself. That is not hypothetical. On
+  2026-09-03 a QR-provisioned tablet with no Google account was left with no way back to the OEM
+  launcher and had to be factory reset, because Muralis had taken HOME during enrolment, from the
+  admin receiver's `onEnabled`, and something else then killed its activity a second into every
+  start. `onEnabled` no longer pins; `applyKioskPolicy` is the only caller. The safe-mode block
+  (`DISALLOW_SAFE_BOOT`) sits behind the same gate since the same day: safe mode is itself a way
+  out, and the service used to remove it at every boot, before anyone had another. Nothing may make Muralis the
+  only way out of the device before the operator has a way out of Muralis.
 - **The lock-task allowlist is this package and nothing else, and must stay that way.** An
   allowlisted package is exactly one Android will let run *over* the kiosk while lock task is held,
   so every name added there is a door. `lockTaskPackages()` used to volunteer the launcher and
@@ -392,6 +401,17 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   site). The layered setup, offline in-app text plus the public URL, is also what GDPR
   accessibility and the Austrian guidance for commercial apps expect; researched 2026-08-25, link-
   only was rejected on that basis.
+- **Play Console's automatic integrity protection must stay OFF for this app.** Turning it on makes
+  Play inject `com.pairip.*` into the signed artifact: it replaces the manifest's application class
+  with `com.pairip.application.Application` and adds `com.pairip.licensecheck.LicenseActivity`,
+  which refuses to let the app run unless Play itself installed it for a signed-in account. The
+  wall-panel path installs the APK by QR during setup, outside Play, on purpose, so that check can
+  never pass. Measured on the tablet 2026-09-03 with the Play-signed 0.4.5 and no Google account:
+  `KioskActivity` resumed, `LicenseActivity` finished it 1.3 s later with `clear-task-index`, Play's
+  `UnauthenticatedMainActivity` took the screen, and because Muralis was HOME the whole thing
+  repeated forever; the app's own code never logged a line. It is per-release in Play Console under
+  Test and release, App integrity, Automatic protection. None of this is in this repo and none of it
+  is visible in a local build, which is exactly why it is written down here.
 
 ## Platform constraints that shape the code
 

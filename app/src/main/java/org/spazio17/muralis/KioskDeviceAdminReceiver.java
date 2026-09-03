@@ -45,8 +45,14 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     @Override
     public void onEnabled(Context context, android.content.Intent intent) {
         Log.i(TAG, "Muralis device admin enabled");
-        // Runs during QR enrolment, which is the earliest possible moment to claim HOME.
-        pinAsHomeActivity(context);
+        // This used to call pinAsHomeActivity, on the reasoning that QR enrolment is the earliest
+        // possible moment to claim HOME. It is, and that was the problem: it made Muralis the only
+        // way out of the device before anybody had recorded a way out of Muralis, so when Google's
+        // injected licence check killed the activity a second into every launch on 2026-09-03, the
+        // tablet had nowhere else to go and had to be wiped. HOME is claimed by
+        // KioskActivity.applyKioskPolicy instead, behind the same escape-combination gate as lock
+        // task, on the first resume after the first-start wizard finishes. Nothing is lost by
+        // waiting: until the wizard is done there is no dashboard to return to anyway.
     }
 
     /**
@@ -67,6 +73,9 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
      * <p>This does <b>not</b> break the nine-tap escape hatch: {@code openSystemLauncher()} resolves
      * the OEM launcher and launches it with an explicit {@code setPackage}, which bypasses
      * preferred-activity resolution entirely. Verify that after changing either method.
+     *
+     * <p>Called from {@code KioskActivity.applyKioskPolicy} only, and only once both escape
+     * combinations are recorded; see {@link #onEnabled} for why it no longer runs at enrolment.
      */
     static void pinAsHomeActivity(Context context) {
         DevicePolicyManager policy = context.getSystemService(DevicePolicyManager.class);
