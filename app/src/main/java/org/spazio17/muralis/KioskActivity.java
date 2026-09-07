@@ -3081,10 +3081,11 @@ public final class KioskActivity extends Activity {
         LinearLayout creditsCard = card(theme, "Credits");
         addAboutRow(creditsCard, theme, "Eclipse Paho", "MQTT client (EPL/EDL)");
         addAboutRow(creditsCard, theme, "Catppuccin", "Colour palette (MIT)");
-        // The parking page shows the Android robot, and this sentence is Google's condition for
-        // that, word for word (brand guidelines, CC BY 3.0). Here rather than on the parking page
-        // itself, because the page is a full-screen illustration and this is where the app already
-        // says who it owes what to.
+        // The parking page shows the Android robot, shared by Google under CC BY 3.0, and this is
+        // the credit for it: author, licence, modified, like the two rows above it. Here rather than
+        // on the parking page itself, because the page is a full-screen illustration and this is
+        // where the app already says who it owes what to. See the string's comment for Google's
+        // own longer phrasing and why the row does not carry it.
         addAboutRow(creditsCard, theme, "Android robot", getString(R.string.android_robot_attribution));
 
         // No explanatory line above these two buttons. They are rendered in-app rather than linked

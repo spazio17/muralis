@@ -72,8 +72,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   surfaces: the old prefilled `homeassistant.local` text was saved and loaded at the first press on
   a fresh panel, and named a product this app does not belong to. The parking page's illustration,
   the Android robot pasting a fresh poster over a scratched Muralis billboard, is an easter egg
-  for exactly this state; when it lands it carries Google's CC BY 3.0 attribution sentence in
-  About, per the Android brand guidelines, and it is never the app icon.
+  for exactly this state; About's Credits card carries the CC BY 3.0 credit for it (Google,
+  modified, the licence), short like the other rows rather than Google's long sentence, at Juri's
+  request, and the robot is never the app icon.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
