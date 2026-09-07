@@ -2733,6 +2733,15 @@ public final class KioskActivity extends Activity {
      * gap is the keyboard on a fullscreen window and zero on one the system already resized, which is
      * exactly the amount the caller still has to give back.
      *
+     * <p><b>Why the keyboard is read as a window inset from API 30:</b> the visible display frame is the
+     * old report and it is fading out. An app that draws edge to edge, which every app targeting API 35
+     * does, gets no resized window and no shrunk visible frame when the keyboard opens; the keyboard
+     * arrives only as {@code WindowInsets.Type.ime()}, and only through an insets pass, which need not
+     * trigger any layout. Found on the Pixel 9 Pro XL, Android 17, 2026-09-07: the keyboard covered the
+     * lower half of the settings form and the focused box with it, and this method measured zero.
+     * So from API 30 the keyboard's top edge is the window's bottom less the IME inset, the measurement
+     * also runs whenever insets are applied, and the older report stays for the Android 8 and 9 devices.
+     *
      * <p>Both callers use this to give back the space themselves: the configuration screens as scroll
      * padding, the dashboard by shrinking the WebView. Worst in landscape, the orientation a wall panel
      * is fixed in, because the keyboard takes a much larger share of a short screen.
@@ -2747,12 +2756,26 @@ public final class KioskActivity extends Activity {
         final Runnable measure = () -> {
             View decor = getWindow().getDecorView();
             View content = findViewById(android.R.id.content);
-            Rect visible = new Rect();
-            decor.getWindowVisibleDisplayFrame(visible);
             int[] location = new int[2];
             content.getLocationOnScreen(location);
             int contentBottom = location[1] + content.getHeight();
-            int inset = Math.max(0, contentBottom - visible.bottom);
+            int keyboardTop;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.view.WindowInsets rootInsets = decor.getRootWindowInsets();
+                int ime = rootInsets == null ? 0
+                        : rootInsets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                if (ime == 0) {
+                    keyboardTop = Integer.MAX_VALUE;
+                } else {
+                    decor.getLocationOnScreen(location);
+                    keyboardTop = location[1] + decor.getHeight() - ime;
+                }
+            } else {
+                Rect visible = new Rect();
+                decor.getWindowVisibleDisplayFrame(visible);
+                keyboardTop = visible.bottom;
+            }
+            int inset = Math.max(0, contentBottom - keyboardTop);
             // A navigation bar or display cutout also shrinks the visible frame. Only a gap big enough
             // to be a keyboard counts, so ordinary layout does not gain phantom padding.
             if (inset < dp(MIN_KEYBOARD_INSET_DP)) {
@@ -2768,6 +2791,13 @@ public final class KioskActivity extends Activity {
         // detached, and the observer belongs to the window rather than the view, so every screen visit
         // would leave another listener firing forever against a dead view.
         final android.view.ViewTreeObserver.OnGlobalLayoutListener layoutListener = measure::run;
+        // The insets pass is the only signal an edge-to-edge window gets when the keyboard opens or
+        // closes, and it does not lay anything out by itself, so measure after it too. Nothing is
+        // consumed: the insets go on down to the children unchanged.
+        anchor.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.post(measure);
+            return insets;
+        });
         anchor.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View view) {
