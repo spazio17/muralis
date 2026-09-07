@@ -3697,30 +3697,18 @@ public final class KioskActivity extends Activity {
         int pad = dp(28);
         column.setPadding(pad, pad, pad, pad);
 
-        // The easter egg, and the reason this screen is worth looking at: the billboard with the
-        // poster pasted perfectly, upside down, and the robot wondering. Decorative, so no content
-        // description; the text under it carries the meaning. Scaled to fit whatever is left of the
-        // screen after the text, keeping its shape, so it works in portrait and landscape alike.
+        // The text first, because the picture gets whatever height the text leaves.
         android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-        ImageView scene = new ImageView(this);
-        scene.setImageResource(R.drawable.parking_billboard);
-        scene.setAdjustViewBounds(true);
-        scene.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        scene.setMaxWidth((int) (metrics.widthPixels * 0.86f));
-        scene.setMaxHeight((int) (metrics.heightPixels * 0.58f));
-        LinearLayout.LayoutParams sceneParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        sceneParams.gravity = Gravity.CENTER_HORIZONTAL;
-        sceneParams.bottomMargin = dp(24);
-        column.addView(scene, sceneParams);
-
+        int textWidth = metrics.widthPixels - 2 * pad;
+        java.util.List<View> lines = new java.util.ArrayList<>();
         TextView title = new TextView(this);
         title.setText("No dashboard yet.");
         title.setTextColor(theme.text);
         title.setTextSize(30);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
-        column.addView(title, matchWrap());
+        title.setLayoutParams(matchWrap());
+        lines.add(title);
         TextView body = new TextView(this);
         body.setText("Open the Muralis settings and enter one. The panel does the rest.");
         body.setTextColor(theme.subtext);
@@ -3729,7 +3717,8 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         bodyParams.topMargin = dp(10);
-        column.addView(body, bodyParams);
+        body.setLayoutParams(bodyParams);
+        lines.add(body);
         if (KioskRuntimeState.httpAdminListening()) {
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             String address = facts == null || facts.ipAddress.isEmpty()
@@ -3743,7 +3732,44 @@ public final class KioskActivity extends Activity {
             LinearLayout.LayoutParams adminParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             adminParams.topMargin = dp(22);
-            column.addView(admin, adminParams);
+            admin.setLayoutParams(adminParams);
+            lines.add(admin);
+        }
+        // What the text will take, measured at the width it will get, so the picture can be
+        // capped to the rest. A fixed share of the height was the first version, and on a phone
+        // held sideways (360dp tall) the picture's share plus three lines of text was more than
+        // the screen: the title sat at the bottom edge and the lines under it were off the screen
+        // (measured 2026-09-07). The tablet never showed it, the phone in landscape always did.
+        int textHeight = 0;
+        for (View line : lines) {
+            line.measure(View.MeasureSpec.makeMeasureSpec(textWidth, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) line.getLayoutParams();
+            textHeight += line.getMeasuredHeight() + (params == null ? 0 : params.topMargin);
+        }
+        int sceneGap = dp(24);
+        int sceneRoom = metrics.heightPixels - 2 * pad - textHeight - sceneGap;
+
+        // The easter egg, and the reason this screen is worth looking at: the billboard with the
+        // poster pasted perfectly, upside down, and the robot wondering. Decorative, so no content
+        // description; the text under it carries the meaning. Scaled to fit whatever is left of the
+        // screen after the text, keeping its shape, so it works in portrait and landscape alike:
+        // never wider than 86% of the screen, never taller than 58% of it, and never taller than
+        // the room the text leaves.
+        ImageView scene = new ImageView(this);
+        scene.setImageResource(R.drawable.parking_billboard);
+        scene.setAdjustViewBounds(true);
+        scene.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        scene.setMaxWidth((int) (metrics.widthPixels * 0.86f));
+        scene.setMaxHeight(Math.max(dp(48),
+                Math.min((int) (metrics.heightPixels * 0.58f), sceneRoom)));
+        LinearLayout.LayoutParams sceneParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sceneParams.gravity = Gravity.CENTER_HORIZONTAL;
+        sceneParams.bottomMargin = sceneGap;
+        column.addView(scene, sceneParams);
+        for (View line : lines) {
+            column.addView(line);
         }
         root.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
