@@ -15,7 +15,13 @@
      all. What says "tablet" instead is the front camera, the one mark every tablet carries and no
      monitor does, and it is the same dot the device bezel in the store screenshots draws, so the
      icon and the listing images agree about what the object is. Sketches for this decision, and the
-     four rejected directions, are in media/google-play/icon-explorations/. -->
+     four rejected directions, are in media/google-play/icon-explorations/.
+
+     Removing the stand also left the panel two units above the canvas centre, because the old
+     composition was balanced around the stand's foot rather than around the screen. That is 9.5px
+     out of place in the 512px listing icon: small enough to read as "something is slightly off"
+     without being nameable (Juri, 2026-09-07). Every path is therefore two units lower than the
+     first stand-free draft, and nothing else about the drawing changed. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -24,21 +30,23 @@
 
     <!-- Panel bezel. Stroked rather than filled so the tiles inside stay legible when a launcher
          shrinks the icon to a status-bar size. The path is the stroke's centreline, so the drawn
-         edge spans 24..28 and the glyph stays inside the guaranteed 18..90 square. -->
+         edge spans 24..84 across and 28..80 down: centred on 54,54 in both directions, and inside
+         the guaranteed 18..90 square. The bezel is the outermost mark, so it alone decides where
+         the glyph sits; measure both spans before changing a coordinate here. -->
     <path
-        android:pathData="M30,28 L78,28 A4,4 0 0 1 82,32 L82,72 A4,4 0 0 1 78,76 L30,76 A4,4 0 0 1 26,72 L26,32 A4,4 0 0 1 30,28 Z"
+        android:pathData="M30,30 L78,30 A4,4 0 0 1 82,34 L82,74 A4,4 0 0 1 78,78 L30,78 A4,4 0 0 1 26,74 L26,34 A4,4 0 0 1 30,30 Z"
         android:strokeColor="#CBA6F7"
         android:strokeWidth="4"
         android:fillColor="#00000000" />
 
     <!-- The front camera: what makes this a tablet and not a monitor. Centred on the top bezel. -->
     <path
-        android:pathData="M52.2,31.2 A1.8,1.8 0 1 1 55.8,31.2 A1.8,1.8 0 1 1 52.2,31.2 Z"
+        android:pathData="M52.2,33.2 A1.8,1.8 0 1 1 55.8,33.2 A1.8,1.8 0 1 1 52.2,33.2 Z"
         android:fillColor="#CBA6F7" />
 
     <!-- Dashboard tiles: two rows, wide and narrow alternating, echoing a card layout. -->
-    <path android:pathData="M33,38 L57,38 L57,50 L33,50 Z" android:fillColor="#CBA6F7" />
-    <path android:pathData="M61,38 L75,38 L75,50 L61,50 Z" android:fillColor="#7F5AF0" />
-    <path android:pathData="M33,54 L47,54 L47,66 L33,66 Z" android:fillColor="#7F5AF0" />
-    <path android:pathData="M51,54 L75,54 L75,66 L51,66 Z" android:fillColor="#CBA6F7" />
+    <path android:pathData="M33,40 L57,40 L57,52 L33,52 Z" android:fillColor="#CBA6F7" />
+    <path android:pathData="M61,40 L75,40 L75,52 L61,52 Z" android:fillColor="#7F5AF0" />
+    <path android:pathData="M33,56 L47,56 L47,68 L33,68 Z" android:fillColor="#7F5AF0" />
+    <path android:pathData="M51,56 L75,56 L75,68 L51,68 Z" android:fillColor="#CBA6F7" />
 </vector>
