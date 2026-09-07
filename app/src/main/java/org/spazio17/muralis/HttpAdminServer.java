@@ -1065,7 +1065,9 @@ final class HttpAdminServer {
                 .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
                 .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
                 .append("<input type=\"text\" name=\"url\"").append(MACHINE_TEXT)
-                .append(" inputmode=\"url\" placeholder=\"http://homeassistant.local:8123/\">")
+                .append(" inputmode=\"url\" placeholder=\"")
+                .append(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL)
+                .append("\">")
                 .append("<button type=\"submit\">Go</button>")
                 .append("</form></fieldset>")
 
