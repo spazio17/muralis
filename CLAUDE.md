@@ -50,9 +50,16 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   (reported 2026-08-24). The rules, all host-tested and verified on hardware: **reload** reloads
   whatever is on screen, dashboard or one-off or a page reached inside the dashboard; a **kiosk
   restart**, a process restart and the nightly clean always come back to the stored dashboard.
-  Every surface carries both halves, including two Home Assistant text entities; the one-off
-  entity reads `runtime.last_page_url` rather than a stored field, because an entity whose state
-  cannot be read back snaps back on every edit.
+  Every surface carries both halves as *inputs*, including two Home Assistant text entities; the
+  one-off entity reads `runtime.last_page_url` rather than a stored field, because an entity whose
+  state cannot be read back snaps back on every edit. **As a button, `kiosk.home` exists only in
+  Home Assistant now.** The tablet's "Main dashboard" and the web admin's quick action of the
+  same name were removed on 2026-09-07 at Juri's decision: on the tablet's settings screen it sat
+  beside "Open once" while the only save was the foot button "Open dashboard", two buttons naming
+  the dashboard and neither of them the save, and he pressed it in place of the save and lost a
+  full set of typed MQTT credentials. Anyone who misreads that button makes the same mistake, so
+  the button went rather than its name. The way back from a one-off URL on those two surfaces is
+  the foot button or "Restart kiosk"; the command itself is unchanged and MQTT keeps it.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would

@@ -1031,9 +1031,13 @@ final class HttpAdminServer {
                         config.launcherSequence))
                 .append(sectionFormEnd("Save"))
 
-                // Kept sorted by label; add new actions in alphabetical place.
+                // Kept sorted by label; add new actions in alphabetical place. There is no
+                // "Main dashboard" (kiosk.home) action any more, dropped 2026-09-07 together with
+                // the tablet's button of the same name: on the tablet it was pressed in place of
+                // the save, and Juri wanted the two surfaces to offer the same set. The way back
+                // from a one-off URL is "Restart kiosk", which the one-off box's hint already
+                // promises, and Home Assistant keeps its kiosk.home button.
                 .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")
-                .append(quickAction("kiosk.home", "Main dashboard"))
                 .append(quickAction("system.reboot", "Reboot"))
                 .append(quickAction("kiosk.reload", "Reload"))
                 .append(quickAction("kiosk.restart", "Restart kiosk"))
@@ -1053,9 +1057,8 @@ final class HttpAdminServer {
                 // parameters, and it used to store whatever was typed as the panel's dashboard,
                 // so the way back was retyping the original by hand (reported 2026-08-24). The
                 // Dashboard box above is where the stored URL changes.
-                // The hint sits above the input so what the box does is read before it is used.
-                // No "Main dashboard" button here: Quick actions already has it, and the way
-                // back does not need to exist twice on one page.
+                // The hint sits above the input so what the box does is read before it is used,
+                // and it names the way back: a kiosk restart, which is a quick action above.
                 .append("<fieldset><legend>Open a URL now</legend>")
                 .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
                 .append("dashboard is unchanged.</p>")

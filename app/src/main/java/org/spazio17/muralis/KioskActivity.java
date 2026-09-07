@@ -1388,10 +1388,19 @@ public final class KioskActivity extends Activity {
         addField(dashboardCard, theme, "Dashboard URL", urlInput);
         EditText deviceIdInput = themedInput(theme, config.deviceId, false);
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
-        // Two buttons beside the aggregate Save ("Open dashboard") at the foot of the screen,
-        // because they answer a different question: that one stores what is typed as THE
-        // dashboard, these two navigate without changing what is stored. Juri, 2026-08-24: a URL
+        // One button beside the aggregate Save ("Open dashboard") at the foot of the screen,
+        // because it answers a different question: that one stores what is typed as THE
+        // dashboard, this one shows it without changing what is stored. Juri, 2026-08-24: a URL
         // with one-off query parameters is exactly what a stored dashboard URL must not become.
+        //
+        // There used to be a second one here, "Main dashboard", which opened the stored dashboard
+        // and saved nothing. Removed 2026-09-07 at Juri's decision, after it cost him a full set
+        // of typed MQTT credentials: two buttons on one screen carrying the word "dashboard", and
+        // the one that saves is at the foot and named after what it opens, so the nearer one was
+        // pressed as if it were the save and the screen closed without one. Anyone who
+        // misunderstands that button makes the same mistake, so it is gone rather than renamed.
+        // Nothing is lost: the foot button already returns to the stored dashboard, a kiosk
+        // restart does too, and Home Assistant keeps its own kiosk.home button.
         Button openOnce = secondaryButton(theme, "Open once");
         openOnce.setOnClickListener(view -> {
             String once = normalizeUrl(urlInput.getText().toString());
@@ -1405,16 +1414,6 @@ public final class KioskActivity extends Activity {
             showDashboard(once);
         });
         dashboardCard.addView(openOnce, matchWrap());
-        Button mainDashboard = secondaryButton(theme, "Main dashboard");
-        mainDashboard.setOnClickListener(view -> {
-            String stored = KioskConfig.load(this).dashboardUrl;
-            if (stored.isEmpty()) {
-                Toast.makeText(this, "No dashboard URL is stored yet", Toast.LENGTH_LONG).show();
-                return;
-            }
-            showDashboard(stored);
-        });
-        dashboardCard.addView(mainDashboard, matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
