@@ -1248,6 +1248,112 @@ public final class KioskActivity extends Activity {
     }
 
     /**
+     * Writes an edit that no Save button was pressed for, and keeps this screen honest about it.
+     *
+     * <p>Three things have to happen together here, and each is in this one place because
+     * forgetting any of them is a silent bug rather than a visible one. The controllers reload, or
+     * a new broker address sits in storage while the old client stays connected to the old one.
+     * Telemetry republishes, the standing rule for anything applied outside the dispatcher.
+     * And this screen's stale-form baseline moves to what was just written, or the Save button at
+     * the foot would refuse itself, reporting the operator's own blur as "changed from another
+     * surface" and redrawing the screen under them.
+     */
+    private void applyConnectionEdit(KioskConfig.Editor editor) {
+        editor.apply();
+        connectionBaseline = connectionBaselineOf(KioskConfig.load(this));
+        KioskService.reloadConfiguration(this);
+        KioskService.publishTelemetrySoon(this);
+    }
+
+    /**
+     * Stores whichever MQTT boxes differ from what is stored, and only those.
+     *
+     * <p>Called when any of the four loses focus, Juri's rule of 2026-09-07: setting up a broker
+     * means leaving three or four boxes in a row, and on 2026-09-06 a full set of credentials was
+     * typed and then lost, because the only thing that stored them was a button at the foot of the
+     * screen that was never pressed. A field losing focus is as deliberate an action as a click,
+     * which is the same reasoning the web admin password on this screen has always used.
+     *
+     * <p>Only the changed boxes are written, so merely tabbing through a card cannot restart the
+     * MQTT client, and cannot move the baseline either. The port is left alone when it is not a
+     * port at all, rather than substituted: the box is already red and the card already says why.
+     * A blank password means keep the current one, which is what its label says on both surfaces.
+     */
+    private void saveMqttFieldsOnBlur(EditText host, EditText port, EditText username,
+            EditText password) {
+        KioskConfig stored = KioskConfig.load(this);
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        boolean changed = false;
+        String typedHost = host.getText().toString().trim();
+        if (!typedHost.equals(stored.mqttHost)) {
+            editor.mqttHost(typedHost);
+            changed = true;
+        }
+        Integer typedPort = parsePortStrict(port.getText().toString());
+        if (typedPort != null && typedPort != stored.mqttPort) {
+            editor.mqttPort(typedPort);
+            changed = true;
+        }
+        String typedUsername = username.getText().toString();
+        if (!typedUsername.equals(stored.mqttUsername)) {
+            editor.mqttUsername(typedUsername);
+            changed = true;
+        }
+        String typedPassword = password.getText().toString();
+        if (!typedPassword.isEmpty() && !typedPassword.equals(stored.mqttPassword)) {
+            editor.mqttPassword(typedPassword);
+            changed = true;
+        }
+        if (changed) {
+            applyConnectionEdit(editor);
+        }
+    }
+
+    /**
+     * Stores the device id when its box is left, under the dispatcher's own rule for it.
+     *
+     * <p>Refused rather than corrected, because an empty or unusable id is not a typo this screen
+     * can guess its way out of: the id is the panel's identity in Home Assistant, and an emptied
+     * one re-mints every entity.
+     */
+    private void saveDeviceIdOnBlur(EditText field) {
+        String typed = field.getText().toString().trim();
+        if (typed.equals(KioskConfig.load(this).deviceId)) {
+            return;
+        }
+        String problem = KioskCommandDispatcher.validateDeviceId(typed);
+        if (problem != null) {
+            Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+            return;
+        }
+        applyConnectionEdit(KioskConfig.edit(this).deviceId(typed));
+    }
+
+    /**
+     * Stores the web admin port when its box is left, under the same three rules the Save button
+     * applies: a number, inside the range the app can actually bind, and not already held by
+     * another service. The advisory border the blur pre-check paints is not one of them; it is
+     * allowed to be out of date, this is not.
+     */
+    private void saveAdminPortOnBlur(EditText field) {
+        Integer typed = parsePortStrict(field.getText().toString());
+        if (typed == null || typed == KioskConfig.load(this).httpPort) {
+            return;
+        }
+        String problem = KioskCommandDispatcher.validateAdminPort(typed);
+        if (problem != null) {
+            Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!SettingProbe.portFree(typed)) {
+            Toast.makeText(this, "Not saved: port " + typed + " is already in use on this device",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        applyConnectionEdit(KioskConfig.edit(this).httpPort(typed));
+    }
+
+    /**
      * Applies one instantly-applied setting the moment it is touched, the way the web admin's
      * equivalent controls already do, and tells Home Assistant about it without waiting for the
      * next telemetry tick. These controls sit in the card each one is about rather than collected
@@ -1382,10 +1488,9 @@ public final class KioskActivity extends Activity {
         addField(dashboardCard, theme, "Dashboard URL", urlInput);
         EditText deviceIdInput = themedInput(theme, config.deviceId, false);
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
-        // Two buttons beside the aggregate Save ("Open dashboard") at the foot of the screen,
-        // because they answer a different question: that one stores what is typed as THE
-        // dashboard, these two navigate without changing what is stored. Juri, 2026-08-24: a URL
-        // with one-off query parameters is exactly what a stored dashboard URL must not become.
+        // Shows what is typed and stores nothing, which is the whole point of it. Juri,
+        // 2026-08-24: a URL with one-off query parameters is exactly what a stored dashboard URL
+        // must not become, so the button that looks at one deliberately is not a save.
         Button openOnce = secondaryButton(theme, "Open once");
         openOnce.setOnClickListener(view -> {
             String once = normalizeUrl(urlInput.getText().toString());
@@ -1399,16 +1504,48 @@ public final class KioskActivity extends Activity {
             showDashboard(once);
         });
         dashboardCard.addView(openOnce, matchWrap());
-        Button mainDashboard = secondaryButton(theme, "Main dashboard");
-        mainDashboard.setOnClickListener(view -> {
-            String stored = KioskConfig.load(this).dashboardUrl;
-            if (stored.isEmpty()) {
-                Toast.makeText(this, "No dashboard URL is stored yet", Toast.LENGTH_LONG).show();
+        // Saves this card, and opens nothing. It used to be "Main dashboard", which opened the
+        // stored dashboard and saved nothing, and on 2026-09-06 that cost Juri a full set of typed
+        // MQTT credentials: two buttons on this card name the dashboard, the button that actually
+        // stores anything is at the foot of the screen and is named after what it opens, so the
+        // nearest thing to a save was pressed and the screen closed without one. The rename is his
+        // (2026-09-07) and the rule behind it is worth keeping: a button that says Save, saves,
+        // and nothing else on a card is allowed to look like the card's save.
+        Button saveDashboard = secondaryButton(theme, "Save dashboard");
+        saveDashboard.setOnClickListener(view -> {
+            KioskConfig current = KioskConfig.load(this);
+            // The same stale-form guard the foot button carries, and for the same reason: this
+            // screen holds the values that were current when it was built.
+            if (!connectionBaselineOf(current).equals(connectionBaseline)) {
+                Toast.makeText(this, "Not saved: these settings were changed from another "
+                        + "surface while this screen was open. Showing the current values.",
+                        Toast.LENGTH_LONG).show();
+                redrawInPlace(() -> showConfiguration(current));
                 return;
             }
-            showDashboard(stored);
+            String typedUrl = normalizeUrl(urlInput.getText().toString());
+            if (typedUrl.isEmpty()) {
+                Toast.makeText(this, "Not saved: the dashboard URL is empty",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            // The dispatcher's validators, shared with the web admin and with the foot button:
+            // one set of rules, whichever surface or button the value arrived through.
+            String urlProblem = KioskCommandDispatcher.validateDashboardUrl(typedUrl);
+            if (urlProblem != null) {
+                Toast.makeText(this, "Not saved: " + urlProblem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            String typedId = deviceIdInput.getText().toString().trim();
+            String idProblem = KioskCommandDispatcher.validateDeviceId(typedId);
+            if (idProblem != null) {
+                Toast.makeText(this, "Not saved: " + idProblem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            applyConnectionEdit(KioskConfig.edit(this).dashboardUrl(typedUrl).deviceId(typedId));
+            Toast.makeText(this, "Dashboard saved, not opened", Toast.LENGTH_SHORT).show();
         });
-        dashboardCard.addView(mainDashboard, matchWrap());
+        dashboardCard.addView(saveDashboard, matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -1462,6 +1599,16 @@ public final class KioskActivity extends Activity {
                 runPrecheck(urlInput, theme, () -> SettingProbe.dashboardUrl(typed));
             }
         });
+        // Every connection box on this screen except the dashboard URL stores itself when it is
+        // left (Juri, 2026-09-07). The URL is the deliberate exception: "Open once" reads the box
+        // without storing it, so a box that stored itself on the way out would make looking at a
+        // one-off URL replace the panel's dashboard, which is the bug that button exists to
+        // prevent. It has "Save dashboard" next to it instead.
+        deviceIdInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                saveDeviceIdOnBlur(deviceIdInput);
+            }
+        });
         Runnable checkBroker = () -> {
             clearPrecheck(brokerInput, theme);
             String host = brokerInput.getText().toString().trim();
@@ -1503,6 +1650,7 @@ public final class KioskActivity extends Activity {
         };
         brokerInput.setOnFocusChangeListener((view, hasFocus) -> {
             if (!hasFocus) {
+                saveMqttFieldsOnBlur(brokerInput, portInput, usernameInput, passwordInput);
                 checkBroker.run();
             }
         });
@@ -1511,12 +1659,27 @@ public final class KioskActivity extends Activity {
         // host line's verdict.
         portInput.setOnFocusChangeListener((view, hasFocus) -> {
             if (!hasFocus) {
+                saveMqttFieldsOnBlur(brokerInput, portInput, usernameInput, passwordInput);
                 clearPrecheck(portInput, theme);
                 checkBroker.run();
             }
         });
+        // The credentials have nothing to probe, so storing them is all their blur does.
+        usernameInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                saveMqttFieldsOnBlur(brokerInput, portInput, usernameInput, passwordInput);
+            }
+        });
+        passwordInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                saveMqttFieldsOnBlur(brokerInput, portInput, usernameInput, passwordInput);
+            }
+        });
         httpPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(httpPortInput, theme);
+            if (!hasFocus) {
+                saveAdminPortOnBlur(httpPortInput);
+            }
             String typed = httpPortInput.getText().toString().trim();
             int bound = KioskRuntimeState.httpAdminListening()
                     ? KioskRuntimeState.httpAdminPort() : -1;
@@ -2038,6 +2201,22 @@ public final class KioskActivity extends Activity {
                 // Assistant on the old values for up to a minute.
                 KioskService.publishTelemetrySoon(this);
                 showDashboard(url);
+            } else {
+                // An emptied box means "keep what is stored", the rule both password boxes on this
+                // screen already follow, and pressing this then simply leaves for the dashboard.
+                // It used to mean nothing at all: the button did not save, did not open and said
+                // nothing. It is also the way back when the box holds something this screen
+                // refuses to save, which "Main dashboard" used to be until it became "Save
+                // dashboard" (Juri, 2026-09-07); without it an operator who mistyped a long URL
+                // would be stuck on the settings screen, retyping the real one from memory, which
+                // is the same trap the one-off URL rules were written to close.
+                String stored = KioskConfig.load(this).dashboardUrl;
+                if (stored.isEmpty()) {
+                    Toast.makeText(this, "No dashboard URL is stored yet",
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    showDashboard(stored);
+                }
             }
         });
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,

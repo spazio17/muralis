@@ -339,9 +339,22 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   write the same settings, so the rules are: the stats-overlay switch, portrait, the brightness pair
   and the admin password apply the moment they are touched, on the
   tablet and in the web admin alike (the admin password on blur when non-empty, because the box
-  now renders blank and its only job on either surface is setting a new one); only
-  the connection fields (dashboard URL, device id, broker, ports) wait for a save button, because
-  applying those per keystroke would rebind sockets and restart the MQTT client. Anything applied
+  now renders blank and its only job on either surface is setting a new one). **On the tablet,
+  every connection box except the dashboard URL now stores itself when it loses focus** (Juri,
+  2026-09-07, after typing a full set of MQTT credentials and losing them: the only thing that
+  stored them was a button at the foot of the screen, and the button he pressed instead was one of
+  two on the Dashboard card that name the dashboard). Per keystroke would rebind sockets and
+  restart the MQTT client; per *blur* is three or four times during a setup, and only for the
+  boxes whose value actually changed, which is the same bargain the admin password already struck.
+  Every such write goes through `KioskActivity.applyConnectionEdit`, which also moves the screen's
+  stale-form baseline, or the Save button would refuse the operator's own blur as another
+  surface's change. **The dashboard URL is the deliberate exception**: "Open once" reads that box
+  without storing it, so a box that stored itself on the way out would make looking at a one-off
+  URL replace the panel's dashboard, the exact bug the one-off rules exist to prevent. It has
+  "Save dashboard" beside it instead, which saves that card and opens nothing; it was called "Main
+  dashboard" and did the opposite (opened the stored dashboard, saved nothing), which is what made
+  it look like the card's save. The web admin needs none of this: it has always had one Save per
+  section, each with its own baseline. Anything applied
   outside `KioskCommandDispatcher` must also call `KioskService.publishTelemetrySoon`, since only
   the dispatcher republishes automatically, and without it Home Assistant keeps showing the old
   value for up to a full publish interval. Both UIs poll storage on a timer so a change made
