@@ -3863,14 +3863,66 @@ public final class KioskActivity extends Activity {
 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        // Top-right: the bottom corners are the nine-tap escape zones.
+        // Top-right: the bottom corners are the nine-tap escape zones. The top margin is not a
+        // constant: see placeStatsOverlay, which puts the block one pixel under the status bar.
         params.gravity = Gravity.TOP | Gravity.END;
-        params.topMargin = dp(4);
+        params.topMargin = 1;
         params.rightMargin = dp(4);
         dashboard.addView(statsOverlay, params);
+        // Placed once the view is attached and knows its insets, and again whenever the insets
+        // change (bars shown or hidden, a rotation). The listener consumes nothing.
+        statsOverlay.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.post(this::placeStatsOverlay);
+            return insets;
+        });
+        statsOverlay.post(this::placeStatsOverlay);
 
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
+    }
+
+    /**
+     * Puts the readout one pixel under the status bar, whatever kind of window this is.
+     *
+     * <p>Juri, 2026-09-07: "on all devices too high". A fixed 4dp from the top of the dashboard view
+     * meant three different things: under the clock on a phone that draws edge to edge (Android 15
+     * and later, where the content starts at the screen's top edge), four pixels under the bar on an
+     * older ordinary install (whose window already starts below the bar), and hard against the top
+     * edge on the kiosk, which hides its bars. One rule instead: the block's top edge sits one pixel
+     * below the bar, and where the bar is hidden, one pixel below where it would be, from the
+     * system's own dimension for it, so the readout lands in the same place on every device.
+     */
+    private void placeStatsOverlay() {
+        if (statsOverlay == null || statsOverlay.getParent() == null) {
+            return;
+        }
+        View content = findViewById(android.R.id.content);
+        int[] location = new int[2];
+        content.getLocationOnScreen(location);
+        android.view.WindowInsets insets = statsOverlay.getRootWindowInsets();
+        int bar;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            bar = insets == null ? 0
+                    : insets.getInsets(android.view.WindowInsets.Type.statusBars()).top;
+        } else {
+            bar = insets == null ? 0 : insets.getSystemWindowInsetTop();
+        }
+        if (location[1] > 0) {
+            // The window itself starts below the bar: nothing of the bar is inside this view.
+            bar = 0;
+        } else if (bar == 0) {
+            // Content from the very top and no bar reported: the kiosk, bars hidden. Where the bar
+            // would be, from the system's own dimension, so the readout sits where it does on a
+            // phone rather than against the edge.
+            int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+            bar = id == 0 ? dp(24) : getResources().getDimensionPixelSize(id);
+        }
+        int margin = bar + 1;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) statsOverlay.getLayoutParams();
+        if (params.topMargin != margin) {
+            params.topMargin = margin;
+            statsOverlay.setLayoutParams(params);
+        }
     }
 
     /**
