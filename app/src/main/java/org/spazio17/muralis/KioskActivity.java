@@ -1762,8 +1762,7 @@ public final class KioskActivity extends Activity {
             TextView needsGrant = new TextView(this);
             needsGrant.setTextColor(theme.bad);
             needsGrant.setTextSize(13);
-            needsGrant.setText("Brightness cannot be set until Muralis has the \"Modify system "
-                    + "settings\" permission. It is the only thing on this panel that needs it.");
+            needsGrant.setText("Needs the \"Modify system settings\" permission.");
             displayCard.addView(needsGrant, matchWrapClose());
             Button grantWriteSettings = secondaryButton(theme, "Grant it now");
             grantWriteSettings.setOnClickListener(view -> offerWriteSettingsGrant());

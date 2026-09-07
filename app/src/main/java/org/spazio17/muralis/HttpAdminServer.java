@@ -1315,9 +1315,8 @@ final class HttpAdminServer {
         if (KioskService.canWriteSystemSettings(context)) {
             return "";
         }
-        return "<p class=\"hint\">Brightness cannot be set until Muralis has the \"Modify "
-                + "system settings\" permission. Grant it on the tablet, in the Display card "
-                + "of the Muralis settings screen, or over adb with "
+        return "<p class=\"hint\">Brightness needs the \"Modify system settings\" permission: "
+                + "grant it in the Display card on the tablet, or with "
                 + "<code>adb shell appops set " + context.getPackageName()
                 + " WRITE_SETTINGS allow</code>.</p>";
     }
