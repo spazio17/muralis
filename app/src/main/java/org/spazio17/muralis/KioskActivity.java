@@ -1473,8 +1473,12 @@ public final class KioskActivity extends Activity {
         }
 
         LinearLayout dashboardCard = card(theme, "Dashboard");
-        EditText urlInput = themedInput(theme, config.dashboardUrl.isEmpty()
-                ? "http://homeassistant.local:8123/" : config.dashboardUrl, false);
+        // The box holds what is stored and nothing else; the example is a hint. It used to be
+        // prefilled with a Home Assistant address as real text, so a fresh panel saved and loaded
+        // it at the first press of the foot button and showed an error page for a host that does
+        // not exist. See KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL for the two reasons.
+        EditText urlInput = themedInput(theme, config.dashboardUrl, false);
+        urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(dashboardCard, theme, "Dashboard URL", urlInput);
@@ -2077,92 +2081,97 @@ public final class KioskActivity extends Activity {
         Button open = primaryButton(theme, "Open dashboard");
         open.setOnClickListener(view -> {
             String url = normalizeUrl(urlInput.getText().toString());
-            if (!url.isEmpty()) {
-                // Stale-form guard, the same rule the escape recorder and the web admin boxes
-                // follow: this form holds the values that were current when the screen was built,
-                // and if another surface changed any of them since, writing the form back would
-                // silently revert that change. Refused with an explanation, and the screen is
-                // rebuilt showing what is actually stored now.
-                KioskConfig current = KioskConfig.load(this);
-                if (!connectionBaselineOf(current).equals(connectionBaseline)) {
-                    Toast.makeText(this, "Not saved: these settings were changed from another "
-                            + "surface while this screen was open. Showing the current values.",
-                            Toast.LENGTH_LONG).show();
-                    redrawInPlace(() -> showConfiguration(current));
-                    return;
-                }
-                // The dispatcher's rules, shared with the web admin: normalizeUrl already adds a
-                // missing scheme, but an over-long URL or an id MQTT cannot carry must be refused
-                // here, where the operator is, not discovered later as a logcat line.
-                String urlProblem = KioskCommandDispatcher.validateDashboardUrl(url);
-                if (urlProblem != null) {
-                    Toast.makeText(this, "Not saved: " + urlProblem + ".",
-                            Toast.LENGTH_LONG).show();
-                    return;
-                }
-                String deviceId = deviceIdInput.getText().toString().trim();
-                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
-                if (idProblem != null) {
-                    Toast.makeText(this, "Not saved: " + idProblem + ".",
-                            Toast.LENGTH_LONG).show();
-                    return;
-                }
-                // Refused, never substituted, and the same three rules the web save applies: a
-                // number, inside 1024-65535 (a privileged port passes a plain range check and
-                // fails at bind time, killing the web admin), and not already held by another
-                // service. parsePort's clamp is for reading storage back, not for a form.
-                Integer typedAdminPort = parsePortStrict(httpPortInput.getText().toString());
-                if (typedAdminPort == null) {
-                    Toast.makeText(this, "Not saved: the web admin port must be a number "
-                            + "between 1 and 65535", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                int adminPort = typedAdminPort;
-                String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
-                if (portProblem != null) {
-                    Toast.makeText(this, "Not saved: " + portProblem + ".",
-                            Toast.LENGTH_LONG).show();
-                    return;
-                }
-                KioskConfig storedNow = KioskConfig.load(this);
-                if (adminPort != storedNow.httpPort && !SettingProbe.portFree(adminPort)) {
-                    // Same gate as the web save: the advisory border is a warning, this is the
-                    // refusal, so a save cannot put the admin into a bind failure.
-                    Toast.makeText(this, "Not saved: port " + adminPort + " is already in use on "
-                            + "this device", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                Integer typedBrokerPort = parsePortStrict(portInput.getText().toString());
-                if (typedBrokerPort == null) {
-                    Toast.makeText(this, "Not saved: the broker port must be a number between 1 "
-                            + "and 65535", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                // Only the fields with a text box on this screen are written. The overlay switch,
-                // portrait, the brightness pair and the admin password already applied themselves
-                // when touched, and the Editor cannot touch what it was not given.
-                KioskConfig.Editor editor = KioskConfig.edit(this)
-                        .dashboardUrl(url)
-                        .deviceId(deviceId)
-                        .mqttHost(brokerInput.getText().toString())
-                        .mqttPort(typedBrokerPort)
-                        .mqttUsername(usernameInput.getText().toString())
-                        .httpPort(adminPort);
-                String mqttPassword = passwordInput.getText().toString();
-                if (!mqttPassword.isEmpty()) {
-                    // The box renders blank and blank means "keep", exactly like the web admin's
-                    // form; writing the empty string here would wipe the stored password on every
-                    // unrelated save.
-                    editor.mqttPassword(mqttPassword);
-                }
-                editor.apply();
-                KioskService.reloadConfiguration(this);
-                // House rule: applied outside the dispatcher, so republish. dashboard_url and
-                // device id ride in the telemetry document, and this save used to leave Home
-                // Assistant on the old values for up to a minute.
-                KioskService.publishTelemetrySoon(this);
-                showDashboard(url);
+            // Stale-form guard, the same rule the escape recorder and the web admin boxes
+            // follow: this form holds the values that were current when the screen was built,
+            // and if another surface changed any of them since, writing the form back would
+            // silently revert that change. Refused with an explanation, and the screen is
+            // rebuilt showing what is actually stored now.
+            KioskConfig current = KioskConfig.load(this);
+            if (!connectionBaselineOf(current).equals(connectionBaseline)) {
+                Toast.makeText(this, "Not saved: these settings were changed from another "
+                        + "surface while this screen was open. Showing the current values.",
+                        Toast.LENGTH_LONG).show();
+                redrawInPlace(() -> showConfiguration(current));
+                return;
             }
+            // The dispatcher's rules, shared with the web admin: normalizeUrl already adds a
+            // missing scheme, but an over-long URL or an id MQTT cannot carry must be refused
+            // here, where the operator is, not discovered later as a logcat line.
+            //
+            // An emptied box is the one input the dispatcher refuses that this button accepts.
+            // Clearing the URL and pressing the button that saves is a decision, and it used to be
+            // answered with nothing at all: no save, no screen change, no message. Now it saves
+            // the other cards, stores the empty URL, and shows the parking page, which says what
+            // to do next (Juri, 2026-09-07). The web admin's Dashboard box keeps refusing empty;
+            // a browser is not where somebody blanks a panel on purpose.
+            String urlProblem = url.isEmpty() ? null : KioskCommandDispatcher.validateDashboardUrl(url);
+            if (urlProblem != null) {
+                Toast.makeText(this, "Not saved: " + urlProblem + ".",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            String deviceId = deviceIdInput.getText().toString().trim();
+            String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+            if (idProblem != null) {
+                Toast.makeText(this, "Not saved: " + idProblem + ".",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            // Refused, never substituted, and the same three rules the web save applies: a
+            // number, inside 1024-65535 (a privileged port passes a plain range check and
+            // fails at bind time, killing the web admin), and not already held by another
+            // service. parsePort's clamp is for reading storage back, not for a form.
+            Integer typedAdminPort = parsePortStrict(httpPortInput.getText().toString());
+            if (typedAdminPort == null) {
+                Toast.makeText(this, "Not saved: the web admin port must be a number "
+                        + "between 1 and 65535", Toast.LENGTH_LONG).show();
+                return;
+            }
+            int adminPort = typedAdminPort;
+            String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
+            if (portProblem != null) {
+                Toast.makeText(this, "Not saved: " + portProblem + ".",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            KioskConfig storedNow = KioskConfig.load(this);
+            if (adminPort != storedNow.httpPort && !SettingProbe.portFree(adminPort)) {
+                // Same gate as the web save: the advisory border is a warning, this is the
+                // refusal, so a save cannot put the admin into a bind failure.
+                Toast.makeText(this, "Not saved: port " + adminPort + " is already in use on "
+                        + "this device", Toast.LENGTH_LONG).show();
+                return;
+            }
+            Integer typedBrokerPort = parsePortStrict(portInput.getText().toString());
+            if (typedBrokerPort == null) {
+                Toast.makeText(this, "Not saved: the broker port must be a number between 1 "
+                        + "and 65535", Toast.LENGTH_LONG).show();
+                return;
+            }
+            // Only the fields with a text box on this screen are written. The overlay switch,
+            // portrait, the brightness pair and the admin password already applied themselves
+            // when touched, and the Editor cannot touch what it was not given.
+            KioskConfig.Editor editor = KioskConfig.edit(this)
+                    .dashboardUrl(url)
+                    .deviceId(deviceId)
+                    .mqttHost(brokerInput.getText().toString())
+                    .mqttPort(typedBrokerPort)
+                    .mqttUsername(usernameInput.getText().toString())
+                    .httpPort(adminPort);
+            String mqttPassword = passwordInput.getText().toString();
+            if (!mqttPassword.isEmpty()) {
+                // The box renders blank and blank means "keep", exactly like the web admin's
+                // form; writing the empty string here would wipe the stored password on every
+                // unrelated save.
+                editor.mqttPassword(mqttPassword);
+            }
+            editor.apply();
+            KioskService.reloadConfiguration(this);
+            // House rule: applied outside the dispatcher, so republish. dashboard_url and
+            // device id ride in the telemetry document, and this save used to leave Home
+            // Assistant on the old values for up to a minute.
+            KioskService.publishTelemetrySoon(this);
+            showDashboard(url);
         });
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
         // so handing it the screen left no way back. Wi-Fi is set up once during provisioning, and
@@ -3125,6 +3134,12 @@ public final class KioskActivity extends Activity {
         LinearLayout creditsCard = card(theme, "Credits");
         addAboutRow(creditsCard, theme, "Eclipse Paho", "MQTT client (EPL/EDL)");
         addAboutRow(creditsCard, theme, "Catppuccin", "Colour palette (MIT)");
+        // The parking page shows the Android robot, shared by Google under CC BY 3.0, and this is
+        // the credit for it: author, licence, modified, like the two rows above it. Here rather than
+        // on the parking page itself, because the page is a full-screen illustration and this is
+        // where the app already says who it owes what to. See the string's comment for Google's
+        // own longer phrasing and why the row does not carry it.
+        addAboutRow(creditsCard, theme, "Android robot", getString(R.string.android_robot_attribution));
 
         // No explanatory line above these two buttons. They are rendered in-app rather than linked
         // out because a kiosk under lock task has no browser to hand a URL to, which is a fact
@@ -3686,7 +3701,166 @@ public final class KioskActivity extends Activity {
         return button;
     }
 
+    /**
+     * The dashboard view of a panel that has no dashboard URL.
+     *
+     * <p>Reached three ways, all of them "show the dashboard" with nothing to show: the foot button
+     * pressed with the URL box emptied, {@code kiosk.home} or a kiosk restart with nothing stored,
+     * and the nightly and pressure rebuilds on such a panel. Not reached at boot: an unconfigured
+     * panel still opens its settings screen from {@code initializeUserInterface}, because that is
+     * where the missing URL gets typed. Before this existed the empty case was a black WebView
+     * loading "", or nothing happening at all, depending on the route in (Juri, 2026-09-07).
+     *
+     * <p>It is the dashboard state in every respect but the WebView: fullscreen, lock task held,
+     * the escape combinations working from its corners, and the blackout honoured, so
+     * {@code kiosk.stop} and {@code display.visual_off} blank this screen exactly as they blank a
+     * dashboard. There is no supervisor, no frozen-page check and no server probe, because there
+     * is no page; {@link #destroyWebView} has already cancelled them. Rebuilt on rotation like
+     * every native screen.
+     *
+     * <p>The text says the one thing an operator standing in front of the panel needs, and the web
+     * admin address when there is one, because "open the settings" presumes they know the corner
+     * combination and a browser on another device presumes nothing. Above the text sits the
+     * illustration Juri chose from five (media/drafts/parking-page/, sketch E): the Muralis
+     * billboard with a fresh poster pasted perfectly, upside down, and the Android robot on its
+     * ladder wondering, the one the old black screen with the upside-down robot inspired. It is
+     * {@code R.drawable.parking_billboard}, generated by make-parking-drawable.py beside the
+     * sketches, and the About screen carries the CC BY 3.0 sentence Google requires for the robot.
+     */
+    private void showParkingPage() {
+        currentScreen = this::showParkingPage;
+        clearStatusChip();
+        destroyWebView();
+        configurationVisible = false;
+        if (proBilling != null) {
+            proBilling.detachListener();
+        }
+        recorderVisible = false;
+        wizardVisible = false;
+        publishOperatorScreenState();
+        setDashboardFullscreen(true);
+        disableStatusBarIfPinned();
+        enterImmersiveMode();
+
+        KioskTheme theme = currentTheme();
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(theme.base);
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.CENTER);
+        int pad = dp(28);
+        column.setPadding(pad, pad, pad, pad);
+
+        // The text first, because the picture gets whatever height the text leaves.
+        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+        int textWidth = metrics.widthPixels - 2 * pad;
+        java.util.List<View> lines = new java.util.ArrayList<>();
+        TextView title = new TextView(this);
+        title.setText("No dashboard yet.");
+        title.setTextColor(theme.text);
+        title.setTextSize(30);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setLayoutParams(matchWrap());
+        lines.add(title);
+        TextView body = new TextView(this);
+        body.setText("Open the Muralis settings and enter one. The panel does the rest.");
+        body.setTextColor(theme.subtext);
+        body.setTextSize(18);
+        body.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        bodyParams.topMargin = dp(10);
+        body.setLayoutParams(bodyParams);
+        lines.add(body);
+        if (KioskRuntimeState.httpAdminListening()) {
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            String address = facts == null || facts.ipAddress.isEmpty()
+                    ? "this-tablet" : facts.ipAddress;
+            TextView admin = new TextView(this);
+            admin.setText("Or from another device: http://" + address + ":"
+                    + KioskRuntimeState.httpAdminPort());
+            admin.setTextColor(theme.subtext);
+            admin.setTextSize(16);
+            admin.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams adminParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            adminParams.topMargin = dp(22);
+            admin.setLayoutParams(adminParams);
+            lines.add(admin);
+        }
+        // What the text will take, measured at the width it will get, so the picture can be
+        // capped to the rest. A fixed share of the height was the first version, and on a phone
+        // held sideways (360dp tall) the picture's share plus three lines of text was more than
+        // the screen: the title sat at the bottom edge and the lines under it were off the screen
+        // (measured 2026-09-07). The tablet never showed it, the phone in landscape always did.
+        int textHeight = 0;
+        for (View line : lines) {
+            line.measure(View.MeasureSpec.makeMeasureSpec(textWidth, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) line.getLayoutParams();
+            textHeight += line.getMeasuredHeight() + (params == null ? 0 : params.topMargin);
+        }
+        int sceneGap = dp(24);
+        int sceneRoom = metrics.heightPixels - 2 * pad - textHeight - sceneGap;
+
+        // The easter egg, and the reason this screen is worth looking at: the billboard with the
+        // poster pasted perfectly, upside down, and the robot wondering. Decorative, so no content
+        // description; the text under it carries the meaning. Scaled to fit whatever is left of the
+        // screen after the text, keeping its shape, so it works in portrait and landscape alike:
+        // never wider than 86% of the screen, never taller than 58% of it, and never taller than
+        // the room the text leaves.
+        ImageView scene = new ImageView(this);
+        scene.setImageResource(R.drawable.parking_billboard);
+        scene.setAdjustViewBounds(true);
+        scene.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        scene.setMaxWidth((int) (metrics.widthPixels * 0.86f));
+        scene.setMaxHeight(Math.max(dp(48),
+                Math.min((int) (metrics.heightPixels * 0.58f), sceneRoom)));
+        LinearLayout.LayoutParams sceneParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sceneParams.gravity = Gravity.CENTER_HORIZONTAL;
+        sceneParams.bottomMargin = sceneGap;
+        column.addView(scene, sceneParams);
+        for (View line : lines) {
+            column.addView(line);
+        }
+        root.addView(column, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // The same blackout the dashboard carries, for the same two commands, so a panel with no
+        // dashboard can still be blanked and woken like one.
+        blackout = new View(this);
+        blackout.setBackgroundColor(Color.BLACK);
+        blackout.setVisibility(View.GONE);
+        blackout.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                handleUiCommand("display.wake", -1, null);
+            }
+            return true;
+        });
+        root.addView(blackout, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+        applyKioskPolicy();
+        kioskStopped = KioskConfig.kioskStopped(this);
+        if (kioskStopped) {
+            blackout.setVisibility(View.VISIBLE);
+        }
+        int visualOffBoot = KioskConfig.visualOffBootCount(this);
+        if (visualOffBoot >= 0 && visualOffBoot == currentBootCount()) {
+            blackout.setVisibility(View.VISIBLE);
+            setWindowBrightness(1);
+        } else {
+            setWindowBrightness(-1);
+        }
+    }
+
     private void showDashboard(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            showParkingPage();
+            return;
+        }
         // Cleared, not set: a WebView reflows itself on rotation, and rebuilding this screen would
         // reload the dashboard every time somebody turned the panel. See onConfigurationChanged.
         currentScreen = null;
@@ -4091,9 +4265,11 @@ public final class KioskActivity extends Activity {
                         ? KioskConfig.load(this).dashboardUrl
                         : url;
                 if (target == null || target.trim().isEmpty()) {
-                    // Only reachable for kiosk.home on a panel with no dashboard configured yet:
-                    // loading "" would blank a working screen for nothing.
-                    Log.w(TAG, "No dashboard URL to show");
+                    // Only reachable for kiosk.home on a panel with no dashboard URL. Home is the
+                    // dashboard view, and with nothing stored the dashboard view is the parking
+                    // page, so that is where home goes. It used to log a line and do nothing,
+                    // which on a panel that had just been blanked on purpose read as a dead command.
+                    showDashboard("");
                     break;
                 }
                 // A one-off URL also lifts a kiosk.stop and a visual-off, exactly as

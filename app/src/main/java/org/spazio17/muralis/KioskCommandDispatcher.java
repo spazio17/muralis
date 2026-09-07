@@ -254,6 +254,23 @@ final class KioskCommandDispatcher {
 
 
     /** Returns null when {@code url} is an acceptable dashboard URL, an error message otherwise. */
+    /**
+     * The example both settings surfaces show for the dashboard URL, and they show it as a hint,
+     * never as a value.
+     *
+     * <p>It was {@code http://homeassistant.local:8123/}, prefilled into the tablet's box as real
+     * text, and on a fresh panel the first press of the save button stored it and loaded it,
+     * landing on an error page for a host that does not exist (Juri, 2026-09-07). Two things
+     * were wrong with that, and this fixes both. A value nobody typed must never be one press
+     * from being stored: the form-design literature is unanimous that example text belongs in
+     * the hint, alongside a visible label, where it shows the shape of a valid entry and cannot
+     * be mistaken for data or submitted by accident. And Muralis is not a Home Assistant app: it
+     * runs any dashboard, so the example must not name one product. {@code example.com} is
+     * reserved for exactly this use (RFC 2606), resolves to nothing anyone runs, and reads as
+     * "put yours here" to everyone.
+     */
+    static final String EXAMPLE_DASHBOARD_URL = "https://example.com/dashboard";
+
     static String validateDashboardUrl(String url) {
         if (url == null || url.trim().isEmpty()) {
             return "url must not be empty";

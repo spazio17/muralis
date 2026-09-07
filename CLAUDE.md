@@ -60,6 +60,21 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   full set of typed MQTT credentials. Anyone who misreads that button makes the same mistake, so
   the button went rather than its name. The way back from a one-off URL on those two surfaces is
   the foot button or "Restart kiosk"; the command itself is unchanged and MQTT keeps it.
+  **A panel with no dashboard URL shows a parking page, not a black WebView** (2026-09-07):
+  `showDashboard("")` routes to `showParkingPage`, a native screen that is the dashboard state in
+  every respect but the page (fullscreen, lock task, escape corners, blackout honoured) and says
+  what to do next, with the web admin address when there is one. It is reached by the foot button
+  pressed with an emptied URL box (which now saves the other cards and stores the empty URL, where
+  it used to do nothing), by `kiosk.home` and a kiosk restart with nothing stored, and by the
+  maintenance rebuilds; **not at boot**, where an unconfigured panel still opens its settings
+  screen. The dashboard URL box's example is a *hint*, never a value, and it is
+  `KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL` (`https://example.com/dashboard`) on both
+  surfaces: the old prefilled `homeassistant.local` text was saved and loaded at the first press on
+  a fresh panel, and named a product this app does not belong to. The parking page's illustration,
+  the Android robot pasting a fresh poster over a scratched Muralis billboard, is an easter egg
+  for exactly this state; About's Credits card carries the CC BY 3.0 credit for it (Google,
+  modified, the licence), short like the other rows rather than Google's long sentence, at Juri's
+  request, and the robot is never the app icon.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
