@@ -5,8 +5,23 @@
 
      The 108x108dp canvas is mandated; only the middle 72x72 is guaranteed visible, because the
      launcher may mask, crop and parallax the rest. Everything meaningful therefore sits between 18
-     and 90. The glyph is a wall panel showing a dashboard: an outlined screen with three tiles, which
-     is what this app actually is, rather than a letter or a house. -->
+     and 90. The glyph is a wall panel showing a dashboard: an outlined screen with four tiles, which
+     is what this app actually is, rather than a letter or a house.
+
+     There is deliberately no stand. The first version had a neck and a foot under the screen, added
+     so the icon would read as "a fixed wall panel rather than a tablet or a TV", and it achieved the
+     exact opposite: a screen on a neck above a foot is the visual language of a desk monitor, and
+     that is what people saw (Juri, 2026-09-04). A panel actually mounted on a wall has no stand at
+     all. What says "tablet" instead is the front camera, the one mark every tablet carries and no
+     monitor does, and it is the same dot the device bezel in the store screenshots draws, so the
+     icon and the listing images agree about what the object is. Sketches for this decision, and the
+     four rejected directions, are in media/google-play/icon-explorations/.
+
+     Removing the stand also left the panel two units above the canvas centre, because the old
+     composition was balanced around the stand's foot rather than around the screen. That is 9.5px
+     out of place in the 512px listing icon: small enough to read as "something is slightly off"
+     without being nameable (Juri, 2026-09-07). Every path is therefore two units lower than the
+     first stand-free draft, and nothing else about the drawing changed. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -14,21 +29,24 @@
     android:viewportHeight="108">
 
     <!-- Panel bezel. Stroked rather than filled so the tiles inside stay legible when a launcher
-         shrinks the icon to a status-bar size. -->
+         shrinks the icon to a status-bar size. The path is the stroke's centreline, so the drawn
+         edge spans 24..84 across and 28..80 down: centred on 54,54 in both directions, and inside
+         the guaranteed 18..90 square. The bezel is the outermost mark, so it alone decides where
+         the glyph sits; measure both spans before changing a coordinate here. -->
     <path
-        android:pathData="M30,30 L78,30 A4,4 0 0 1 82,34 L82,70 A4,4 0 0 1 78,74 L30,74 A4,4 0 0 1 26,70 L26,34 A4,4 0 0 1 30,30 Z"
+        android:pathData="M30,30 L78,30 A4,4 0 0 1 82,34 L82,74 A4,4 0 0 1 78,78 L30,78 A4,4 0 0 1 26,74 L26,34 A4,4 0 0 1 30,30 Z"
         android:strokeColor="#CBA6F7"
         android:strokeWidth="4"
         android:fillColor="#00000000" />
 
-    <!-- Dashboard tiles: one wide, two narrow, echoing a Home Assistant card layout. -->
-    <path android:pathData="M34,38 L58,38 L58,50 L34,50 Z" android:fillColor="#CBA6F7" />
-    <path android:pathData="M62,38 L74,38 L74,50 L62,50 Z" android:fillColor="#7F5AF0" />
-    <path android:pathData="M34,54 L48,54 L48,66 L34,66 Z" android:fillColor="#7F5AF0" />
-    <path android:pathData="M52,54 L74,54 L74,66 L52,66 Z" android:fillColor="#CBA6F7" />
-
-    <!-- Wall mount, so the icon reads as a fixed panel rather than a tablet or a TV. -->
-    <path android:pathData="M50,74 L58,74 L58,82 L50,82 Z" android:fillColor="#CBA6F7" />
-    <path android:pathData="M40,82 L68,82 A2,2 0 0 1 68,86 L40,86 A2,2 0 0 1 40,82 Z"
+    <!-- The front camera: what makes this a tablet and not a monitor. Centred on the top bezel. -->
+    <path
+        android:pathData="M52.2,33.2 A1.8,1.8 0 1 1 55.8,33.2 A1.8,1.8 0 1 1 52.2,33.2 Z"
         android:fillColor="#CBA6F7" />
+
+    <!-- Dashboard tiles: two rows, wide and narrow alternating, echoing a card layout. -->
+    <path android:pathData="M33,40 L57,40 L57,52 L33,52 Z" android:fillColor="#CBA6F7" />
+    <path android:pathData="M61,40 L75,40 L75,52 L61,52 Z" android:fillColor="#7F5AF0" />
+    <path android:pathData="M33,56 L47,56 L47,68 L33,68 Z" android:fillColor="#7F5AF0" />
+    <path android:pathData="M51,56 L75,56 L75,68 L51,68 Z" android:fillColor="#CBA6F7" />
 </vector>
