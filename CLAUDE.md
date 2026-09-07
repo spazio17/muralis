@@ -50,9 +50,16 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   (reported 2026-08-24). The rules, all host-tested and verified on hardware: **reload** reloads
   whatever is on screen, dashboard or one-off or a page reached inside the dashboard; a **kiosk
   restart**, a process restart and the nightly clean always come back to the stored dashboard.
-  Every surface carries both halves, including two Home Assistant text entities; the one-off
-  entity reads `runtime.last_page_url` rather than a stored field, because an entity whose state
-  cannot be read back snaps back on every edit.
+  Every surface carries both halves as *inputs*, including two Home Assistant text entities; the
+  one-off entity reads `runtime.last_page_url` rather than a stored field, because an entity whose
+  state cannot be read back snaps back on every edit. **As a button, `kiosk.home` exists only in
+  Home Assistant now.** The tablet's "Main dashboard" and the web admin's quick action of the
+  same name were removed on 2026-09-07 at Juri's decision: on the tablet's settings screen it sat
+  beside "Open once" while the only save was the foot button "Open dashboard", two buttons naming
+  the dashboard and neither of them the save, and he pressed it in place of the save and lost a
+  full set of typed MQTT credentials. Anyone who misreads that button makes the same mistake, so
+  the button went rather than its name. The way back from a one-off URL on those two surfaces is
+  the foot button or "Restart kiosk"; the command itself is unchanged and MQTT keeps it.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
@@ -434,6 +441,41 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   full lock-task feature masking, `HardwarePropertiesManager`) exist only conditional on it. The
   app must work, in a visibly degraded way, without it too, see the device-owner warning banner
   pattern in the config screen.
+- **`WRITE_SETTINGS` is a user grant, and device-owner status cannot substitute for it.** The
+  brightness pair writes `Settings.System.SCREEN_BRIGHTNESS` and `SCREEN_BRIGHTNESS_MODE`, and
+  that namespace has no device-owner setter, unlike Global and Secure. So the one permission this
+  app needs a human for is the one that looks most like it should come free with enrolment. It is
+  declared in the manifest, granted from `ACTION_MANAGE_WRITE_SETTINGS` or by
+  `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`, and until it is granted both
+  brightness controls are inert: the checkbox cannot write the mode, and the slider is separately
+  disabled while the light sensor owns the backlight, which on an unconfigured device it does by
+  default. That combination reads as two bugs, and on 2026-09-07 it read that way to Juri on a
+  freshly provisioned panel, so **all three surfaces now name the missing grant rather than
+  failing quietly**: the tablet's Display card carries the sentence and a button, the web admin
+  carries the same sentence and the adb command, and the slider's refusal is a toast rather than
+  only a log line. A device with no light sensor is the case that needs the toast, because nothing
+  disables its slider.
+  **The card's claim is kept true while it is on screen**: `watchForWriteSettingsGrant` watches the
+  app op through `AppOpsManager` while the red line is drawn, and the moment the grant is made it
+  redraws the configuration screen in place (typed boxes and scroll kept) and starts the activity
+  again, which brings a `singleTask` activity forward, so a panel whose Settings screen has no
+  navigation bar comes back by itself; the setup page promises exactly that. Found 2026-09-07 on
+  the phone: granted, returned by hand, and the card still said the grant was missing. A device
+  owner may start an activity from the background on every Android; an ordinary install on
+  Android 10+ is refused silently and `onResume` does the redraw when the operator comes back.
+- **Every text box on both settings surfaces is a machine value, so no keyboard prose habits.**
+  The panel's own keyboard (SwiftKey on both Huawei test devices) reads a full stop as the end of
+  a sentence: it adds a space, capitalises what follows and corrects the word, so
+  `test.mosquitto.org` typed into the broker box arrived as `test. mosquito. org` (Juri,
+  2026-09-07; the capture script had recorded the same on 2026-08-31 and worked around it by not
+  typing the host). Measured on the phone that day: `TYPE_TEXT_FLAG_NO_SUGGESTIONS` alone stops
+  the correcting but not the space after the full stop, so `themedInput` gives every plain box the
+  visible-password variation, which keyboards treat as "type exactly this", the dashboard URL and
+  the broker host the URI variation (the URL keyboard, measured intact), and ports the number
+  class. The web admin's text inputs carry `autocapitalize="off" autocorrect="off"
+  spellcheck="false"`, which Chrome on Android maps onto the same flags, and the two address boxes
+  add `inputmode="url"`. Not `type="url"` there: the browser would refuse a host without a scheme
+  before the server's normalisation could add one.
 - **`targetSdk` tracks Play's rolling floor.** It moves every August; re-check
   https://developer.android.com/google/play/requirements/target-sdk before any submission rather
   than trusting a remembered number.

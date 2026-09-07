@@ -993,14 +993,14 @@ final class HttpAdminServer {
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
                 .append(baselineField(config.dashboardUrl + "|" + config.deviceId))
-                .append(field("text", "dashboard_url", "Dashboard URL", config.dashboardUrl))
+                .append(urlField("dashboard_url", "Dashboard URL", config.dashboardUrl))
                 .append(field("text", "device_id", "Device ID", config.deviceId))
                 .append(sectionFormEnd("Save"))
 
                 .append(sectionFormStart("mqtt", "MQTT", notice, noticeSection))
                 .append(baselineField(
                         config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername))
-                .append(field("text", "mqtt_host", "Broker host", config.mqttHost))
+                .append(urlField("mqtt_host", "Broker host", config.mqttHost))
                 .append(field("number", "mqtt_port", "Broker port",
                         Integer.toString(config.mqttPort)))
                 .append(field("text", "mqtt_username", "Username", config.mqttUsername))
@@ -1031,9 +1031,13 @@ final class HttpAdminServer {
                         config.launcherSequence))
                 .append(sectionFormEnd("Save"))
 
-                // Kept sorted by label; add new actions in alphabetical place.
+                // Kept sorted by label; add new actions in alphabetical place. There is no
+                // "Main dashboard" (kiosk.home) action any more, dropped 2026-09-07 together with
+                // the tablet's button of the same name: on the tablet it was pressed in place of
+                // the save, and Juri wanted the two surfaces to offer the same set. The way back
+                // from a one-off URL is "Restart kiosk", which the one-off box's hint already
+                // promises, and Home Assistant keeps its kiosk.home button.
                 .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")
-                .append(quickAction("kiosk.home", "Main dashboard"))
                 .append(quickAction("system.reboot", "Reboot"))
                 .append(quickAction("kiosk.reload", "Reload"))
                 .append(quickAction("kiosk.restart", "Restart kiosk"))
@@ -1045,6 +1049,7 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append(brightnessControl())
                 .append(autoBrightnessControl())
+                .append(writeSettingsHint())
                 .append(orientationControl())
                 .append("</fieldset>")
 
@@ -1052,16 +1057,15 @@ final class HttpAdminServer {
                 // parameters, and it used to store whatever was typed as the panel's dashboard,
                 // so the way back was retyping the original by hand (reported 2026-08-24). The
                 // Dashboard box above is where the stored URL changes.
-                // The hint sits above the input so what the box does is read before it is used.
-                // No "Main dashboard" button here: Quick actions already has it, and the way
-                // back does not need to exist twice on one page.
+                // The hint sits above the input so what the box does is read before it is used,
+                // and it names the way back: a kiosk restart, which is a quick action above.
                 .append("<fieldset><legend>Open a URL now</legend>")
                 .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
                 .append("dashboard is unchanged.</p>")
                 .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
                 .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
-                .append("<input type=\"text\" name=\"url\" ")
-                .append("placeholder=\"http://homeassistant.local:8123/\">")
+                .append("<input type=\"text\" name=\"url\"").append(MACHINE_TEXT)
+                .append(" inputmode=\"url\" placeholder=\"http://homeassistant.local:8123/\">")
                 .append("<button type=\"submit\">Go</button>")
                 .append("</form></fieldset>")
 
@@ -1293,6 +1297,29 @@ final class HttpAdminServer {
     }
 
     /**
+     * Why the brightness controls above do nothing, on a panel that has not been granted
+     * {@code WRITE_SETTINGS}, or nothing at all once it has.
+     *
+     * <p>The same sentence the tablet's Display card shows, so the two surfaces describe one rule,
+     * with the adb command in place of the tablet's grant button: this page cannot hand a browser
+     * the Settings screen that grants an app-op, and on a wall-mounted panel a cable is often the
+     * shorter route anyway. Both controls are affected and neither says so on its own: the
+     * checkbox writes {@code SCREEN_BRIGHTNESS_MODE}, the slider writes
+     * {@code SCREEN_BRIGHTNESS}, and both live in {@code Settings.System}, which has no
+     * device-owner setter. Added 2026-09-07, after a freshly provisioned panel showed two dead
+     * brightness controls and no surface anywhere said which single grant was missing.
+     */
+    private String writeSettingsHint() {
+        if (KioskService.canWriteSystemSettings(context)) {
+            return "";
+        }
+        return "<p class=\"hint\">Brightness needs the \"Modify system settings\" permission: "
+                + "grant it in the Display card on the tablet, or with "
+                + "<code>adb shell appops set " + context.getPackageName()
+                + " WRITE_SETTINGS allow</code>.</p>";
+    }
+
+    /**
      * The status chip: battery, network, address and load, each with its own glyph.
      *
      * <p>The five glyphs are the same shapes {@link StatusIcon} draws on the tablet, at the same
@@ -1381,10 +1408,37 @@ final class HttpAdminServer {
         return "<input type=\"hidden\" name=\"baseline\" value=\"" + escapeHtml(value) + "\">";
     }
 
+    /**
+     * One labelled input. A text box on this page holds a machine value, an address, a host, an
+     * id, a username, and a phone browser's keyboard treats a plain text box as prose: a full stop
+     * ends a sentence, so it gains a space and a capital, and unknown words are corrected. The
+     * tablet's own settings screen turns the same habits off with its input types (see
+     * KioskActivity.themedInput, and the broker host that arrived as "test. mosquito. org"); these
+     * three attributes are how a page does it, and Chrome on Android maps them onto the same
+     * keyboard flags. The address boxes add {@code inputmode="url"}, which is the URL keyboard the
+     * tablet's own boxes get, and the one mode every keyboard was measured to leave a full stop
+     * alone in. Not {@code type="url"}: the browser would then refuse a host without a scheme
+     * before the server's own normalisation could add one.
+     */
     private static String field(String type, String name, String label, String value) {
-        return "<label>" + escapeHtml(label) + "<input type=\"" + type + "\" name=\"" + name
-                + "\" value=\"" + escapeHtml(value) + "\"></label>";
+        return field(type, name, label, value, "");
     }
+
+    private static String field(String type, String name, String label, String value,
+            String extraAttributes) {
+        return "<label>" + escapeHtml(label) + "<input type=\"" + type + "\" name=\"" + name
+                + "\" value=\"" + escapeHtml(value) + "\"" + (type.equals("text") ? MACHINE_TEXT : "")
+                + extraAttributes + "></label>";
+    }
+
+    /** A text box holding a URL or a host name: the URL keyboard on a phone, see {@link #field}. */
+    private static String urlField(String name, String label, String value) {
+        return field("text", name, label, value, " inputmode=\"url\"");
+    }
+
+    /** See {@link #field}: a text box that must not be autocorrected, capitalised or spellchecked. */
+    private static final String MACHINE_TEXT =
+            " autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"";
 
     private static String quickAction(String command, String label) {
         return "<form class=\"cmd\" method=\"post\" action=\"/api/command\" style=\"display:inline\">"

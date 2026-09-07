@@ -251,6 +251,14 @@ public final class KioskActivity extends Activity {
      */
     private Runnable currentScreen;
     /**
+     * Set while the Display card says the WRITE_SETTINGS grant is missing, so the grant is shown
+     * the moment it is made and the operator is brought back from Settings. See
+     * {@link #watchForWriteSettingsGrant()}.
+     */
+    private android.app.AppOpsManager.OnOpChangedListener writeSettingsWatch;
+    /** Between onResume and onPause. The grant watcher only starts this activity when it is not. */
+    private boolean inFront;
+    /**
      * The scroll offset a redraw is carrying across, or -1 when the next screen is a genuine
      * arrival and belongs at the top. See {@link #redrawInPlace}.
      */
@@ -298,10 +306,14 @@ public final class KioskActivity extends Activity {
         }
         String problem = KioskService.applyBrightness(this, pendingBrightnessPercent);
         if (problem != null) {
-            // Never on screen: the slider is disabled whenever the sensor is in charge, so the only
-            // way here is a permission the operator can fix, and offerWriteSettingsGrant says that
-            // in the one place that can act on it.
+            // Said out loud, not only logged. The old reasoning was that the slider is disabled
+            // whenever the sensor is in charge, so the only way here is the missing WRITE_SETTINGS
+            // grant, which the settings screen already offers. That leaves one real hole: a device
+            // with no light sensor has nothing to disable the slider, so without the grant the
+            // slider moved, the panel did not, and the only record was a logcat line nobody on a
+            // wall-mounted tablet can read (Juri, 2026-09-07).
             Log.w(TAG, "Brightness not applied: " + problem);
+            Toast.makeText(this, "Brightness not applied: " + problem, Toast.LENGTH_LONG).show();
         } else {
             // The house rule (CLAUDE.md): anything applied outside the dispatcher republishes,
             // or Home Assistant shows the old value until the next 60-second tick. The slider
@@ -703,6 +715,7 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        inFront = true;
         // Every Muralis screen is fullscreen, including configuration: a kiosk should never show a
         // system bar, and the settings screen used to keep the navigation bar for the keyboard's
         // dismiss key, which also handed anyone standing at the panel a Back button.
@@ -722,10 +735,21 @@ public final class KioskActivity extends Activity {
         if (proBilling != null) {
             proBilling.refresh();
         }
+        // Back from the Settings screen that "Grant it now" opened, whether the watcher brought
+        // the activity back or the operator did: the card was drawn with the grant missing and the
+        // grant is there now, so redraw before the red line is read again. Here rather than in the
+        // watcher's callback because this screen re-applies lock task as it is built, and that is
+        // only allowed once this task is in the foreground.
+        if (writeSettingsWatch != null && configurationVisible && currentScreen != null
+                && KioskService.canWriteSystemSettings(this)) {
+            stopWatchingWriteSettings();
+            redrawInPlace(currentScreen);
+        }
     }
 
     @Override
     protected void onPause() {
+        inFront = false;
         // Belt and braces for the same invariant: a bar disabled while nothing is pinned is a
         // tablet nobody can use.
         disableStatusBarIfPinned();
@@ -742,6 +766,7 @@ public final class KioskActivity extends Activity {
         // configuration screen would leave the pressure rebuild deferred until the app returns.
         KioskRuntimeState.publishOperatorOnScreen(false);
         releaseKioskPolicy();
+        stopWatchingWriteSettings();
         unregisterReceiver(controlReceiver);
         if (unlockReceiverRegistered) {
             unregisterReceiver(unlockReceiver);
@@ -1195,13 +1220,15 @@ public final class KioskActivity extends Activity {
     /**
      * Sends the operator to the one Settings screen that can grant {@code WRITE_SETTINGS}.
      *
-     * <p>Only reached when this device actually has a light sensor, so it never appears on hardware
-     * where automatic brightness is impossible anyway. Lock task is released first: it would
+     * <p>Reached from the automatic-brightness checkbox, and from the button the card shows while
+     * the grant is missing: the slider needs the same permission, and on a device with no light
+     * sensor the checkbox is not there to offer it. Lock task is released first: it would
      * otherwise refuse the launch outright, which is the same trap {@link #openSystemLauncher()}
-     * documents.
+     * documents. The log line names the adb route for a panel being provisioned over a cable,
+     * which is the only route on an OEM build that hides this Settings screen.
      */
     private void offerWriteSettingsGrant() {
-        Toast.makeText(this, R.string.auto_brightness_needs_permission, Toast.LENGTH_LONG).show();
+        Toast.makeText(this, R.string.brightness_needs_permission, Toast.LENGTH_LONG).show();
         releaseForOtherApp();
         try {
             startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS)
@@ -1212,6 +1239,76 @@ public final class KioskActivity extends Activity {
             Log.w(TAG, "No WRITE_SETTINGS grant screen; use `adb shell appops set "
                     + getPackageName() + " WRITE_SETTINGS allow`", unavailable);
         }
+    }
+
+    /**
+     * Shows the {@code WRITE_SETTINGS} grant the moment it is made, and brings the operator back.
+     *
+     * <p>Registered while the Display card carries its red line, and idle otherwise. Without it,
+     * the card was a snapshot: granted in Settings, back in Muralis, and the line and the "Grant it
+     * now" button were still there until something else rebuilt the screen (found on the phone,
+     * 2026-09-07). Worse on the panel itself, where Settings is a screen with no navigation bar
+     * and "come back" is not a thing the operator can be expected to know how to do; the setup
+     * page promises that Muralis comes back on its own when they are done, and this is what keeps
+     * that promise. {@link android.app.AppOpsManager#startWatchingMode} reports changes to this
+     * package's own op with no permission on every Android version this app runs on; the callback
+     * arrives on a binder thread and is posted to the main one.
+     *
+     * <p>When the op flips to allowed: if this screen is in front, the configuration screen is
+     * redrawn in place, half-typed boxes and scroll position kept, so the line is gone before it is
+     * read again. If Settings is in front, this activity is started, which for a singleTask
+     * activity means brought forward, and onResume does the redraw once it is, because building the
+     * configuration screen re-applies lock task and Android refuses that for a task that is not in
+     * the foreground. A device owner may start an activity from the background on every Android
+     * version. An ordinary install on Android 10 or later has that refused, silently; such a device
+     * has a navigation bar, the operator comes back by hand, and the same onResume does the redraw.
+     * A change to anything but allowed (revoked, or the op touched for another reason) leaves the
+     * card as it stands and keeps watching.
+     */
+    private void watchForWriteSettingsGrant() {
+        if (writeSettingsWatch != null) {
+            return;
+        }
+        android.app.AppOpsManager appOps = getSystemService(android.app.AppOpsManager.class);
+        if (appOps == null) {
+            return;
+        }
+        writeSettingsWatch = (op, packageName) -> mainHandler.post(this::onWriteSettingsChanged);
+        appOps.startWatchingMode(android.app.AppOpsManager.OPSTR_WRITE_SETTINGS, getPackageName(),
+                writeSettingsWatch);
+    }
+
+    private void stopWatchingWriteSettings() {
+        if (writeSettingsWatch == null) {
+            return;
+        }
+        android.app.AppOpsManager appOps = getSystemService(android.app.AppOpsManager.class);
+        if (appOps != null) {
+            appOps.stopWatchingMode(writeSettingsWatch);
+        }
+        writeSettingsWatch = null;
+    }
+
+    private void onWriteSettingsChanged() {
+        if (isDestroyed() || isFinishing() || !KioskService.canWriteSystemSettings(this)) {
+            return;
+        }
+        if (!configurationVisible || currentScreen == null) {
+            // Granted over adb while a dashboard is up: nothing on screen claims otherwise, and
+            // the next visit to the settings screen draws the card without the line.
+            stopWatchingWriteSettings();
+            return;
+        }
+        if (inFront) {
+            stopWatchingWriteSettings();
+            redrawInPlace(currentScreen);
+            return;
+        }
+        // Settings is in front. Only come back here; the redraw waits for onResume, which keeps
+        // the watcher until then. Redrawing now would rebuild the configuration screen while
+        // another task holds the screen, and that screen re-applies lock task as it is built,
+        // which Android refuses for a task that is not in the foreground.
+        startActivity(new Intent(this, KioskActivity.class));
     }
 
     /**
@@ -1378,14 +1475,24 @@ public final class KioskActivity extends Activity {
         LinearLayout dashboardCard = card(theme, "Dashboard");
         EditText urlInput = themedInput(theme, config.dashboardUrl.isEmpty()
                 ? "http://homeassistant.local:8123/" : config.dashboardUrl, false);
-        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(dashboardCard, theme, "Dashboard URL", urlInput);
         EditText deviceIdInput = themedInput(theme, config.deviceId, false);
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
-        // Two buttons beside the aggregate Save ("Open dashboard") at the foot of the screen,
-        // because they answer a different question: that one stores what is typed as THE
-        // dashboard, these two navigate without changing what is stored. Juri, 2026-08-24: a URL
+        // One button beside the aggregate Save ("Open dashboard") at the foot of the screen,
+        // because it answers a different question: that one stores what is typed as THE
+        // dashboard, this one shows it without changing what is stored. Juri, 2026-08-24: a URL
         // with one-off query parameters is exactly what a stored dashboard URL must not become.
+        //
+        // There used to be a second one here, "Main dashboard", which opened the stored dashboard
+        // and saved nothing. Removed 2026-09-07 at Juri's decision, after it cost him a full set
+        // of typed MQTT credentials: two buttons on one screen carrying the word "dashboard", and
+        // the one that saves is at the foot and named after what it opens, so the nearer one was
+        // pressed as if it were the save and the screen closed without one. Anyone who
+        // misunderstands that button makes the same mistake, so it is gone rather than renamed.
+        // Nothing is lost: the foot button already returns to the stored dashboard, a kiosk
+        // restart does too, and Home Assistant keeps its own kiosk.home button.
         Button openOnce = secondaryButton(theme, "Open once");
         openOnce.setOnClickListener(view -> {
             String once = normalizeUrl(urlInput.getText().toString());
@@ -1399,16 +1506,6 @@ public final class KioskActivity extends Activity {
             showDashboard(once);
         });
         dashboardCard.addView(openOnce, matchWrap());
-        Button mainDashboard = secondaryButton(theme, "Main dashboard");
-        mainDashboard.setOnClickListener(view -> {
-            String stored = KioskConfig.load(this).dashboardUrl;
-            if (stored.isEmpty()) {
-                Toast.makeText(this, "No dashboard URL is stored yet", Toast.LENGTH_LONG).show();
-                return;
-            }
-            showDashboard(stored);
-        });
-        dashboardCard.addView(mainDashboard, matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -1422,6 +1519,9 @@ public final class KioskActivity extends Activity {
 
         LinearLayout mqttCard = card(theme, "MQTT");
         EditText brokerInput = themedInput(theme, config.mqttHost, false);
+        // The URL keyboard, dot and slash to hand, and no sentence habits: see themedInput.
+        brokerInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(mqttCard, theme, "Broker host", brokerInput);
         EditText portInput = themedInput(theme, Integer.toString(config.mqttPort), false);
         portInput.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -1645,6 +1745,30 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         brightnessCaptionParams.topMargin = dp(14);
         displayCard.addView(brightnessCaption, brightnessCaptionParams);
+        // The permission both brightness controls need, stated on the card rather than only in a
+        // toast at the moment one of them is refused. Juri, on a freshly provisioned panel
+        // 2026-09-07: "the brightness toggle does not toggle", and neither the app nor the setup
+        // page said why. In this state the card looks like two separate bugs rather than one
+        // missing grant: the checkbox cannot write SCREEN_BRIGHTNESS_MODE without WRITE_SETTINGS,
+        // and the slider is separately disabled while the light sensor owns the backlight, which
+        // on a device nobody has configured yet it does by default. Device-owner status buys
+        // nothing here, unlike the Global and Secure namespaces: Settings.System has no
+        // device-owner setter, so this is a grant somebody makes once by hand.
+        if (!KioskService.canWriteSystemSettings(this)) {
+            TextView needsGrant = new TextView(this);
+            needsGrant.setTextColor(theme.bad);
+            needsGrant.setTextSize(13);
+            needsGrant.setText("Needs the \"Modify system settings\" permission.");
+            displayCard.addView(needsGrant, matchWrapClose());
+            Button grantWriteSettings = secondaryButton(theme, "Grant it now");
+            grantWriteSettings.setOnClickListener(view -> offerWriteSettingsGrant());
+            displayCard.addView(grantWriteSettings, matchWrap());
+            // The line and the button are a claim about right now, so they must go the moment it
+            // stops being true, without waiting for the screen to be rebuilt by something else.
+            watchForWriteSettingsGrant();
+        } else {
+            stopWatchingWriteSettings();
+        }
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedCheckBox(theme,
                     "Adjust brightness automatically",
@@ -2583,18 +2707,37 @@ public final class KioskActivity extends Activity {
      * Reports the software keyboard's height whenever it changes.
      *
      * <p><b>Why measuring is necessary at all:</b> Android ignores {@code SOFT_INPUT_ADJUST_RESIZE} on
-     * a window carrying {@link WindowManager.LayoutParams#FLAG_FULLSCREEN}, which every Muralis screen
-     * does, because a kiosk has no business showing a status bar. The window therefore never shrinks
-     * and the keyboard is simply drawn on top of it. The IME does still reduce the window's visible
-     * display frame, though, so the gap between the decor height and that frame's bottom is the
-     * keyboard height, whether or not the window resized.
+     * a window carrying {@link WindowManager.LayoutParams#FLAG_FULLSCREEN}, which every screen of a
+     * device-owner panel does, because a kiosk has no business showing a status bar. The window
+     * therefore never shrinks and the keyboard is simply drawn on top of it. The IME does still reduce
+     * the window's visible display frame, though, so the gap between the bottom of the content and that
+     * frame's bottom is what the keyboard covers.
+     *
+     * <p><b>Why it is measured against the content view and not the decor:</b> an ordinary install
+     * shows its system bars, so its window is not fullscreen, and there {@code adjustResize} does work:
+     * Android itself shrinks the content to the keyboard's top edge. Measuring against the decor's
+     * height, which does not shrink, reported the keyboard's height a second time, and both callers
+     * then took it away again: on the phone a third of the settings form was visible, then a band of
+     * background the size of the keyboard, then the keyboard (Juri, 2026-09-07; in every build since
+     * the bars were shown on ordinary installs, 2026-08-21). Against the content's own bottom edge the
+     * gap is the keyboard on a fullscreen window and zero on one the system already resized, which is
+     * exactly the amount the caller still has to give back.
+     *
+     * <p><b>Why the keyboard is read as a window inset from API 30:</b> the visible display frame is the
+     * old report and it is fading out. An app that draws edge to edge, which every app targeting API 35
+     * does, gets no resized window and no shrunk visible frame when the keyboard opens; the keyboard
+     * arrives only as {@code WindowInsets.Type.ime()}, and only through an insets pass, which need not
+     * trigger any layout. Found on the Pixel 9 Pro XL, Android 17, 2026-09-07: the keyboard covered the
+     * lower half of the settings form and the focused box with it, and this method measured zero.
+     * So from API 30 the keyboard's top edge is the window's bottom less the IME inset, the measurement
+     * also runs whenever insets are applied, and the older report stays for the Android 8 and 9 devices.
      *
      * <p>Both callers use this to give back the space themselves: the configuration screens as scroll
      * padding, the dashboard by shrinking the WebView. Worst in landscape, the orientation a wall panel
      * is fixed in, because the keyboard takes a much larger share of a short screen.
      *
      * @param anchor a view in the hierarchy, used only for its window and lifecycle
-     * @param onInset called with the keyboard height in pixels, or 0 when it is closed
+     * @param onInset called with the covered height in pixels, or 0 when nothing is covered
      */
     private void trackKeyboardInset(View anchor, java.util.function.IntConsumer onInset) {
         // Remembers the last value so the listener, which fires on every layout pass, does not
@@ -2602,9 +2745,27 @@ public final class KioskActivity extends Activity {
         final int[] applied = {-1};
         final Runnable measure = () -> {
             View decor = getWindow().getDecorView();
-            Rect visible = new Rect();
-            decor.getWindowVisibleDisplayFrame(visible);
-            int inset = Math.max(0, decor.getHeight() - visible.bottom);
+            View content = findViewById(android.R.id.content);
+            int[] location = new int[2];
+            content.getLocationOnScreen(location);
+            int contentBottom = location[1] + content.getHeight();
+            int keyboardTop;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.view.WindowInsets rootInsets = decor.getRootWindowInsets();
+                int ime = rootInsets == null ? 0
+                        : rootInsets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                if (ime == 0) {
+                    keyboardTop = Integer.MAX_VALUE;
+                } else {
+                    decor.getLocationOnScreen(location);
+                    keyboardTop = location[1] + decor.getHeight() - ime;
+                }
+            } else {
+                Rect visible = new Rect();
+                decor.getWindowVisibleDisplayFrame(visible);
+                keyboardTop = visible.bottom;
+            }
+            int inset = Math.max(0, contentBottom - keyboardTop);
             // A navigation bar or display cutout also shrinks the visible frame. Only a gap big enough
             // to be a keyboard counts, so ordinary layout does not gain phantom padding.
             if (inset < dp(MIN_KEYBOARD_INSET_DP)) {
@@ -2612,6 +2773,8 @@ public final class KioskActivity extends Activity {
             }
             if (inset != applied[0]) {
                 applied[0] = inset;
+                Log.d(TAG, "Keyboard covers " + inset + "px of the content (content bottom "
+                        + contentBottom + ", keyboard top " + keyboardTop + ")");
                 onInset.accept(inset);
             }
         };
@@ -2620,6 +2783,13 @@ public final class KioskActivity extends Activity {
         // detached, and the observer belongs to the window rather than the view, so every screen visit
         // would leave another listener firing forever against a dead view.
         final android.view.ViewTreeObserver.OnGlobalLayoutListener layoutListener = measure::run;
+        // The insets pass is the only signal an edge-to-edge window gets when the keyboard opens or
+        // closes, and it does not lay anything out by itself, so measure after it too. Nothing is
+        // consumed: the insets go on down to the children unchanged.
+        anchor.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.post(measure);
+            return insets;
+        });
         anchor.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View view) {
@@ -2647,15 +2817,46 @@ public final class KioskActivity extends Activity {
             if (focused == null) {
                 return;
             }
-            // Asks for a little more than the field's own height so the next field, and any error text
+            // Scrolled by hand, against the part of the scroll view the keyboard does not cover,
+            // which is its height less the bottom padding the measurement adds. ScrollView's own
+            // requestRectangleOnScreen judges against its full height and ignores that padding,
+            // so on every window that is padded rather than resized (the kiosk, and every
+            // edge-to-edge phone) it saw the field as already visible and did nothing; the field
+            // stayed under the keyboard (Pixel 9 Pro XL, Android 17, 2026-09-07). Asks for a
+            // little more than the field's own height so the next field, and any error text
             // under it, are not left flush against the keyboard.
-            scroll.post(() -> focused.requestRectangleOnScreen(
-                    new Rect(0, 0, focused.getWidth(), focused.getHeight() + dp(24)), false));
+            scroll.post(() -> {
+                if (focused.getWindowToken() == null || scroll.getWindowToken() == null) {
+                    return;
+                }
+                int[] fieldAt = new int[2];
+                focused.getLocationInWindow(fieldAt);
+                int[] scrollAt = new int[2];
+                scroll.getLocationInWindow(scrollAt);
+                int visibleTop = scrollAt[1] + scroll.getPaddingTop();
+                int visibleBottom = scrollAt[1] + scroll.getHeight() - scroll.getPaddingBottom();
+                int fieldTop = fieldAt[1];
+                int fieldBottom = fieldAt[1] + focused.getHeight() + dp(24);
+                if (fieldBottom > visibleBottom) {
+                    scroll.smoothScrollBy(0, fieldBottom - visibleBottom);
+                } else if (fieldTop < visibleTop) {
+                    scroll.smoothScrollBy(0, fieldTop - visibleTop - dp(24));
+                }
+            });
         };
         trackKeyboardInset(scroll, inset -> {
             scroll.setPadding(scroll.getPaddingLeft(), scroll.getPaddingTop(),
                     scroll.getPaddingRight(), inset);
             if (inset > 0) {
+                revealFocused.run();
+            }
+        });
+        // On an ordinary install the window itself shrinks for the keyboard (see
+        // trackKeyboardInset), so the inset above stays zero and ScrollView's own onSizeChanged
+        // does the scrolling, flush against the keyboard. Same margin as the fullscreen case.
+        scroll.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (bottom - top < oldBottom - oldTop) {
                 revealFocused.run();
             }
         });
@@ -3403,9 +3604,23 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
+        // Every box on this screen holds a machine value: an address, a host, an id, a username,
+        // a port. None of it is prose, so the keyboard's prose habits are wrong for all of it,
+        // and one of them corrupts the value silently: the panel's own keyboard (SwiftKey on both
+        // Huawei test devices) reads a full stop as the end of a sentence, adds a space after it
+        // and capitalises what follows, and corrects "mosquitto" to "mosquito" on the way, so
+        // "test.mosquitto.org" typed into the broker box arrived as "test. mosquito. org" (Juri,
+        // 2026-09-07, and the capture script had documented the same on 2026-08-31). Measured on
+        // the phone the same day: TYPE_TEXT_FLAG_NO_SUGGESTIONS alone stops the correcting but
+        // not the space after the full stop ("mqtt.user" still came back as "mqtt. user"), so
+        // the plain boxes use the visible-password variation, which every keyboard treats as
+        // "type exactly this": no predictions, no auto-space, no capitals. The dashboard URL and
+        // the broker host set the URI variation on top of this, for the URL keyboard, and ports
+        // the number class; both were measured to come back intact too.
         input.setInputType(InputType.TYPE_CLASS_TEXT | (secret
                 ? InputType.TYPE_TEXT_VARIATION_PASSWORD
-                : InputType.TYPE_TEXT_VARIATION_NORMAL));
+                : InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
         input.setTextColor(theme.text);
         input.setHintTextColor(theme.subtext);
         input.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(1)));
@@ -3672,14 +3887,66 @@ public final class KioskActivity extends Activity {
 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        // Top-right: the bottom corners are the nine-tap escape zones.
+        // Top-right: the bottom corners are the nine-tap escape zones. The top margin is not a
+        // constant: see placeStatsOverlay, which puts the block one pixel under the status bar.
         params.gravity = Gravity.TOP | Gravity.END;
-        params.topMargin = dp(4);
+        params.topMargin = 1;
         params.rightMargin = dp(4);
         dashboard.addView(statsOverlay, params);
+        // Placed once the view is attached and knows its insets, and again whenever the insets
+        // change (bars shown or hidden, a rotation). The listener consumes nothing.
+        statsOverlay.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.post(this::placeStatsOverlay);
+            return insets;
+        });
+        statsOverlay.post(this::placeStatsOverlay);
 
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
+    }
+
+    /**
+     * Puts the readout one pixel under the status bar, whatever kind of window this is.
+     *
+     * <p>Juri, 2026-09-07: "on all devices too high". A fixed 4dp from the top of the dashboard view
+     * meant three different things: under the clock on a phone that draws edge to edge (Android 15
+     * and later, where the content starts at the screen's top edge), four pixels under the bar on an
+     * older ordinary install (whose window already starts below the bar), and hard against the top
+     * edge on the kiosk, which hides its bars. One rule instead: the block's top edge sits one pixel
+     * below the bar, and where the bar is hidden, one pixel below where it would be, from the
+     * system's own dimension for it, so the readout lands in the same place on every device.
+     */
+    private void placeStatsOverlay() {
+        if (statsOverlay == null || statsOverlay.getParent() == null) {
+            return;
+        }
+        View content = findViewById(android.R.id.content);
+        int[] location = new int[2];
+        content.getLocationOnScreen(location);
+        android.view.WindowInsets insets = statsOverlay.getRootWindowInsets();
+        int bar;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            bar = insets == null ? 0
+                    : insets.getInsets(android.view.WindowInsets.Type.statusBars()).top;
+        } else {
+            bar = insets == null ? 0 : insets.getSystemWindowInsetTop();
+        }
+        if (location[1] > 0) {
+            // The window itself starts below the bar: nothing of the bar is inside this view.
+            bar = 0;
+        } else if (bar == 0) {
+            // Content from the very top and no bar reported: the kiosk, bars hidden. Where the bar
+            // would be, from the system's own dimension, so the readout sits where it does on a
+            // phone rather than against the edge.
+            int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+            bar = id == 0 ? dp(24) : getResources().getDimensionPixelSize(id);
+        }
+        int margin = bar + 1;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) statsOverlay.getLayoutParams();
+        if (params.topMargin != margin) {
+            params.topMargin = margin;
+            statsOverlay.setLayoutParams(params);
+        }
     }
 
     /**
