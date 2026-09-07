@@ -251,6 +251,14 @@ public final class KioskActivity extends Activity {
      */
     private Runnable currentScreen;
     /**
+     * Set while the Display card says the WRITE_SETTINGS grant is missing, so the grant is shown
+     * the moment it is made and the operator is brought back from Settings. See
+     * {@link #watchForWriteSettingsGrant()}.
+     */
+    private android.app.AppOpsManager.OnOpChangedListener writeSettingsWatch;
+    /** Between onResume and onPause. The grant watcher only starts this activity when it is not. */
+    private boolean inFront;
+    /**
      * The scroll offset a redraw is carrying across, or -1 when the next screen is a genuine
      * arrival and belongs at the top. See {@link #redrawInPlace}.
      */
@@ -707,6 +715,7 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        inFront = true;
         // Every Muralis screen is fullscreen, including configuration: a kiosk should never show a
         // system bar, and the settings screen used to keep the navigation bar for the keyboard's
         // dismiss key, which also handed anyone standing at the panel a Back button.
@@ -726,10 +735,21 @@ public final class KioskActivity extends Activity {
         if (proBilling != null) {
             proBilling.refresh();
         }
+        // Back from the Settings screen that "Grant it now" opened, whether the watcher brought
+        // the activity back or the operator did: the card was drawn with the grant missing and the
+        // grant is there now, so redraw before the red line is read again. Here rather than in the
+        // watcher's callback because this screen re-applies lock task as it is built, and that is
+        // only allowed once this task is in the foreground.
+        if (writeSettingsWatch != null && configurationVisible && currentScreen != null
+                && KioskService.canWriteSystemSettings(this)) {
+            stopWatchingWriteSettings();
+            redrawInPlace(currentScreen);
+        }
     }
 
     @Override
     protected void onPause() {
+        inFront = false;
         // Belt and braces for the same invariant: a bar disabled while nothing is pinned is a
         // tablet nobody can use.
         disableStatusBarIfPinned();
@@ -746,6 +766,7 @@ public final class KioskActivity extends Activity {
         // configuration screen would leave the pressure rebuild deferred until the app returns.
         KioskRuntimeState.publishOperatorOnScreen(false);
         releaseKioskPolicy();
+        stopWatchingWriteSettings();
         unregisterReceiver(controlReceiver);
         if (unlockReceiverRegistered) {
             unregisterReceiver(unlockReceiver);
@@ -1207,7 +1228,7 @@ public final class KioskActivity extends Activity {
      * which is the only route on an OEM build that hides this Settings screen.
      */
     private void offerWriteSettingsGrant() {
-        Toast.makeText(this, R.string.auto_brightness_needs_permission, Toast.LENGTH_LONG).show();
+        Toast.makeText(this, R.string.brightness_needs_permission, Toast.LENGTH_LONG).show();
         releaseForOtherApp();
         try {
             startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS)
@@ -1218,6 +1239,76 @@ public final class KioskActivity extends Activity {
             Log.w(TAG, "No WRITE_SETTINGS grant screen; use `adb shell appops set "
                     + getPackageName() + " WRITE_SETTINGS allow`", unavailable);
         }
+    }
+
+    /**
+     * Shows the {@code WRITE_SETTINGS} grant the moment it is made, and brings the operator back.
+     *
+     * <p>Registered while the Display card carries its red line, and idle otherwise. Without it,
+     * the card was a snapshot: granted in Settings, back in Muralis, and the line and the "Grant it
+     * now" button were still there until something else rebuilt the screen (found on the phone,
+     * 2026-09-07). Worse on the panel itself, where Settings is a screen with no navigation bar
+     * and "come back" is not a thing the operator can be expected to know how to do; the setup
+     * page promises that Muralis comes back on its own when they are done, and this is what keeps
+     * that promise. {@link android.app.AppOpsManager#startWatchingMode} reports changes to this
+     * package's own op with no permission on every Android version this app runs on; the callback
+     * arrives on a binder thread and is posted to the main one.
+     *
+     * <p>When the op flips to allowed: if this screen is in front, the configuration screen is
+     * redrawn in place, half-typed boxes and scroll position kept, so the line is gone before it is
+     * read again. If Settings is in front, this activity is started, which for a singleTask
+     * activity means brought forward, and onResume does the redraw once it is, because building the
+     * configuration screen re-applies lock task and Android refuses that for a task that is not in
+     * the foreground. A device owner may start an activity from the background on every Android
+     * version. An ordinary install on Android 10 or later has that refused, silently; such a device
+     * has a navigation bar, the operator comes back by hand, and the same onResume does the redraw.
+     * A change to anything but allowed (revoked, or the op touched for another reason) leaves the
+     * card as it stands and keeps watching.
+     */
+    private void watchForWriteSettingsGrant() {
+        if (writeSettingsWatch != null) {
+            return;
+        }
+        android.app.AppOpsManager appOps = getSystemService(android.app.AppOpsManager.class);
+        if (appOps == null) {
+            return;
+        }
+        writeSettingsWatch = (op, packageName) -> mainHandler.post(this::onWriteSettingsChanged);
+        appOps.startWatchingMode(android.app.AppOpsManager.OPSTR_WRITE_SETTINGS, getPackageName(),
+                writeSettingsWatch);
+    }
+
+    private void stopWatchingWriteSettings() {
+        if (writeSettingsWatch == null) {
+            return;
+        }
+        android.app.AppOpsManager appOps = getSystemService(android.app.AppOpsManager.class);
+        if (appOps != null) {
+            appOps.stopWatchingMode(writeSettingsWatch);
+        }
+        writeSettingsWatch = null;
+    }
+
+    private void onWriteSettingsChanged() {
+        if (isDestroyed() || isFinishing() || !KioskService.canWriteSystemSettings(this)) {
+            return;
+        }
+        if (!configurationVisible || currentScreen == null) {
+            // Granted over adb while a dashboard is up: nothing on screen claims otherwise, and
+            // the next visit to the settings screen draws the card without the line.
+            stopWatchingWriteSettings();
+            return;
+        }
+        if (inFront) {
+            stopWatchingWriteSettings();
+            redrawInPlace(currentScreen);
+            return;
+        }
+        // Settings is in front. Only come back here; the redraw waits for onResume, which keeps
+        // the watcher until then. Redrawing now would rebuild the configuration screen while
+        // another task holds the screen, and that screen re-applies lock task as it is built,
+        // which Android refuses for a task that is not in the foreground.
+        startActivity(new Intent(this, KioskActivity.class));
     }
 
     /**
@@ -1669,6 +1760,11 @@ public final class KioskActivity extends Activity {
             Button grantWriteSettings = secondaryButton(theme, "Grant it now");
             grantWriteSettings.setOnClickListener(view -> offerWriteSettingsGrant());
             displayCard.addView(grantWriteSettings, matchWrap());
+            // The line and the button are a claim about right now, so they must go the moment it
+            // stops being true, without waiting for the screen to be rebuilt by something else.
+            watchForWriteSettingsGrant();
+        } else {
+            stopWatchingWriteSettings();
         }
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedCheckBox(theme,

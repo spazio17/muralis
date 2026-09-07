@@ -9,7 +9,10 @@
     <string name="admin_escape_opened">System launcher opened; use the Muralis icon or notification to return</string>
     <string name="admin_escape_unavailable">System launcher is unavailable</string>
     <string name="configuration_escape_opened">Muralis configuration opened</string>
-    <string name="auto_brightness_needs_permission">Automatic brightness needs the "Modify system settings" permission. Grant it to Muralis, then set the switch again.</string>
+    <!-- Shown on the way to the Settings screen that grants WRITE_SETTINGS, from the Display card's
+         button and from the automatic-brightness checkbox alike; Muralis returns by itself once the
+         grant is made (KioskActivity.watchForWriteSettingsGrant). -->
+    <string name="brightness_needs_permission">Brightness needs the "Modify system settings" permission. Allow it for Muralis, and Muralis comes back on its own.</string>
     <string name="provisioning_warning">Muralis is not the device owner, so kiosk lock-down is inactive. The dashboard works, but the screen cannot be fully locked until Muralis is provisioned as device owner.</string>
     <string name="set_default_launcher">Set Muralis as the default launcher</string>
     <string name="set_default_launcher_unavailable">Open Settings and set Muralis as the Home app.</string>

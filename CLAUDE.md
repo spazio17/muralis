@@ -455,6 +455,14 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   carries the same sentence and the adb command, and the slider's refusal is a toast rather than
   only a log line. A device with no light sensor is the case that needs the toast, because nothing
   disables its slider.
+  **The card's claim is kept true while it is on screen**: `watchForWriteSettingsGrant` watches the
+  app op through `AppOpsManager` while the red line is drawn, and the moment the grant is made it
+  redraws the configuration screen in place (typed boxes and scroll kept) and starts the activity
+  again, which brings a `singleTask` activity forward, so a panel whose Settings screen has no
+  navigation bar comes back by itself; the setup page promises exactly that. Found 2026-09-07 on
+  the phone: granted, returned by hand, and the card still said the grant was missing. A device
+  owner may start an activity from the background on every Android; an ordinary install on
+  Android 10+ is refused silently and `onResume` does the redraw when the operator comes back.
 - **`targetSdk` tracks Play's rolling floor.** It moves every August; re-check
   https://developer.android.com/google/play/requirements/target-sdk before any submission rather
   than trusting a remembered number.
