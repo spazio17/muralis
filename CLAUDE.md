@@ -447,6 +447,20 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   full lock-task feature masking, `HardwarePropertiesManager`) exist only conditional on it. The
   app must work, in a visibly degraded way, without it too, see the device-owner warning banner
   pattern in the config screen.
+- **`WRITE_SETTINGS` is a user grant, and device-owner status cannot substitute for it.** The
+  brightness pair writes `Settings.System.SCREEN_BRIGHTNESS` and `SCREEN_BRIGHTNESS_MODE`, and
+  that namespace has no device-owner setter, unlike Global and Secure. So the one permission this
+  app needs a human for is the one that looks most like it should come free with enrolment. It is
+  declared in the manifest, granted from `ACTION_MANAGE_WRITE_SETTINGS` or by
+  `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`, and until it is granted both
+  brightness controls are inert: the checkbox cannot write the mode, and the slider is separately
+  disabled while the light sensor owns the backlight, which on an unconfigured device it does by
+  default. That combination reads as two bugs, and on 2026-09-07 it read that way to Juri on a
+  freshly provisioned panel, so **all three surfaces now name the missing grant rather than
+  failing quietly**: the tablet's Display card carries the sentence and a button, the web admin
+  carries the same sentence and the adb command, and the slider's refusal is a toast rather than
+  only a log line. A device with no light sensor is the case that needs the toast, because nothing
+  disables its slider.
 - **`targetSdk` tracks Play's rolling floor.** It moves every August; re-check
   https://developer.android.com/google/play/requirements/target-sdk before any submission rather
   than trusting a remembered number.

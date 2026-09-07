@@ -298,10 +298,14 @@ public final class KioskActivity extends Activity {
         }
         String problem = KioskService.applyBrightness(this, pendingBrightnessPercent);
         if (problem != null) {
-            // Never on screen: the slider is disabled whenever the sensor is in charge, so the only
-            // way here is a permission the operator can fix, and offerWriteSettingsGrant says that
-            // in the one place that can act on it.
+            // Said out loud, not only logged. The old reasoning was that the slider is disabled
+            // whenever the sensor is in charge, so the only way here is the missing WRITE_SETTINGS
+            // grant, which the settings screen already offers. That leaves one real hole: a device
+            // with no light sensor has nothing to disable the slider, so without the grant the
+            // slider moved, the panel did not, and the only record was a logcat line nobody on a
+            // wall-mounted tablet can read (Juri, 2026-09-07).
             Log.w(TAG, "Brightness not applied: " + problem);
+            Toast.makeText(this, "Brightness not applied: " + problem, Toast.LENGTH_LONG).show();
         } else {
             // The house rule (CLAUDE.md): anything applied outside the dispatcher republishes,
             // or Home Assistant shows the old value until the next 60-second tick. The slider
@@ -1195,10 +1199,12 @@ public final class KioskActivity extends Activity {
     /**
      * Sends the operator to the one Settings screen that can grant {@code WRITE_SETTINGS}.
      *
-     * <p>Only reached when this device actually has a light sensor, so it never appears on hardware
-     * where automatic brightness is impossible anyway. Lock task is released first: it would
+     * <p>Reached from the automatic-brightness checkbox, and from the button the card shows while
+     * the grant is missing: the slider needs the same permission, and on a device with no light
+     * sensor the checkbox is not there to offer it. Lock task is released first: it would
      * otherwise refuse the launch outright, which is the same trap {@link #openSystemLauncher()}
-     * documents.
+     * documents. The log line names the adb route for a panel being provisioned over a cable,
+     * which is the only route on an OEM build that hides this Settings screen.
      */
     private void offerWriteSettingsGrant() {
         Toast.makeText(this, R.string.auto_brightness_needs_permission, Toast.LENGTH_LONG).show();
@@ -1808,6 +1814,26 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         brightnessCaptionParams.topMargin = dp(14);
         displayCard.addView(brightnessCaption, brightnessCaptionParams);
+        // The permission both brightness controls need, stated on the card rather than only in a
+        // toast at the moment one of them is refused. Juri, on a freshly provisioned panel
+        // 2026-09-07: "the brightness toggle does not toggle", and neither the app nor the setup
+        // page said why. In this state the card looks like two separate bugs rather than one
+        // missing grant: the checkbox cannot write SCREEN_BRIGHTNESS_MODE without WRITE_SETTINGS,
+        // and the slider is separately disabled while the light sensor owns the backlight, which
+        // on a device nobody has configured yet it does by default. Device-owner status buys
+        // nothing here, unlike the Global and Secure namespaces: Settings.System has no
+        // device-owner setter, so this is a grant somebody makes once by hand.
+        if (!KioskService.canWriteSystemSettings(this)) {
+            TextView needsGrant = new TextView(this);
+            needsGrant.setTextColor(theme.bad);
+            needsGrant.setTextSize(13);
+            needsGrant.setText("Brightness cannot be set until Muralis has the \"Modify system "
+                    + "settings\" permission. It is the only thing on this panel that needs it.");
+            displayCard.addView(needsGrant, matchWrapClose());
+            Button grantWriteSettings = secondaryButton(theme, "Grant it now");
+            grantWriteSettings.setOnClickListener(view -> offerWriteSettingsGrant());
+            displayCard.addView(grantWriteSettings, matchWrap());
+        }
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedCheckBox(theme,
                     "Adjust brightness automatically",

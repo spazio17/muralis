@@ -1045,6 +1045,7 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append(brightnessControl())
                 .append(autoBrightnessControl())
+                .append(writeSettingsHint())
                 .append(orientationControl())
                 .append("</fieldset>")
 
@@ -1290,6 +1291,30 @@ final class HttpAdminServer {
         boolean on = KioskService.isAutoBrightnessOn(context);
         return "<label class=\"check\"><input type=\"checkbox\" id=\"auto-brightness\""
                 + (on ? " checked" : "") + "> Adjust brightness automatically</label>";
+    }
+
+    /**
+     * Why the brightness controls above do nothing, on a panel that has not been granted
+     * {@code WRITE_SETTINGS}, or nothing at all once it has.
+     *
+     * <p>The same sentence the tablet's Display card shows, so the two surfaces describe one rule,
+     * with the adb command in place of the tablet's grant button: this page cannot hand a browser
+     * the Settings screen that grants an app-op, and on a wall-mounted panel a cable is often the
+     * shorter route anyway. Both controls are affected and neither says so on its own: the
+     * checkbox writes {@code SCREEN_BRIGHTNESS_MODE}, the slider writes
+     * {@code SCREEN_BRIGHTNESS}, and both live in {@code Settings.System}, which has no
+     * device-owner setter. Added 2026-09-07, after a freshly provisioned panel showed two dead
+     * brightness controls and no surface anywhere said which single grant was missing.
+     */
+    private String writeSettingsHint() {
+        if (KioskService.canWriteSystemSettings(context)) {
+            return "";
+        }
+        return "<p class=\"hint\">Brightness cannot be set until Muralis has the \"Modify "
+                + "system settings\" permission. Grant it on the tablet, in the Display card "
+                + "of the Muralis settings screen, or over adb with "
+                + "<code>adb shell appops set " + context.getPackageName()
+                + " WRITE_SETTINGS allow</code>.</p>";
     }
 
     /**
