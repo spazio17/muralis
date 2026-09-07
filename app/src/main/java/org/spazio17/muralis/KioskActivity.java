@@ -2773,6 +2773,8 @@ public final class KioskActivity extends Activity {
             }
             if (inset != applied[0]) {
                 applied[0] = inset;
+                Log.d(TAG, "Keyboard covers " + inset + "px of the content (content bottom "
+                        + contentBottom + ", keyboard top " + keyboardTop + ")");
                 onInset.accept(inset);
             }
         };
@@ -2815,10 +2817,32 @@ public final class KioskActivity extends Activity {
             if (focused == null) {
                 return;
             }
-            // Asks for a little more than the field's own height so the next field, and any error text
+            // Scrolled by hand, against the part of the scroll view the keyboard does not cover,
+            // which is its height less the bottom padding the measurement adds. ScrollView's own
+            // requestRectangleOnScreen judges against its full height and ignores that padding,
+            // so on every window that is padded rather than resized (the kiosk, and every
+            // edge-to-edge phone) it saw the field as already visible and did nothing; the field
+            // stayed under the keyboard (Pixel 9 Pro XL, Android 17, 2026-09-07). Asks for a
+            // little more than the field's own height so the next field, and any error text
             // under it, are not left flush against the keyboard.
-            scroll.post(() -> focused.requestRectangleOnScreen(
-                    new Rect(0, 0, focused.getWidth(), focused.getHeight() + dp(24)), false));
+            scroll.post(() -> {
+                if (focused.getWindowToken() == null || scroll.getWindowToken() == null) {
+                    return;
+                }
+                int[] fieldAt = new int[2];
+                focused.getLocationInWindow(fieldAt);
+                int[] scrollAt = new int[2];
+                scroll.getLocationInWindow(scrollAt);
+                int visibleTop = scrollAt[1] + scroll.getPaddingTop();
+                int visibleBottom = scrollAt[1] + scroll.getHeight() - scroll.getPaddingBottom();
+                int fieldTop = fieldAt[1];
+                int fieldBottom = fieldAt[1] + focused.getHeight() + dp(24);
+                if (fieldBottom > visibleBottom) {
+                    scroll.smoothScrollBy(0, fieldBottom - visibleBottom);
+                } else if (fieldTop < visibleTop) {
+                    scroll.smoothScrollBy(0, fieldTop - visibleTop - dp(24));
+                }
+            });
         };
         trackKeyboardInset(scroll, inset -> {
             scroll.setPadding(scroll.getPaddingLeft(), scroll.getPaddingTop(),
