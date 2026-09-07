@@ -1475,7 +1475,8 @@ public final class KioskActivity extends Activity {
         LinearLayout dashboardCard = card(theme, "Dashboard");
         EditText urlInput = themedInput(theme, config.dashboardUrl.isEmpty()
                 ? "http://homeassistant.local:8123/" : config.dashboardUrl, false);
-        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(dashboardCard, theme, "Dashboard URL", urlInput);
         EditText deviceIdInput = themedInput(theme, config.deviceId, false);
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
@@ -1518,6 +1519,9 @@ public final class KioskActivity extends Activity {
 
         LinearLayout mqttCard = card(theme, "MQTT");
         EditText brokerInput = themedInput(theme, config.mqttHost, false);
+        // The URL keyboard, dot and slash to hand, and no sentence habits: see themedInput.
+        brokerInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(mqttCard, theme, "Broker host", brokerInput);
         EditText portInput = themedInput(theme, Integer.toString(config.mqttPort), false);
         portInput.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -3524,9 +3528,23 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
+        // Every box on this screen holds a machine value: an address, a host, an id, a username,
+        // a port. None of it is prose, so the keyboard's prose habits are wrong for all of it,
+        // and one of them corrupts the value silently: the panel's own keyboard (SwiftKey on both
+        // Huawei test devices) reads a full stop as the end of a sentence, adds a space after it
+        // and capitalises what follows, and corrects "mosquitto" to "mosquito" on the way, so
+        // "test.mosquitto.org" typed into the broker box arrived as "test. mosquito. org" (Juri,
+        // 2026-09-07, and the capture script had documented the same on 2026-08-31). Measured on
+        // the phone the same day: TYPE_TEXT_FLAG_NO_SUGGESTIONS alone stops the correcting but
+        // not the space after the full stop ("mqtt.user" still came back as "mqtt. user"), so
+        // the plain boxes use the visible-password variation, which every keyboard treats as
+        // "type exactly this": no predictions, no auto-space, no capitals. The dashboard URL and
+        // the broker host set the URI variation on top of this, for the URL keyboard, and ports
+        // the number class; both were measured to come back intact too.
         input.setInputType(InputType.TYPE_CLASS_TEXT | (secret
                 ? InputType.TYPE_TEXT_VARIATION_PASSWORD
-                : InputType.TYPE_TEXT_VARIATION_NORMAL));
+                : InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
         input.setTextColor(theme.text);
         input.setHintTextColor(theme.subtext);
         input.setBackground(theme.outlinedPanel(theme.surfaceAlt, dp(10), dp(1)));

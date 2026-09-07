@@ -463,6 +463,19 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   the phone: granted, returned by hand, and the card still said the grant was missing. A device
   owner may start an activity from the background on every Android; an ordinary install on
   Android 10+ is refused silently and `onResume` does the redraw when the operator comes back.
+- **Every text box on both settings surfaces is a machine value, so no keyboard prose habits.**
+  The panel's own keyboard (SwiftKey on both Huawei test devices) reads a full stop as the end of
+  a sentence: it adds a space, capitalises what follows and corrects the word, so
+  `test.mosquitto.org` typed into the broker box arrived as `test. mosquito. org` (Juri,
+  2026-09-07; the capture script had recorded the same on 2026-08-31 and worked around it by not
+  typing the host). Measured on the phone that day: `TYPE_TEXT_FLAG_NO_SUGGESTIONS` alone stops
+  the correcting but not the space after the full stop, so `themedInput` gives every plain box the
+  visible-password variation, which keyboards treat as "type exactly this", the dashboard URL and
+  the broker host the URI variation (the URL keyboard, measured intact), and ports the number
+  class. The web admin's text inputs carry `autocapitalize="off" autocorrect="off"
+  spellcheck="false"`, which Chrome on Android maps onto the same flags, and the two address boxes
+  add `inputmode="url"`. Not `type="url"` there: the browser would refuse a host without a scheme
+  before the server's normalisation could add one.
 - **`targetSdk` tracks Play's rolling floor.** It moves every August; re-check
   https://developer.android.com/google/play/requirements/target-sdk before any submission rather
   than trusting a remembered number.

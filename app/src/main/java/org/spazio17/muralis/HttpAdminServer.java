@@ -993,14 +993,14 @@ final class HttpAdminServer {
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
                 .append(baselineField(config.dashboardUrl + "|" + config.deviceId))
-                .append(field("text", "dashboard_url", "Dashboard URL", config.dashboardUrl))
+                .append(urlField("dashboard_url", "Dashboard URL", config.dashboardUrl))
                 .append(field("text", "device_id", "Device ID", config.deviceId))
                 .append(sectionFormEnd("Save"))
 
                 .append(sectionFormStart("mqtt", "MQTT", notice, noticeSection))
                 .append(baselineField(
                         config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername))
-                .append(field("text", "mqtt_host", "Broker host", config.mqttHost))
+                .append(urlField("mqtt_host", "Broker host", config.mqttHost))
                 .append(field("number", "mqtt_port", "Broker port",
                         Integer.toString(config.mqttPort)))
                 .append(field("text", "mqtt_username", "Username", config.mqttUsername))
@@ -1064,8 +1064,8 @@ final class HttpAdminServer {
                 .append("dashboard is unchanged.</p>")
                 .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
                 .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
-                .append("<input type=\"text\" name=\"url\" ")
-                .append("placeholder=\"http://homeassistant.local:8123/\">")
+                .append("<input type=\"text\" name=\"url\"").append(MACHINE_TEXT)
+                .append(" inputmode=\"url\" placeholder=\"http://homeassistant.local:8123/\">")
                 .append("<button type=\"submit\">Go</button>")
                 .append("</form></fieldset>")
 
@@ -1409,10 +1409,37 @@ final class HttpAdminServer {
         return "<input type=\"hidden\" name=\"baseline\" value=\"" + escapeHtml(value) + "\">";
     }
 
+    /**
+     * One labelled input. A text box on this page holds a machine value, an address, a host, an
+     * id, a username, and a phone browser's keyboard treats a plain text box as prose: a full stop
+     * ends a sentence, so it gains a space and a capital, and unknown words are corrected. The
+     * tablet's own settings screen turns the same habits off with its input types (see
+     * KioskActivity.themedInput, and the broker host that arrived as "test. mosquito. org"); these
+     * three attributes are how a page does it, and Chrome on Android maps them onto the same
+     * keyboard flags. The address boxes add {@code inputmode="url"}, which is the URL keyboard the
+     * tablet's own boxes get, and the one mode every keyboard was measured to leave a full stop
+     * alone in. Not {@code type="url"}: the browser would then refuse a host without a scheme
+     * before the server's own normalisation could add one.
+     */
     private static String field(String type, String name, String label, String value) {
-        return "<label>" + escapeHtml(label) + "<input type=\"" + type + "\" name=\"" + name
-                + "\" value=\"" + escapeHtml(value) + "\"></label>";
+        return field(type, name, label, value, "");
     }
+
+    private static String field(String type, String name, String label, String value,
+            String extraAttributes) {
+        return "<label>" + escapeHtml(label) + "<input type=\"" + type + "\" name=\"" + name
+                + "\" value=\"" + escapeHtml(value) + "\"" + (type.equals("text") ? MACHINE_TEXT : "")
+                + extraAttributes + "></label>";
+    }
+
+    /** A text box holding a URL or a host name: the URL keyboard on a phone, see {@link #field}. */
+    private static String urlField(String name, String label, String value) {
+        return field("text", name, label, value, " inputmode=\"url\"");
+    }
+
+    /** See {@link #field}: a text box that must not be autocorrected, capitalised or spellchecked. */
+    private static final String MACHINE_TEXT =
+            " autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"";
 
     private static String quickAction(String command, String label) {
         return "<form class=\"cmd\" method=\"post\" action=\"/api/command\" style=\"display:inline\">"
