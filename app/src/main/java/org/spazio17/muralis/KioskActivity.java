@@ -2708,18 +2708,28 @@ public final class KioskActivity extends Activity {
      * Reports the software keyboard's height whenever it changes.
      *
      * <p><b>Why measuring is necessary at all:</b> Android ignores {@code SOFT_INPUT_ADJUST_RESIZE} on
-     * a window carrying {@link WindowManager.LayoutParams#FLAG_FULLSCREEN}, which every Muralis screen
-     * does, because a kiosk has no business showing a status bar. The window therefore never shrinks
-     * and the keyboard is simply drawn on top of it. The IME does still reduce the window's visible
-     * display frame, though, so the gap between the decor height and that frame's bottom is the
-     * keyboard height, whether or not the window resized.
+     * a window carrying {@link WindowManager.LayoutParams#FLAG_FULLSCREEN}, which every screen of a
+     * device-owner panel does, because a kiosk has no business showing a status bar. The window
+     * therefore never shrinks and the keyboard is simply drawn on top of it. The IME does still reduce
+     * the window's visible display frame, though, so the gap between the bottom of the content and that
+     * frame's bottom is what the keyboard covers.
+     *
+     * <p><b>Why it is measured against the content view and not the decor:</b> an ordinary install
+     * shows its system bars, so its window is not fullscreen, and there {@code adjustResize} does work:
+     * Android itself shrinks the content to the keyboard's top edge. Measuring against the decor's
+     * height, which does not shrink, reported the keyboard's height a second time, and both callers
+     * then took it away again: on the phone a third of the settings form was visible, then a band of
+     * background the size of the keyboard, then the keyboard (Juri, 2026-09-07; in every build since
+     * the bars were shown on ordinary installs, 2026-08-21). Against the content's own bottom edge the
+     * gap is the keyboard on a fullscreen window and zero on one the system already resized, which is
+     * exactly the amount the caller still has to give back.
      *
      * <p>Both callers use this to give back the space themselves: the configuration screens as scroll
      * padding, the dashboard by shrinking the WebView. Worst in landscape, the orientation a wall panel
      * is fixed in, because the keyboard takes a much larger share of a short screen.
      *
      * @param anchor a view in the hierarchy, used only for its window and lifecycle
-     * @param onInset called with the keyboard height in pixels, or 0 when it is closed
+     * @param onInset called with the covered height in pixels, or 0 when nothing is covered
      */
     private void trackKeyboardInset(View anchor, java.util.function.IntConsumer onInset) {
         // Remembers the last value so the listener, which fires on every layout pass, does not
@@ -2727,9 +2737,13 @@ public final class KioskActivity extends Activity {
         final int[] applied = {-1};
         final Runnable measure = () -> {
             View decor = getWindow().getDecorView();
+            View content = findViewById(android.R.id.content);
             Rect visible = new Rect();
             decor.getWindowVisibleDisplayFrame(visible);
-            int inset = Math.max(0, decor.getHeight() - visible.bottom);
+            int[] location = new int[2];
+            content.getLocationOnScreen(location);
+            int contentBottom = location[1] + content.getHeight();
+            int inset = Math.max(0, contentBottom - visible.bottom);
             // A navigation bar or display cutout also shrinks the visible frame. Only a gap big enough
             // to be a keyboard counts, so ordinary layout does not gain phantom padding.
             if (inset < dp(MIN_KEYBOARD_INSET_DP)) {
@@ -2781,6 +2795,15 @@ public final class KioskActivity extends Activity {
             scroll.setPadding(scroll.getPaddingLeft(), scroll.getPaddingTop(),
                     scroll.getPaddingRight(), inset);
             if (inset > 0) {
+                revealFocused.run();
+            }
+        });
+        // On an ordinary install the window itself shrinks for the keyboard (see
+        // trackKeyboardInset), so the inset above stays zero and ScrollView's own onSizeChanged
+        // does the scrolling, flush against the keyboard. Same margin as the fullscreen case.
+        scroll.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (bottom - top < oldBottom - oldTop) {
                 revealFocused.run();
             }
         });
