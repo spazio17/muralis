@@ -9,6 +9,9 @@
     <string name="admin_escape_opened">System launcher opened; use the Muralis icon or notification to return</string>
     <string name="admin_escape_unavailable">System launcher is unavailable</string>
     <string name="configuration_escape_opened">Muralis configuration opened</string>
+    <!-- Verbatim from the Android brand guidelines, the condition of using the robot at all; it is
+         shown wherever the app lists its credits, because the parking page shows the robot. -->
+    <string name="android_robot_attribution">The Android robot is reproduced or modified from work created and shared by Google and used according to terms described in the Creative Commons 3.0 Attribution License.</string>
     <!-- Shown on the way to the Settings screen that grants WRITE_SETTINGS, from the Display card's
          button and from the automatic-brightness checkbox alike; Muralis returns by itself once the
          grant is made (KioskActivity.watchForWriteSettingsGrant). -->
