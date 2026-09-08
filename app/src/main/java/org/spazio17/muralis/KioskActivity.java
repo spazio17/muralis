@@ -183,6 +183,13 @@ public final class KioskActivity extends Activity {
 
     private WebView webView;
     private View blackout;
+    /**
+     * Whether display.visual_off's film is in force in this process: the black view on the screens
+     * that have one, the 1% window brightness on every screen. Kept as a field so a tap anywhere can
+     * be answered without a preference read per touch; the persisted truth is the boot-keyed flag
+     * in KioskConfig, and the two are written together.
+     */
+    private boolean filmOn;
     private TextView statsOverlay;
     /**
      * The System stats card's readout on the configuration screen. Distinct from
@@ -1062,6 +1069,15 @@ public final class KioskActivity extends Activity {
                 // through costs nothing.
                 return super.dispatchTouchEvent(event);
             }
+            // A tap on a darkened panel means "wake", on every screen. The black view that used to
+            // be the only thing answering a tap exists on the dashboard and the parking page; the
+            // configuration screen had the 1% dimming and nothing to tap, so Juri tapped the
+            // tablet and nothing happened (2026-09-08). Consumed, as the black view consumes it:
+            // the first touch on a dark panel must not also press whatever sits under the finger.
+            if (filmOn) {
+                handleUiCommand("display.wake", -1, null);
+                return true;
+            }
             // Deliberately not gated on configurationVisible: an escape hatch that stops working
             // the moment you are inside settings is not an escape hatch. This is exactly the
             // situation an operator stuck on the configuration screen needs it for.
@@ -1377,6 +1393,15 @@ public final class KioskActivity extends Activity {
         if (box.isChecked() != value) {
             box.setChecked(value);
         }
+    }
+
+    /**
+     * The Display off sentence: red while a sleep that Android ended is on record, because then it
+     * says the stored method was switched under the operator and why, and that has to be seen.
+     */
+    private void paintDisplayOffNote(TextView note, KioskTheme theme) {
+        note.setText(KioskService.describeDisplayOff(this));
+        note.setTextColor(KioskService.displayOffWarning(this) ? theme.bad : theme.subtext);
     }
 
     /** One radio option, carrying its stored spelling as the tag the listener reads back. */
@@ -1922,9 +1947,8 @@ public final class KioskActivity extends Activity {
         displayCard.addView(displayOffInput, matchWrapClose());
 
         TextView displayOffNote = new TextView(this);
-        displayOffNote.setTextColor(theme.subtext);
         displayOffNote.setTextSize(12);
-        displayOffNote.setText(KioskService.describeDisplayOff(this));
+        paintDisplayOffNote(displayOffNote, theme);
         displayCard.addView(displayOffNote, matchWrapClose());
 
         displayOffInput.setOnCheckedChangeListener((group, checkedId) -> {
@@ -1936,7 +1960,7 @@ public final class KioskActivity extends Activity {
             // forgets a recorded bad sleep, and the two must never be stored apart.
             DarkWatch.setMethod(this, (String) checked.getTag());
             KioskService.publishTelemetrySoon(this);
-            displayOffNote.setText(KioskService.describeDisplayOff(this));
+            paintDisplayOffNote(displayOffNote, theme);
         });
 
         // The web admin's System stats box, on the tablet: the same eight rows from the same
@@ -2007,8 +2031,9 @@ public final class KioskActivity extends Activity {
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
                             KioskConfig.displayOffMethodOf(KioskActivity.this));
-                    // The sentence changes on its own when a sleep ends badly, so it follows too.
-                    displayOffNote.setText(KioskService.describeDisplayOff(KioskActivity.this));
+                    // The sentence changes on its own when a sleep ends badly, so it follows too,
+                    // and the method radio with it, since a bad sleep switches the stored method.
+                    paintDisplayOffNote(displayOffNote, theme);
                 } finally {
                     syncingLiveControls = false;
                 }
@@ -3956,6 +3981,7 @@ public final class KioskActivity extends Activity {
         if (visualOffBoot >= 0 && visualOffBoot == currentBootCount()) {
             blackout.setVisibility(View.VISIBLE);
             setWindowBrightness(1);
+            filmOn = true;
         } else {
             setWindowBrightness(-1);
         }
@@ -4062,6 +4088,7 @@ public final class KioskActivity extends Activity {
         if (visualOffBoot >= 0 && visualOffBoot == currentBootCount()) {
             blackout.setVisibility(View.VISIBLE);
             setWindowBrightness(1);
+            filmOn = true;
         } else {
             // A fresh dashboard starts with the window at the system setting.
             setWindowBrightness(-1);
@@ -4433,6 +4460,7 @@ public final class KioskActivity extends Activity {
                     blackout.setVisibility(View.VISIBLE);
                 }
                 setWindowBrightness(1);
+                filmOn = true;
                 // Keyed to this boot: survives the nightly restart, never a reboot.
                 KioskConfig.recordVisualOffBootCount(this, currentBootCount());
                 break;
@@ -4487,8 +4515,12 @@ public final class KioskActivity extends Activity {
      * a visual-off left in force.
      */
     private void liftVisualOff() {
+        filmOn = false;
         KioskConfig.recordVisualOffBootCount(this, -1);
         setWindowBrightness(-1);
+        // A wake by tap goes through no dispatcher, so Home Assistant would otherwise learn of it
+        // at the next minute tick; a duplicate from the command paths is coalesced.
+        KioskService.publishTelemetrySoon(this);
     }
 
     /**
