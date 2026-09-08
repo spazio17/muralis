@@ -45,9 +45,10 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   its validator in the dispatcher, and the surfaces share it.
 - **A one-off URL is not the dashboard.** `kiosk.set_url` means "this is the dashboard now" and
   persists; `kiosk.open_url` shows a URL and stores nothing; `kiosk.home` returns to the stored
-  one. The web admin's "Open a URL now" box used to send `set_url`, so looking at something once
-  replaced the panel's dashboard and the only way back was retyping the original from memory
-  (reported 2026-08-24). The rules, all host-tested and verified on hardware: **reload** reloads
+  one. The web admin's one-off box used to send `set_url`, so looking at something once replaced
+  the panel's dashboard and the only way back was retyping the original from memory (reported
+  2026-08-24). Since 2026-09-08 there is no separate box: the Dashboard box has Save and Open
+  once on one input, mirroring the tablet's Dashboard card. The rules, all host-tested and verified on hardware: **reload** reloads
   whatever is on screen, dashboard or one-off or a page reached inside the dashboard; a **kiosk
   restart**, a process restart and the nightly clean always come back to the stored dashboard.
   Every surface carries both halves as *inputs*, including two Home Assistant text entities; the
@@ -453,9 +454,12 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   or freezing the process while the screen is off, is caught after the fact: `DarkWatch` records
   the sleep before `lockNow`, heartbeats while dark on the 2-second sampler, and the next process
   judges what ended the last one, with a reboot, an app update and the nightly restart recognised
-  as innocent. A bad ending is recorded once, the panel uses the film from then on, and every
-  surface says so in one shared sentence (`KioskService.describeDisplayOff`); changing the method
-  from any surface clears the record, which is how an operator asks for another try. Under sleep
+  as innocent. A bad ending is recorded once and the stored method is switched to `film`, so the
+  radio visibly moves to Black film and the shared sentence (`KioskService.describeDisplayOff`)
+  turns red on every surface, saying Android stopped Muralis and that it is not a Muralis error;
+  changing the method from any surface clears the record, which is how an operator asks for
+  another try. A tap on a darkened panel wakes it on every screen (`filmOn` in
+  `dispatchTouchEvent`), not only where the black view exists. Under sleep
   nothing is drawn: the dark state is the screen being off, `display.source` reports
   `display_off` from `isInteractive()`, and the power button or a remote wake ends it. The
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission is deliberately not declared: Play restricts

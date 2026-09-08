@@ -31,6 +31,15 @@ Array.prototype.forEach.call(document.querySelectorAll('form.cmd'),function(form
 form.addEventListener('submit',function(event){
 event.preventDefault();
 send(encode(form),form.elements.cmnd.value);});});
+// The Dashboard box's second button. It would otherwise submit the whole box to its own
+// formaction, which is the scripting-free path; here the click is caught and only the
+// address is sent, so the result lands in the console like every other command and the
+// page stays put. Nothing is saved either way: that is the Save button's job.
+var once=document.getElementById('open-once');
+if(once){once.addEventListener('click',function(event){
+event.preventDefault();
+var box=once.form&&once.form.elements.dashboard_url;
+send('cmnd=kiosk.open_url&url='+encodeURIComponent(box?box.value:''),'kiosk.open_url');});}
 var auto=document.getElementById('auto-brightness');
 if(auto){auto.addEventListener('change',function(){
 // Marked as user-driven so the stats poll does not fight the operator: without this, a

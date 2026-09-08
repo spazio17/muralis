@@ -1054,6 +1054,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     choice.method == DisplayOffPolicy.Method.SLEEP
                             ? DisplayOffPolicy.SLEEP : DisplayOffPolicy.FILM);
             display.put("off_method_reason", describeDisplayOff(this));
+            display.put("off_method_warning", displayOffWarning(this));
             display.put("auto", auto);
             display.put("has_light_sensor", hasLightSensor(this));
             display.put("source", source);
@@ -1280,9 +1281,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return;
         }
         if (exit == DisplayOffPolicy.Exit.STOPPED) {
-            DarkWatch.recordStopped(this, System.currentTimeMillis(), DarkWatch.WHY_STOPPED);
+            switchToFilmAfterBadSleep(DarkWatch.WHY_STOPPED);
             Log.w(TAG, "The previous process was stopped while the screen was asleep; "
-                    + "Display off uses the black film until the method is changed");
+                    + "Display off is switched to the black film");
             return;
         }
         Log.i(TAG, "The previous process ended while the screen was asleep: " + exit
@@ -1319,15 +1320,26 @@ public final class KioskService extends Service implements KioskCommandDispatche
         long elapsed = SystemClock.elapsedRealtime();
         long lastBeat = DarkWatch.lastBeatElapsedMs(this);
         if (DisplayOffPolicy.frozen(lastBeat, elapsed, DisplayOffPolicy.HEARTBEAT_MS)) {
-            DarkWatch.recordStopped(this, System.currentTimeMillis(), DarkWatch.WHY_FROZEN);
+            switchToFilmAfterBadSleep(DarkWatch.WHY_FROZEN);
             Log.w(TAG, "The process was frozen for " + ((elapsed - lastBeat) / 1000)
-                    + " s while the screen was asleep; Display off uses the black film until the "
-                    + "method is changed");
+                    + " s while the screen was asleep; Display off is switched to the black film");
             publishStateSoon();
         }
         if (elapsed - lastBeat >= DisplayOffPolicy.HEARTBEAT_MS) {
             DarkWatch.beat(this, elapsed);
         }
+    }
+
+    /**
+     * A sleep Android ended badly switches the stored method to the film, visibly: the radio
+     * moves to Black film and the sentence under it turns red, so the operator learns why "Turn
+     * the screen off" stopped working and that it was not Muralis (Juri's ask, 2026-09-08).
+     * Written directly rather than through DarkWatch.setMethod, which would forget the very
+     * record the red sentence is made of; the operator's next method change forgets it.
+     */
+    private void switchToFilmAfterBadSleep(String why) {
+        DarkWatch.recordStopped(this, System.currentTimeMillis(), why);
+        KioskConfig.edit(this).displayOffMethod(DisplayOffPolicy.FILM).apply();
     }
 
     private static IntentFilter screenFilter() {
@@ -1568,12 +1580,27 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * method in force, so the three surfaces describe one rule. Plain words on purpose: this is
      * read by whoever wonders why the panel is not going dark the way they expected.
      */
+    /** Whether a sleep that Android ended is on record, which paints the sentence red. */
+    static boolean displayOffWarning(Context context) {
+        return DarkWatch.stoppedAtMs(context) > 0;
+    }
+
     static String describeDisplayOff(Context context) {
+        if (displayOffWarning(context)) {
+            // Short on purpose: what changed, why, whose fault it is not, and the way back.
+            String when = java.text.DateFormat.getDateTimeInstance(
+                    java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                    .format(new java.util.Date(DarkWatch.stoppedAtMs(context)));
+            String how = DarkWatch.WHY_FROZEN.equals(DarkWatch.stoppedWhy(context))
+                    ? "froze" : "stopped";
+            return "Switched to Black film: Android " + how + " Muralis while the screen was off "
+                    + "on " + when + ".";
+        }
         DisplayOffPolicy.Choice choice = chooseDisplayOff(context);
         switch (choice.why) {
             case NOT_DEVICE_OWNER:
-                return "Display off shows a black film. Turning the screen off for real needs "
-                        + "the device-owner install.";
+                return "Display off shows a black film. Turning the screen off needs the "
+                        + "device-owner install.";
             case AWAITING_REBOOT:
                 return "Display off shows a black film until the tablet restarts: the permission "
                         + "to turn the screen off arrived with an update, and Android grants it "
@@ -1582,23 +1609,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 return "Display off shows a black film while the tablet runs on battery without "
                         + "a battery optimisation exemption, because Android would cut a sleeping "
                         + "panel off the network.";
-            case STOPPED_WHILE_DARK: {
-                String when = java.text.DateFormat.getDateTimeInstance(
-                        java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
-                        .format(new java.util.Date(DarkWatch.stoppedAtMs(context)));
-                String how = DarkWatch.WHY_FROZEN.equals(DarkWatch.stoppedWhy(context))
-                        ? "froze Muralis" : "stopped Muralis";
-                return "Display off shows a black film: this system " + how + " while the "
-                        + "screen was off, on " + when + ". Change the method to try the real "
-                        + "screen-off again.";
-            }
+            case STOPPED_WHILE_DARK:
+                // Only reachable with the method still on automatic and a record present, which
+                // the switch above prevents from now on; the red sentence covered it already.
             case TRUSTED:
             case CHOSEN:
             default:
+                // No "a tap wakes it" on the film: the film view exists on the dashboard and
+                // the parking page only, so on the configuration screen Display off dims the
+                // panel to 1% with nothing to tap (Juri, on the tablet, 2026-09-08).
                 return choice.method == DisplayOffPolicy.Method.SLEEP
-                        ? "Display off turns the screen off for real. A remote wake or the power "
-                                + "button turns it back on."
-                        : "Display off shows a black film at minimum brightness. A tap wakes it.";
+                        ? "Display off turns the screen off. A remote wake or the power button "
+                                + "turns it back on."
+                        : "Display off shows a black film at minimum brightness.";
         }
     }
 
