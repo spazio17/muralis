@@ -2542,6 +2542,26 @@ public final class KioskActivity extends Activity {
      * edge-to-edge enforcement. The tappable-element insets are asked rather than the bar heights
      * because they answer the actual question: gesture navigation's bottom strip passes taps
      * through and reports zero, a three-button bar eats them and reports its height.
+     *
+     * <p><b>Below API 30 it must not ask {@code getSystemWindowInsets}, which is what it used to
+     * do.</b> Those are the CONTENT insets, and {@code SYSTEM_UI_FLAG_LAYOUT_STABLE}, which the
+     * kiosk sets precisely so hiding a bar does not reshuffle the layout, freezes them at the bar
+     * heights whether or not a bar is on screen. So a device-owner panel with both bars hidden
+     * for the whole life of the process still reported a navigation bar, and both the drawn
+     * corner targets and the listening band dodged a bar that was not there.
+     *
+     * <p>Measured on the Lenovo, Android 10 device owner, 1280x800 with a 48px bar, 2026-09-08:
+     * the bottom targets were drawn 56px above the screen edge while the top ones sat 8px from
+     * it, and the bottom band ran from y=656 to the last row, 144px instead of the 96 it is meant
+     * to be. Juri saw the squares floating above a bar that had never been visible. The tablet's
+     * own escape combination still worked, because the drawn square and the band had moved
+     * together, which is why this survived unnoticed on the wall panel too.
+     *
+     * <p>The visible display frame is asked instead, because "where is this window actually
+     * visible" is the real question and it is the only spelling of it the older API has. The
+     * keyboard shrinks that frame as well, so the difference is capped at the edge's stable inset
+     * by {@link SystemBarOverlap}: at most one bar, zero once the bar is gone, and no size
+     * written down anywhere.
      */
     @SuppressWarnings("deprecation")
     private Rect systemBarOverlap() {
@@ -2552,6 +2572,10 @@ public final class KioskActivity extends Activity {
         if (content == null || insets == null || content.getWidth() == 0) {
             return overlap;
         }
+        int[] contentOrigin = new int[2];
+        int[] decorOrigin = new int[2];
+        content.getLocationOnScreen(contentOrigin);
+        decor.getLocationOnScreen(decorOrigin);
         int left;
         int top;
         int right;
@@ -2566,16 +2590,31 @@ public final class KioskActivity extends Activity {
             bottom = bars.bottom;
         } else {
             // Deprecated from API 30 but the only spelling below it, the same both-paths rule as
-            // enterImmersiveMode. Hidden bars report zero here too.
-            left = insets.getSystemWindowInsetLeft();
-            top = insets.getSystemWindowInsetTop();
-            right = insets.getSystemWindowInsetRight();
-            bottom = insets.getSystemWindowInsetBottom();
+            // enterImmersiveMode. Every number here is measured: the frame comes from the window
+            // and the caps from the platform's own stable insets, so a 48px bar at 160dpi and an
+            // 82px one at 272dpi need no distinguishing and nothing is written down.
+            //
+            // Each edge's cap is zero while that bar is hidden, which is what makes a hidden bar
+            // collapse to nothing even with the keyboard up. Without the gate the cap alone would
+            // report a full bar whenever the visible frame shrank for any reason, and the soft
+            // keyboard shrinks it by hundreds of pixels on the configuration screen, where the
+            // escape combination has to keep working.
+            Rect visible = new Rect();
+            decor.getWindowVisibleDisplayFrame(visible);
+            int visibility = decor.getWindowSystemUiVisibility();
+            boolean navigationHidden = (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0;
+            boolean statusHidden = (visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0
+                    || (getWindow().getAttributes().flags
+                            & WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+            left = SystemBarOverlap.leading(decorOrigin[0], visible.left,
+                    navigationHidden ? 0 : insets.getStableInsetLeft());
+            top = SystemBarOverlap.leading(decorOrigin[1], visible.top,
+                    statusHidden ? 0 : insets.getStableInsetTop());
+            right = SystemBarOverlap.trailing(decorOrigin[0] + decor.getWidth(), visible.right,
+                    navigationHidden ? 0 : insets.getStableInsetRight());
+            bottom = SystemBarOverlap.trailing(decorOrigin[1] + decor.getHeight(), visible.bottom,
+                    navigationHidden ? 0 : insets.getStableInsetBottom());
         }
-        int[] contentOrigin = new int[2];
-        int[] decorOrigin = new int[2];
-        content.getLocationOnScreen(contentOrigin);
-        decor.getLocationOnScreen(decorOrigin);
         // The insets are window-relative. Where the content view already sits below a bar, the
         // subtraction lands at zero and nothing moves.
         overlap.left = Math.max(0, decorOrigin[0] + left - contentOrigin[0]);

@@ -98,6 +98,15 @@ javac -d "${test_dir}/origin" \
     "${host_test_dir}/RequestOriginTest.java"
 java -cp "${test_dir}/origin" org.spazio17.muralis.RequestOriginTest
 
+# Where the corner tap targets land, per device, from whatever the platform reports. Extracted
+# from the activity because three of its four cases need a device with visible system bars, and
+# the wall panel is not always attached.
+mkdir -p "${test_dir}/overlap"
+javac -d "${test_dir}/overlap" \
+    "${pure_java_dir}/SystemBarOverlap.java" \
+    "${host_test_dir}/SystemBarOverlapTest.java"
+java -cp "${test_dir}/overlap" org.spazio17.muralis.SystemBarOverlapTest
+
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \
     "${pure_java_dir}/AuthThrottle.java" \
