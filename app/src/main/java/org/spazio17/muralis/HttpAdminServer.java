@@ -584,6 +584,11 @@ final class HttpAdminServer {
                 }
             }
             url = params.get("url");
+            if (url == null && "kiosk.open_url".equals(command)) {
+                // The Dashboard box's Open once button posts the whole box, whose input is the
+                // stored dashboard's field. Same value, read under its own name.
+                url = params.get("dashboard_url");
+            }
             value = params.get("value");
             if (params.containsKey("enabled")) {
                 // The same parser the JSON path uses. The old spelling list here treated every
@@ -1006,7 +1011,21 @@ final class HttpAdminServer {
                 .append(baselineField(config.dashboardUrl + "|" + config.deviceId))
                 .append(urlField("dashboard_url", "Dashboard URL", config.dashboardUrl))
                 .append(field("text", "device_id", "Device ID", config.deviceId))
-                .append(sectionFormEnd("Save"))
+                // Two buttons on one input, the shape the tablet's Dashboard card has had since
+                // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it
+                // until the next kiosk restart and stores nothing (kiosk.open_url, never
+                // set_url). It used to be a separate "Open a URL now" box with a "Go" button,
+                // which Juri had removed 2026-09-08 so the two surfaces offer the same thing in
+                // the same place. Open once is a submit button with its own formaction, so with
+                // scripting unavailable the browser still posts the box to /api/command (which
+                // reads dashboard_url for it, see handleCommand); with scripting, commandScript
+                // intercepts the click and reports the result inline like every other command.
+                .append("<p class=\"hint\">Open once shows the address until the next kiosk ")
+                .append("restart and stores nothing.</p>")
+                .append(sectionFormEnd("Save",
+                        "<button type=\"submit\" id=\"open-once\" name=\"cmnd\" "
+                                + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
+                                + "formmethod=\"post\">Open once</button>"))
 
                 .append(sectionFormStart("mqtt", "MQTT", notice, noticeSection))
                 .append(baselineField(
@@ -1064,24 +1083,6 @@ final class HttpAdminServer {
                 .append(orientationControl())
                 .append(displayOffControl())
                 .append("</fieldset>")
-
-                // kiosk.open_url, NOT kiosk.set_url: this box is for a URL with one-off query
-                // parameters, and it used to store whatever was typed as the panel's dashboard,
-                // so the way back was retyping the original by hand (reported 2026-08-24). The
-                // Dashboard box above is where the stored URL changes.
-                // The hint sits above the input so what the box does is read before it is used,
-                // and it names the way back: a kiosk restart, which is a quick action above.
-                .append("<fieldset><legend>Open a URL now</legend>")
-                .append("<p class=\"hint\">Shown until the next kiosk restart; the stored ")
-                .append("dashboard is unchanged.</p>")
-                .append("<form class=\"cmd\" method=\"post\" action=\"/api/command\">")
-                .append("<input type=\"hidden\" name=\"cmnd\" value=\"kiosk.open_url\">")
-                .append("<input type=\"text\" name=\"url\"").append(MACHINE_TEXT)
-                .append(" inputmode=\"url\" placeholder=\"")
-                .append(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL)
-                .append("\">")
-                .append("<button type=\"submit\">Go</button>")
-                .append("</form></fieldset>")
 
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands
@@ -1297,7 +1298,7 @@ final class HttpAdminServer {
         return "<label>Display off<select id=\"display-off-method\" "
                 + "data-setting=\"display_off_method\">" + options + "</select></label>"
                 + "<p class=\"hint\" id=\"display-off-note\">"
-                + KioskService.describeDisplayOff(context) + "</p>";
+                + escapeHtml(KioskService.describeDisplayOff(context)) + "</p>";
     }
 
     /**
@@ -1434,6 +1435,12 @@ final class HttpAdminServer {
     private static String sectionFormEnd(String label) {
         return "<button class=\"primary\" type=\"submit\">" + escapeHtml(label)
                 + "</button></fieldset></form>";
+    }
+
+    /** The same, with a second button beside Save; the caller supplies that button's markup. */
+    private static String sectionFormEnd(String label, String besideHtml) {
+        return "<div class=\"actions\"><button class=\"primary\" type=\"submit\">"
+                + escapeHtml(label) + "</button>" + besideHtml + "</div></fieldset></form>";
     }
 
     /** The hidden input staleFormRefusal checks on submit. */
