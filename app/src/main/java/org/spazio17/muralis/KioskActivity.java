@@ -1996,7 +1996,7 @@ public final class KioskActivity extends Activity {
         escapeSummary.setTextSize(14);
         escapeSummary.setText("Settings: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.settingsSequence))
-                + "\nLauncher: "
+                + "\nHome screen: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.launcherSequence)));
         escapeCard.addView(escapeSummary, matchWrap());
         Button manageSequences = secondaryButton(theme, "Manage escape sequences");
@@ -2229,7 +2229,7 @@ public final class KioskActivity extends Activity {
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 sequenceCard(theme, "Open Muralis settings", config.settingsSequence, false),
-                sequenceCard(theme, "Exit to the system launcher", config.launcherSequence, true))),
+                sequenceCard(theme, "Leave Muralis for the home screen", config.launcherSequence, true))),
                 matchWrap());
 
         Button back = primaryButton(theme, "Back to configuration");
@@ -2295,20 +2295,43 @@ public final class KioskActivity extends Activity {
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, "Welcome to Muralis",
-                "Two tap combinations before anything else"), matchWrap());
+                "First, your way back out"), matchWrap());
 
-        TextView explain = new TextView(this);
-        explain.setTextColor(theme.subtext);
-        explain.setTextSize(14);
-        explain.setText("Muralis locks this tablet to one page. The only way back out is a "
-                + "combination of taps in the corners of the screen, so those are recorded "
-                + "first: one that opens Muralis settings, one that exits to the system "
-                + "launcher. You will perform each on the real corners, and you can change "
-                + "them later in settings. Keep them to yourself, anyone who watches you "
-                + "perform one can repeat it.");
-        page.addView(explain, matchWrap());
+        // Four short blocks rather than one paragraph, and the first line carries the whole
+        // message on its own. Watched on 2026-09-08: a tester who had never seen Muralis skipped
+        // the old 75-word block entirely and found the settings combination by pressing corners at
+        // random. Someone who reads one sentence here and stops still learns what corner taps are
+        // for; the two combinations are a list because they used to sit mid-sentence after a
+        // colon, and the secrecy note is last because it is the only part she could not have
+        // discovered by poking.
+        TextView lead = new TextView(this);
+        lead.setTextColor(theme.text);
+        lead.setTextSize(15);
+        lead.setText("Muralis covers the whole screen. Tapping the corners in your own order is "
+                + "how you get back out.");
+        page.addView(lead, matchWrap());
 
-        Button start = primaryButton(theme, "Record the first combination");
+        TextView listCaption = new TextView(this);
+        listCaption.setTextColor(theme.subtext);
+        listCaption.setTextSize(14);
+        listCaption.setText("Record two combinations now:");
+        page.addView(listCaption, matchWrap());
+
+        TextView list = new TextView(this);
+        list.setTextColor(theme.text);
+        list.setTextSize(15);
+        list.setLineSpacing(dp(6), 1f);
+        list.setText("1.   opens Muralis settings\n2.   leaves Muralis for the home screen");
+        page.addView(list, matchWrapClose());
+
+        TextView note = new TextView(this);
+        note.setTextColor(theme.subtext);
+        note.setTextSize(13);
+        note.setText("You can change them later in settings. Keep them to yourself, anyone who "
+                + "watches you tap can do it too.");
+        page.addView(note, matchWrap());
+
+        Button start = primaryButton(theme, "Record the first one");
         start.setOnClickListener(view -> showWizardRecorder(false));
         page.addView(start, matchWrap());
 
@@ -2389,7 +2412,7 @@ public final class KioskActivity extends Activity {
         }
 
         TextView title = new TextView(this);
-        title.setText(forLauncher ? "Exit to the system launcher" : "Open Muralis settings");
+        title.setText(forLauncher ? "Leave Muralis for the home screen" : "Open Muralis settings");
         title.setTextColor(theme.text);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
@@ -2398,7 +2421,8 @@ public final class KioskActivity extends Activity {
         TextView hint = new TextView(this);
         hint.setText("Tap the highlighted corners in the order you want. Between "
                 + EscapeSequence.MIN_LENGTH + " and " + EscapeSequence.MAX_LENGTH
-                + " taps, no pause longer than " + (EscapeSequence.MAX_GAP_MS / 1000) + "s.");
+                + " taps, and do not stop for more than "
+                + (EscapeSequence.MAX_GAP_MS / 1000) + " seconds.");
         hint.setTextColor(theme.subtext);
         hint.setTextSize(14);
         hint.setGravity(Gravity.CENTER);
