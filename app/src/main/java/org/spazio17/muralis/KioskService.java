@@ -1572,8 +1572,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         DisplayOffPolicy.Choice choice = chooseDisplayOff(context);
         switch (choice.why) {
             case NOT_DEVICE_OWNER:
-                return "Display off shows a black film. Turning the screen off for real needs "
-                        + "the device-owner install.";
+                return "Display off shows a black film. Turning the screen off needs the "
+                        + "device-owner install.";
             case AWAITING_REBOOT:
                 return "Display off shows a black film until the tablet restarts: the permission "
                         + "to turn the screen off arrived with an update, and Android grants it "
@@ -1589,16 +1589,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 String how = DarkWatch.WHY_FROZEN.equals(DarkWatch.stoppedWhy(context))
                         ? "froze Muralis" : "stopped Muralis";
                 return "Display off shows a black film: this system " + how + " while the "
-                        + "screen was off, on " + when + ". Change the method to try the real "
+                        + "screen was off, on " + when + ". Change the method to try the "
                         + "screen-off again.";
             }
             case TRUSTED:
             case CHOSEN:
             default:
+                // No "a tap wakes it" on the film: the film view exists on the dashboard and
+                // the parking page only, so on the configuration screen Display off dims the
+                // panel to 1% with nothing to tap (Juri, on the tablet, 2026-09-08).
                 return choice.method == DisplayOffPolicy.Method.SLEEP
-                        ? "Display off turns the screen off for real. A remote wake or the power "
-                                + "button turns it back on."
-                        : "Display off shows a black film at minimum brightness. A tap wakes it.";
+                        ? "Display off turns the screen off. A remote wake or the power button "
+                                + "turns it back on."
+                        : "Display off shows a black film at minimum brightness.";
         }
     }
 
