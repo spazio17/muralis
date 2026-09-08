@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Minimal policy set. Muralis needs device-owner status for lock-task and status-bar control, not for
-  password or wipe policy, so nothing broader is declared.
+  password or wipe policy, so nothing broader is declared. force-lock is the one addition
+  (2026-09-08): it is what lets DevicePolicyManager.lockNow() put the screen to sleep for real, the
+  only way an app can switch the backlight off, see DisplayOffPolicy. Without it the call throws
+  SecurityException and the panel keeps the black film.
 -->
 <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-policies>
         <disable-keyguard-features />
+        <force-lock />
     </uses-policies>
 </device-admin>

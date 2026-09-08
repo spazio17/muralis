@@ -100,6 +100,14 @@ final class KioskCommandDispatcher {
          */
         boolean setOrientation(String value);
 
+        /**
+         * Stores how {@code display.visual_off} darkens the panel; see {@code DisplayOffPolicy}.
+         *
+         * @return false when {@code sleep} is asked of an install that is not the device owner,
+         *         before anything is stored, the same shape as {@link #setOrientation}
+         */
+        boolean setDisplayOffMethod(String value);
+
         /** Stores {@code url} as the panel's dashboard and shows it. */
         void setDashboardUrl(String url);
 
@@ -217,6 +225,14 @@ final class KioskCommandDispatcher {
                 }
                 if (!executor.setOrientation(args.value)) {
                     return rejected("this device has no accelerometer to follow");
+                }
+                return accepted();
+            case "display.off_method":
+                if (!DisplayOffPolicy.isMethod(args.value)) {
+                    return rejected("value must be auto, sleep or film");
+                }
+                if (!executor.setDisplayOffMethod(args.value)) {
+                    return rejected("a real screen-off needs the device-owner install");
                 }
                 return accepted();
             case "webadmin.enabled":

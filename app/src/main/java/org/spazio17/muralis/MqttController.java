@@ -544,6 +544,19 @@ final class MqttController implements MqttCallbackExtended {
                     "display.orientation",
                     orientationOptions,
                     "{{ value_json.config.orientation }}"));
+            // How the Display off button darkens the panel; see DisplayOffPolicy. "sleep" only
+            // where the device owner's lockNow exists to do it, the same gate as "auto" above.
+            org.json.JSONArray displayOffOptions = new org.json.JSONArray();
+            displayOffOptions.put(DisplayOffPolicy.AUTO);
+            if (KioskService.isDeviceOwner(appContext)) {
+                displayOffOptions.put(DisplayOffPolicy.SLEEP);
+            }
+            displayOffOptions.put(DisplayOffPolicy.FILM);
+            components.put("display_off_method", select(
+                    "Display off method",
+                    "display.off_method",
+                    displayOffOptions,
+                    "{{ value_json.config.display_off_method }}"));
             // The switch reflects the operator's flag, not whether a socket is bound: with no
             // admin password stored, "on" is an honest description of intent while the bind
             // stays refused, and the runtime state carries the difference.

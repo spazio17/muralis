@@ -34,10 +34,16 @@ if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.dataset.pending||value==null){return;}
 if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){el.value=value;}}
+var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('orientation',cfg.orientation);
+follow('display-off-method',cfg.display_off_method);
+// The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
+// not a control, and is never gated on pending.
+var dn=document.getElementById('display-off-note');
+if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;}
 // The slider follows the real backlight, except while the operator is actually dragging it.
-var disp=data.display||{},sl=document.getElementById('brightness');
+var sl=document.getElementById('brightness');
 if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){
 sl.value=disp.brightness_percent;
 var lbl=document.getElementById('brightness-value');

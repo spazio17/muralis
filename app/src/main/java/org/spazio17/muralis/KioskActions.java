@@ -19,6 +19,13 @@ final class KioskActions {
     static final String EXTRA_COMMAND = "command";
     static final String EXTRA_BRIGHTNESS = "brightness_percent";
     static final String EXTRA_URL = "url";
+    /**
+     * On {@code display.visual_off}: {@link DisplayOffPolicy#SLEEP} or {@link DisplayOffPolicy#FILM},
+     * what the service decided. The activity draws the film only for the latter; a sleeping
+     * screen needs nothing drawn, and a film that is drawn anyway would greet the power button
+     * with black.
+     */
+    static final String EXTRA_DISPLAY_OFF_METHOD = "display_off_method";
 
     private KioskActions() {
     }

@@ -21,6 +21,7 @@ final class KioskConfig {
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     private static final String STATS_OVERLAY = "stats_overlay";
     private static final String ORIENTATION = "orientation";
+    private static final String DISPLAY_OFF_METHOD = "display_off_method";
     /**
      * Retired 2026-08-29, when the two-way portrait switch became the three-way orientation
      * setting. Read only by the migration in {@link #orientationOf} and removed by the first
@@ -79,6 +80,14 @@ final class KioskConfig {
      */
     String orientation = ORIENTATION_AUTO;
     /**
+     * How {@code display.visual_off} darkens the panel: {@link DisplayOffPolicy#AUTO}, a real
+     * sleep where it can be trusted and the black film otherwise; {@link DisplayOffPolicy#SLEEP};
+     * or {@link DisplayOffPolicy#FILM}. Automatic by default, which on a device-owner panel on
+     * mains means the backlight really goes off, Juri's ask of 2026-09-08. See DisplayOffPolicy
+     * for the whole rule and for how a sleep that ended badly turns this into the film.
+     */
+    String displayOffMethod = DisplayOffPolicy.AUTO;
+    /**
      * Whether the web admin is allowed to serve at all, independent of the password: turning the
      * surface off must not cost the operator their stored password, and turning it back on must
      * not require retyping one. Enabled by default; the no-password fail-closed rule in
@@ -128,6 +137,7 @@ final class KioskConfig {
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
         config.statsOverlay = statsOverlayEnabled(context);
         config.orientation = orientationOf(context);
+        config.displayOffMethod = displayOffMethodOf(context);
         config.settingsSequence = preferences.getString(SETTINGS_SEQUENCE, "");
         config.launcherSequence = preferences.getString(LAUNCHER_SEQUENCE, "");
         return config;
@@ -203,6 +213,11 @@ final class KioskConfig {
             return this;
         }
 
+        Editor displayOffMethod(String value) {
+            plain.putString(DISPLAY_OFF_METHOD, value);
+            return this;
+        }
+
         Editor kioskStopped(boolean value) {
             plain.putBoolean(KIOSK_STOPPED, value);
             return this;
@@ -247,6 +262,18 @@ final class KioskConfig {
                 store.put(secret.getKey(), secret.getValue());
             }
         }
+    }
+
+    /**
+     * Narrow reader for the display-off method, read on every {@code display.visual_off} and by
+     * the live-sync polls. An unknown stored spelling reads as automatic rather than failing: a
+     * panel must always have some way to go dark.
+     */
+    static String displayOffMethodOf(Context context) {
+        String stored = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(DISPLAY_OFF_METHOD, DisplayOffPolicy.AUTO);
+        return DisplayOffPolicy.isMethod(stored) ? stored : DisplayOffPolicy.AUTO;
     }
 
     /**

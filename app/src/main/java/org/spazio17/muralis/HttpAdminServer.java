@@ -790,6 +790,17 @@ final class HttpAdminServer {
                             .statsOverlay(isTrue(form.get("stats_overlay")))
                             .apply();
                 }
+                if (form.containsKey("display_off_method")) {
+                    String method = form.get("display_off_method");
+                    if (!DisplayOffPolicy.isMethod(method)) {
+                        return "Display off method must be auto, sleep or film.";
+                    }
+                    if (DisplayOffPolicy.SLEEP.equals(method)
+                            && !KioskService.isDeviceOwner(context)) {
+                        return "A real screen-off needs the device-owner install.";
+                    }
+                    DarkWatch.setMethod(context, method);
+                }
                 return null;
             default:
                 Log.i(TAG, "Ignoring a settings post with no known section");
@@ -1051,6 +1062,7 @@ final class HttpAdminServer {
                 .append(autoBrightnessControl())
                 .append(writeSettingsHint())
                 .append(orientationControl())
+                .append(displayOffControl())
                 .append("</fieldset>")
 
                 // kiosk.open_url, NOT kiosk.set_url: this box is for a URL with one-off query
@@ -1252,10 +1264,10 @@ final class HttpAdminServer {
         // "auto" only where an accelerometer exists to drive it, the same gate the
         // auto-brightness checkbox above sits behind.
         if (KioskService.hasAccelerometer(context)) {
-            options.append(orientationOption("auto", "Auto-rotate", current));
+            options.append(selectOption("auto", "Auto-rotate", current));
         }
-        options.append(orientationOption("landscape", "Landscape", current));
-        options.append(orientationOption("portrait", "Portrait", current));
+        options.append(selectOption("landscape", "Landscape", current));
+        options.append(selectOption("portrait", "Portrait", current));
         // A plain label, not label.check: that class is display:flex for a checkbox and its text,
         // and a select carries width:100%, so the two fought over one line and the caption ended
         // up beside the control instead of above it, alone among this page's fields. The default
@@ -1264,9 +1276,28 @@ final class HttpAdminServer {
                 + options + "</select></label>";
     }
 
-    private static String orientationOption(String value, String label, String current) {
+    private static String selectOption(String value, String label, String current) {
         return "<option value=\"" + value + "\"" + (value.equals(current) ? " selected" : "")
                 + ">" + label + "</option>";
+    }
+
+    /**
+     * How "Display off" darkens the panel, as a select posted the moment it changes, with the
+     * sentence the tablet's Display card shows under it, kept current by the stats poll. The real
+     * screen-off is offered only to a device owner, the same gate the tablet applies.
+     */
+    private String displayOffControl() {
+        String current = KioskConfig.displayOffMethodOf(context);
+        StringBuilder options = new StringBuilder();
+        options.append(selectOption(DisplayOffPolicy.AUTO, "Automatic", current));
+        if (KioskService.isDeviceOwner(context)) {
+            options.append(selectOption(DisplayOffPolicy.SLEEP, "Turn the screen off", current));
+        }
+        options.append(selectOption(DisplayOffPolicy.FILM, "Black film", current));
+        return "<label>Display off<select id=\"display-off-method\" "
+                + "data-setting=\"display_off_method\">" + options + "</select></label>"
+                + "<p class=\"hint\" id=\"display-off-note\">"
+                + KioskService.describeDisplayOff(context) + "</p>";
     }
 
     /**

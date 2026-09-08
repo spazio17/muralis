@@ -30,7 +30,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
-  `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/portrait`,
+  `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
   `webadmin.enabled`, `system.reboot`, `telemetry.publish`)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
@@ -440,6 +440,26 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   repeated forever; the app's own code never logged a line. It is per-release in Play Console under
   Test and release, App integrity, Automatic protection. None of this is in this repo and none of it
   is visible in a local build, which is exactly why it is written down here.
+
+- **Display off is a real sleep where it can be trusted, and the black film otherwise
+  (2026-09-08, Juri's ask).** `display.visual_off` on a device-owner panel calls
+  `DevicePolicyManager.lockNow()` (`force-lock` is declared for it), which is the only call an app
+  has that switches the backlight off; the film, a black view at 1% brightness, is what an
+  ordinary install gets and what a device owner falls back to. `DisplayOffPolicy` (pure,
+  host-tested) decides from the stored `display_off_method` (`auto`, the default, `sleep`, `film`)
+  and three live facts: device owner or not, cable attached or not, and
+  `isIgnoringBatteryOptimizations`, because on battery without the allowlist Doze cuts a sleeping
+  panel's network so no wake can arrive. What no API announces, a vendor power manager stopping
+  or freezing the process while the screen is off, is caught after the fact: `DarkWatch` records
+  the sleep before `lockNow`, heartbeats while dark on the 2-second sampler, and the next process
+  judges what ended the last one, with a reboot, an app update and the nightly restart recognised
+  as innocent. A bad ending is recorded once, the panel uses the film from then on, and every
+  surface says so in one shared sentence (`KioskService.describeDisplayOff`); changing the method
+  from any surface clears the record, which is how an operator asks for another try. Under sleep
+  nothing is drawn: the dark state is the screen being off, `display.source` reports
+  `display_off` from `isInteractive()`, and the power button or a remote wake ends it. The
+  `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission is deliberately not declared: Play restricts
+  it, and the policy does not need it, it only reads the answer.
 
 ## Platform constraints that shape the code
 

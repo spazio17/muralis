@@ -10,8 +10,10 @@ import android.app.NotificationManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.net.ConnectivityManager;
@@ -169,6 +171,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     publishStateSoon();
                 }
             }
+            beatWhileDark();
             telemetryHandler.postDelayed(this, STATS_SAMPLE_INTERVAL_MS);
         }
     };
@@ -240,6 +243,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification());
+        judgeLastDarkExit();
+        registerReceiver(screenReceiver, screenFilter());
         applyResourceGuarantees();
         acquireRuntimeLocks();
         startControllers();
@@ -305,6 +310,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public void onDestroy() {
+        try {
+            unregisterReceiver(screenReceiver);
+        } catch (IllegalArgumentException notRegistered) {
+            // onCreate did not get as far as registering it.
+        }
         stopControllers();
         stopTelemetry();
         releaseRuntimeLocks();
@@ -834,6 +844,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private void restartApplication(long epochDay) {
         KioskConfig.recordNightlyRestartDay(this, epochDay);
+        // A panel that sleeps every night restarts every night while asleep; without this the
+        // next process would read its own predecessor's exit as the system stopping Muralis.
+        DarkWatch.markIntentionalExit(this);
         try {
             android.app.AlarmManager alarms = getSystemService(android.app.AlarmManager.class);
             android.app.PendingIntent relaunch = android.app.PendingIntent.getActivity(
@@ -945,6 +958,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             applied.put("stats_overlay", config.statsOverlay);
             applied.put("orientation", config.orientation);
+            applied.put("display_off_method", config.displayOffMethod);
             // Live system state rather than a stored preference, so the web admin's checkbox tracks
             // the tablet's own auto-brightness toggle however it was changed.
             applied.put("has_light_sensor", hasLightSensor(this));
@@ -1016,16 +1030,30 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // The only remaining window override is display.visual_off, which dims the panel to 1% as a
             // presentation state rather than as a brightness choice, and it is reported as its own
             // source so a 1% reading is not mistaken for a real level.
+            // A sleeping screen is the other display-off presentation state, and since 2026-09-08
+            // the default one on a device-owner panel: no override is in force then, the window is
+            // simply not being shown, so the screen's own state is what says the panel is dark.
+            PowerManager power = getSystemService(PowerManager.class);
+            boolean screenOn = power == null || power.isInteractive();
             String source;
             double percent;
             if (override >= 0) {
                 source = "display_off";
                 percent = override;
+            } else if (!screenOn) {
+                source = "display_off";
+                percent = -1;
             } else {
                 source = auto ? "auto" : "manual";
                 percent = raw < 0 ? -1 : Math.min(100.0, 100.0 * raw / scale);
             }
 
+            DisplayOffPolicy.Choice choice = chooseDisplayOff(this);
+            display.put("screen_on", screenOn);
+            display.put("off_method_effective",
+                    choice.method == DisplayOffPolicy.Method.SLEEP
+                            ? DisplayOffPolicy.SLEEP : DisplayOffPolicy.FILM);
+            display.put("off_method_reason", describeDisplayOff(this));
             display.put("auto", auto);
             display.put("has_light_sensor", hasLightSensor(this));
             display.put("source", source);
@@ -1197,14 +1225,131 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public void displayWake() {
+        // A wake asked for is a sleep that ended well, whatever put the screen on in between.
+        DarkWatch.end(this);
         wakeDisplay();
         sendUiCommand("display.wake", -1, null);
     }
 
+    /**
+     * Darkens the panel the way {@link DisplayOffPolicy} decides: a real sleep, or the film.
+     *
+     * <p>The dark record is written <em>before</em> {@code lockNow}, the same rule as the relaunch
+     * floor and the nightly date: if the very next thing that happens is the system killing this
+     * process, the record must already be there for the next process to judge. A refusal (the
+     * admin policy missing, which cannot happen with {@code force-lock} declared, but the call
+     * throws rather than returns) clears it again and takes the film instead, so the panel still
+     * goes dark, only not the way that was asked.
+     */
     @Override
     public void displayVisualOff() {
-        sendUiCommand("display.visual_off", -1, null);
+        DisplayOffPolicy.Choice choice = chooseDisplayOff(this);
+        String method = DisplayOffPolicy.FILM;
+        if (choice.method == DisplayOffPolicy.Method.SLEEP) {
+            DevicePolicyManager policy = getSystemService(DevicePolicyManager.class);
+            DarkWatch.begin(this, bootCount(this), DarkWatch.installStamp(this),
+                    SystemClock.elapsedRealtime());
+            try {
+                if (policy == null) {
+                    throw new SecurityException("no DevicePolicyManager");
+                }
+                policy.lockNow();
+                method = DisplayOffPolicy.SLEEP;
+                Log.i(TAG, "Display off: the screen is asleep (" + choice.why + ")");
+            } catch (SecurityException refused) {
+                DarkWatch.end(this);
+                DarkWatch.recordRefusal(this, bootCount(this));
+                Log.w(TAG, "Display off: sleep refused until the next reboot, using the black "
+                        + "film", refused);
+            }
+        } else {
+            Log.i(TAG, "Display off: black film (" + choice.why + ")");
+        }
+        sendUiCommand("display.visual_off", method);
     }
+
+    /**
+     * What ended the previous process, judged from the dark record it left, and remembered when
+     * the answer is that the system stopped Muralis while the screen was asleep. Runs before
+     * anything else in {@link #onCreate} so the record is judged exactly once per process.
+     */
+    private void judgeLastDarkExit() {
+        DisplayOffPolicy.Exit exit = DarkWatch.judgeAndClear(this, bootCount(this),
+                DarkWatch.installStamp(this));
+        if (exit == DisplayOffPolicy.Exit.NONE) {
+            return;
+        }
+        if (exit == DisplayOffPolicy.Exit.STOPPED) {
+            DarkWatch.recordStopped(this, System.currentTimeMillis(), DarkWatch.WHY_STOPPED);
+            Log.w(TAG, "The previous process was stopped while the screen was asleep; "
+                    + "Display off uses the black film until the method is changed");
+            return;
+        }
+        Log.i(TAG, "The previous process ended while the screen was asleep: " + exit
+                + ", which is not held against sleep");
+    }
+
+    /**
+     * The heartbeat of a sleeping panel, on the 2-second sampler: a beat written every
+     * {@link DisplayOffPolicy#HEARTBEAT_MS}, and a gap of three of them read as the process having
+     * been frozen, which for a panel that has to hear its wake is as bad as being stopped.
+     */
+    private void beatWhileDark() {
+        if (!DarkWatch.active(this)) {
+            interactiveSamplesWhileDark = 0;
+            return;
+        }
+        // The sleep ends when the screen is really on again, judged from the power manager on two
+        // consecutive samples rather than from ACTION_SCREEN_ON. Measured on the Lenovo
+        // 2026-09-08: going to sleep delivered a screen-on broadcast 1.1 s after "Sleeping" and a
+        // screen-off 45 ms later, while wakefulness never left Asleep; a watch ended on that
+        // broadcast never heartbeats and never judges anything. Two samples, four seconds, also
+        // outlast the moment between lockNow and the panel actually going dark.
+        PowerManager power = getSystemService(PowerManager.class);
+        if (power != null && power.isInteractive()) {
+            if (++interactiveSamplesWhileDark >= 2) {
+                interactiveSamplesWhileDark = 0;
+                DarkWatch.end(this);
+                Log.i(TAG, "The screen is on again; the sleep ended well");
+                publishStateSoon();
+            }
+            return;
+        }
+        interactiveSamplesWhileDark = 0;
+        long elapsed = SystemClock.elapsedRealtime();
+        long lastBeat = DarkWatch.lastBeatElapsedMs(this);
+        if (DisplayOffPolicy.frozen(lastBeat, elapsed, DisplayOffPolicy.HEARTBEAT_MS)) {
+            DarkWatch.recordStopped(this, System.currentTimeMillis(), DarkWatch.WHY_FROZEN);
+            Log.w(TAG, "The process was frozen for " + ((elapsed - lastBeat) / 1000)
+                    + " s while the screen was asleep; Display off uses the black film until the "
+                    + "method is changed");
+            publishStateSoon();
+        }
+        if (elapsed - lastBeat >= DisplayOffPolicy.HEARTBEAT_MS) {
+            DarkWatch.beat(this, elapsed);
+        }
+    }
+
+    private static IntentFilter screenFilter() {
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        return filter;
+    }
+
+    /**
+     * Either edge of the screen is worth telling Home Assistant about at once, since
+     * {@code display.source} follows it. Nothing is decided here: the broadcast is not evidence of
+     * the screen's state, see {@link #beatWhileDark}, only a reason to publish the state that is.
+     */
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            publishStateSoon();
+        }
+    };
+
+    /** Consecutive 2-second samples with the screen interactive while a sleep is recorded. */
+    private int interactiveSamplesWhileDark;
 
     /**
      * Sets the panel brightness by writing the system setting, not a per-window override.
@@ -1296,6 +1441,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
+     * @return false when sleep is asked of an install that is not the device owner, before
+     *         anything is stored; see {@link DisplayOffPolicy}
+     */
+    @Override
+    public boolean setDisplayOffMethod(String value) {
+        if (DisplayOffPolicy.SLEEP.equals(value) && !isDeviceOwner(this)) {
+            return false;
+        }
+        DarkWatch.setMethod(this, value);
+        publishTelemetrySoon(this);
+        return true;
+    }
+
+    /**
      * Hands brightness to the ambient-light sensor, or takes it back.
      *
      * <p>Two halves, and both are needed: the system-wide
@@ -1372,6 +1531,74 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     Math.round(raw * 100.0f / SYSTEM_BRIGHTNESS_SCALE)));
         } catch (RuntimeException unavailable) {
             return -1;
+        }
+    }
+
+    /** Whether this app is the device owner, for the surfaces that have no service instance. */
+    static boolean isDeviceOwner(Context context) {
+        DevicePolicyManager policy = context.getSystemService(DevicePolicyManager.class);
+        return policy != null && policy.isDeviceOwnerApp(context.getPackageName());
+    }
+
+    /** The device's boot counter, or -1 when unreadable; see DarkWatch for what it is for. */
+    static int bootCount(Context context) {
+        return Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+    }
+
+    /**
+     * What {@code display.visual_off} would do right now, from the stored method and the facts
+     * {@link DisplayOffPolicy} asks for, all read live: the cable and the allowlist can change
+     * between one press and the next.
+     */
+    static DisplayOffPolicy.Choice chooseDisplayOff(Context context) {
+        PowerManager power = context.getSystemService(PowerManager.class);
+        boolean exempt = power != null
+                && power.isIgnoringBatteryOptimizations(context.getPackageName());
+        Intent battery = context.registerReceiver(null,
+                new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        boolean plugged = battery != null
+                && battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+        return DisplayOffPolicy.choose(KioskConfig.displayOffMethodOf(context),
+                isDeviceOwner(context), plugged, exempt, DarkWatch.stoppedAtMs(context),
+                DarkWatch.refusedThisBoot(context, bootCount(context)));
+    }
+
+    /**
+     * The one sentence the Display card, the web admin and the stats all show for the display-off
+     * method in force, so the three surfaces describe one rule. Plain words on purpose: this is
+     * read by whoever wonders why the panel is not going dark the way they expected.
+     */
+    static String describeDisplayOff(Context context) {
+        DisplayOffPolicy.Choice choice = chooseDisplayOff(context);
+        switch (choice.why) {
+            case NOT_DEVICE_OWNER:
+                return "Display off shows a black film. Turning the screen off for real needs "
+                        + "the device-owner install.";
+            case AWAITING_REBOOT:
+                return "Display off shows a black film until the tablet restarts: the permission "
+                        + "to turn the screen off arrived with an update, and Android grants it "
+                        + "at the next boot.";
+            case ON_BATTERY_WITHOUT_EXEMPTION:
+                return "Display off shows a black film while the tablet runs on battery without "
+                        + "a battery optimisation exemption, because Android would cut a sleeping "
+                        + "panel off the network.";
+            case STOPPED_WHILE_DARK: {
+                String when = java.text.DateFormat.getDateTimeInstance(
+                        java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                        .format(new java.util.Date(DarkWatch.stoppedAtMs(context)));
+                String how = DarkWatch.WHY_FROZEN.equals(DarkWatch.stoppedWhy(context))
+                        ? "froze Muralis" : "stopped Muralis";
+                return "Display off shows a black film: this system " + how + " while the "
+                        + "screen was off, on " + when + ". Change the method to try the real "
+                        + "screen-off again.";
+            }
+            case TRUSTED:
+            case CHOSEN:
+            default:
+                return choice.method == DisplayOffPolicy.Method.SLEEP
+                        ? "Display off turns the screen off for real. A remote wake or the power "
+                                + "button turns it back on."
+                        : "Display off shows a black film at minimum brightness. A tap wakes it.";
         }
     }
 
@@ -1490,9 +1717,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void sendUiCommand(String command, int brightnessPercent, String url) {
+        sendUiCommand(command, brightnessPercent, url, null);
+    }
+
+    /** {@code display.visual_off} with the method the service chose; see KioskActions. */
+    private void sendUiCommand(String command, String displayOffMethod) {
+        sendUiCommand(command, -1, null, displayOffMethod);
+    }
+
+    private void sendUiCommand(String command, int brightnessPercent, String url,
+            String displayOffMethod) {
         Intent intent = new Intent(KioskActions.UI_CONTROL)
                 .setPackage(getPackageName())
                 .putExtra(KioskActions.EXTRA_COMMAND, command);
+        if (displayOffMethod != null) {
+            intent.putExtra(KioskActions.EXTRA_DISPLAY_OFF_METHOD, displayOffMethod);
+        }
         if (brightnessPercent >= 0) {
             intent.putExtra(KioskActions.EXTRA_BRIGHTNESS, brightnessPercent);
         }
