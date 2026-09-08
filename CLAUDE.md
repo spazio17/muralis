@@ -454,9 +454,12 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   or freezing the process while the screen is off, is caught after the fact: `DarkWatch` records
   the sleep before `lockNow`, heartbeats while dark on the 2-second sampler, and the next process
   judges what ended the last one, with a reboot, an app update and the nightly restart recognised
-  as innocent. A bad ending is recorded once, the panel uses the film from then on, and every
-  surface says so in one shared sentence (`KioskService.describeDisplayOff`); changing the method
-  from any surface clears the record, which is how an operator asks for another try. Under sleep
+  as innocent. A bad ending is recorded once and the stored method is switched to `film`, so the
+  radio visibly moves to Black film and the shared sentence (`KioskService.describeDisplayOff`)
+  turns red on every surface, saying Android stopped Muralis and that it is not a Muralis error;
+  changing the method from any surface clears the record, which is how an operator asks for
+  another try. A tap on a darkened panel wakes it on every screen (`filmOn` in
+  `dispatchTouchEvent`), not only where the black view exists. Under sleep
   nothing is drawn: the dark state is the screen being off, `display.source` reports
   `display_off` from `isInteractive()`, and the power button or a remote wake ends it. The
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission is deliberately not declared: Play restricts

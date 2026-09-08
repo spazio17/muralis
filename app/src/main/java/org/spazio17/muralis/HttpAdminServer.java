@@ -1297,7 +1297,8 @@ final class HttpAdminServer {
         options.append(selectOption(DisplayOffPolicy.FILM, "Black film", current));
         return "<label>Display off<select id=\"display-off-method\" "
                 + "data-setting=\"display_off_method\">" + options + "</select></label>"
-                + "<p class=\"hint\" id=\"display-off-note\">"
+                + "<p class=\"hint" + (KioskService.displayOffWarning(context) ? " bad" : "")
+                + "\" id=\"display-off-note\">"
                 + escapeHtml(KioskService.describeDisplayOff(context)) + "</p>";
     }
 

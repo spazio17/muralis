@@ -41,7 +41,7 @@ follow('display-off-method',cfg.display_off_method);
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
-if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;}
+if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;dn.classList.toggle('bad',!!disp.off_method_warning);}
 // The slider follows the real backlight, except while the operator is actually dragging it.
 var sl=document.getElementById('brightness');
 if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){
