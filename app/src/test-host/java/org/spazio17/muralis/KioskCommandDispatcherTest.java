@@ -86,6 +86,34 @@ public final class KioskCommandDispatcherTest {
                 + noAccelerometer.detail);
         executor.accelerometerPresent = true;
 
+        // display.off_method: the same shape as orientation. A closed vocabulary validated here,
+        // and "sleep" refused for an install that is not the device owner, before anything is
+        // stored, because lockNow does not exist for it.
+        KioskCommandDispatcher.Result noMethod = KioskCommandDispatcher.dispatch(
+                "display.off_method", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(noMethod.status.equals("rejected"), "off_method without a value was accepted");
+        KioskCommandDispatcher.Result badMethod = KioskCommandDispatcher.dispatch(
+                "display.off_method",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "dim"), executor);
+        require(badMethod.status.equals("rejected"), "an unknown display-off method was accepted");
+        require(executor.lastDisplayOffMethod == null, "executor ran despite a bad method");
+        KioskCommandDispatcher.Result film = KioskCommandDispatcher.dispatch(
+                "display.off_method",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "film"), executor);
+        require(film.status.equals("accepted"), "film was rejected");
+        require("film".equals(executor.lastDisplayOffMethod), "method not forwarded");
+        executor.deviceOwner = false;
+        KioskCommandDispatcher.Result sleepWithoutOwner = KioskCommandDispatcher.dispatch(
+                "display.off_method",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "sleep"), executor);
+        require(sleepWithoutOwner.status.equals("rejected"),
+                "a non-owner must not report success for sleep");
+        require(sleepWithoutOwner.detail.contains("device-owner"),
+                "rejection should say why: " + sleepWithoutOwner.detail);
+        require("film".equals(executor.lastDisplayOffMethod),
+                "a refused sleep must leave the stored method alone");
+        executor.deviceOwner = true;
+
         KioskCommandDispatcher.Result badUrl = KioskCommandDispatcher.dispatch(
                 "kiosk.set_url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
                 executor);
@@ -461,6 +489,19 @@ public final class KioskCommandDispatcherTest {
             calls.add("setOrientation:" + value);
             lastOrientation = value;
             return accelerometerPresent || !"auto".equals(value);
+        }
+
+        boolean deviceOwner = true;
+        String lastDisplayOffMethod = null;
+
+        @Override
+        public boolean setDisplayOffMethod(String value) {
+            calls.add("setDisplayOffMethod:" + value);
+            if ("sleep".equals(value) && !deviceOwner) {
+                return false;
+            }
+            lastDisplayOffMethod = value;
+            return true;
         }
 
         @Override

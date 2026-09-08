@@ -65,7 +65,8 @@ pure_java_dir=${project_dir}/app/src/main/java/org/spazio17/muralis
 host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
-            Provisioning RequestOrigin AuthThrottle PurchaseSignature; do
+            Provisioning RequestOrigin AuthThrottle PurchaseSignature \
+            SystemBarOverlap DisplayOffPolicy; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -83,6 +84,7 @@ mkdir -p "${test_dir}/dispatcher" "${test_dir}/stats"
 
 javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/KioskCommandDispatcher.java" \
+    "${pure_java_dir}/DisplayOffPolicy.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
 
@@ -106,6 +108,14 @@ javac -d "${test_dir}/overlap" \
     "${pure_java_dir}/SystemBarOverlap.java" \
     "${host_test_dir}/SystemBarOverlapTest.java"
 java -cp "${test_dir}/overlap" org.spazio17.muralis.SystemBarOverlapTest
+
+# Which "display off" a panel gets, and how a sleep that ended is judged. Extracted because the
+# rows need a tablet on battery, off the allowlist, mid-update or mid-restart, one per row.
+mkdir -p "${test_dir}/displayoff"
+javac -d "${test_dir}/displayoff" \
+    "${pure_java_dir}/DisplayOffPolicy.java" \
+    "${host_test_dir}/DisplayOffPolicyTest.java"
+java -cp "${test_dir}/displayoff" org.spazio17.muralis.DisplayOffPolicyTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \

@@ -559,7 +559,8 @@ public final class KioskActivity extends Activity {
             handleUiCommand(
                     intent.getStringExtra(KioskActions.EXTRA_COMMAND),
                     intent.getIntExtra(KioskActions.EXTRA_BRIGHTNESS, -1),
-                    intent.getStringExtra(KioskActions.EXTRA_URL));
+                    intent.getStringExtra(KioskActions.EXTRA_URL),
+                    intent.getStringExtra(KioskActions.EXTRA_DISPLAY_OFF_METHOD));
         }
     };
 
@@ -1378,8 +1379,8 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** One orientation option, carrying its stored spelling as the tag the listener reads back. */
-    private RadioButton orientationChoice(
+    /** One radio option, carrying its stored spelling as the tag the listener reads back. */
+    private RadioButton radioChoice(
             KioskTheme theme, RadioGroup group, String label, String value) {
         RadioButton radio = new RadioButton(this);
         radio.setText(label);
@@ -1407,7 +1408,7 @@ public final class KioskActivity extends Activity {
      * group does not offer it (no accelerometer) matches nothing and changes nothing, which
      * mirrors what {@code applyOrientation} does with the same value.
      */
-    private static void checkOrientationIfChanged(RadioGroup group, String value) {
+    private static void checkRadioIfChanged(RadioGroup group, String value) {
         for (int index = 0; index < group.getChildCount(); index++) {
             View child = group.getChildAt(index);
             if (value.equals(child.getTag())) {
@@ -1882,12 +1883,12 @@ public final class KioskActivity extends Activity {
         // "Auto-rotate", the platform's own name for it, is offered only where a sensor exists to
         // follow, the same gate the auto-brightness checkbox sits behind just above.
         if (KioskService.hasAccelerometer(this)) {
-            orientationChoice(theme, orientationInput, "Auto-rotate",
+            radioChoice(theme, orientationInput, "Auto-rotate",
                     KioskConfig.ORIENTATION_AUTO);
         }
-        orientationChoice(theme, orientationInput, "Landscape", KioskConfig.ORIENTATION_LANDSCAPE);
-        orientationChoice(theme, orientationInput, "Portrait", KioskConfig.ORIENTATION_PORTRAIT);
-        checkOrientationIfChanged(orientationInput, config.orientation);
+        radioChoice(theme, orientationInput, "Landscape", KioskConfig.ORIENTATION_LANDSCAPE);
+        radioChoice(theme, orientationInput, "Portrait", KioskConfig.ORIENTATION_PORTRAIT);
+        checkRadioIfChanged(orientationInput, config.orientation);
         orientationInput.setOnCheckedChangeListener((group, checkedId) -> {
             View checked = group.findViewById(checkedId);
             if (checked == null) {
@@ -1900,6 +1901,43 @@ public final class KioskActivity extends Activity {
             applyOrientation();
         });
         displayCard.addView(orientationInput, matchWrapClose());
+
+        // How "Display off" darkens the panel, and one line saying what that means on this
+        // tablet right now. The real screen-off is offered only to a device owner, the same gate
+        // as auto-rotate behind the accelerometer: an option that cannot work is worse than an
+        // absent one, and the line below says why the film is what an ordinary install gets.
+        TextView displayOffLabel = fieldCaption(theme, "Display off");
+        LinearLayout.LayoutParams displayOffLabelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        displayOffLabelParams.topMargin = dp(14);
+        displayCard.addView(displayOffLabel, displayOffLabelParams);
+
+        RadioGroup displayOffInput = new RadioGroup(this);
+        radioChoice(theme, displayOffInput, "Automatic", DisplayOffPolicy.AUTO);
+        if (KioskService.isDeviceOwner(this)) {
+            radioChoice(theme, displayOffInput, "Turn the screen off", DisplayOffPolicy.SLEEP);
+        }
+        radioChoice(theme, displayOffInput, "Black film", DisplayOffPolicy.FILM);
+        checkRadioIfChanged(displayOffInput, config.displayOffMethod);
+        displayCard.addView(displayOffInput, matchWrapClose());
+
+        TextView displayOffNote = new TextView(this);
+        displayOffNote.setTextColor(theme.subtext);
+        displayOffNote.setTextSize(12);
+        displayOffNote.setText(KioskService.describeDisplayOff(this));
+        displayCard.addView(displayOffNote, matchWrapClose());
+
+        displayOffInput.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            // Through DarkWatch rather than applyLiveSetting, because setting the method also
+            // forgets a recorded bad sleep, and the two must never be stored apart.
+            DarkWatch.setMethod(this, (String) checked.getTag());
+            KioskService.publishTelemetrySoon(this);
+            displayOffNote.setText(KioskService.describeDisplayOff(this));
+        });
 
         // The web admin's System stats box, on the tablet: the same eight rows from the same
         // formatter, with the switch that puts them on the dashboard directly under them. A switch
@@ -1965,8 +2003,12 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(statsOverlayInput,
                             KioskConfig.statsOverlayEnabled(KioskActivity.this));
-                    checkOrientationIfChanged(orientationInput,
+                    checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
+                    checkRadioIfChanged(displayOffInput,
+                            KioskConfig.displayOffMethodOf(KioskActivity.this));
+                    // The sentence changes on its own when a sleep ends badly, so it follows too.
+                    displayOffNote.setText(KioskService.describeDisplayOff(KioskActivity.this));
                 } finally {
                     syncingLiveControls = false;
                 }
@@ -4285,6 +4327,11 @@ public final class KioskActivity extends Activity {
     }
 
     private void handleUiCommand(String command, int brightnessPercent, String url) {
+        handleUiCommand(command, brightnessPercent, url, null);
+    }
+
+    private void handleUiCommand(String command, int brightnessPercent, String url,
+            String displayOffMethod) {
         if (command == null) {
             return;
         }
@@ -4375,6 +4422,13 @@ public final class KioskActivity extends Activity {
                 showDashboard(KioskConfig.load(this).dashboardUrl);
                 break;
             case "display.visual_off":
+                if (DisplayOffPolicy.SLEEP.equals(displayOffMethod)) {
+                    // The service put the screen to sleep. Nothing is drawn: the dark state is
+                    // the screen being off, and the power button or a remote wake ends it. A film
+                    // drawn here as well would greet the power button with black and a second
+                    // tap, which is not what a person pressing it meant.
+                    break;
+                }
                 if (blackout != null) {
                     blackout.setVisibility(View.VISIBLE);
                 }
