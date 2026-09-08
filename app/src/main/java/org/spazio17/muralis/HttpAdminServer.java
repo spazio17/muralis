@@ -1027,7 +1027,7 @@ final class HttpAdminServer {
                 .append("is easier than typing them here.</p>")
                 .append(field("text", "settings_sequence", "Open Muralis settings",
                         config.settingsSequence))
-                .append(field("text", "launcher_sequence", "Exit to the system launcher",
+                .append(field("text", "launcher_sequence", "Leave Muralis for the home screen",
                         config.launcherSequence))
                 .append(sectionFormEnd("Save"))
 
