@@ -99,6 +99,22 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `MqttController.MAX_COMMAND_BYTES`, deliberately equal), and the caller-supplied command id is
   bounded to 96 characters and stripped of control characters before it is logged or echoed, so an
   embedded newline cannot forge log lines.
+- **The web admin serves HTTPS with a certificate the panel makes itself (2026-09-09).**
+  `AdminCertificate` keeps an EC key pair in the Android Keystore, which also issues the
+  self-signed X.509 (ten years, `CN=Muralis <device id>`; the Keystore cannot put an address in
+  it, so a browser shows two warnings, authority and name, and one click accepts both). The
+  listening socket stays plain and every accepted connection is handed to TLS: Android's
+  Conscrypt wraps the socket's file descriptor, not its streams, so nothing can be peeked and
+  handed back (a wrapper `Socket` was tried and died with "Socket is closed" inside
+  `NativeSsl.doHandshake`). BoringSSL names a plain HTTP request it was fed instead of a
+  ClientHello (`HTTP_REQUEST`, `WRONG_VERSION_NUMBER`), and that case is answered on the raw
+  socket with a `301` to `https://<the address it connected to>:<port>/`, path lost, password
+  never asked over plain text. The fingerprint is printed on the
+  tablet's web-admin card, in the web admin's own box and in the admin-only stats
+  (`config.http_tls`, `config.http_certificate_sha256`), so a person can compare it with the
+  browser's. A device whose Keystore cannot make the certificate falls back to plain HTTP and
+  says so in red on the page. A user-supplied certificate (own CA, fullchain plus key) is the
+  planned v2 step. MQTT is unchanged: plain TCP, trusted network.
 - **The remote surfaces are the paid tier, gated in exactly two places.** Muralis Pro (Play
   product `muralis_pro`, one-time, account-wide) unlocks MQTT and the web admin together; the
   kiosk, recovery, the stats overlay and the local `TelemetryCollector` feeding it stay free and

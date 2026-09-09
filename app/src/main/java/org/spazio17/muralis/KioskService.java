@@ -974,6 +974,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             stats.put("display", displaySnapshot());
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
+                applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
+                applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("mqtt_host", config.mqttHost);
                 applied.put("mqtt_port", config.mqttPort);
             }

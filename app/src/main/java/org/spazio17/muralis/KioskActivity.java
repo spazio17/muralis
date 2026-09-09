@@ -901,8 +901,10 @@ public final class KioskActivity extends Activity {
             String address = httpFacts == null || httpFacts.ipAddress.isEmpty()
                     ? "this-tablet" : httpFacts.ipAddress;
             httpState.setTextColor(theme.ok);
-            httpState.setText("Listening at http://" + address + ":"
-                    + KioskRuntimeState.httpAdminPort());
+            String fingerprint = KioskRuntimeState.httpAdminFingerprint();
+            httpState.setText("Listening at " + KioskRuntimeState.httpAdminScheme() + address + ":"
+                    + KioskRuntimeState.httpAdminPort()
+                    + (fingerprint.isEmpty() ? "" : "\nCertificate SHA-256 " + fingerprint));
         } else if (!enabled) {
             httpState.setTextColor(theme.subtext);
             httpState.setText("Web admin disabled");
@@ -3908,8 +3910,8 @@ public final class KioskActivity extends Activity {
             String address = facts == null || facts.ipAddress.isEmpty()
                     ? "this-tablet" : facts.ipAddress;
             TextView admin = new TextView(this);
-            admin.setText("Or from another device: http://" + address + ":"
-                    + KioskRuntimeState.httpAdminPort());
+            admin.setText("Or from another device: " + KioskRuntimeState.httpAdminScheme() + address
+                    + ":" + KioskRuntimeState.httpAdminPort());
             admin.setTextColor(theme.subtext);
             admin.setTextSize(16);
             admin.setGravity(Gravity.CENTER);

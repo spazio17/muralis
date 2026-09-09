@@ -67,7 +67,7 @@ host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
-            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply; do
+            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -134,6 +134,13 @@ javac -d "${test_dir}/powersupply" \
     "${pure_java_dir}/PowerSupply.java" \
     "${host_test_dir}/PowerSupplyTest.java"
 java -cp "${test_dir}/powersupply" org.spazio17.muralis.PowerSupplyTest
+
+# The certificate fingerprint's format and the plain-HTTP redirect's refusal of a forged Host.
+mkdir -p "${test_dir}/tls"
+javac -d "${test_dir}/tls" \
+    "${pure_java_dir}/TlsPresentation.java" \
+    "${host_test_dir}/TlsPresentationTest.java"
+java -cp "${test_dir}/tls" org.spazio17.muralis.TlsPresentationTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \
