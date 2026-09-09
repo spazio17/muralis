@@ -80,6 +80,9 @@ final class MqttController implements MqttCallbackExtended {
      * disappear on a running device, and the controller is rebuilt whenever configuration reloads.
      */
     private final boolean hasLightSensor;
+    /** Same rule as the light sensor: a panel with no battery is never offered battery entities. */
+    private final boolean hasBattery;
+    private static final String[] BATTERY_ENTITIES = {"battery", "battery_temperature", "battery_state"};
     /**
      * Volatile because Paho's callback thread reads it ({@code connectComplete}, {@code publish})
      * while the main thread replaces it in {@link #start}/{@link #stop}. Without it a reader can
@@ -106,6 +109,7 @@ final class MqttController implements MqttCallbackExtended {
         deviceModel = android.os.Build.MODEL;
         appVersion = TelemetryCollector.appVersionName(context);
         hasLightSensor = KioskService.hasLightSensor(context);
+        hasBattery = KioskService.hasBattery(context);
     }
 
     void start() {
@@ -497,12 +501,14 @@ final class MqttController implements MqttCallbackExtended {
             // entity id from this name, so an existing installation's history follows the entity id
             // only if the rename is done in Settings > Entities once this payload lands, not by
             // deleting and re-adding.
-            components.put("battery", sensor(
-                    "Battery level", "battery", "%", "measurement",
-                    "{{ value_json.battery.percent | round | int }}"));
-            components.put("battery_temperature", sensor(
-                    "Battery temperature", "temperature", "°C", "measurement",
-                    "{{ value_json.battery.temperature_c | round(1) }}"));
+            if (hasBattery) {
+                components.put("battery", sensor(
+                        "Battery level", "battery", "%", "measurement",
+                        "{{ value_json.battery.percent | round | int }}"));
+                components.put("battery_temperature", sensor(
+                        "Battery temperature", "temperature", "°C", "measurement",
+                        "{{ value_json.battery.temperature_c | round(1) }}"));
+            }
             components.put("memory_available", sensor(
                     "Available memory", "data_size", "MiB", "measurement",
                     "{{ (value_json.memory.available_bytes / 1048576) | round(1) }}"));
@@ -538,9 +544,20 @@ final class MqttController implements MqttCallbackExtended {
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
             // so the three surfaces cannot drift apart. It is empty when the battery has no
             // reading at all, which would be a blank state rather than an honest one.
-            components.put("battery_state", sensor(
-                    "Battery state", null, null, null,
-                    "{{ value_json.battery.charge_state or 'unknown' }}"));
+            if (hasBattery) {
+                components.put("battery_state", sensor(
+                        "Battery state", null, null, null,
+                        "{{ value_json.battery.charge_state or 'unknown' }}"));
+            }
+            // On every panel, battery or not: how it is fed. An enum sensor, so Home Assistant
+            // knows the three words and can translate and colour them; see SystemStats.powerSource
+            // for why a charger, PoE and a DC adapter are all "mains".
+            JSONObject powerSource = sensor(
+                    "Power source", "enum", null, null,
+                    "{{ value_json.power.source }}");
+            powerSource.put("options",
+                    new JSONArray().put("battery").put("wireless").put("mains"));
+            components.put("power_source", powerSource);
             // The build actually running, as its own entity rather than only the device-info "sw"
             // field: device info is buried behind the device page, while a diagnostic sensor can
             // sit on a dashboard, be templated against, and answer "which panels are behind"
@@ -639,12 +656,19 @@ final class MqttController implements MqttCallbackExtended {
             components.put("home", button("Main dashboard", "kiosk.home"));
             components.put("reload", button("Reload dashboard", "kiosk.reload"));
             components.put("restart", button("Restart kiosk", "kiosk.restart"));
-            components.put("wake", button("Wake display", "display.wake"));
+            // "Display on" since 2026-09-09, to pair with "Display off"; the key changed with the
+            // name, per the naming rule, and the old "wake" key is withdrawn below for good.
+            components.put("display_on", button("Display on", "display.wake"));
             components.put("display_off", button("Display off", "display.visual_off"));
-            // Answers "unsupported" with a provisioning hint when the panel is not device owner,
-            // rather than pretending. No shutdown button exists for the same reason: nothing can
-            // power off an Android device, which is why that command was deleted outright.
-            components.put("reboot", button("Reboot tablet", "system.reboot"));
+            // Only where it can work: the command answers "unsupported" with a provisioning hint on
+            // an ordinary install, and a button that can only fail is withdrawn there since
+            // 2026-09-09, the same rule as the light sensor and the battery. No shutdown button
+            // exists at all: nothing can power off an Android device, which is why that command
+            // was deleted outright.
+            boolean deviceOwner = KioskService.isDeviceOwner(appContext);
+            if (deviceOwner) {
+                components.put("reboot", button("Reboot tablet", "system.reboot"));
+            }
             discovery.put("cmps", components);
 
             // The "Portrait mode" switch became the "Orientation" select on 2026-08-29, and per
@@ -653,6 +677,25 @@ final class MqttController implements MqttCallbackExtended {
             // its platform, then the full configuration published without it. Keep this until no
             // panel can still be announcing the switch; today that is only the maintainer's installation.
             components.put("portrait", new JSONObject().put("p", "switch"));
+            java.util.List<String> withdrawn = new java.util.ArrayList<>();
+            withdrawn.add("portrait");
+            // "Wake display" became "Display on" on 2026-09-09; the app was public by then, so
+            // this withdrawal stays for good.
+            components.put("wake", new JSONObject().put("p", "button"));
+            withdrawn.add("wake");
+            if (!deviceOwner) {
+                components.put("reboot", new JSONObject().put("p", "button"));
+                withdrawn.add("reboot");
+            }
+            // A panel with no battery announced the three battery sensors under every build before
+            // 2026-09-09, so on such a panel they are withdrawn the same way, on every connect,
+            // because the panel cannot know which build the installation last saw.
+            if (!hasBattery) {
+                for (String key : BATTERY_ENTITIES) {
+                    components.put(key, new JSONObject().put("p", "sensor"));
+                    withdrawn.add(key);
+                }
+            }
 
             publishMqttStateEntity(device, origin);
 
@@ -672,7 +715,9 @@ final class MqttController implements MqttCallbackExtended {
             // hold no trace of them. Any entity removed after the app is public needs its withdrawal kept
             // indefinitely, because the last stranger's panel never announces its upgrade.
             publish(topic, discovery.toString(), 1, true);
-            components.remove("portrait");
+            for (String key : withdrawn) {
+                components.remove(key);
+            }
             publish(topic, discovery.toString(), 1, true);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);

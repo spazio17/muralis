@@ -275,6 +275,26 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   RAM. `getHistoricalProcessExitReasons` would give ground truth about a kill, but it is API 30 and
   the target hardware is API 26. The nightly restart plus the OS's own verdict plus renderer-death
   recovery cover the same failure without measuring anything.
+- **A panel with no battery is reported as mains-powered, never as a flat battery.** PoE wall
+  panels and screens on a mains adapter report `EXTRA_PRESENT` false while the platform still
+  fills level and status with 0 % and "charging" (measured on the Lenovo with `dumpsys battery
+  set present 0`, 2026-09-09). So `battery.present` is in the status document, every other
+  battery field is null on such a panel, the overlay's BAT row becomes a MAINS row carrying
+  whatever the kernel measures of the supply (`PowerSupply`, pure, reads
+  `/sys/class/power_supply`: only an online non-battery node, only live `voltage_now`,
+  `current_now` or `power_now`, never a rating, so most tablets show "MAINS" alone; the numbers
+  are whatever the kernel measures at the device's own DC input, 5 V USB to 24 V DC or PoE,
+  never the 230 V on the wall; the same numbers are `power.volts`/`power.watts`), the web admin
+  chip says "mains", and
+  discovery announces no battery entity, withdrawing the three on every connect because an older
+  build announced them. `plugged` stays true: it is what makes a real screen-off trustworthy there.
+  What every panel does report is `power.source`: `battery`, `wireless` (an induction pad) or
+  `mains`, which is a charger, PoE and a DC adapter alike, one word on purpose, Android cannot
+  tell them apart and whether the cell is filling is the battery object's business. A "Power
+  source" enum sensor carries it in discovery. Same day: the "Wake
+  display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
+  withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
+  elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public

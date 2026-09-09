@@ -1074,7 +1074,7 @@ final class HttpAdminServer {
                 .append("</div></fieldset>")
 
                 .append("<fieldset><legend>Display</legend><div class=\"actions\">")
-                .append(quickAction("display.wake", "Wake display"))
+                .append(quickAction("display.wake", "Display on"))
                 .append(quickAction("display.visual_off", "Display off"))
                 .append("</div>")
                 .append(brightnessControl())
