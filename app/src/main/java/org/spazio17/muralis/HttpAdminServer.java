@@ -497,7 +497,7 @@ final class HttpAdminServer {
             // POST, not GET, even though it changes nothing on this device. It makes the panel
             // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
             // was an SSRF and LAN-scanning primitive: Basic-auth credentials ride along
-            // automatically, and <img src=".../api/check?kind=mqtt_host&value=10.0.0.5&port=22">
+            // automatically, and <img src=".../api/check?kind=mqtt_host&value=192.0.2.5&port=22">
             // on any page the operator visited would have had the panel probe it and leak
             // reachability through onload/onerror timing. POST puts it behind the same
             // crossSiteRefusal gate as the commands, which is why that gate is keyed on the verb.

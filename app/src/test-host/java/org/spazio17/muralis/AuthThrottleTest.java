@@ -7,8 +7,8 @@ package org.spazio17.muralis;
 /** Host tests for {@link AuthThrottle}: when guessing is refused, and when it is forgiven. */
 public final class AuthThrottleTest {
 
-    private static final String ATTACKER = "10.0.14.99";
-    private static final String OPERATOR = "10.0.14.20";
+    private static final String ATTACKER = "192.0.2.99";
+    private static final String OPERATOR = "192.0.2.20";
 
     public static void main(String[] args) {
         belowThresholdIsNotLockedOut();

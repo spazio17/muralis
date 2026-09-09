@@ -9,10 +9,12 @@ removed that changes what the app actually does.
 
 ## What this is
 
-An Android kiosk launcher for a wall-mounted tablet running a Home Assistant dashboard in a
-WebView. It locks the device into that one dashboard, recovers from the dashboard going stale or
-unreachable without anyone touching it, and exposes a shared command/telemetry surface over both
-MQTT and a small built-in HTTP admin server.
+An Android kiosk launcher for a wall-mounted tablet showing one web page in a WebView: a
+smart-home dashboard of any brand, an office board, a front-desk screen, a page on the local
+network. It locks the device onto that one page, recovers from the page going stale or unreachable
+without anyone touching it, and exposes a shared command/telemetry surface over both MQTT and a
+small built-in HTTP admin server. Home Assistant is one integration (MQTT discovery, two
+blueprints), not the product's frame; see the positioning decision of 2026-09-09.
 
 It targets the **public Android SDK only**: no platform signature, no privileged permissions, so it
 installs as an ordinary APK (minSdk 26, targetSdk 36, Play's floor, which moves every August;

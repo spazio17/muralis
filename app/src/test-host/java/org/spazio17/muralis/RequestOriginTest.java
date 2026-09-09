@@ -19,39 +19,39 @@ public final class RequestOriginTest {
 
     /** curl and Home Assistant send neither header. They must keep working. */
     private static void automationPasses() {
-        expectAllowed(null, null, "10.0.14.51:8080");
+        expectAllowed(null, null, "192.0.2.51:8080");
         // A body-less POST from a script that sets Host only.
         expectAllowed(null, "", "panel.local:8080");
     }
 
     private static void ownPagePasses() {
-        expectAllowed("same-origin", "http://10.0.14.51:8080", "10.0.14.51:8080");
+        expectAllowed("same-origin", "http://192.0.2.51:8080", "192.0.2.51:8080");
         // Typed address or bookmark: no initiating document at all.
-        expectAllowed("none", null, "10.0.14.51:8080");
+        expectAllowed("none", null, "192.0.2.51:8080");
         // Safari has historically omitted Origin on a same-origin POST; Sec-Fetch-Site carries it.
-        expectAllowed("same-origin", null, "10.0.14.51:8080");
+        expectAllowed("same-origin", null, "192.0.2.51:8080");
     }
 
     private static void crossSiteIsRefused() {
-        expectRefused("cross-site", null, "10.0.14.51:8080");
+        expectRefused("cross-site", null, "192.0.2.51:8080");
         // same-site is refused too: a wall panel has no sibling sites worth trusting.
-        expectRefused("same-site", null, "10.0.14.51:8080");
+        expectRefused("same-site", null, "192.0.2.51:8080");
         // Case is not guaranteed by the wire format.
-        expectRefused("Cross-Site", null, "10.0.14.51:8080");
+        expectRefused("Cross-Site", null, "192.0.2.51:8080");
     }
 
     private static void mismatchedOriginIsRefused() {
         // The attack: an attacker's page posting to the panel with the operator's cached credentials.
-        expectRefused(null, "http://evil.example", "10.0.14.51:8080");
+        expectRefused(null, "http://evil.example", "192.0.2.51:8080");
         // Right host, wrong port, is still a different origin.
-        expectRefused(null, "http://10.0.14.51:9999", "10.0.14.51:8080");
+        expectRefused(null, "http://192.0.2.51:9999", "192.0.2.51:8080");
         // A prefix must not be enough.
-        expectRefused(null, "http://10.0.14.51:8080.evil.example", "10.0.14.51:8080");
+        expectRefused(null, "http://192.0.2.51:8080.evil.example", "192.0.2.51:8080");
     }
 
     private static void opaqueOriginIsRefused() {
-        expectRefused(null, "null", "10.0.14.51:8080");
-        expectRefused(null, "NULL", "10.0.14.51:8080");
+        expectRefused(null, "null", "192.0.2.51:8080");
+        expectRefused(null, "NULL", "192.0.2.51:8080");
     }
 
     private static void portAndSchemeAreHandled() {
