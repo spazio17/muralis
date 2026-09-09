@@ -6,9 +6,10 @@
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
 # Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run eleven suites: dispatcher, provisioning, request origin,
-# auth throttle, system stats, recycle policy, recovery policy, server probe
-# policy, escape sequence, relaunch policy and telemetry interval.
+# compile and run these suites: dispatcher, provisioning, request origin, system
+# bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
+# retry, system stats, recycle policy, recovery policy, server probe policy,
+# escape sequence and relaunch policy.
 
 set -euo pipefail
 
@@ -66,7 +67,7 @@ host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
-            SystemBarOverlap DisplayOffPolicy; do
+            SystemBarOverlap DisplayOffPolicy MqttConnectRetry; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -116,6 +117,15 @@ javac -d "${test_dir}/displayoff" \
     "${pure_java_dir}/DisplayOffPolicy.java" \
     "${host_test_dir}/DisplayOffPolicyTest.java"
 java -cp "${test_dir}/displayoff" org.spazio17.muralis.DisplayOffPolicyTest
+
+# The wait between broker connection attempts after one failed outright, which Paho's own
+# reconnect does not cover. Extracted because testing it for real means stopping a broker and
+# waiting up to five minutes per row.
+mkdir -p "${test_dir}/mqttretry"
+javac -d "${test_dir}/mqttretry" \
+    "${pure_java_dir}/MqttConnectRetry.java" \
+    "${host_test_dir}/MqttConnectRetryTest.java"
+java -cp "${test_dir}/mqttretry" org.spazio17.muralis.MqttConnectRetryTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \
