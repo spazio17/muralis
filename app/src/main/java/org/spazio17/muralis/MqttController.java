@@ -565,8 +565,8 @@ final class MqttController implements MqttCallbackExtended {
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":false}}",
                     "{{ 'ON' if value_json.config.web_admin_enabled else 'OFF' }}"));
-            // The two URLs, as text entities so both can be set from Home Assistant, which is
-            // what Juri asked for. They read different fields on purpose: the stored dashboard
+            // The two URLs, as text entities so both can be set from Home Assistant, as
+            // decided. They read different fields on purpose: the stored dashboard
             // reads config.dashboard_url, while the one-off reads runtime.last_page_url, the page
             // actually on the glass. A one-off has nothing stored to read back, and an entity
             // whose state cannot be read is the entity that snaps back on every edit, which is
@@ -594,7 +594,7 @@ final class MqttController implements MqttCallbackExtended {
             // the removal rule below, leaving it out of the payload would strand it as
             // "unavailable" forever: it must be withdrawn once as an empty config holding only
             // its platform, then the full configuration published without it. Keep this until no
-            // panel can still be announcing the switch; today that is only Juri's installation.
+            // panel can still be announcing the switch; today that is only the maintainer's installation.
             components.put("portrait", new JSONObject().put("p", "switch"));
 
             publishMqttStateEntity(device, origin);
@@ -610,9 +610,9 @@ final class MqttController implements MqttCallbackExtended {
             // platform, in its own payload, and QoS 1 keeps their order. A standing block of
             // those withdrawals lived here until 2026-08-25 covering every entity this app had
             // retired (recycle controls, network/charging, both network_state spellings,
-            // last_mqtt_outage_cause); it was deleted, pre-publication, once Juri confirmed his
-            // Home Assistant, the only installation that ever saw those keys, held no trace of
-            // them. Any entity removed after the app is public needs its withdrawal kept
+            // last_mqtt_outage_cause); it was deleted, pre-publication, once the maintainer's
+            // Home Assistant, the only installation that ever saw those keys, was confirmed to
+            // hold no trace of them. Any entity removed after the app is public needs its withdrawal kept
             // indefinitely, because the last stranger's panel never announces its upgrade.
             publish(topic, discovery.toString(), 1, true);
             components.remove("portrait");

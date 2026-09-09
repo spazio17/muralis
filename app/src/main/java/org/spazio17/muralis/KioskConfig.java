@@ -83,7 +83,7 @@ final class KioskConfig {
      * How {@code display.visual_off} darkens the panel: {@link DisplayOffPolicy#AUTO}, a real
      * sleep where it can be trusted and the black film otherwise; {@link DisplayOffPolicy#SLEEP};
      * or {@link DisplayOffPolicy#FILM}. Automatic by default, which on a device-owner panel on
-     * mains means the backlight really goes off, Juri's ask of 2026-09-08. See DisplayOffPolicy
+     * mains means the backlight really goes off, as decided on 2026-09-08. See DisplayOffPolicy
      * for the whole rule and for how a sleep that ended badly turns this into the film.
      */
     String displayOffMethod = DisplayOffPolicy.AUTO;

@@ -21,7 +21,7 @@ import android.util.Log;
  * the Store mid-update. Those answers change nothing. What Play says clearly does: an {@code OK}
  * answer for the whole account that does not contain the purchase, or {@code BILLING_UNAVAILABLE},
  * which is what a device with no Google account signed in gets, both make {@link ProBilling} call
- * {@link #drop}, at once. This is Juri's rule of 2026-09-03, absolute: Muralis works with or without
+ * {@link #drop}, at once. This is the rule of 2026-09-03, absolute: Muralis works with or without
  * a Google account, Muralis Pro only with one, and a refund ends it. It is also how client-only
  * apps on Play behave in general, which is why the account check and the day-long grace that
  * briefly stood here are gone: Play already answers both questions.

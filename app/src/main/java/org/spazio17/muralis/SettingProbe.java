@@ -10,7 +10,7 @@ import java.net.ServerSocket;
 
 /**
  * Answers "would this value work", from the one vantage point that can know: this device, on its
- * own network. Juri's design (2026-08-24), one function for every input whose validity is a
+ * own network. The design of 2026-08-24: one function for every input whose validity is a
  * runtime fact rather than a spelling: the admin port (bindable here?), the dashboard URL
  * (answers HTTP from here?), the broker host (accepts TCP from here?). Both settings surfaces use
  * it, the web admin through {@code POST /api/check} and the tablet directly, so the two can never

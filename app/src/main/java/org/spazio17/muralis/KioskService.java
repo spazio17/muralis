@@ -1333,7 +1333,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * A sleep Android ended badly switches the stored method to the film, visibly: the radio
      * moves to Black film and the sentence under it turns red, so the operator learns why "Turn
-     * the screen off" stopped working and that it was not Muralis (Juri's ask, 2026-09-08).
+     * the screen off" stopped working and that it was not Muralis (decided 2026-09-08).
      * Written directly rather than through DarkWatch.setMethod, which would forget the very
      * record the red sentence is made of; the operator's next method change forgets it.
      */
@@ -1617,7 +1617,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             default:
                 // No "a tap wakes it" on the film: the film view exists on the dashboard and
                 // the parking page only, so on the configuration screen Display off dims the
-                // panel to 1% with nothing to tap (Juri, on the tablet, 2026-09-08).
+                // panel to 1% with nothing to tap (seen on the tablet, 2026-09-08).
                 return choice.method == DisplayOffPolicy.Method.SLEEP
                         ? "Display off turns the screen off. A remote wake or the power button "
                                 + "turns it back on."

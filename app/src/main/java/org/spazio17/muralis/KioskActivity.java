@@ -318,7 +318,7 @@ public final class KioskActivity extends Activity {
             // grant, which the settings screen already offers. That leaves one real hole: a device
             // with no light sensor has nothing to disable the slider, so without the grant the
             // slider moved, the panel did not, and the only record was a logcat line nobody on a
-            // wall-mounted tablet can read (Juri, 2026-09-07).
+            // wall-mounted tablet can read (seen 2026-09-07).
             Log.w(TAG, "Brightness not applied: " + problem);
             Toast.makeText(this, "Brightness not applied: " + problem, Toast.LENGTH_LONG).show();
         } else {
@@ -679,7 +679,7 @@ public final class KioskActivity extends Activity {
      * <p>Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
      * and both start at boot without anybody opening a screen, so an answer that only arrives when
      * somebody taps their way into settings arrives too late to gate anything. It also means a
-     * purchase made on another device is picked up by the next nightly restart on its own. Juri,
+     * purchase made on another device is picked up by the next nightly restart on its own. Decided
      * 2026-08-27.
      *
      * <p><b>Never before the first-start wizard has recorded both escape combinations.</b> Muralis
@@ -687,7 +687,7 @@ public final class KioskActivity extends Activity {
      * asking Google anything, and somebody who cannot leave Muralis yet must not be shown a Google
      * screen on the way in. This is ordering only, not a new capability: the wizard finishes,
      * {@link #continueAfterFirstStartWizard} starts this, and every later launch takes the path
-     * above. Juri, 2026-09-03.
+     * above. Decided 2026-09-03.
      */
     private void startProBilling() {
         if (proBilling == null) {
@@ -1071,8 +1071,8 @@ public final class KioskActivity extends Activity {
             }
             // A tap on a darkened panel means "wake", on every screen. The black view that used to
             // be the only thing answering a tap exists on the dashboard and the parking page; the
-            // configuration screen had the 1% dimming and nothing to tap, so Juri tapped the
-            // tablet and nothing happened (2026-09-08). Consumed, as the black view consumes it:
+            // configuration screen had the 1% dimming and nothing to tap, so a tap on the
+            // tablet did nothing (2026-09-08). Consumed, as the black view consumes it:
             // the first touch on a dark panel must not also press whatever sits under the finger.
             if (filmOn) {
                 handleUiCommand("display.wake", -1, null);
@@ -1512,11 +1512,11 @@ public final class KioskActivity extends Activity {
         addField(dashboardCard, theme, "Device ID", deviceIdInput);
         // One button beside the aggregate Save ("Open dashboard") at the foot of the screen,
         // because it answers a different question: that one stores what is typed as THE
-        // dashboard, this one shows it without changing what is stored. Juri, 2026-08-24: a URL
+        // dashboard, this one shows it without changing what is stored. Decided 2026-08-24: a URL
         // with one-off query parameters is exactly what a stored dashboard URL must not become.
         //
         // There used to be a second one here, "Main dashboard", which opened the stored dashboard
-        // and saved nothing. Removed 2026-09-07 at Juri's decision, after it cost him a full set
+        // and saved nothing. Removed 2026-09-07, by decision of that day, after it cost a full set
         // of typed MQTT credentials: two buttons on one screen carrying the word "dashboard", and
         // the one that saves is at the foot and named after what it opens, so the nearer one was
         // pressed as if it were the save and the screen closed without one. Anyone who
@@ -1566,7 +1566,7 @@ public final class KioskActivity extends Activity {
         addField(mqttCard, theme, "Password (blank keeps the current one)", passwordInput);
         // The broker verdict lives here, on the page where the address is typed, not as a toast
         // over the dashboard: the toast was unreadable in the second before the dashboard took
-        // the screen, which is exactly where a misconfiguration must NOT be reported (Juri,
+        // the screen, which is exactly where a misconfiguration must NOT be reported (decided
         // 2026-08-24). Checked when the screen opens and whenever the host or port box is left.
         TextView mqttState = new TextView(this);
         mqttState.setTextSize(13);
@@ -1776,7 +1776,7 @@ public final class KioskActivity extends Activity {
         brightnessCaptionParams.topMargin = dp(14);
         displayCard.addView(brightnessCaption, brightnessCaptionParams);
         // The permission both brightness controls need, stated on the card rather than only in a
-        // toast at the moment one of them is refused. Juri, on a freshly provisioned panel
+        // toast at the moment one of them is refused. On a freshly provisioned panel,
         // 2026-09-07: "the brightness toggle does not toggle", and neither the app nor the setup
         // page said why. In this state the card looks like two separate bugs rather than one
         // missing grant: the checkbox cannot write SCREEN_BRIGHTNESS_MODE without WRITE_SETTINGS,
@@ -2045,7 +2045,7 @@ public final class KioskActivity extends Activity {
         };
         mainHandler.postDelayed(liveSettingSyncTask, LIVE_SETTING_SYNC_INTERVAL_MS);
 
-        // The Pro gate's face. Juri's chosen shape (2026-08-27): the paid cards stay visible and
+        // The Pro gate's face. The shape decided on 2026-08-27: the paid cards stay visible and
         // complete but inert, each carrying one line and its own Buy button, because a feature
         // nobody can see is a feature nobody buys, and a hidden card would also make a bought
         // panel and a free one different screens. Evaluated once per build; the ProBilling
@@ -2070,7 +2070,7 @@ public final class KioskActivity extends Activity {
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(manageSequences, matchWrap());
 
-        // The Pro state lives in About (moved 2026-08-29, Juri's call): it is a fact about this
+        // The Pro state lives in About (moved 2026-08-29, by decision of that day): it is a fact about this
         // installation, like the version line beside it, not a card-sized feature of its own.
         // The purchase still lives where the features it unlocks are: the locked MQTT and web
         // admin cards stay visible, complete and inert, each with its own Buy button. The button
@@ -2169,7 +2169,7 @@ public final class KioskActivity extends Activity {
             // Clearing the URL and pressing the button that saves is a decision, and it used to be
             // answered with nothing at all: no save, no screen change, no message. Now it saves
             // the other cards, stores the empty URL, and shows the parking page, which says what
-            // to do next (Juri, 2026-09-07). The web admin's Dashboard box keeps refusing empty;
+            // to do next (decided 2026-09-07). The web admin's Dashboard box keeps refusing empty;
             // a browser is not where somebody blanks a panel on purpose.
             String urlProblem = url.isEmpty() ? null : KioskCommandDispatcher.validateDashboardUrl(url);
             if (urlProblem != null) {
@@ -2620,7 +2620,7 @@ public final class KioskActivity extends Activity {
      * <p>Measured on the Lenovo, Android 10 device owner, 1280x800 with a 48px bar, 2026-09-08:
      * the bottom targets were drawn 56px above the screen edge while the top ones sat 8px from
      * it, and the bottom band ran from y=656 to the last row, 144px instead of the 96 it is meant
-     * to be. Juri saw the squares floating above a bar that had never been visible. The tablet's
+     * to be. The squares were seen floating above a bar that had never been visible (2026-09-08). The tablet's
      * own escape combination still worked, because the drawn square and the band had moved
      * together, which is why this survived unnoticed on the wall panel too.
      *
@@ -2857,7 +2857,7 @@ public final class KioskActivity extends Activity {
      * Android itself shrinks the content to the keyboard's top edge. Measuring against the decor's
      * height, which does not shrink, reported the keyboard's height a second time, and both callers
      * then took it away again: on the phone a third of the settings form was visible, then a band of
-     * background the size of the keyboard, then the keyboard (Juri, 2026-09-07; in every build since
+     * background the size of the keyboard, then the keyboard (seen 2026-09-07; in every build since
      * the bars were shown on ordinary installs, 2026-08-21). Against the content's own bottom edge the
      * gap is the keyboard on a fullscreen window and zero on one the system already resized, which is
      * exactly the amount the caller still has to give back.
@@ -3754,7 +3754,7 @@ public final class KioskActivity extends Activity {
         // and one of them corrupts the value silently: the panel's own keyboard (SwiftKey on both
         // Huawei test devices) reads a full stop as the end of a sentence, adds a space after it
         // and capitalises what follows, and corrects "mosquitto" to "mosquito" on the way, so
-        // "test.mosquitto.org" typed into the broker box arrived as "test. mosquito. org" (Juri,
+        // "test.mosquitto.org" typed into the broker box arrived as "test. mosquito. org" (seen
         // 2026-09-07, and the capture script had documented the same on 2026-08-31). Measured on
         // the phone the same day: TYPE_TEXT_FLAG_NO_SUGGESTIONS alone stops the correcting but
         // not the space after the full stop ("mqtt.user" still came back as "mqtt. user"), so
@@ -3839,7 +3839,7 @@ public final class KioskActivity extends Activity {
      * and the nightly and pressure rebuilds on such a panel. Not reached at boot: an unconfigured
      * panel still opens its settings screen from {@code initializeUserInterface}, because that is
      * where the missing URL gets typed. Before this existed the empty case was a black WebView
-     * loading "", or nothing happening at all, depending on the route in (Juri, 2026-09-07).
+     * loading "", or nothing happening at all, depending on the route in (found 2026-09-07).
      *
      * <p>It is the dashboard state in every respect but the WebView: fullscreen, lock task held,
      * the escape combinations working from its corners, and the blackout honoured, so
@@ -3851,7 +3851,7 @@ public final class KioskActivity extends Activity {
      * <p>The text says the one thing an operator standing in front of the panel needs, and the web
      * admin address when there is one, because "open the settings" presumes they know the corner
      * combination and a browser on another device presumes nothing. Above the text sits the
-     * illustration Juri chose from five (media/drafts/parking-page/, sketch E): the Muralis
+     * illustration chosen from five on 2026-09-07 (media/drafts/parking-page/, sketch E): the Muralis
      * billboard with a fresh poster pasted perfectly, upside down, and the Android robot on its
      * ladder wondering, the one the old black screen with the upside-down robot inspired. It is
      * {@code R.drawable.parking_billboard}, generated by make-parking-drawable.py beside the
@@ -4214,7 +4214,7 @@ public final class KioskActivity extends Activity {
     /**
      * Puts the readout one pixel under the status bar, whatever kind of window this is.
      *
-     * <p>Juri, 2026-09-07: "on all devices too high". A fixed 4dp from the top of the dashboard view
+     * <p>Reported 2026-09-07: "on all devices too high". A fixed 4dp from the top of the dashboard view
      * meant three different things: under the clock on a phone that draws edge to edge (Android 15
      * and later, where the content starts at the screen's top edge), four pixels under the bar on an
      * older ordinary install (whose window already starts below the bar), and hard against the top

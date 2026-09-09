@@ -57,10 +57,10 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   one-off entity reads `runtime.last_page_url` rather than a stored field, because an entity whose
   state cannot be read back snaps back on every edit. **As a button, `kiosk.home` exists only in
   Home Assistant now.** The tablet's "Main dashboard" and the web admin's quick action of the
-  same name were removed on 2026-09-07 at Juri's decision: on the tablet's settings screen it sat
-  beside "Open once" while the only save was the foot button "Open dashboard", two buttons naming
-  the dashboard and neither of them the save, and he pressed it in place of the save and lost a
-  full set of typed MQTT credentials. Anyone who misreads that button makes the same mistake, so
+  same name were removed on 2026-09-07, when it was decided that they had to go: on the tablet's
+  settings screen it sat beside "Open once" while the only save was the foot button "Open
+  dashboard", two buttons naming the dashboard and neither of them the save, and it was pressed in
+  place of the save, which cost a full set of typed MQTT credentials. Anyone who misreads that button makes the same mistake, so
   the button went rather than its name. The way back from a one-off URL on those two surfaces is
   the foot button or "Restart kiosk"; the command itself is unchanged and MQTT keeps it.
   **A panel with no dashboard URL shows a parking page, not a black WebView** (2026-09-07):
@@ -76,8 +76,8 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   a fresh panel, and named a product this app does not belong to. The parking page's illustration,
   the Android robot pasting a fresh poster over a scratched Muralis billboard, is an easter egg
   for exactly this state; About's Credits card carries the CC BY 3.0 credit for it (Google,
-  modified, the licence), short like the other rows rather than Google's long sentence, at Juri's
-  request, and the robot is never the app icon.
+  modified, the licence), short like the other rows rather than Google's long sentence, as decided
+  on 2026-09-07, and the robot is never the app icon.
 - **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
   at any privilege level. The command was deleted rather than shipped as a no-op that reports
   `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
@@ -108,7 +108,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   ever built; do not add a third gate site or a third construction site. The entitlement is Play's
   signed purchase document, verified on-device by `PurchaseSignature` (pure, host-tested; see its
   javadoc for why there is deliberately no verification server) and cached in `SecretStore` as a
-  bridge, not as a right: Google Play's answer is the truth. **Juri's rule, 2026-09-03, absolute:
+  bridge, not as a right: Google Play's answer is the truth. **The rule since 2026-09-03, absolute:
   Muralis works with or without a Google account, Muralis Pro only with one, and a refund ends it.**
   So `ProBilling` calls `ProEntitlement.drop` at once on a full-account `queryPurchasesAsync` that
   answers `OK` without the purchase, and on `BILLING_UNAVAILABLE` from setup or query, which is
@@ -208,8 +208,8 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   2026-08-24) and survives them both, so neither pass lights up a panel somebody blanked on
   purpose; `display.visual_off` survives them the same way (2026-08-25, after the nightly restart
   lit a panel blanked with the Display off button), but keyed to `BOOT_COUNT` rather than stored
-  as a bare flag, engaged-this-boot or not at all, so a reboot always comes back lit (Juri's
-  rule) and the stranded-dark bug the old persisted 1% override caused cannot return; and the
+  as a bare flag, engaged-this-boot or not at all, so a reboot always comes back lit (the rule
+  since 2026-08-25) and the stranded-dark bug the old persisted 1% override caused cannot return; and the
   pressure rebuild waits while the configuration screen or the
   sequence recorder is up (`KioskRuntimeState.operatorOnScreen`), because destroying the view tree
   mid-edit costs an operator a half-filled form. The nightly restart never waits: it runs inside
@@ -294,7 +294,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   that question was answered in hindsight by an outage-attribution feature (`OutageLedger`, a
   ConnectivityManager callback in the service, a verdict on every reconnect, a "Last MQTT outage
   cause" diagnostic sensor and `runtime.mqtt_outages`/`last_mqtt_outage_*` telemetry fields);
-  Juri removed the whole chain on 2026-08-25, because as long as the MQTT state entity updates
+  the whole chain was removed on 2026-08-25, because as long as the MQTT state entity updates
   correctly, *why* a session dropped is not worth knowing, and *when and for how long* is that
   entity's own history in Home Assistant. Do not rebuild the attribution in any form without
   that conversation again, and note the reconnect still publishes telemetry early, now simply
@@ -305,9 +305,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   then publishing the configuration without it, never by aliasing a new name onto an old
   `unique_id` and never by mere omission, which strands the entity. **Withdrawals are bridging
   code with a retention rule**: they stay until every installation that ever saw the old key has
-  processed one. Pre-publication that meant Juri's own Home Assistant, so the standing stale-keys
+  processed one. Pre-publication that meant the maintainer's own Home Assistant, so the standing stale-keys
   block that had accumulated (recycle controls, network/charging, both `network_state` spellings,
-  `last_mqtt_outage_cause`) was retired on 2026-08-25 after he confirmed HA clean; an entity
+  `last_mqtt_outage_cause`) was retired on 2026-08-25 once that installation was confirmed clean; an entity
   removed after the app is public needs its withdrawal kept indefinitely, because the last
   stranger's panel never announces its upgrade. The mechanics live in a comment above the
   discovery publish in `MqttController`.
@@ -316,7 +316,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture
   is worthless once someone has watched it being used, and a hardcoded one is identical on every
   panel. **There is no compiled-in default any more** (the fixed BL x9 / BR x9 pair was retired
-  2026-08-25, decided with Juri): a first-start wizard in `KioskActivity` records both combinations
+  2026-08-25, by decision of that day): a first-start wizard in `KioskActivity` records both combinations
   before anything else, and `applyKioskPolicy` refuses to engage lock task until
   `KioskConfig.escapeSequencesConfigured()` is true, because a pinned screen with no recorded way
   out is a bricked panel. Deliberately unmigrated: installs that ran on the old defaults (they were
@@ -380,7 +380,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   newer change even to its own fields.
 - **The web admin port is floored at 1024, and refused while another service holds it.** The
   history in one line each: an out-of-range port once crash-looped a panel, so the range became
-  checked; Juri then proved on hardware (2026-08-24) that a *privileged* port like 80 passes a
+  checked; it was then proved on hardware (2026-08-24) that a *privileged* port like 80 passes a
   1-65535 check and fails at bind time, since an unprivileged app can never bind below 1024, and
   the server failing closed meant the admin's own settings box could switch the admin off. So
   `KioskCommandDispatcher.validateAdminPort` floors the range at 1024 (this floor is for the port
@@ -394,8 +394,8 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   does. `KioskActivity.parsePort`'s clamp survives for reading storage back, where something
   usable has to come out whatever is in there; it is never right for a form. Keep syntax and range
   in separate checks, too: one parser judging both answered "must be a number" for 99999.
-- **Both settings surfaces pre-check values against the device, on blur, in colour.** Juri's
-  design (2026-08-24): validation can only test spelling, but "is this port bindable", "does this
+- **Both settings surfaces pre-check values against the device, on blur, in colour.** The
+  design of 2026-08-24: validation can only test spelling, but "is this port bindable", "does this
   URL answer HTTP", "is a broker listening there" are runtime facts only the device can know.
   `SettingProbe` is the one implementation; the web admin reaches it through `POST /api/check`
   with `admin_check.js` colouring the field, the tablet calls it directly and colours the same
@@ -445,7 +445,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   is visible in a local build, which is exactly why it is written down here.
 
 - **Display off is a real sleep where it can be trusted, and the black film otherwise
-  (2026-09-08, Juri's ask).** `display.visual_off` on a device-owner panel calls
+  (decided 2026-09-08).** `display.visual_off` on a device-owner panel calls
   `DevicePolicyManager.lockNow()` (`force-lock` is declared for it), which is the only call an app
   has that switches the backlight off; the film, a black view at 1% brightness, is what an
   ordinary install gets and what a device owner falls back to. `DisplayOffPolicy` (pure,
@@ -490,7 +490,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`, and until it is granted both
   brightness controls are inert: the checkbox cannot write the mode, and the slider is separately
   disabled while the light sensor owns the backlight, which on an unconfigured device it does by
-  default. That combination reads as two bugs, and on 2026-09-07 it read that way to Juri on a
+  default. That combination reads as two bugs, and on 2026-09-07 it read that way to the maintainer on a
   freshly provisioned panel, so **all three surfaces now name the missing grant rather than
   failing quietly**: the tablet's Display card carries the sentence and a button, the web admin
   carries the same sentence and the adb command, and the slider's refusal is a toast rather than
@@ -507,7 +507,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **Every text box on both settings surfaces is a machine value, so no keyboard prose habits.**
   The panel's own keyboard (SwiftKey on both Huawei test devices) reads a full stop as the end of
   a sentence: it adds a space, capitalises what follows and corrects the word, so
-  `test.mosquitto.org` typed into the broker box arrived as `test. mosquito. org` (Juri,
+  `test.mosquitto.org` typed into the broker box arrived as `test. mosquito. org` (seen
   2026-09-07; the capture script had recorded the same on 2026-08-31 and worked around it by not
   typing the host). Measured on the phone that day: `TYPE_TEXT_FLAG_NO_SUGGESTIONS` alone stops
   the correcting but not the space after the full stop, so `themedInput` gives every plain box the

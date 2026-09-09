@@ -184,7 +184,7 @@ public final class KioskCommandDispatcherTest {
     }
 
     /**
-     * The web admin port is floored at 1024, not 1. Found by Juri on hardware: port 80 passed a
+     * The web admin port is floored at 1024, not 1. Found on hardware (2026-08-24): port 80 passed a
      * 1-65535 check, persisted, and failed at bind time, because an unprivileged app can never
      * bind below 1024 on Android, so the admin's own settings box switched the admin off. The
      * broker port deliberately has no such floor; it is a remote port.

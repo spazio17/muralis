@@ -276,7 +276,7 @@ final class KioskCommandDispatcher {
      *
      * <p>It was {@code http://homeassistant.local:8123/}, prefilled into the tablet's box as real
      * text, and on a fresh panel the first press of the save button stored it and loaded it,
-     * landing on an error page for a host that does not exist (Juri, 2026-09-07). Two things
+     * landing on an error page for a host that does not exist (seen 2026-09-07). Two things
      * were wrong with that, and this fixes both. A value nobody typed must never be one press
      * from being stored: the form-design literature is unanimous that example text belongs in
      * the hint, alongside a visible label, where it shows the shape of a valid entry and cannot
@@ -344,7 +344,7 @@ final class KioskCommandDispatcher {
     /**
      * Returns null when {@code port} can serve the web admin, an error message otherwise.
      *
-     * <p>The floor is 1024 rather than 1 because Juri proved the difference on hardware
+     * <p>The floor is 1024 rather than 1 because the difference was proved on hardware
      * (2026-08-24): port 80 passed a 1-65535 range check, persisted, and then failed at bind
      * time, since an unprivileged app can never bind below 1024 on Android. The server fails
      * closed on a bind error, so the admin's own settings box was able to switch the admin off,
