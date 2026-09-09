@@ -18,7 +18,8 @@ lines.push('CPU  '+num(sys.cpu_busy_percent)+'%'+(sys.cpu_max_frequency_khz!=nul
 lines.push('RAM  '+mb(sys.mem_used_kb)+'/'+mb(sys.mem_total_kb)+'   '+usedPercent(sys.mem_used_kb,sys.mem_total_kb)+(mem.low?'   LOW MEMORY':''));
 lines.push('ZRAM '+mb(sys.swap_used_kb)+'/'+mb(sys.swap_total_kb));
 lines.push('TEMP '+num(sys.cpu_temperature_c,1)+'C cpu   '+num(sys.gpu_temperature_c,1)+'C gpu');
-lines.push('BAT  '+(bat.percent==null?'--':Math.round(bat.percent)+'%')+(bat.charge_state?' '+bat.charge_state:''));
+var pw=data.power||{};
+lines.push(bat.present===false?'MAINS'+(pw.volts!=null?' '+pw.volts.toFixed(1)+'V':'')+(pw.watts!=null?' '+pw.watts.toFixed(1)+'W':''):'BAT  '+(bat.percent==null?'--':Math.round(bat.percent)+'%')+(bat.charge_state?' '+bat.charge_state:''));
 lines.push('IP   '+(net.ip_address||'--')+'   '+(net.wifi_rssi_dbm!=null?net.wifi_rssi_dbm+'dBm':'--'));
 // The age is of the last renderer death, not the last page load: see the same row in
 // SystemStats.formatOverlayHtml for why those two must not be confused.
@@ -58,8 +59,8 @@ if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
 target.textContent=lines.join('\n');
 var battery=document.getElementById('chip-battery');
-if(battery){var pct=bat.percent;
-battery.textContent=(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');
+if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;
+battery.textContent=mains?'mains':(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');
 // The battery glyph is a real gauge: the fill rectangle is resized in place, the bolt
 // is revealed while charging, and a nearly flat panel on battery turns red.
 var fillEl=document.getElementById('chip-battery-fill'),top=5.9,bottom=20.1,frac=pct==null?0:Math.max(0,Math.min(100,pct))/100;
@@ -68,7 +69,7 @@ fillEl.setAttribute('y',(bottom-(bottom-top)*frac).toFixed(2));
 var low=pct!=null&&pct<15&&!bat.plugged,tone=low?'var(--bad)':'var(--text)';
 document.getElementById('chip-battery-icon').style.color=tone;
 battery.style.color=tone;
-battery.parentNode.title='battery'+(bat.charge_state?', '+bat.charge_state:'');
+battery.parentNode.title=mains?'no battery, mains powered':'battery'+(bat.charge_state?', '+bat.charge_state:'');
 var addr=document.getElementById('chip-address');
 addr.textContent=net.ip_address||'--';
 addr.parentNode.title='address of this panel on the network';

@@ -291,8 +291,12 @@ final class SystemStats {
         text.append('\n').append("TEMP ").append(celsius(sample.cpuTemperatureC)).append("cpu  ")
                 .append(celsius(sample.gpuTemperatureC)).append("gpu");
 
-        text.append('\n').append("BAT ").append(runtime.batteryPercent < 0
-                ? "--" : Math.round(runtime.batteryPercent) + "% " + chargeStateLabel(runtime));
+        if (runtime.batteryPresent) {
+            text.append('\n').append("BAT ").append(runtime.batteryPercent < 0
+                    ? "--" : Math.round(runtime.batteryPercent) + "% " + chargeStateLabel(runtime));
+        } else {
+            text.append('\n').append("MAINS").append(mainsReadings(runtime));
+        }
 
         text.append('\n').append("IP ")
                 .append(runtime.ipAddress == null || runtime.ipAddress.isEmpty()
@@ -353,11 +357,15 @@ final class SystemStats {
                 + dim("cpu  ") + colored(celsius(sample.gpuTemperatureC),
                         temperatureColor(sample.gpuTemperatureC)) + dim("gpu"));
 
-        row(html, "BAT", runtime.batteryPercent < 0
-                ? colored("--", LABEL)
-                : colored(Math.round(runtime.batteryPercent) + "%",
-                        batteryColor(runtime.batteryPercent, runtime.charging))
-                        + dim(" " + chargeStateLabel(runtime)));
+        if (runtime.batteryPresent) {
+            row(html, "BAT", runtime.batteryPercent < 0
+                    ? colored("--", LABEL)
+                    : colored(Math.round(runtime.batteryPercent) + "%",
+                            batteryColor(runtime.batteryPercent, runtime.charging))
+                            + dim(" " + chargeStateLabel(runtime)));
+        } else {
+            row(html, "MAINS", colored(mainsReadings(runtime).trim(), VALUE));
+        }
 
         row(html, "IP", colored(runtime.ipAddress == null || runtime.ipAddress.isEmpty()
                         ? "--" : escapeHtml(runtime.ipAddress), VALUE)
@@ -491,6 +499,11 @@ final class SystemStats {
          */
         long appUptimeMs;
         double batteryPercent = -1;
+        /** False on a panel with no battery at all: PoE, or a screen on its mains adapter. */
+        boolean batteryPresent = true;
+        /** Live readings of the supply feeding a panel without a battery; NaN where the kernel gives none. */
+        double mainsVolts = Double.NaN;
+        double mainsWatts = Double.NaN;
         /** True while the battery is gaining charge, or is full on mains. */
         boolean charging;
         /** True whenever a charger is attached, which is not the same as gaining charge. */
@@ -558,6 +571,41 @@ final class SystemStats {
             return "charged";
         }
         return runtime.charging ? "charging" : "on hold";
+    }
+
+    /**
+     * How the panel is fed, in one word, on every panel: the battery object only speaks for panels
+     * that have one. "battery" is a cell with no cable; "wireless" a cell on an induction pad;
+     * "mains" everything else, a cell on a charger, a PoE wall panel, a screen on a DC adapter.
+     * One word for those three on purpose (decided 2026-09-09): Android has no notion of PoE, and
+     * whether the cell is charging is the battery object's business, not this word's.
+     *
+     * @param batteryPresent {@code EXTRA_PRESENT}
+     * @param plugged        {@code EXTRA_PLUGGED} flags, 0 for no cable; 4 is the wireless pad
+     */
+    static String powerSource(boolean batteryPresent, int plugged) {
+        if (batteryPresent && (plugged & 4) != 0) {
+            return "wireless";
+        }
+        if (!batteryPresent || plugged != 0) {
+            return "mains";
+        }
+        return "battery";
+    }
+
+    /**
+     * The live numbers of a mains supply, each with a leading space, or nothing: " 5.1V 7.4W",
+     * " 12.0V", "". Only what the kernel measured; see {@link PowerSupply}.
+     */
+    static String mainsReadings(RuntimeFacts runtime) {
+        StringBuilder text = new StringBuilder();
+        if (!Double.isNaN(runtime.mainsVolts)) {
+            text.append(String.format(Locale.US, " %.1fV", runtime.mainsVolts));
+        }
+        if (!Double.isNaN(runtime.mainsWatts)) {
+            text.append(String.format(Locale.US, " %.1fW", runtime.mainsWatts));
+        }
+        return text.toString();
     }
 
     static String percent(double value) {

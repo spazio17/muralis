@@ -66,6 +66,7 @@ final class TelemetryCollector {
             root.put("uptime_ms", SystemClock.elapsedRealtime());
             root.put("app_uptime_ms", KioskService.appUptimeMs());
             root.put("battery", batterySnapshot());
+            root.put("power", powerSnapshot());
             root.put("memory", memorySnapshot());
             root.put("storage", storageSnapshot());
             root.put("network", networkSnapshot());
@@ -140,7 +141,7 @@ final class TelemetryCollector {
                 new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         double percent = Double.NaN;
         int status = BatteryManager.BATTERY_STATUS_UNKNOWN;
-        if (state != null) {
+        if (state != null && state.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true)) {
             int level = state.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
             int scale = state.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
             if (scale > 0) {
@@ -169,6 +170,25 @@ final class TelemetryCollector {
             return battery;
         }
 
+        // A panel with no battery (PoE, or a screen on its mains adapter) says so once and
+        // reports every battery reading as null: the platform still fills the level and status
+        // extras on such hardware, with 0 % and "charging", and publishing those would put a flat,
+        // forever-charging battery on the dashboard of a device that has none. Plugged stays: it
+        // is a fact about the power source, not the cell.
+        boolean present = state.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true);
+        battery.put("present", present);
+        if (!present) {
+            for (String field : new String[] {"percent", "status", "health"}) {
+                battery.put(field, JSONObject.NULL);
+            }
+            battery.put("plugged", state.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0));
+            for (String field : new String[] {"charge_state", "temperature_c", "voltage_mv",
+                    "charge_counter_uah", "current_now_ua", "current_average_ua",
+                    "energy_counter_nwh"}) {
+                battery.put(field, JSONObject.NULL);
+            }
+            return battery;
+        }
         int level = state.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = state.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
         battery.put("percent", scale > 0 ? level * 100.0 / scale : JSONObject.NULL);
@@ -193,6 +213,28 @@ final class TelemetryCollector {
         battery.put("energy_counter_nwh", nullableBatteryProperty(
                 manager, BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER));
         return battery;
+    }
+
+    /** See {@link SystemStats#powerSource}: the one power reading every panel has. */
+    private JSONObject powerSnapshot() throws JSONException {
+        Intent state = context.registerReceiver(null,
+                new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        JSONObject power = new JSONObject();
+        if (state == null) {
+            power.put("source", JSONObject.NULL);
+            return power;
+        }
+        power.put("source", SystemStats.powerSource(
+                state.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true),
+                state.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)));
+        // Live numbers of the supply feeding the device, where the kernel measures them; null is
+        // the honest answer on most tablets, whose ports report a rating and nothing live.
+        PowerSupply.Mains mains = PowerSupply.readMains(KioskService.POWER_SUPPLY_CLASS);
+        power.put("volts", mains == null || Double.isNaN(mains.volts)
+                ? JSONObject.NULL : number(mains.volts));
+        power.put("watts", mains == null || Double.isNaN(mains.watts)
+                ? JSONObject.NULL : number(mains.watts));
+        return power;
     }
 
     private JSONObject memorySnapshot() throws JSONException {

@@ -178,6 +178,34 @@ public final class SystemStatsTest {
                 "an unknown sample must still produce every row: " + unknown);
         require(unknown.contains("BAT --") && unknown.contains("IP --"),
                 "missing figures must read -- rather than drop their row: " + unknown);
+
+        // A PoE panel, or a screen on its mains adapter: no battery to read, and the platform's
+        // 0 % / "charging" for it must not appear on any surface.
+        SystemStats.RuntimeFacts mains = new SystemStats.RuntimeFacts();
+        mains.batteryPresent = false;
+        mains.batteryPercent = 0;
+        mains.plugged = true;
+        String poe = SystemStats.formatOverlay(new SystemStats.Sample(), mains);
+        require(poe.contains("\nMAINS\n") && !poe.contains("0%") && !poe.contains("BAT"),
+                "a panel without a battery reads MAINS alone when nothing is measured: " + poe);
+        String poeHtml = SystemStats.formatOverlayHtml(new SystemStats.Sample(), mains);
+        require(poeHtml.contains("MAINS") && !poeHtml.contains("0%") && !poeHtml.contains("BAT"),
+                "the HTML overlay must say MAINS too: " + poeHtml);
+        mains.mainsVolts = 5.1;
+        mains.mainsWatts = 7.395;
+        String measured = SystemStats.formatOverlay(new SystemStats.Sample(), mains);
+        require(measured.contains("MAINS 5.1V 7.4W"),
+                "measured volts and watts follow the word, one decimal each: " + measured);
+        mains.mainsWatts = Double.NaN;
+        require(SystemStats.formatOverlay(new SystemStats.Sample(), mains).contains("MAINS 5.1V\n"),
+                "volts without watts shows volts alone");
+
+        require(SystemStats.powerSource(false, 1).equals("mains"), "no cell is mains, whatever feeds it");
+        require(SystemStats.powerSource(false, 0).equals("mains"), "no cell and no cable reported is still mains");
+        require(SystemStats.powerSource(true, 1).equals("mains") && SystemStats.powerSource(true, 2).equals("mains"),
+                "a cell on an AC or USB charger is mains too");
+        require(SystemStats.powerSource(true, 4).equals("wireless"), "a cell on an induction pad is wireless");
+        require(SystemStats.powerSource(true, 0).equals("battery"), "a cell with no cable is on battery");
     }
 
     private static void testColorThresholds() {

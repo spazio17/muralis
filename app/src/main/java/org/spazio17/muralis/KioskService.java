@@ -91,6 +91,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * from the stored "last chosen level".
      */
     static final String APPLIED_BRIGHTNESS_KEY = "applied_brightness_percent";
+    /** Where the kernel describes what feeds the device; see {@link PowerSupply}. */
+    static final java.io.File POWER_SUPPLY_CLASS = new java.io.File("/sys/class/power_supply");
 
     /** When {@link #onCreate} ran, on the monotonic clock, for {@link RelaunchPolicy#SETTLE_MS}. */
     private long createdAtMs;
@@ -1088,8 +1090,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
         facts.lastPageError = KioskRuntimeState.lastPageError();
         facts.lastPageErrorAgoMs = KioskRuntimeState.lastPageErrorAgoMs();
         try {
+            facts.batteryPresent = hasBattery(this);
+            if (!facts.batteryPresent) {
+                PowerSupply.Mains mains = PowerSupply.readMains(POWER_SUPPLY_CLASS);
+                if (mains != null) {
+                    facts.mainsVolts = mains.volts;
+                    facts.mainsWatts = mains.watts;
+                }
+            }
             BatteryManager battery = getSystemService(BatteryManager.class);
-            if (battery != null) {
+            if (facts.batteryPresent && battery != null) {
                 int capacity = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
                 facts.batteryPercent = capacity >= 0 ? capacity : -1;
             }
@@ -1107,10 +1117,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 // charger is pulled, which is why the readout kept claiming "charging". Derive
                 // everything from "plugged" and let the status only distinguish full from filling.
                 facts.plugged = batteryState.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
-                facts.full = facts.plugged && status == BatteryManager.BATTERY_STATUS_FULL;
-                facts.charging = facts.plugged
+                // Without a battery there is nothing to be full or charging; plugged still holds,
+                // it is what makes a real screen-off trustworthy on such a panel.
+                facts.full = facts.batteryPresent && facts.plugged
+                        && status == BatteryManager.BATTERY_STATUS_FULL;
+                facts.charging = facts.batteryPresent && facts.plugged
                         && (status == BatteryManager.BATTERY_STATUS_CHARGING || facts.full);
-                if (facts.batteryPercent < 0) {
+                if (facts.batteryPresent && facts.batteryPercent < 0) {
                     int level = batteryState.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
                     int scale = batteryState.getIntExtra(BatteryManager.EXTRA_SCALE, 100);
                     facts.batteryPercent = level >= 0 && scale > 0 ? level * 100.0 / scale : -1;
@@ -1627,6 +1640,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     static boolean canWriteSystemSettings(Context context) {
         return Settings.System.canWrite(context);
+    }
+
+    /**
+     * Whether this device has a battery at all. A PoE wall panel, or a screen fed from its mains
+     * adapter with the cell removed, reports {@code EXTRA_PRESENT} false, and everything a battery
+     * reading would then say about it (0 %, "charging") is noise. A missing extra reads as present,
+     * which is what every consumer tablet is.
+     */
+    static boolean hasBattery(Context context) {
+        Intent state = context.registerReceiver(null,
+                new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        return state == null || state.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true);
     }
 
     /** True when this hardware can measure ambient light at all. */
