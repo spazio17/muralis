@@ -5,9 +5,13 @@
 package org.spazio17.muralis;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
+import org.eclipse.paho.client.mqttv3.IMqttActionListener;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
+import org.eclipse.paho.client.mqttv3.IMqttToken;
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -19,6 +23,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -82,6 +87,15 @@ final class MqttController implements MqttCallbackExtended {
      */
     private volatile MqttAsyncClient client;
     private final Context appContext;
+    /**
+     * The retry after a connect that failed outright, which Paho's automatic reconnect does not
+     * cover; see {@link MqttConnectRetry}. Scheduled on the main thread, cancelled by
+     * {@link #stop}, and guarded besides by the client it was scheduled for still being the live
+     * one, so a configuration reload can never leave a retry firing for a client already closed.
+     */
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private MqttConnectOptions connectOptions;
+    private final AtomicInteger connectFailures = new AtomicInteger();
 
     MqttController(Context context, CommandListener commandListener) {
         config = KioskConfig.load(context);
@@ -147,9 +161,46 @@ final class MqttController implements MqttCallbackExtended {
             if (!config.mqttPassword.isEmpty()) {
                 options.setPassword(config.mqttPassword.toCharArray());
             }
-            client.connect(options);
+            connectOptions = options;
+            connect(client);
         } catch (MqttException exception) {
             Log.e(TAG, "Unable to start MQTT client", exception);
+        }
+    }
+
+    /**
+     * One connection attempt against {@code target}, and the next one scheduled if it fails.
+     * {@code target} rather than the field, because by the time the failure arrives on Paho's
+     * thread, {@link #stop} may have replaced or nulled the field, and a retry for a client that is
+     * no longer ours must simply not happen.
+     */
+    private void connect(MqttAsyncClient target) {
+        if (target != client) {
+            return;
+        }
+        try {
+            target.connect(connectOptions, null, new IMqttActionListener() {
+                @Override
+                public void onSuccess(IMqttToken token) {
+                    // The session itself is set up in connectComplete, which Paho calls for this
+                    // as for every reconnect. Nothing to do here.
+                }
+
+                @Override
+                public void onFailure(IMqttToken token, Throwable cause) {
+                    if (target != client) {
+                        return;
+                    }
+                    long delay = MqttConnectRetry.delayMs(connectFailures.incrementAndGet());
+                    Log.w(TAG, "MQTT connect failed (" + (cause == null ? "no cause" : cause)
+                            + "); retrying in " + delay / 1000 + " s");
+                    mainHandler.postDelayed(() -> connect(target), delay);
+                }
+            });
+        } catch (MqttException exception) {
+            // Paho refuses a connect() on a client that is already connecting or connected;
+            // neither needs a retry from here, the pending one reports through the listener.
+            Log.w(TAG, "MQTT connect not started: " + exception.getMessage());
         }
     }
 
@@ -159,8 +210,9 @@ final class MqttController implements MqttCallbackExtended {
             return;
         }
         // Null the field first: connectComplete runs on Paho's own thread and would otherwise see
-        // a client we are in the middle of tearing down.
+        // a client we are in the middle of tearing down. The pending retry, if any, goes with it.
         client = null;
+        mainHandler.removeCallbacksAndMessages(null);
         try {
             if (stopping.isConnected()) {
                 // Explicitly against `stopping`, and waited on.
@@ -221,13 +273,18 @@ final class MqttController implements MqttCallbackExtended {
 
     @Override
     public void connectComplete(boolean reconnect, String serverUri) {
-        Log.i(TAG, reconnect ? "MQTT reconnected" : "MQTT connected");
-        if (reconnect) {
+        int failedAttempts = connectFailures.getAndSet(0);
+        Log.i(TAG, reconnect ? "MQTT reconnected"
+                : failedAttempts > 0 ? "MQTT connected after " + failedAttempts + " failed attempt(s)"
+                : "MQTT connected");
+        if (reconnect || failedAttempts > 0) {
             // Fresh telemetry straight away: the retained snapshot on the broker is as stale as
-            // the outage was long, and the next scheduled tick can be a minute away. (Until
-            // 2026-08-25 this publish also carried an outage-cause verdict from OutageLedger;
-            // that whole attribution feature was removed as not worth knowing, the MQTT state
-            // entity's own history already says when and for how long.)
+            // the outage was long, and the next scheduled tick can be a minute away. Also after
+            // a first connect that needed retries, for the same reason: by then the panel has
+            // been up for a while and the broker has nothing from it yet. (Until 2026-08-25 this
+            // publish also carried an outage-cause verdict from OutageLedger; that whole
+            // attribution feature was removed as not worth knowing, the MQTT state entity's own
+            // history already says when and for how long.)
             KioskService.publishTelemetrySoon(appContext);
         }
         // Copied to a local, the way publish() already does. This runs on Paho's thread while

@@ -133,6 +133,15 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   refuses to build without `MURALIS_LICENSE_KEY`, or with one that does not parse.
   rather than crashing. This app runs across a much wider spread of Android versions and device
   policies than a build for one fixed piece of hardware would, so this matters more here, not less.
+- **A broker that is down when the client is built is retried, not abandoned.** Paho's automatic
+  reconnect covers a connection that was established and then lost, nothing else: a first connect
+  that fails left the client silent for good (Lenovo, 2026-09-09: broker reachable, three minutes,
+  zero attempts). `MqttController.connect` now passes a failure listener and reschedules itself on
+  the schedule in `MqttConnectRetry`, 15 s, 30 s, 60 s, 120 s, 240 s, then every five minutes;
+  `stop()` cancels the pending retry, and a retry checks it is still for the live client, so a
+  configuration reload while one is pending leaves exactly one client (measured: one connection on
+  the broker after two reloads with it down). A connect that needed retries publishes telemetry at
+  once, like a reconnect does.
 - **A refused command is never silent.** Malformed input, an unusable command name, or a retained
   MQTT command (structurally indistinguishable from a fresh one at the protocol level; MQTT strips
   `RETAIN` on delivery to an established subscription, so the app can only refuse it on reconnect
