@@ -67,7 +67,7 @@ host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
-            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation; do
+            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -141,6 +141,13 @@ javac -d "${test_dir}/tls" \
     "${pure_java_dir}/TlsPresentation.java" \
     "${host_test_dir}/TlsPresentationTest.java"
 java -cp "${test_dir}/tls" org.spazio17.muralis.TlsPresentationTest
+
+# The optional PIN behind the tap combinations: its rules and its stored form.
+mkdir -p "${test_dir}/pin"
+javac -d "${test_dir}/pin" \
+    "${pure_java_dir}/EscapePin.java" \
+    "${host_test_dir}/EscapePinTest.java"
+java -cp "${test_dir}/pin" org.spazio17.muralis.EscapePinTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \

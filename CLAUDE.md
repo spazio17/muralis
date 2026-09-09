@@ -366,7 +366,14 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `KioskConfig.escapeSequencesConfigured()` is true, because a pinned screen with no recorded way
   out is a bricked panel. Deliberately unmigrated: installs that ran on the old defaults (they were
   never persisted) see the wizard once after updating and re-record. Do not reintroduce a default,
-  and do not let any new screen bypass the wizard routing in `initializeUserInterface`. It works from every screen the app shows, including its own configuration screen: it is the
+  and do not let any new screen bypass the wizard routing in `initializeUserInterface`. **An
+  optional PIN stands behind both combinations since 2026-09-09**, free on every panel: a
+  combination can be watched and repeated, a PIN has to be known. `EscapePin` (pure) keeps 4 to 8
+  digits as a salted PBKDF2 hash in `SecretStore`; `KioskActivity.gateBehindPin` asks for it after
+  a matched combination and counts wrong tries with an `AuthThrottle` (five, then a doubling
+  lockout); it is set, changed and removed on the Escape sequences page of the tablet and in the
+  web admin's Escape sequences box, which is also the reset for a forgotten one. Managing it for a
+  whole fleet is the paid part, per the fleet design. It works from every screen the app shows, including its own configuration screen: it is the
   one way out of the kiosk and has no screen-specific exceptions. Exiting releases lock task and
   launches the OEM launcher resolved at runtime via an explicit `setPackage` intent, never a
   hardcoded launcher package, since the default launcher varies by OEM.

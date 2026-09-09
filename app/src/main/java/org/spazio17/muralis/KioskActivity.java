@@ -1029,7 +1029,7 @@ public final class KioskActivity extends Activity {
      * react to the change either. Every layout decision that reads {@code screenWidthDp} was
      * therefore frozen at whatever the width had been when the screen was built: {@link #cardGrid}
      * kept two lanes in portrait, or one lane in landscape with every card and every field stretched
-     * the full width, and {@link #actionRow} kept the wrong axis. The MQTT interval buttons are the
+     * the full width, and the foot button's row kept the wrong axis. The MQTT interval buttons are the
      * most visible casualty, since they share a row at weight 1 and simply elongate. Leaving the
      * screen for the dashboard and coming back fixed it, because that rebuilt the view tree, which
      * is precisely what this does without making the operator do it.
@@ -1197,16 +1197,124 @@ public final class KioskActivity extends Activity {
             if (EscapeSequence.matchesTail(escapeTaps, sequence, EscapeSequence.MAX_GAP_MS)) {
                 escapeTaps.clear();
                 if (checkLauncher) {
-                    openSystemLauncher();
+                    gateBehindPin("To leave Muralis for the home screen", true, this::openSystemLauncher);
                 } else {
-                    showConfiguration(KioskConfig.load(this));
-                    Toast.makeText(this, R.string.configuration_escape_opened,
-                            Toast.LENGTH_SHORT).show();
+                    gateBehindPin("To open Muralis settings", false, () -> {
+                        showConfiguration(KioskConfig.load(this));
+                        Toast.makeText(this, R.string.configuration_escape_opened,
+                                Toast.LENGTH_SHORT).show();
+                    });
                 }
                 return true;
             }
         }
         return false;
+    }
+
+    /** Wrong PINs are counted like wrong web admin passwords: five, then a lockout that doubles. */
+    private final AuthThrottle pinThrottle = new AuthThrottle();
+    private static final String PIN_THROTTLE_KEY = "pin";
+
+    /**
+     * The optional second lock behind a tap combination (2026-09-09): a combination can be
+     * watched and repeated, a PIN has to be known. Free on every panel. With no PIN set the
+     * combination alone does what it always did.
+     */
+    private void gateBehindPin(String purpose, boolean leavesTheApp, Runnable action) {
+        if (!KioskConfig.escapePinSet(this)) {
+            action.run();
+            return;
+        }
+        Runnable backToDashboard = () -> showDashboard(KioskConfig.load(this).dashboardUrl);
+        // An action that leaves the app (the launcher) does not replace the screen, so the prompt
+        // would still be the content when the panel comes back; the dashboard is restored first.
+        showPinPrompt(purpose, leavesTheApp ? () -> {
+            backToDashboard.run();
+            action.run();
+        } : action, backToDashboard);
+    }
+
+    /** A prompt nobody answers goes away on its own; a wall panel must not be parked on it. */
+    private static final long PIN_PROMPT_TIMEOUT_MS = 60_000L;
+
+    private void showPinPrompt(String purpose, Runnable onSuccess, Runnable onCancel) {
+        configurationVisible = true;
+        recorderVisible = false;
+        publishOperatorScreenState();
+        applyKioskPolicy();
+        KioskTheme theme = currentTheme();
+        LinearLayout page = pageColumn(theme);
+        // A panel, centred and near the top, rather than a page: one question does not need
+        // a screen's width, and on a wall panel the eye goes to the middle first (2026-09-09).
+        LinearLayout panel = card(theme, "Enter the PIN");
+        TextView why = new TextView(this);
+        why.setText(purpose);
+        why.setTextColor(theme.subtext);
+        why.setTextSize(14);
+        panel.addView(why, matchWrap());
+        EditText input = themedInput(theme, "", true);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        input.setHint(EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH + " digits");
+        panel.addView(input, matchWrap());
+        TextView verdict = new TextView(this);
+        verdict.setTextColor(theme.bad);
+        verdict.setTextSize(14);
+        verdict.setVisibility(View.GONE);
+        panel.addView(verdict, matchWrap());
+        long waitNow = pinThrottle.lockedOutFor(PIN_THROTTLE_KEY, android.os.SystemClock.elapsedRealtime());
+        if (waitNow > 0) {
+            verdict.setText("Too many wrong PINs. Try again in " + (waitNow + 999) / 1000 + " s.");
+            verdict.setVisibility(View.VISIBLE);
+        }
+        Runnable thisPrompt = () -> showPinPrompt(purpose, onSuccess, onCancel);
+        Runnable expire = () -> {
+            if (currentScreen == thisPrompt) {
+                hideKeyboard(input);
+                onCancel.run();
+            }
+        };
+        mainHandler.postDelayed(expire, PIN_PROMPT_TIMEOUT_MS);
+        Button unlock = primaryButton(theme, "Unlock");
+        unlock.setOnClickListener(view -> {
+            long now = android.os.SystemClock.elapsedRealtime();
+            long wait = pinThrottle.lockedOutFor(PIN_THROTTLE_KEY, now);
+            if (wait > 0) {
+                verdict.setText("Too many wrong PINs. Try again in " + (wait + 999) / 1000 + " s.");
+                verdict.setVisibility(View.VISIBLE);
+                return;
+            }
+            if (EscapePin.matches(input.getText().toString(), KioskConfig.escapePinHash(this))) {
+                pinThrottle.recordSuccess(PIN_THROTTLE_KEY, now);
+                mainHandler.removeCallbacks(expire);
+                hideKeyboard(input);
+                onSuccess.run();
+                return;
+            }
+            input.setText("");
+            if (pinThrottle.recordFailure(PIN_THROTTLE_KEY, now)) {
+                long locked = pinThrottle.lockedOutFor(PIN_THROTTLE_KEY, now);
+                verdict.setText("Too many wrong PINs. Try again in " + (locked + 999) / 1000 + " s.");
+            } else {
+                verdict.setText("Wrong PIN.");
+            }
+            verdict.setVisibility(View.VISIBLE);
+        });
+        Button cancel = secondaryButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> {
+            mainHandler.removeCallbacks(expire);
+            hideKeyboard(input);
+            onCancel.run();
+        });
+        panel.addView(buttonRow(unlock, cancel), matchWrap());
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        LinearLayout.LayoutParams panelParams = new LinearLayout.LayoutParams(
+                Math.min(dp(480), screenWidth - dp(40)), ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER_HORIZONTAL;
+        panelParams.topMargin = dp(48);
+        page.addView(panel, panelParams);
+        setContentView(scrollPage(theme, page));
+        currentScreen = thisPrompt;
+        input.requestFocus();
     }
 
     private void openSystemLauncher() {
@@ -1537,7 +1645,7 @@ public final class KioskActivity extends Activity {
                     Toast.LENGTH_SHORT).show();
             showDashboard(once);
         });
-        dashboardCard.addView(openOnce, matchWrap());
+        dashboardCard.addView(buttonRow(openOnce), matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -1703,7 +1811,7 @@ public final class KioskActivity extends Activity {
             mainHandler.postDelayed(
                     () -> refreshWebAdminControls(webAdminToggle, httpState, theme), 700);
         });
-        httpCard.addView(webAdminToggle, matchWrap());
+        httpCard.addView(buttonRow(webAdminToggle), matchWrap());
         refreshWebAdminControls(webAdminToggle, httpState, theme);
         // The broker is checked as soon as the screen opens, not only after an edit: an operator
         // who comes here because "Home Assistant lost the panel" gets the answer without having
@@ -1794,7 +1902,7 @@ public final class KioskActivity extends Activity {
             displayCard.addView(needsGrant, matchWrapClose());
             Button grantWriteSettings = secondaryButton(theme, "Grant it now");
             grantWriteSettings.setOnClickListener(view -> offerWriteSettingsGrant());
-            displayCard.addView(grantWriteSettings, matchWrap());
+            displayCard.addView(buttonRow(grantWriteSettings), matchWrap());
             // The line and the button are a claim about right now, so they must go the moment it
             // stops being true, without waiting for the screen to be rebuilt by something else.
             watchForWriteSettingsGrant();
@@ -2066,11 +2174,12 @@ public final class KioskActivity extends Activity {
         escapeSummary.setText("Settings: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.settingsSequence))
                 + "\nHome screen: "
-                + EscapeSequence.describe(EscapeSequence.parse(config.launcherSequence)));
+                + EscapeSequence.describe(EscapeSequence.parse(config.launcherSequence))
+                + "\nPIN: " + (KioskConfig.escapePinSet(this) ? "set" : "not set"));
         escapeCard.addView(escapeSummary, matchWrap());
         Button manageSequences = secondaryButton(theme, "Manage escape sequences");
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
-        escapeCard.addView(manageSequences, matchWrap());
+        escapeCard.addView(buttonRow(manageSequences), matchWrap());
 
         // The Pro state lives in About (moved 2026-08-29, by decision of that day): it is a fact about this
         // installation, like the version line beside it, not a card-sized feature of its own.
@@ -2129,7 +2238,7 @@ public final class KioskActivity extends Activity {
 
         Button aboutButton = secondaryButton(theme, "Version, privacy and terms");
         aboutButton.setOnClickListener(view -> showAbout());
-        aboutCard.addView(aboutButton, matchWrap());
+        aboutCard.addView(buttonRow(aboutButton), matchWrap());
         // Ordinary installs only. On a device-owner panel "close" is meaningless (Muralis is HOME,
         // the system relaunches it immediately) and the escape sequence is the deliberate exit, so
         // a close button there is a control whose only use is breaking the panel, the same class
@@ -2139,7 +2248,7 @@ public final class KioskActivity extends Activity {
         if (!isDeviceOwner()) {
             Button closeApp = secondaryButton(theme, "Close Muralis");
             closeApp.setOnClickListener(view -> closeCompletely());
-            aboutCard.addView(closeApp, matchWrap());
+            aboutCard.addView(buttonRow(closeApp), matchWrap());
         }
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
@@ -2245,7 +2354,7 @@ public final class KioskActivity extends Activity {
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
         // so handing it the screen left no way back. Wi-Fi is set up once during provisioning, and
         // Settings is still reachable through the escape sequence when it is genuinely needed.
-        page.addView(actionRow(java.util.Arrays.<View>asList(open)), matchWrap());
+        page.addView(footButton(open), matchWrap());
 
         // The page itself takes the initial focus, so no field holds it uninvited. Without this,
         // the first EditText (the dashboard URL) silently owned the focus from the moment the
@@ -2298,15 +2407,70 @@ public final class KioskActivity extends Activity {
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 sequenceCard(theme, "Open Muralis settings", config.settingsSequence, false),
-                sequenceCard(theme, "Leave Muralis for the home screen", config.launcherSequence, true))),
+                sequenceCard(theme, "Leave Muralis for the home screen", config.launcherSequence, true),
+                pinCard(theme))),
                 matchWrap());
 
         Button back = primaryButton(theme, "Back to configuration");
         back.setOnClickListener(view -> showConfiguration(KioskConfig.load(this)));
-        page.addView(back, matchWrap());
+        page.addView(buttonRow(back), matchWrap());
 
         setContentView(scrollPage(theme, page));
         currentScreen = () -> showEscapeSequences(KioskConfig.load(this));
+    }
+
+    /** The optional PIN, on the same page as the two combinations it stands behind. */
+    private LinearLayout pinCard(KioskTheme theme) {
+        boolean set = KioskConfig.escapePinSet(this);
+        LinearLayout item = card(theme, "PIN after a combination");
+        TextView current = new TextView(this);
+        current.setTextColor(set ? theme.accentAlt : theme.subtext);
+        current.setTextSize(14);
+        current.setText(set
+                ? "A PIN is asked after either combination."
+                : "Optional. A combination can be watched and repeated; a PIN has to be known.");
+        item.addView(current, matchWrap());
+        EditText pin = themedInput(theme, "", true);
+        pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        pin.setHint("New PIN, " + EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH + " digits");
+        item.addView(pin, matchWrap());
+        EditText again = themedInput(theme, "", true);
+        again.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        again.setHint("Repeat it");
+        item.addView(again, matchWrap());
+        Button save = secondaryButton(theme, set ? "Change the PIN" : "Set the PIN");
+        save.setOnClickListener(view -> {
+            String typed = pin.getText().toString();
+            String problem = EscapePin.validationProblem(typed);
+            if (problem != null) {
+                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (!typed.equals(again.getText().toString())) {
+                Toast.makeText(this, "Not saved: the two PINs differ.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            KioskConfig.setEscapePinHash(this, EscapePin.hash(typed));
+            hideKeyboard(pin);
+            Toast.makeText(this, "PIN set.", Toast.LENGTH_SHORT).show();
+            redrawInPlace(() -> showEscapeSequences(KioskConfig.load(this)));
+        });
+        if (!set) {
+            item.addView(buttonRow(save), matchWrap());
+        }
+        if (set) {
+            // Confirmed with the PIN itself (2026-09-09): a settings screen left open must not be
+            // enough to take the second lock away. The web admin's removal stays unconfirmed on
+            // purpose, it is the reset for a forgotten PIN.
+            Button remove = secondaryButton(theme, "Remove the PIN");
+            remove.setOnClickListener(view -> showPinPrompt("To remove the PIN", () -> {
+                KioskConfig.setEscapePinHash(this, null);
+                Toast.makeText(this, "PIN removed.", Toast.LENGTH_SHORT).show();
+                showEscapeSequences(KioskConfig.load(this));
+            }, () -> showEscapeSequences(KioskConfig.load(this))));
+            item.addView(buttonRow(save, remove), matchWrap());
+        }
+        return item;
     }
 
     private LinearLayout sequenceCard(KioskTheme theme, String title, String sequence,
@@ -2319,7 +2483,7 @@ public final class KioskActivity extends Activity {
         item.addView(current, matchWrap());
         Button record = secondaryButton(theme, "Record a new combination");
         record.setOnClickListener(view -> showSequenceRecorder(forLauncher));
-        item.addView(record, matchWrap());
+        item.addView(buttonRow(record), matchWrap());
         return item;
     }
 
@@ -2402,7 +2566,7 @@ public final class KioskActivity extends Activity {
 
         Button start = primaryButton(theme, "Record the first one");
         start.setOnClickListener(view -> showWizardRecorder(false));
-        page.addView(start, matchWrap());
+        page.addView(buttonRow(start), matchWrap());
 
         setContentView(scrollPage(theme, page));
         currentScreen = this::showFirstStartWizard;
@@ -2506,14 +2670,14 @@ public final class KioskActivity extends Activity {
 
         Button save = primaryButton(theme, "Save this combination");
         save.setOnClickListener(view -> saveRecordedSequence());
-        panel.addView(save, matchWrap());
+        panel.addView(buttonRow(save), matchWrap());
 
         Button clear = secondaryButton(theme, "Start over");
         clear.setOnClickListener(view -> {
             recordedZones.clear();
             updateRecorderReadout();
         });
-        panel.addView(clear, matchWrap());
+        panel.addView(buttonRow(clear), matchWrap());
 
         Button cancel = secondaryButton(theme, recordingForWizard ? "Back" : "Cancel");
         cancel.setOnClickListener(view -> {
@@ -2524,7 +2688,7 @@ public final class KioskActivity extends Activity {
                 showEscapeSequences(KioskConfig.load(this));
             }
         });
-        panel.addView(cancel, matchWrap());
+        panel.addView(buttonRow(cancel), matchWrap());
 
         // 460dp was a fixed width, and a phone in portrait is 360dp or less, so the panel and
         // every button in it ran off both edges with no way to reach Save. Capped instead: as wide
@@ -3053,21 +3217,23 @@ public final class KioskActivity extends Activity {
     }
 
     /** Actions sit in a row on a wide screen and stack on a narrow one. */
-    private ViewGroup actionRow(List<View> buttons) {
+    /**
+     * The page's one main action: centred, and twice as wide as its text, so it is unmistakably
+     * the button of the page without being a bar across it (2026-09-09).
+     */
+    private LinearLayout footButton(Button button) {
         LinearLayout row = new LinearLayout(this);
-        boolean wide = getResources().getConfiguration().screenWidthDp >= 720;
-        row.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        for (int index = 0; index < buttons.size(); index++) {
-            LinearLayout.LayoutParams params = wide
-                    ? new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.topMargin = dp(16);
-            if (wide && index > 0) {
-                params.leftMargin = dp(14);
-            }
-            row.addView(buttons.get(index), params);
-        }
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setBaselineAligned(false);
+        row.setGravity(Gravity.CENTER_HORIZONTAL);
+        button.setTextSize(16.5f);
+        int textWidth = (int) Math.ceil(button.getPaint().measureText(button.getText().toString()));
+        int side = Math.max(dp(20), textWidth / 2);
+        button.setPadding(side, button.getPaddingTop(), side, button.getPaddingBottom());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(16);
+        row.addView(button, params);
         return row;
     }
 
@@ -3293,7 +3459,7 @@ public final class KioskActivity extends Activity {
 
         Button back = primaryButton(theme, "Back to configuration");
         back.setOnClickListener(view -> showConfiguration(KioskConfig.load(this)));
-        page.addView(back, matchWrap());
+        page.addView(buttonRow(back), matchWrap());
 
         setContentView(scrollPage(theme, page));
     }
@@ -3361,7 +3527,7 @@ public final class KioskActivity extends Activity {
 
         Button back = primaryButton(theme, "Back to about");
         back.setOnClickListener(view -> showAbout());
-        page.addView(back, matchWrap());
+        page.addView(buttonRow(back), matchWrap());
 
         setContentView(scrollPage(theme, page));
     }
@@ -4297,7 +4463,7 @@ public final class KioskActivity extends Activity {
         cardView.addView(needs, needsParams);
         Button unlock = secondaryButton(theme, "Buy Muralis Pro");
         unlock.setOnClickListener(view -> proBilling.buy(this));
-        cardView.addView(unlock, matchWrap());
+        cardView.addView(buttonRow(unlock), matchWrap());
     }
 
     private static void setEnabledDeeply(View view, boolean enabled) {
@@ -5211,6 +5377,36 @@ public final class KioskActivity extends Activity {
             return "http://" + url;
         }
         return url;
+    }
+
+    /**
+     * Buttons sized to their label, side by side, starting at the left edge: a button that spans
+     * a 1280 px card reads as a bar, not a button (2026-09-09). A minimum width keeps short
+     * labels ("Unlock", "Cancel") from shrinking to their text alone, and a row wraps nothing:
+     * two or three buttons are all any card offers.
+     */
+    private LinearLayout buttonRow(Button... buttons) {
+        LinearLayout row = new LinearLayout(this);
+        // Side by side on a tablet; one under the other on a phone, where two 160 dp buttons
+        // and their gap do not fit a card (the Pixel is 393 dp wide). A LinearLayout never wraps.
+        boolean wide = getResources().getConfiguration().screenWidthDp >= 600;
+        row.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        // Start, not centred: LinearLayout adds half a centred child's top margin to its offset,
+        // which pushed every button 5 px below the row and cut off its bottom edge (2026-09-09).
+        row.setBaselineAligned(false);
+        row.setGravity(Gravity.START | Gravity.TOP);
+        for (int i = 0; i < buttons.length; i++) {
+            buttons[i].setMinWidth(dp(wide ? 160 : 120));
+            buttons[i].setMinimumWidth(dp(wide ? 160 : 120));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (i > 0 && wide) {
+                params.leftMargin = dp(12);
+            }
+            params.topMargin = dp(10);
+            row.addView(buttons[i], params);
+        }
+        return row;
     }
 
     private LinearLayout.LayoutParams matchWrap() {

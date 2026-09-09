@@ -19,6 +19,8 @@ final class KioskConfig {
     private static final String MQTT_PASSWORD = "mqtt_password";
     private static final String HTTP_PORT = "http_port";
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
+    /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
+    private static final String ESCAPE_PIN_HASH = "escape_pin_hash";
     private static final String STATS_OVERLAY = "stats_overlay";
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
@@ -149,6 +151,35 @@ final class KioskConfig {
      * first-start wizard instead of a dashboard and never engages lock task: a pinned screen with
      * no recorded way out is a bricked panel, so like visual_off this fails toward an exit.
      */
+    static boolean escapePinSet(Context context) {
+        return escapePinHash(context) != null;
+    }
+
+    /**
+     * The stored hash, or null when none is set. SecretStore answers "" for a value never stored
+     * and null only while the Keystore is unavailable; both read as no PIN here, so a Keystore
+     * hiccup at boot fails open to the combination rather than locking the operator out of
+     * settings behind a PIN nobody can check.
+     */
+    static String escapePinHash(Context context) {
+        String hash = new SecretStore(storageContext(context)).getOrNull(ESCAPE_PIN_HASH);
+        return hash == null || hash.isEmpty() ? null : hash;
+    }
+
+    /**
+     * Stores or, with null or empty, removes the PIN. Direct rather than through Editor, whose
+     * apply() deliberately never clears a secret: removing the PIN is the one clear that is a
+     * decision rather than an echo of an unreadable read.
+     */
+    static void setEscapePinHash(Context context, String hash) {
+        SecretStore secrets = new SecretStore(storageContext(context));
+        if (hash == null || hash.isEmpty()) {
+            secrets.clear(ESCAPE_PIN_HASH);
+        } else {
+            secrets.put(ESCAPE_PIN_HASH, hash);
+        }
+    }
+
     boolean escapeSequencesConfigured() {
         return EscapeSequence.isValid(EscapeSequence.parse(settingsSequence))
                 && EscapeSequence.isValid(EscapeSequence.parse(launcherSequence));
