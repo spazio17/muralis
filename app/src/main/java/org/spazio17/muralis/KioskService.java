@@ -957,6 +957,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (includeAdminDetail) {
                 applied.put("settings_sequence", config.settingsSequence);
                 applied.put("launcher_sequence", config.launcherSequence);
+                applied.put("escape_pin_set", KioskConfig.escapePinSet(this));
             }
             applied.put("stats_overlay", config.statsOverlay);
             applied.put("orientation", config.orientation);

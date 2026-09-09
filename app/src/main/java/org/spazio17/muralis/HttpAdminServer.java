@@ -985,9 +985,24 @@ final class HttpAdminServer {
             return "Not saved: the settings and launcher sequences must be different, or the "
                     + "settings gesture becomes unreachable.";
         }
+        // The PIN rides on this box because it stands behind these two gestures. Judged before
+        // anything is written, so a refused PIN saves nothing at all.
+        String pin = form.get("escape_pin");
+        boolean clearPin = "1".equals(form.get("escape_pin_clear"));
+        if (!clearPin && pin != null && !pin.isEmpty()) {
+            String pinProblem = EscapePin.validationProblem(pin);
+            if (pinProblem != null) {
+                return "Not saved: " + pinProblem + ".";
+            }
+        }
         fresh.settingsSequence = settingsSequence;
         fresh.launcherSequence = launcherSequence;
         fresh.saveEscapeSequences(context);
+        if (clearPin) {
+            KioskConfig.setEscapePinHash(context, null);
+        } else if (pin != null && !pin.isEmpty()) {
+            KioskConfig.setEscapePinHash(context, EscapePin.hash(pin));
+        }
         return null;
     }
 
@@ -1115,6 +1130,15 @@ final class HttpAdminServer {
                         config.settingsSequence))
                 .append(field("text", "launcher_sequence", "Leave Muralis for the home screen",
                         config.launcherSequence))
+                .append("<p class=\"hint\">Optional PIN, asked after either combination: ")
+                .append(EscapePin.MIN_LENGTH).append(" to ").append(EscapePin.MAX_LENGTH)
+                .append(" digits. A combination can be watched and repeated; a PIN has to be known. ")
+                .append(KioskConfig.escapePinSet(context) ? "One is set." : "None is set.").append("</p>")
+                .append(field("password", "escape_pin", "PIN (blank keeps the current one)", ""))
+                .append(KioskConfig.escapePinSet(context)
+                        ? "<label class=\"check\"><input type=\"checkbox\" name=\"escape_pin_clear\" "
+                                + "value=\"1\">Remove the PIN</label>"
+                        : "")
                 .append(sectionFormEnd("Save"))
 
                 // Kept sorted by label; add new actions in alphabetical place. There is no
