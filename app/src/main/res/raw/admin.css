@@ -46,3 +46,5 @@ button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;border:1px solid 
 /* an annotation, not an alarm. Cleared rather than guessed when the check itself cannot run. */
 input.check-ok{border-color:var(--ok)}
 input.check-bad{border-color:var(--bad)}
+/* A certificate fingerprint is 95 characters with no space to break at. */
+.hint code{word-break:break-all}

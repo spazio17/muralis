@@ -192,6 +192,33 @@ final class KioskRuntimeState {
         httpAdminListening = listening;
         httpAdminPort = port;
         httpAdminDownReason = listening || downReason == null ? "" : downReason;
+        if (!listening) {
+            httpAdminSecure = false;
+            httpAdminFingerprint = "";
+        }
+    }
+
+    private static volatile boolean httpAdminSecure;
+    private static volatile String httpAdminFingerprint = "";
+
+    /** Whether the running server speaks HTTPS, and with which certificate; see AdminCertificate. */
+    static void publishHttpAdminTls(boolean secure, String fingerprint) {
+        httpAdminSecure = secure;
+        httpAdminFingerprint = fingerprint == null ? "" : fingerprint;
+    }
+
+    static boolean httpAdminSecure() {
+        return httpAdminSecure;
+    }
+
+    /** Colon-separated SHA-256 of the served certificate, empty on plain HTTP. */
+    static String httpAdminFingerprint() {
+        return httpAdminFingerprint;
+    }
+
+    /** The scheme the running web admin answers on, for every place the tablet prints its address. */
+    static String httpAdminScheme() {
+        return httpAdminSecure ? "https://" : "http://";
     }
 
     /** Empty while listening, or when whoever stopped the server offered no reason. */

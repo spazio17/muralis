@@ -30,9 +30,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+
 /**
  * A local HTTP control/admin surface mirroring the authenticated MQTT command set, the same way
- * Tasmota or WLED let HTTP and MQTT drive identical commands. Plaintext HTTP only, intended for a
+ * Tasmota or WLED let HTTP and MQTT drive identical commands. HTTPS with the panel's own
+ * certificate (see AdminCertificate), intended for a
  * trusted LAN exactly like the plain-TCP MQTT transport. Fails closed: no
  * socket is bound unless an admin password has been configured locally on the device first.
  */
@@ -136,6 +140,14 @@ final class HttpAdminServer {
 
     private ServerSocket serverSocket;
     /**
+     * Null only when this device's Keystore could not make a certificate (see AdminCertificate);
+     * then the server speaks plain HTTP as it did before 2026-09-09, and says so. Otherwise every
+     * accepted connection is expected to start a TLS handshake, and one that does not is sent to
+     * the https address without ever being asked for a password.
+     */
+    private SSLSocketFactory tlsFactory;
+    private String certificateFingerprint = "";
+    /**
      * Every accepted connection, so {@code stop()} can close them. A worker blocked reading a
      * browser's speculative connection is not interruptible and only wakes when SOCKET_TIMEOUT_MS
      * expires, which made a configuration reload freeze the caller for ten seconds.
@@ -193,6 +205,9 @@ final class HttpAdminServer {
             KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "no password");
             return;
         }
+        AdminCertificate certificate = AdminCertificate.load(context);
+        tlsFactory = certificate == null ? null : certificate.socketFactory;
+        certificateFingerprint = certificate == null ? "" : certificate.fingerprint;
         try {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
@@ -215,7 +230,9 @@ final class HttpAdminServer {
         acceptThread = new Thread(this::acceptLoop, "MuralisHttpAccept");
         acceptThread.start();
         KioskRuntimeState.publishHttpAdminState(true, config.httpPort, "");
-        Log.i(TAG, "HTTP admin listening on port " + config.httpPort);
+        KioskRuntimeState.publishHttpAdminTls(tlsFactory != null, certificateFingerprint);
+        Log.i(TAG, (tlsFactory != null ? "HTTPS" : "HTTP (no certificate)")
+                + " admin listening on port " + config.httpPort);
     }
 
     void stop() {
@@ -340,12 +357,45 @@ final class HttpAdminServer {
 
     private void handleConnection(Socket socket) {
         liveSockets.add(socket);
+        // The channel a reply goes down: the TLS socket once the handshake is done, the raw one
+        // before. Declared here so the failure barrier below answers on the right one; a 500
+        // written to the raw socket under TLS would be plaintext inside the encrypted stream.
+        Socket channel = socket;
+        OutputStream output = null;
         try {
             socket.setSoTimeout(SOCKET_TIMEOUT_MS);
+            // Every connection is handed to TLS first. Android's Conscrypt wraps the socket's file
+            // descriptor, not its streams, so nothing can be peeked before it and handed back:
+            // the handshake itself is the protocol detector. BoringSSL names a plain HTTP request
+            // it was fed instead of a ClientHello, and that one case is answered on the raw
+            // socket with a redirect to this panel's https address, without a password ever
+            // being asked over plain text. Everything else that fails a handshake, a browser
+            // that did not accept the certificate above all, is the caller's decision.
+            InputStream plain;
+            if (tlsFactory != null) {
+                SSLSocket tls = (SSLSocket) tlsFactory.createSocket(
+                        socket, null, socket.getPort(), false);
+                tls.setUseClientMode(false);
+                try {
+                    tls.startHandshake();
+                } catch (IOException refused) {
+                    if (looksLikePlainHttp(refused)) {
+                        redirectToHttps(socket);
+                    } else {
+                        Log.d(TAG, "TLS handshake did not complete: " + refused.getMessage()
+                                + (refused.getCause() == null ? "" : " / " + refused.getCause().getMessage()));
+                    }
+                    return;
+                }
+                channel = tls;
+                plain = tls.getInputStream();
+            } else {
+                plain = socket.getInputStream();
+            }
             // Wrapped, so both readLine and readBody inherit the whole-request deadline without
             // either of them having to know about it. See REQUEST_DEADLINE_MS.
-            InputStream input = new DeadlineInputStream(socket.getInputStream(), REQUEST_DEADLINE_MS);
-            OutputStream output = socket.getOutputStream();
+            InputStream input = new DeadlineInputStream(plain, REQUEST_DEADLINE_MS);
+            output = channel.getOutputStream();
 
             String requestLine = readLine(input, MAX_REQUEST_LINE_LENGTH);
             if (requestLine == null || requestLine.isEmpty()) {
@@ -424,14 +474,19 @@ final class HttpAdminServer {
             // Fail soft like the rest of the app: log it, answer 500, keep serving.
             Log.w(TAG, "HTTP admin request failed", unexpected);
             try {
-                writeResponse(socket.getOutputStream(), 500, "text/plain",
-                        bytes("Internal Server Error"));
+                writeResponse(output != null ? output : channel.getOutputStream(), 500,
+                        "text/plain", bytes("Internal Server Error"));
             } catch (IOException | RuntimeException ignored) {
                 // The socket is already unusable, or the response was partly written. Nothing left
                 // to say to this client; the point was to survive, and we have.
             }
         } finally {
             liveSockets.remove(socket);
+            if (channel != socket) {
+                // Sends the TLS close_notify and frees the native session now rather than at GC;
+                // autoClose was false, so the raw socket below is still ours to close.
+                closeQuietly(channel);
+            }
             closeQuietly(socket);
         }
     }
@@ -1045,6 +1100,7 @@ final class HttpAdminServer {
                         "Admin password (blank keeps the current one)", ""))
                 .append("<p class=\"hint\">At least ").append(MIN_ADMIN_PASSWORD_LENGTH)
                 .append(" characters. No username.</p>")
+                .append(certificateHint())
                 .append(sectionFormEnd("Save"))
 
                 .append(sectionFormStart("sequences", "Escape sequences", notice, noticeSection))
@@ -1634,6 +1690,47 @@ final class HttpAdminServer {
         }
     }
 
+    /**
+     * The sentence under the web admin's own box that lets a person check the padlock: the
+     * fingerprint here has to match the one the browser shows for this page.
+     */
+    private String certificateHint() {
+        if (tlsFactory == null) {
+            return "<p class=\"hint bad\">Served over plain HTTP: this device could not create a "
+                    + "certificate, so the password travels unencrypted. Use it on a trusted "
+                    + "network only.</p>";
+        }
+        return "<p class=\"hint\">Served over HTTPS with a certificate this panel made itself, so "
+                + "your browser warned once. Its SHA-256 fingerprint, to compare with the one the "
+                + "browser shows for this page: <code>" + escapeHtml(certificateFingerprint)
+                + "</code></p>";
+    }
+
+    /** BoringSSL's words for "that was an HTTP request, not a handshake". */
+    private static boolean looksLikePlainHttp(IOException handshakeFailure) {
+        // Conscrypt reports "Handshake failed" and keeps BoringSSL's reason in the cause.
+        for (Throwable step = handshakeFailure; step != null; step = step.getCause()) {
+            String message = String.valueOf(step.getMessage()).toUpperCase(Locale.ROOT);
+            if (message.contains("HTTP_REQUEST") || message.contains("HTTP REQUEST")
+                    || message.contains("WRONG_VERSION_NUMBER") || message.contains("WRONG VERSION")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A plain-HTTP request on the HTTPS port: its bytes went into the failed handshake, so the
+     * path is gone, but where it was going is not: the address it connected to, over https.
+     */
+    private void redirectToHttps(Socket socket) throws IOException {
+        String location = TlsPresentation.redirectLocation(
+                socket.getLocalAddress().getHostAddress(), boundPort);
+        writeResponse(socket.getOutputStream(), 301, "text/plain",
+                bytes("This panel speaks HTTPS: " + location),
+                Collections.singletonMap("Location", location));
+    }
+
     private static String readLine(InputStream input, int maxLength) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream(128);
         int b;
@@ -1711,6 +1808,8 @@ final class HttpAdminServer {
         switch (status) {
             case 200:
                 return "OK";
+            case 301:
+                return "Moved Permanently";
             case 400:
                 return "Bad Request";
             case 401:
