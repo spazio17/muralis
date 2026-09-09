@@ -19,7 +19,7 @@ label.slider input[type=range]{display:block;width:100%;min-width:0;margin-top:.
 /* The sections layout, the way Home Assistant's own Sections view packs cards: */
 /* vertical stacks where each card sits directly under the one above it. This was */
 /* display:grid, which places cards in ROWS, so every row grew to its tallest card */
-/* and the shorter neighbours trailed dead space below them (Juri's sketch, */
+/* and the shorter neighbours trailed dead space below them (per the sketch of */
 /* 2026-08-25). Multicol packs by column instead: ~300px columns, as many as fit, */
 /* balanced by height, and a narrow phone degrades to the same single stack as */
 /* before. break-inside goes on the fieldset as well as the wrapper form because */
@@ -42,7 +42,7 @@ fieldset{border:1px solid var(--accent);background:var(--surface);margin:0;min-w
 /* something solid rather than just a colour change. */
 button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;border:1px solid var(--accent-alt);background:transparent;color:var(--accent-alt);font-size:.9rem;cursor:pointer;box-shadow:0 2px 0 0 var(--accent-alt),0 2px 4px rgba(0,0,0,.18);transition:transform .08s ease,box-shadow .08s ease}button:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}button:active{transform:translateY(2px);box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}button.primary{background:var(--accent);border-color:var(--accent);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}.actions{display:flex;flex-wrap:wrap;gap:.4rem}.actions form{display:inline}#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;white-space:pre-wrap;background:var(--mantle);border-radius:10px;padding:.7rem;overflow-x:auto;color:var(--subtext);margin:.6rem 0 0}dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem .8rem;margin:.6rem 0 0;font-size:.85rem}dt{color:var(--subtext)}dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}a{color:var(--accent-alt)}
 /* The pre-check verdicts (admin_check.js): the border says whether the value would work right */
-/* now, the tooltip says why. Border only, no glow or fill, by Juri's request: the verdict is */
+/* now, the tooltip says why. Border only, no glow or fill, as decided 2026-08-24: the verdict is */
 /* an annotation, not an alarm. Cleared rather than guessed when the check itself cannot run. */
 input.check-ok{border-color:var(--ok)}
 input.check-bad{border-color:var(--bad)}

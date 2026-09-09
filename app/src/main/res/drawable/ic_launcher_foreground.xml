@@ -11,7 +11,7 @@
      There is deliberately no stand. The first version had a neck and a foot under the screen, added
      so the icon would read as "a fixed wall panel rather than a tablet or a TV", and it achieved the
      exact opposite: a screen on a neck above a foot is the visual language of a desk monitor, and
-     that is what people saw (Juri, 2026-09-04). A panel actually mounted on a wall has no stand at
+     that is what people saw (noted 2026-09-04). A panel actually mounted on a wall has no stand at
      all. What says "tablet" instead is the front camera, the one mark every tablet carries and no
      monitor does, and it is the same dot the device bezel in the store screenshots draws, so the
      icon and the listing images agree about what the object is. Sketches for this decision, and the
@@ -20,7 +20,7 @@
      Removing the stand also left the panel two units above the canvas centre, because the old
      composition was balanced around the stand's foot rather than around the screen. That is 9.5px
      out of place in the 512px listing icon: small enough to read as "something is slightly off"
-     without being nameable (Juri, 2026-09-07). Every path is therefore two units lower than the
+     without being nameable (noted 2026-09-07). Every path is therefore two units lower than the
      first stand-free draft, and nothing else about the drawing changed. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"

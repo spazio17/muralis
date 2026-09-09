@@ -12,7 +12,7 @@ package org.spazio17.muralis;
  * about the app changes and a tap on the glass brings the dashboard back. A real <b>sleep</b> is
  * the device owner's {@code DevicePolicyManager.lockNow()}, the admin's power button: the LED goes
  * off, and only a remote wake, the power button or the presence blueprint brings it back. Sleep is
- * what Juri asked for by default (2026-09-08); the film is what an ordinary install gets, and what
+ * the default, decided 2026-09-08; the film is what an ordinary install gets, and what
  * a device-owner panel falls back to when sleep cannot be trusted.
  *
  * <p><b>When sleep cannot be trusted, and how that is known without asking the user to

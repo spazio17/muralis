@@ -497,7 +497,7 @@ final class HttpAdminServer {
             // POST, not GET, even though it changes nothing on this device. It makes the panel
             // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
             // was an SSRF and LAN-scanning primitive: Basic-auth credentials ride along
-            // automatically, and <img src=".../api/check?kind=mqtt_host&value=10.0.0.5&port=22">
+            // automatically, and <img src=".../api/check?kind=mqtt_host&value=192.0.2.5&port=22">
             // on any page the operator visited would have had the panel probe it and leak
             // reachability through onload/onerror timing. POST puts it behind the same
             // crossSiteRefusal gate as the commands, which is why that gate is keyed on the verb.
@@ -1015,7 +1015,7 @@ final class HttpAdminServer {
                 // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it
                 // until the next kiosk restart and stores nothing (kiosk.open_url, never
                 // set_url). It used to be a separate "Open a URL now" box with a "Go" button,
-                // which Juri had removed 2026-09-08 so the two surfaces offer the same thing in
+                // which was removed on 2026-09-08 so the two surfaces offer the same thing in
                 // the same place. Open once is a submit button with its own formaction, so with
                 // scripting unavailable the browser still posts the box to /api/command (which
                 // reads dashboard_url for it, see handleCommand); with scripting, commandScript
@@ -1064,7 +1064,7 @@ final class HttpAdminServer {
                 // Kept sorted by label; add new actions in alphabetical place. There is no
                 // "Main dashboard" (kiosk.home) action any more, dropped 2026-09-07 together with
                 // the tablet's button of the same name: on the tablet it was pressed in place of
-                // the save, and Juri wanted the two surfaces to offer the same set. The way back
+                // the save, and it was decided that the two surfaces offer the same set. The way back
                 // from a one-off URL is "Restart kiosk", which the one-off box's hint already
                 // promises, and Home Assistant keeps its kiosk.home button.
                 .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")

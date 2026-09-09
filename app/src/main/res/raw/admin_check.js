@@ -1,6 +1,6 @@
 // Pre-checks a value against the device the moment its field loses focus, and says the verdict
 // with colour: green when the value would work right now, red when it would not, with the reason
-// in the tooltip. Juri's design (2026-08-24): validation can only test spelling, but "is this
+// in the tooltip. The design of 2026-08-24: validation can only test spelling, but "is this
 // port bindable", "does this URL answer", "is a broker listening there" are runtime facts only
 // the device can know, and the operator should learn them before saving, not after.
 // Advisory only. The save paths keep their own refusals; a red field is a warning, the refusal

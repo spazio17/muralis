@@ -74,7 +74,7 @@ import java.util.List;
  * relaunches the activity, so the query runs at least daily and a connection opened at startup
  * lives a day at most. An earlier version deferred everything to the configuration screen, on the
  * reasoning that the panel's foreground lasts months and a Play binding should not; that reasoning
- * was wrong, because the process does not last months. Juri caught it 2026-08-27.
+ * was wrong, because the process does not last months. Caught 2026-08-27.
  *
  * <p>Two things follow from asking at startup, and both are the point rather than side effects: a
  * purchase made on another device on the same account is picked up by the next nightly restart with
@@ -440,7 +440,7 @@ final class ProBilling implements PurchasesUpdatedListener {
      * {@code BILLING_UNAVAILABLE} is the one refusal that is about this device or account rather
      * than about the moment. Google lists an out-of-date Store, an unsupported country, an
      * enterprise that disabled purchases and a blocked Store; in practice it is also what a device
-     * with no Google account signed in gets, which under Juri's rule is the case that matters. Play
+     * with no Google account signed in gets, which under the rule of 2026-09-03 is the case that matters. Play
      * will not vouch for anything here until the operator changes something, so Pro is off until
      * it does, and comes back by itself when Play answers again. Every other refusal, service
      * unavailable, disconnected, network, timeout, is about the moment and leaves the gate alone,
@@ -557,7 +557,7 @@ final class ProBilling implements PurchasesUpdatedListener {
         buyable = productForDisplay != null && !nowOwned;
         // Play has spoken for the whole account and the purchase was not in it: a refund, or an
         // account that never bought Pro. At once, not after a grace, which is how client-only apps
-        // on Play behave in general and what Juri asked for; a wrong empty answer from Play, which
+        // on Play behave in general and what was decided on 2026-09-03; a wrong empty answer from Play, which
         // does happen right after a boot before the Store has synced, costs a brief outage of the
         // paid surfaces and is corrected by the next query.
         if (fullAccountQuery && !nowOwned) {

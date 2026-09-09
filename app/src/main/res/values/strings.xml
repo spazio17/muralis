@@ -13,7 +13,7 @@
          credit the licence asks for (author, licence, and that the work is modified), in the shape
          of the other credit rows. Google's brand page phrases it as one long sentence, "The Android
          robot is reproduced or modified from work created and shared by Google and used according
-         to terms described in the Creative Commons 3.0 Attribution License"; Juri wanted the row
+         to terms described in the Creative Commons 3.0 Attribution License"; it was decided the row be
          short (2026-09-07), and the licence's own terms allow the credit in any reasonable manner. -->
     <string name="android_robot_attribution">Google, modified (CC BY 3.0)</string>
     <!-- Shown on the way to the Settings screen that grants WRITE_SETTINGS, from the Display card's
