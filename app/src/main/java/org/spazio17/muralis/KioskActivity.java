@@ -265,6 +265,10 @@ public final class KioskActivity extends Activity {
     private android.app.AppOpsManager.OnOpChangedListener writeSettingsWatch;
     /** Between onResume and onPause. The grant watcher only starts this activity when it is not. */
     private boolean inFront;
+    /** True from the moment a launcher hand-over starts until it has been made or abandoned. */
+    private boolean launcherHandoff;
+    /** Bumped per hand-over, so a late callback or a repeated escape cannot start a second one. */
+    private int launcherHandoffGeneration;
     /**
      * The scroll offset a redraw is carrying across, or -1 when the next screen is a genuine
      * arrival and belongs at the top. See {@link #redrawInPlace}.
@@ -729,8 +733,13 @@ public final class KioskActivity extends Activity {
         // dismiss key, which also handed anyone standing at the panel a Back button.
         enterImmersiveMode();
         // Lock task is held on every Muralis screen, so re-apply it here too: coming back from
-        // another app (Settings, the launcher) otherwise leaves the policy released.
-        applyKioskPolicy();
+        // another app (Settings, the launcher) otherwise leaves the policy released. Not while a
+        // launcher hand-over is pending: the keyguard's own dismissal resumes this activity for a
+        // moment, and re-pinning there would put the screen back under lock task mid-retry and
+        // leave the person looking at the kiosk they just asked to leave.
+        if (!launcherHandoff) {
+            applyKioskPolicy();
+        }
         if (webView != null) {
             webView.onResume();
         }
@@ -1317,10 +1326,95 @@ public final class KioskActivity extends Activity {
         input.requestFocus();
     }
 
+    /**
+     * Hands the screen to the system launcher, dealing with the keyguard a sleep left behind.
+     *
+     * <p>A real screen-off ({@code lockNow}) while lock task hides the keyguard leaves Android
+     * with a keyguard to reshow: {@code KeyguardViewMediator} records "reshow when re-enabled"
+     * before it ever checks that the device owner disabled the lock screen, and
+     * {@code stopLockTask()} re-enables it. Measured on the Lenovo 2026-09-09: the launcher came
+     * up behind a lock screen with a clock and notifications, needing a swipe. It cannot be
+     * dismissed while hidden, the request errors, so the pin is dropped first, any brightness
+     * override is lifted, and only then is the keyguard dismissed.
+     *
+     * <p><b>Only for a device owner whose keyguard is not secure</b>, where the lock screen is
+     * disabled and the dismissal is therefore silent. A real credential stays Android's to ask
+     * for and an ordinary install never asks: measured on both panels 2026-09-10, a device PIN
+     * produced no dismissal request at all and Android's lock screen took the screen.
+     *
+     * <p>A callback is not a deadline. Some vendors never deliver a dismissal result, so an
+     * independent 1.2 s timer hands the screen over regardless; on the Lenovo the request went at
+     * +0 ms, a retry at +113 ms and the launcher started at +1,206 ms, so the deadline is what
+     * completed it. {@code onResume} does not re-apply the kiosk policy while a hand-over is
+     * pending, which would otherwise re-pin the screen mid-retry, and each hand-over carries a
+     * generation, so two escapes in a row start the launcher exactly once (measured).
+     */
     private void openSystemLauncher() {
+        liftVisualOff();
+        if (blackout != null && !kioskStopped) {
+            blackout.setVisibility(View.GONE);
+        }
+        launcherHandoff = true;
+        int generation = ++launcherHandoffGeneration;
+        releaseForOtherApp();
+        Runnable finish = () -> {
+            if (!launcherHandoff || generation != launcherHandoffGeneration
+                    || isFinishing() || isDestroyed()) {
+                return;
+            }
+            launcherHandoff = false;
+            startSystemLauncher();
+        };
+        android.app.KeyguardManager keyguard = getSystemService(android.app.KeyguardManager.class);
+        if (keyguard == null || keyguard.isKeyguardSecure() || !KioskService.isDeviceOwner(this)) {
+            // Authentication belongs to Android. The retry fixes only the owner's stale swipe lock.
+            finish.run();
+            return;
+        }
+        mainHandler.postDelayed(finish, KEYGUARD_HANDOVER_DEADLINE_MS);
+        dismissKeyguardForLauncher(keyguard, generation, finish);
+    }
+
+    /** How long a hand-over waits for the keyguard before going ahead without it. */
+    private static final long KEYGUARD_HANDOVER_DEADLINE_MS = 1_200L;
+    /** How often the reshown keyguard is asked again; it refuses until it is actually showing. */
+    private static final long KEYGUARD_POLL_MS = 100L;
+
+    /**
+     * Asks the reshown keyguard to go away, then runs {@code finish}.
+     *
+     * <p>{@code isKeyguardLocked} turns true a moment before the keyguard is actually showing and
+     * a dismissal asked in that moment is refused, so both the wait and the refusal are retried on
+     * the same clock. Nothing here is a deadline: {@code openSystemLauncher}'s timer is.
+     */
+    private void dismissKeyguardForLauncher(android.app.KeyguardManager keyguard,
+            int generation, Runnable finish) {
+        if (!launcherHandoff || generation != launcherHandoffGeneration
+                || isFinishing() || isDestroyed()) {
+            return;
+        }
+        Runnable retry = () -> mainHandler.postDelayed(
+                () -> dismissKeyguardForLauncher(keyguard, generation, finish), KEYGUARD_POLL_MS);
+        if (!keyguard.isKeyguardLocked()) {
+            retry.run();
+            return;
+        }
+        try {
+            keyguard.requestDismissKeyguard(this,
+                    new android.app.KeyguardManager.KeyguardDismissCallback() {
+                        @Override public void onDismissSucceeded() { finish.run(); }
+                        @Override public void onDismissCancelled() { finish.run(); }
+                        @Override public void onDismissError() { retry.run(); }
+                    });
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Keyguard dismissal refused; handing over with Android's lock intact");
+            finish.run();
+        }
+    }
+
+    private void startSystemLauncher() {
         // Lock-task mode would otherwise refuse the launch outright, and the launcher would be
         // unusable without its navigation bar or status bar.
-        releaseForOtherApp();
         // Resolved, not hardcoded: the ROM's com.android.launcher3/.lineage.LineageLauncher does
         // not exist on stock Android, and naming a missing component here would make the escape
         // hatch fail exactly when someone needs it to work.
