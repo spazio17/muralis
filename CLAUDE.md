@@ -517,7 +517,23 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   nothing is drawn: the dark state is the screen being off, `display.source` reports
   `display_off` from `isInteractive()`, and the power button or a remote wake ends it. The
   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission is deliberately not declared: Play restricts
-  it, and the policy does not need it, it only reads the answer.
+  it, and the policy does not need it, it only reads the answer. **A sleep leaves a keyguard
+  behind** (found 2026-09-09): `lockNow` asks the keyguard to lock while lock task has it
+  externally disabled, and `KeyguardViewMediator` records "reshow when re-enabled" before it ever
+  checks that the device owner disabled the lock screen; `stopLockTask()` re-enables it, so the
+  launcher hand-over came up behind a lock screen. It cannot be dismissed while hidden (the request
+  errors), so `openSystemLauncher` drops the pin first, lifts any brightness override, and
+  `dismissKeyguardForLauncher` retries `requestDismissKeyguard` on a 100 ms clock until the reshown
+  keyguard accepts it. **Only for a device owner whose keyguard is not secure**, where the lock
+  screen is disabled and the dismissal is therefore silent: a real credential stays Android's to
+  ask for, and an ordinary install never asks. Measured on both panels 2026-09-10: with a device
+  PIN set, no dismissal was requested at all and Android's lock screen took the screen. A callback
+  is not a deadline, so an independent 1.2 s timer hands the screen over even where a vendor never
+  answers (on the Lenovo the request went at +0 ms, a retry at +113 ms and the launcher started at
+  +1,206 ms, so the deadline is what completed it), and `onResume` does not re-apply the kiosk
+  policy while a hand-over is pending, which would otherwise re-pin the screen mid-retry. Each
+  hand-over carries a generation, so a repeated escape and a late callback cannot start the
+  launcher twice.
 
 ## Platform constraints that shape the code
 
