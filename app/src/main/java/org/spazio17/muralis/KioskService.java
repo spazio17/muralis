@@ -1828,11 +1828,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (KioskRuntimeState.wizardOnScreen()) {
             return "the first-start wizard is on screen";
         }
-        // Somebody is in the settings or picking pictures: the activity answers a start by
-        // showing the dashboard, which would throw their half-made draft away (review of
-        // 2026-09-19).
-        if (KioskRuntimeState.operatorOnScreen()) {
-            return "Muralis settings are open on the panel";
+        // The settings being open is no longer a refusal (it was "Muralis settings are open on
+        // the panel" until 2026-09-24, Juri: "Preview should work anyway"): the activity shows
+        // the screensaver over the page as a preview, exactly what the settings page's own
+        // Preview button does, and a touch brings the settings back. The recorder is different:
+        // it is capturing taps against a clock, and a screensaver would take them.
+        if (KioskRuntimeState.recorderOnScreen()) {
+            return "the escape combination recorder is on screen";
         }
         PowerManager power = getSystemService(PowerManager.class);
         boolean screenOn = power == null || power.isInteractive();

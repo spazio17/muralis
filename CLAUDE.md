@@ -118,9 +118,21 @@ be there.
   bounded to 96 characters and stripped of control characters before it is logged or echoed, so an
   embedded newline cannot forge log lines.
 - **The web admin serves HTTPS with a certificate the panel makes itself (2026-09-09).**
-  `AdminCertificate` keeps an EC key pair in the Android Keystore, which also issues the
-  self-signed X.509 (ten years, `CN=Muralis <device id>`; the Keystore cannot put an address in
-  it, so a browser shows two warnings, authority and name, and one click accepts both). The
+  `AdminCertificate` holds an EC P-256 key pair made in software and kept encrypted through
+  `SecretStore`, and `SelfSignedCertificate` writes the X.509 for it by hand (ten years,
+  `CN=Muralis <device id>`, no extensions; no address in it, since a panel's address changes, so
+  a browser shows two warnings, authority and name, and one click accepts both). **The key pair
+  was in the Android Keystore until 2026-09-24, and that is why the playlist page failed:**
+  the hardware signed every handshake at about 0.4 s on the Huawei tablet (a full handshake
+  0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response closes its connection, and
+  a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
+  deadline: `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
+  Nineteen parallel curls against the tablet all failed, seven refused at the per-host cap and
+  twelve cut at 2.05 s. A software key signs in under a millisecond. The old Keystore alias is
+  deleted the first time the new code runs, so a panel updated across that date shows a new
+  fingerprint once; a user must accept it again. Never put that key back in the Keystore for
+  "security": the certificate exists to keep the admin password off a LAN's wire, and a key that
+  root could read is the price of a web admin that answers. The
   listening socket stays plain and every accepted connection is handed to TLS: Android's
   Conscrypt wraps the socket's file descriptor, not its streams, so nothing can be peeked and
   handed back (a wrapper `Socket` was tried and died with "Socket is closed" inside
@@ -130,9 +142,21 @@ be there.
   never asked over plain text. The fingerprint is printed on the
   tablet's web-admin card, in the web admin's own box and in the admin-only stats
   (`config.http_tls`, `config.http_certificate_sha256`), so a person can compare it with the
-  browser's. A device whose Keystore cannot make the certificate falls back to plain HTTP and
-  says so in red on the page. A user-supplied certificate (own CA, fullchain plus key) is the
-  planned v2 step. MQTT is unchanged: plain TCP, trusted network.
+  browser's. A device whose key cannot be read right now (SecretStore before the first unlock)
+  falls back to plain HTTP and says so in red on the page, and never makes a new key over one
+  that is merely unreadable. **A user-supplied certificate is the planned "local web admin v2"**, settled 2026-09-24 and
+  no different from any service that takes a TLS certificate: two uploads on the web admin, a
+  certificate file with one or more PEM blocks (the server certificate first, then any
+  intermediates, `fullchain.pem` as certbot writes it or `cert.pem` and `chain.pem` pasted
+  together; the root is the client's business and is ignored if present) and an unencrypted
+  private key in PKCS#8 (`BEGIN PRIVATE KEY`), RSA or EC, which the one-key manager serves as it
+  serves the panel's own. Read with the platform's certificate and key factories, no library;
+  the traditional `BEGIN EC PRIVATE KEY` and `BEGIN RSA PRIVATE KEY` shapes are wrapped into
+  PKCS#8 by a few lines of DER or refused with the one openssl command that converts them, and
+  an encrypted key is refused outright, since a wall panel has nowhere to type a passphrase at
+  boot. Nothing is saved until the pair has been parsed and the key shown to match the first
+  certificate. The panel's own certificate stays the out-of-the-box default; a choice on the
+  web admin picks between the two. MQTT is unchanged: plain TCP, trusted network.
 - **The remote surfaces are the paid tier, gated in exactly two places.** Muralis Pro (Play
   product `muralis_pro`, one-time, account-wide) unlocks MQTT and the web admin together; the
   kiosk, recovery, the stats overlay and the local `TelemetryCollector` feeding it stay free and
@@ -912,7 +936,12 @@ be there.
   nothing (Open once, Reboot, Reload, Display on and off, Preview, Back); **red deletes
   something** (Delete a picture, Delete a playlist, and the confirm screen's own button); **green
   adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
-  where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better").
+  where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better"). **A quick action the panel refuses says so on the page** (2026-09-24): `admin_command.js`
+  puts the playlist page's red banner under the pressed button's row, "Not done: Muralis
+  settings are open on the panel.", gone after five seconds, and a panel that does not answer
+  gets the same sentence the playlist page uses. Before that a refusal went to the console
+  alone and Preview, pressed while the panel's settings were open, looked broken. A success
+  still says nothing on the page.
   Taking a picture out of a playlist is the main colour and never red, on both surfaces: red here
   deletes a file or a playlist and this deletes neither. `button.danger` and `button.add` in
   `admin.css`, `dangerButton` and `addButton` in `KioskActivity`, both built on the same shape and

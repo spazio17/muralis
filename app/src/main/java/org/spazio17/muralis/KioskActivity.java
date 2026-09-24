@@ -217,6 +217,12 @@ public final class KioskActivity extends Activity {
      * page). Ends with the screensaver; a remote stop or the display going dark drops it.
      */
     private boolean screensaverPreview;
+    /**
+     * Where a touch on a preview asked for from the web or MQTT goes back to: the settings
+     * screen that was open when it arrived. Null for the settings page's own Preview button,
+     * which goes back to that page.
+     */
+    private Runnable screensaverPreviewReturn;
     /** The strip that names a preview; without it the dimmed page is just the page, darker. */
     private TextView screensaverPreviewCaption;
     // The Pictures mode: the frame in the layer, the set being shown and where in it we are, the
@@ -918,6 +924,7 @@ public final class KioskActivity extends Activity {
         KioskRuntimeState.publishOperatorOnScreen(
                 configurationVisible || recorderVisible || wizardVisible);
         KioskRuntimeState.publishWizardOnScreen(wizardVisible);
+        KioskRuntimeState.publishRecorderOnScreen(recorderVisible);
         // Rides along here because this is already the choke point every screen transition
         // passes through: the app's own screens are dark and want light icons, the dashboard
         // wants whatever probePageLuminance last measured.
@@ -1176,9 +1183,14 @@ public final class KioskActivity extends Activity {
             // corner tap still counts for the escape combinations, which work from every screen.
             if (screensaverShowing != null) {
                 boolean preview = screensaverPreview;
+                Runnable back = screensaverPreviewReturn;
                 stopScreensaver("touch");
                 if (preview) {
-                    showScreensaverSettings();
+                    if (back != null) {
+                        back.run();
+                    } else {
+                        showScreensaverSettings();
+                    }
                 } else if (zone != null) {
                     handleEscapeTap(zone, event.getEventTime());
                 }
@@ -8052,6 +8064,7 @@ public final class KioskActivity extends Activity {
             case "display.visual_off":
                 screensaverStage = ScreensaverPolicy.Stage.DARK;
                 screensaverPreview = false;
+                screensaverPreviewReturn = null;
                 if (DisplayOffPolicy.SLEEP.equals(displayOffMethod)) {
                     // The service put the screen to sleep. Nothing is drawn: the dark state is
                     // the screen being off, and the power button or a remote wake ends it. A film
@@ -8104,18 +8117,34 @@ public final class KioskActivity extends Activity {
                 }
                 break;
             }
-            case "screensaver.start":
-                if (wizardVisible) {
+            case "screensaver.start": {
+                if (wizardVisible || recorderVisible) {
+                    // The service refuses both; a broadcast that still arrives here is ignored
+                    // rather than drawn over the wizard or a recording in progress.
                     break;
                 }
-                if (configurationVisible || recorderVisible) {
-                    // The service already refuses a start while somebody is in the settings; a
-                    // broadcast that still arrives here is ignored rather than answered by
-                    // showing the dashboard over a half-made draft (review of 2026-09-19).
+                ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+                if (configurationVisible) {
+                    // Somebody is in the panel's settings: the same thing the settings page's own
+                    // Preview button does, the page under, the screensaver over it, the caption
+                    // saying a tap goes back, and the tap returns to the screen that was open.
+                    // Until 2026-09-24 the service refused this ("Muralis settings are open on
+                    // the panel") and a Preview pressed on the web looked broken (Juri: "Preview
+                    // should work anyway").
+                    Runnable back = currentScreen;
+                    showDashboard(KioskConfig.load(this).dashboardUrl);
+                    if (startScreensaver(settings, "asked for")) {
+                        screensaverPreview = true;
+                        screensaverPreviewReturn = back;
+                        showScreensaverPreviewCaption(settings);
+                    } else if (back != null) {
+                        back.run();
+                    }
                     break;
                 }
-                startScreensaver(KioskConfig.screensaverOf(this), "asked for");
+                startScreensaver(settings, "asked for");
                 break;
+            }
             case "screensaver.stop":
                 stopScreensaver("asked for");
                 break;
@@ -8343,6 +8372,7 @@ public final class KioskActivity extends Activity {
     private void stopScreensaver(String reason) {
         boolean shown = screensaverShowing != null;
         screensaverPreview = false;
+        screensaverPreviewReturn = null;
         hideScreensaverSurface();
         KioskConfig.recordScreensaverBootCount(this, -1);
         screensaverStage = ScreensaverPolicy.Stage.DASHBOARD;
