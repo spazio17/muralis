@@ -973,18 +973,26 @@ public final class KioskActivity extends Activity {
      * listening; grey "disabled" while the operator has the surface off; a warning only when it
      * should be up and is not.
      */
-    private void refreshWebAdminControls(Button toggle, TextView httpState, KioskTheme theme) {
+    private void refreshWebAdminControls(Button toggle, TextView httpState,
+            TextView fingerprintView, KioskTheme theme) {
         boolean enabled = KioskConfig.webAdminEnabled(this);
         toggle.setText(enabled ? "Turn web admin off" : "Turn web admin on");
+        // The fingerprint in a block of its own, monospaced on the darker plate, as the web page
+        // and the drawings show it: 95 characters with no space to break at ran off the end of
+        // the green status line (Juri, 2026-09-23).
+        String fingerprint = KioskRuntimeState.httpAdminFingerprint();
+        boolean showFingerprint = KioskRuntimeState.httpAdminListening() && !fingerprint.isEmpty();
+        fingerprintView.setVisibility(showFingerprint ? View.VISIBLE : View.GONE);
+        if (showFingerprint) {
+            fingerprintView.setText(fingerprint);
+        }
         if (KioskRuntimeState.httpAdminListening()) {
             SystemStats.RuntimeFacts httpFacts = KioskRuntimeState.lastFacts();
             String address = httpFacts == null || httpFacts.ipAddress.isEmpty()
                     ? "this-tablet" : httpFacts.ipAddress;
             httpState.setTextColor(theme.ok);
-            String fingerprint = KioskRuntimeState.httpAdminFingerprint();
             httpState.setText("Listening at " + KioskRuntimeState.httpAdminScheme() + address + ":"
-                    + KioskRuntimeState.httpAdminPort()
-                    + (fingerprint.isEmpty() ? "" : "\nCertificate SHA-256 " + fingerprint));
+                    + KioskRuntimeState.httpAdminPort());
         } else if (!enabled) {
             httpState.setTextColor(theme.subtext);
             httpState.setText("Web admin disabled");
@@ -1785,11 +1793,11 @@ public final class KioskActivity extends Activity {
 
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
-        // The panel's id under the name, as the web page has it, and the theme toggle at the
-        // right of the app bar: a view control for whoever is reading this screen, not a device
-        // setting, so it sits with the chip rather than in a card (2026-09-23).
+        // The panel's id under the name, as the web page has it. The theme toggle used to sit at
+        // the right of this bar; it is at the right of the Display section's title now, with the
+        // other settings for what this screen looks like (Juri, 2026-09-23).
         page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null, null,
-                themeToggle(theme)), matchWrap());
+                null), matchWrap());
         View provisioningNotice = provisioningNotice(theme);
         if (provisioningNotice != null) {
             page.addView(provisioningNotice, matchWrap());
@@ -1975,6 +1983,22 @@ public final class KioskActivity extends Activity {
         // password is too short" was one line in logcat, invisible from the panel itself.
         TextView httpState = new TextView(this);
         httpState.setTextSize(13);
+        // The sentence the web page carries above the same block, so the two surfaces explain the
+        // certificate the same way, and the fingerprint itself in a code block under it.
+        TextView certificateNote = new TextView(this);
+        certificateNote.setTextColor(theme.subtext);
+        certificateNote.setTextSize(12);
+        certificateNote.setText("Served over HTTPS with a certificate this panel made itself, so "
+                + "your browser warned once. Its SHA-256 fingerprint, to compare with the one the "
+                + "browser shows for that page:");
+        TextView fingerprintView = new TextView(this);
+        fingerprintView.setTypeface(Typeface.MONOSPACE);
+        fingerprintView.setTextSize(12);
+        fingerprintView.setTextColor(theme.subtext);
+        fingerprintView.setBackground(theme.panel(theme.lowest(), dp(8)));
+        int monoPad = dp(12);
+        fingerprintView.setPadding(monoPad, monoPad, monoPad, monoPad);
+        fingerprintView.setVisibility(View.GONE);
         // On/off is its own stored flag, never the password: turning the surface off must not
         // cost the credential, and turning it back on must not require retyping one. The label is
         // the state, so the button always says what pressing it does.
@@ -1996,12 +2020,12 @@ public final class KioskActivity extends Activity {
             }
             // The label flips at once; the state line waits a beat, the bind happens on the
             // service's queue, and the live-sync poll keeps both honest after that.
-            refreshWebAdminControls(webAdminToggle, httpState, theme);
-            mainHandler.postDelayed(
-                    () -> refreshWebAdminControls(webAdminToggle, httpState, theme), 700);
+            refreshWebAdminControls(webAdminToggle, httpState, fingerprintView, theme);
+            mainHandler.postDelayed(() -> refreshWebAdminControls(webAdminToggle, httpState,
+                    fingerprintView, theme), 700);
         });
         httpCard.addView(buttonRow(webAdminToggle), matchWrap());
-        refreshWebAdminControls(webAdminToggle, httpState, theme);
+        refreshWebAdminControls(webAdminToggle, httpState, fingerprintView, theme);
         // The broker is checked as soon as the screen opens, not only after an edit: an operator
         // who comes here because "Home Assistant lost the panel" gets the answer without having
         // to touch a field first.
@@ -2010,6 +2034,14 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         httpStateParams.topMargin = dp(10);
         httpCard.addView(httpState, httpStateParams);
+        LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        noteParams.topMargin = dp(12);
+        httpCard.addView(certificateNote, noteParams);
+        LinearLayout.LayoutParams fingerprintParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        fingerprintParams.topMargin = dp(8);
+        httpCard.addView(fingerprintView, fingerprintParams);
 
 
         // Everything about how the glass looks: the backlight and which way up the panel is.
@@ -2241,10 +2273,14 @@ public final class KioskActivity extends Activity {
         statsReadout.setTextColor(theme.text);
         statsReadout.setLineSpacing(dp(2), 1.1f);
         // Drawn as a code block, matching the web admin's <pre id="stats">: same monospace face, same
-        // darker plate behind it, same padding and corner. The two surfaces show identical rows from
+        // plate behind it, same padding and corner. The two surfaces show identical rows from
         // identical data, so looking identical is the honest presentation; monospace text sitting
-        // bare on the card read as prose that happened to be misaligned.
-        statsReadout.setBackground(theme.panel(theme.mantle, dp(10)));
+        // bare on the card read as prose that happened to be misaligned. The plate is the lowest
+        // surface, white on a light theme and near-black on a dark one, which is the web's
+        // --lowest and the plate the certificate fingerprint stands on; it used to be the mantle,
+        // which is a light theme's card colour again and left the block with no plate at all
+        // (Juri, 2026-09-23).
+        statsReadout.setBackground(theme.panel(theme.lowest(), dp(10)));
         int statsPad = dp(10);
         statsReadout.setPadding(statsPad, statsPad, statsPad, statsPad);
         statsReadout.setText(renderOverlay(theme.light));
@@ -2309,7 +2345,7 @@ public final class KioskActivity extends Activity {
                 }
                 // The web admin button and status line follow the flag and the socket too, so a
                 // toggle from MQTT or the web admin itself shows here without reopening the screen.
-                refreshWebAdminControls(webAdminToggle, httpState, theme);
+                refreshWebAdminControls(webAdminToggle, httpState, fingerprintView, theme);
                 mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
             }
         };
@@ -2425,8 +2461,8 @@ public final class KioskActivity extends Activity {
         // place, one at a time (Juri's drawing of 2026-09-23); from 840 dp the list stands at the
         // left and the open section at the right. Same order as the web page, which has one more
         // section, Quick actions, for the commands that a person standing at the panel has as
-        // the foot button and the escape combinations.
-        page.addView(settingsMenu(theme, java.util.Arrays.asList(
+        // Open dashboard and the escape combinations.
+        final List<Section> sections = java.util.Arrays.asList(
                 new Section(R.drawable.ic_dashboard, "Dashboard", dashboardSummary(config),
                         dashboardCard),
                 new Section(R.drawable.ic_mqtt, "MQTT", config.mqttHost.isEmpty()
@@ -2434,15 +2470,17 @@ public final class KioskActivity extends Activity {
                 new Section(R.drawable.ic_web, "Local web admin", webAdminSummary(config), httpCard),
                 new Section(R.drawable.ic_escape, "Escape sequences", sequencesSummary(config),
                         escapeCard),
-                new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard),
+                // The one section with a control of its own beside its name: the day and night
+                // toggle, which is what this screen looks like and belongs with the brightness
+                // and the orientation rather than in the app bar (Juri, 2026-09-23).
+                new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard,
+                        themeToggle(theme)),
                 new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
                         screensaverCard),
                 new Section(R.drawable.ic_stats, "System stats", statsSummary(), statsCard),
-                new Section(R.drawable.ic_info, "About", appVersionSummary(), aboutCard))),
-                matchWrap());
+                new Section(R.drawable.ic_info, "About", appVersionName(), aboutCard));
 
-        Button open = primaryButton(theme, "Open dashboard");
-        open.setOnClickListener(view -> {
+        Runnable openDashboard = () -> {
             String url = normalizeUrl(urlInput.getText().toString());
             // Stale-form guard, the same rule the escape recorder and the web admin boxes
             // follow: this form holds the values that were current when the screen was built,
@@ -2535,11 +2573,11 @@ public final class KioskActivity extends Activity {
             // Assistant on the old values for up to a minute.
             KioskService.publishTelemetrySoon(this);
             showDashboard(url);
-        });
+        };
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
         // so handing it the screen left no way back. Wi-Fi is set up once during provisioning, and
         // Settings is still reachable through the escape sequence when it is genuinely needed.
-        page.addView(footButton(open), matchWrap());
+        page.addView(settingsMenu(theme, sections, openDashboard), matchWrap());
 
         // The page itself takes the initial focus, so no field holds it uninvited. Without this,
         // the first EditText (the dashboard URL) silently owned the focus from the moment the
@@ -2567,18 +2605,28 @@ public final class KioskActivity extends Activity {
         };
     }
 
-    /** One section of the settings menu: its glyph, its name, one line of what is stored, its body. */
+    /**
+     * One section of the settings menu: its glyph, its name, one line of what is stored, its body,
+     * and at most one control that belongs beside its name wherever that name is drawn, which is
+     * the accordion's row or the open card's title.
+     */
     private static final class Section {
         final int icon;
         final String title;
         final String summary;
         final LinearLayout body;
+        final View action;
 
         Section(int icon, String title, String summary, LinearLayout body) {
+            this(icon, title, summary, body, null);
+        }
+
+        Section(int icon, String title, String summary, LinearLayout body, View action) {
             this.icon = icon;
             this.title = title;
             this.summary = summary;
             this.body = body;
+            this.action = action;
         }
     }
 
@@ -2600,13 +2648,52 @@ public final class KioskActivity extends Activity {
      * at the left, 360 dp wide, and the open section as a card at the right, no wider than
      * 640 dp, so no panel ever spans a landscape tablet and turns its boxes into bars.
      */
-    private View settingsMenu(KioskTheme theme, List<Section> sections) {
+    private View settingsMenu(KioskTheme theme, List<Section> sections, Runnable onOpenDashboard) {
         android.content.SharedPreferences ui = KioskConfig.storageContext(this)
                 .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
         String remembered = ui.getString(OPEN_SECTION, "");
         boolean wide = getResources().getConfiguration().screenWidthDp >= 840;
-        return wide ? listDetail(theme, sections, remembered, ui)
-                : accordion(theme, sections, remembered, ui);
+        View footer = openDashboardRow(theme, onOpenDashboard, wide);
+        return wide ? listDetail(theme, sections, remembered, ui, footer)
+                : accordion(theme, sections, remembered, ui, footer);
+    }
+
+    /**
+     * Open dashboard, drawn as a menu of one entry under the menu itself: the same row, the same
+     * glyph column, in the main colour, a card's gap below the list (Juri, 2026-09-23). It is the
+     * one button of this screen and it saves before it opens, which is why it is apart from the
+     * sections rather than inside one.
+     *
+     * <p>It is the same card as the menu above it, corner for corner, and only the colour sets
+     * it apart (Juri, 2026-09-23). {@code inList} is the list-detail layout, where the card holds
+     * its rows 8 dp in: the row takes that on as padding rather than shrinking, so the card keeps
+     * the menu's width and the two glyph columns still line up.
+     */
+    private LinearLayout openDashboardRow(KioskTheme theme, Runnable onOpen, boolean inList) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(72));
+        int side = dp(inList ? 24 : 16);
+        row.setPadding(side, dp(8), side, dp(8));
+        row.setBackground(theme.ripple(theme.panel(theme.accent, dp(12)),
+                theme.panel(Color.WHITE, dp(12)), theme.onAccent()));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_dashboard);
+        icon.setImageTintList(ColorStateList.valueOf(theme.onAccent()));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        iconParams.rightMargin = dp(20);
+        row.addView(icon, iconParams);
+        TextView label = new TextView(this);
+        label.setText("Open dashboard");
+        label.setTextColor(theme.onAccent());
+        label.setTextSize(16);
+        label.setTypeface(MEDIUM);
+        row.addView(label, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.setContentDescription("Open dashboard: save these settings and show the page");
+        row.setOnClickListener(view -> onOpen.run());
+        return row;
     }
 
     /** The row every section shows closed: 72 dp, the glyph, two lines, and a chevron. */
@@ -2640,6 +2727,13 @@ public final class KioskActivity extends Activity {
         texts.addView(summary);
         row.addView(texts, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // The accordion's row is where that section's name is drawn, so a section's own control
+        // rides here; in the list-detail layout the name is the open card's title and it rides
+        // there instead. Either way it is beside the name, once.
+        if (chevron && section.action != null) {
+            row.addView(section.action, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
         if (chevron) {
             ImageView arrow = new ImageView(this);
             arrow.setImageResource(R.drawable.ic_expand_more);
@@ -2656,18 +2750,30 @@ public final class KioskActivity extends Activity {
     }
 
     private View accordion(KioskTheme theme, List<Section> sections, String remembered,
-            android.content.SharedPreferences ui) {
+            android.content.SharedPreferences ui, View footer) {
+        // The menu and the row under it share one column, no wider than 720 dp and centred: a
+        // phone fills it, a portrait tablet does not stretch it. Measured inside the page's own
+        // gutters, since those are what the column actually has to live in.
+        int width = contentWidthDp();
+        LinearLayout stack = new LinearLayout(this);
+        stack.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams stackParams = new LinearLayout.LayoutParams(
+                width > 720 ? dp(720) : ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        stackParams.gravity = Gravity.CENTER_HORIZONTAL;
+        stack.setLayoutParams(stackParams);
         LinearLayout menu = new LinearLayout(this);
         menu.setOrientation(LinearLayout.VERTICAL);
         menu.setBackground(theme.panel(theme.card, dp(12)));
         menu.setClipToOutline(true);
-        // No wider than 720 dp, centred: a phone fills it, a portrait tablet does not stretch it.
-        int width = getResources().getConfiguration().screenWidthDp;
-        LinearLayout.LayoutParams menuParams = new LinearLayout.LayoutParams(
-                width > 720 + 48 ? dp(720) : ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        menuParams.gravity = Gravity.CENTER_HORIZONTAL;
-        menu.setLayoutParams(menuParams);
+        stack.addView(menu, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (footer != null) {
+            LinearLayout.LayoutParams footerParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            footerParams.topMargin = dp(16);
+            stack.addView(footer, footerParams);
+        }
         List<LinearLayout> rows = new ArrayList<>();
         List<LinearLayout> bodies = new ArrayList<>();
         boolean phone = width < 600;
@@ -2710,7 +2816,7 @@ public final class KioskActivity extends Activity {
                 }
             });
         }
-        return menu;
+        return stack;
     }
 
     /** The open row lifted a step, its chevron turned; the closed rows plain. */
@@ -2725,28 +2831,49 @@ public final class KioskActivity extends Activity {
     }
 
     private View listDetail(KioskTheme theme, List<Section> sections, String remembered,
-            android.content.SharedPreferences ui) {
+            android.content.SharedPreferences ui, View footer) {
         LinearLayout pair = new LinearLayout(this);
         pair.setOrientation(LinearLayout.HORIZONTAL);
         pair.setBaselineAligned(false);
+        // The list is half the open section, the two of them filling the column the gutters
+        // leave, with Material's 24 dp gutter between them (Juri's drawing of 2026-09-23: menu
+        // 30, gap 5, content 60). Weights rather than a fixed 360 dp list, because the column
+        // itself is a share of the screen now and a fixed pane would break the proportion.
+        LinearLayout navColumn = new LinearLayout(this);
+        navColumn.setOrientation(LinearLayout.VERTICAL);
         LinearLayout nav = new LinearLayout(this);
         nav.setOrientation(LinearLayout.VERTICAL);
         nav.setBackground(theme.panel(theme.card, dp(12)));
         nav.setPadding(dp(8), dp(8), dp(8), dp(8));
-        LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(dp(360),
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        navParams.rightMargin = dp(16);
-        pair.addView(nav, navParams);
+        navColumn.addView(nav, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (footer != null) {
+            LinearLayout.LayoutParams footerParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            footerParams.topMargin = dp(16);
+            navColumn.addView(footer, footerParams);
+        }
+        LinearLayout.LayoutParams navParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        navParams.rightMargin = dp(24);
+        pair.addView(navColumn, navParams);
 
-        // The open section as a card, no wider than 640 dp, the rest of the row left empty
-        // rather than filled: at 1280 dp a field across the whole remainder was a bar.
         LinearLayout detail = card(theme, null);
+        // The title, and at the right of it whatever control that section brings: the day and
+        // night toggle for Display, nothing for the rest (Juri, 2026-09-23).
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView detailTitle = cardTitle(theme, "");
-        detail.addView(detailTitle);
-        int room = getResources().getConfiguration().screenWidthDp - 48 - 360 - 16;
-        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(
-                room > 640 ? dp(640) : 0, ViewGroup.LayoutParams.WRAP_CONTENT, room > 640 ? 0f : 1f);
-        pair.addView(detail, detailParams);
+        titleRow.addView(detailTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        FrameLayout titleAction = new FrameLayout(this);
+        titleRow.addView(titleAction, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        detail.addView(titleRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        pair.addView(detail, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f));
 
         int openIndex = 0;
         for (int index = 0; index < sections.size(); index++) {
@@ -2764,18 +2891,18 @@ public final class KioskActivity extends Activity {
             nav.addView(row, rowParams);
             final int mine = index;
             row.setOnClickListener(view -> {
-                showDetail(theme, detail, detailTitle, sections, rows, mine);
+                showDetail(theme, detail, detailTitle, titleAction, sections, rows, mine);
                 ui.edit().putString(OPEN_SECTION, section.title).apply();
                 hideKeyboardIfShown();
             });
         }
-        showDetail(theme, detail, detailTitle, sections, rows, openIndex);
+        showDetail(theme, detail, detailTitle, titleAction, sections, rows, openIndex);
         return pair;
     }
 
     /** Moves one section's body into the detail card and marks its row in the list. */
     private void showDetail(KioskTheme theme, LinearLayout detail, TextView detailTitle,
-            List<Section> sections, List<LinearLayout> rows, int index) {
+            FrameLayout titleAction, List<Section> sections, List<LinearLayout> rows, int index) {
         for (int other = 0; other < rows.size(); other++) {
             boolean on = other == index;
             LinearLayout row = rows.get(other);
@@ -2793,6 +2920,11 @@ public final class KioskActivity extends Activity {
             ((ViewGroup) section.body.getParent()).removeView(section.body);
         }
         detailTitle.setText(section.title);
+        titleAction.removeAllViews();
+        if (section.action != null) {
+            titleAction.addView(section.action, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
         detail.addView(section.body, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
@@ -2857,9 +2989,14 @@ public final class KioskActivity extends Activity {
 
     // ---- the summaries: stored values only, never a status line the pages do not already carry
 
+    /**
+     * Each summary is one line of a list a third of the column wide, so it says the one thing
+     * that section is about and leaves out what the page already shows: the device id is the app
+     * bar's subtitle, the uptime is in the stats readout, the build number is on the About page.
+     */
     private static String dashboardSummary(KioskConfig config) {
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
-        return (host.isEmpty() ? "No dashboard yet" : host) + " · " + config.deviceId;
+        return host.isEmpty() ? "No dashboard yet" : host;
     }
 
     private String webAdminSummary(KioskConfig config) {
@@ -2873,7 +3010,7 @@ public final class KioskActivity extends Activity {
             return "Not recorded yet";
         }
         return config.settingsSequence + " · " + config.launcherSequence
-                + (KioskConfig.escapePinSet(this) ? " · PIN set" : " · no PIN");
+                + (KioskConfig.escapePinSet(this) ? " · PIN" : "");
     }
 
     private String displaySummary() {
@@ -2881,7 +3018,7 @@ public final class KioskActivity extends Activity {
         String method = KioskConfig.displayOffMethodOf(this);
         return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
                 : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
-                + " · display off: "
+                + " · "
                 + (DisplayOffPolicy.SLEEP.equals(method) ? "screen off"
                         : DisplayOffPolicy.FILM.equals(method) ? "black film" : "automatic");
     }
@@ -2907,10 +3044,7 @@ public final class KioskActivity extends Activity {
             text.append(text.length() > 0 ? " · " : "")
                     .append(SystemStats.percent(sample.cpuBusyPercent)).append(" CPU");
         }
-        long minutes = KioskService.appUptimeMs() / 60_000L;
-        text.append(text.length() > 0 ? " · " : "").append("up ")
-                .append(minutes >= 60 ? (minutes / 60) + "h" + (minutes % 60) + "m" : minutes + "m");
-        return text.toString();
+        return text.length() == 0 ? "Live readings" : text.toString();
     }
 
     /**
@@ -2952,7 +3086,7 @@ public final class KioskActivity extends Activity {
         optionsCard.addView(optionsTitle);
         // A third panel for the playlists, split out of the Pictures options on 2026-09-11 at
         // Juri's request, so the two surfaces are arranged alike: mode, that mode's options, and
-        // the playlist. It is the panel's own playlists, so it keeps the Create playlist button
+        // the playlist. It is the panel's own playlists, so it keeps the Create button
         // and the page behind it rather than copying the web admin's inline browser.
         LinearLayout playlistCard = card(theme, "Playlist");
         ScreensaverControls controls =
@@ -3030,7 +3164,7 @@ public final class KioskActivity extends Activity {
         RadioGroup sourceInput;
         TextView sourceState;
         Button refreshButton;
-        /** The "Create playlist" button and the playlist rows under it. */
+        /** The Create button and the playlist rows under it. */
         LinearLayout playlistsGroup;
         /** The options panel's heading, which names the mode its fields belong to. */
         TextView optionsTitle;
@@ -3135,7 +3269,7 @@ public final class KioskActivity extends Activity {
             }
             // The row itself, not only the button in it: an empty row still spends its own 16 dp
             // margin, and that margin plus the playlists' own is the gap Juri measured between
-            // the source sentence and Create playlist (2026-09-10, B1).
+            // the source sentence and Create (2026-09-10, B1).
             refreshButton.setVisibility(local ? View.GONE : View.VISIBLE);
             sourceButtons.setVisibility(local ? View.GONE : View.VISIBLE);
             creditBox.setEnabled(local);
@@ -3552,7 +3686,7 @@ public final class KioskActivity extends Activity {
     /**
      * The Playlist panel, the web page's copied line for line (Juri, 2026-09-19): one row per
      * playlist, its name, how many pictures it holds, Use or "In use", Edit and Delete, and under
-     * the list the box that names a new playlist with its green Create playlist beside it.
+     * the list the box that names a new playlist with Create beside it.
      *
      * <p>Create makes the playlist at once and empty, as the web does; Edit is where its pictures
      * are picked. It used to open the playlist page with a draft, and the button used to sit above
@@ -3596,11 +3730,11 @@ public final class KioskActivity extends Activity {
             }
         }
 
-        // The box with its label on the border and Create playlist beside it, the button on the
-        // box's centre line and not the label's (Juri, 2026-09-23).
+        // The box with its label on the border and Create beside it, the button on the box's
+        // centre line and not the label's (Juri, 2026-09-23). The word "playlist" is the panel's
+        // title and is not repeated in the button.
         LinearLayout maker = new LinearLayout(this);
         maker.setOrientation(LinearLayout.HORIZONTAL);
-        maker.setGravity(Gravity.BOTTOM);
         LinearLayout fieldColumn = new LinearLayout(this);
         fieldColumn.setOrientation(LinearLayout.VERTICAL);
         EditText newName = proseInput(theme, "");
@@ -3613,7 +3747,7 @@ public final class KioskActivity extends Activity {
         problem.setTextColor(theme.bad);
         problem.setTextSize(12);
         problem.setVisibility(View.GONE);
-        Button create = primaryButton(theme, "Create playlist");
+        Button create = primaryButton(theme, "Create");
         Runnable createIt = () -> {
             String typed = newName.getText().toString().trim();
             String refusal = library.playlists().load().nameProblem(typed, null);
@@ -3631,11 +3765,7 @@ public final class KioskActivity extends Activity {
             createIt.run();
             return true;
         });
-        LinearLayout.LayoutParams createParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        createParams.leftMargin = dp(8);
-        createParams.bottomMargin = dp(8);
-        maker.addView(create, createParams);
+        addBesideBox(maker, create);
         group.addView(maker, matchWrapClose());
         group.addView(problem, matchWrapClose());
     }
@@ -4064,8 +4194,6 @@ public final class KioskActivity extends Activity {
         editor.setVisibility(View.GONE);
         LinearLayout boxRow = new LinearLayout(this);
         boxRow.setOrientation(LinearLayout.HORIZONTAL);
-        boxRow.setGravity(Gravity.CENTER_VERTICAL);
-        boxRow.setGravity(Gravity.BOTTOM);
         LinearLayout nameColumn = new LinearLayout(this);
         nameColumn.setOrientation(LinearLayout.VERTICAL);
         EditText name = proseInput(theme, draft.name);
@@ -4075,13 +4203,7 @@ public final class KioskActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button keep = primaryButton(theme, "Save");
         Button drop = textButton(theme, "Cancel");
-        for (Button button : new Button[] {keep, drop}) {
-            LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            gap.leftMargin = dp(8);
-            gap.bottomMargin = dp(8);
-            boxRow.addView(button, gap);
-        }
+        addBesideBox(boxRow, keep, drop);
         TextView problem = new TextView(this);
         problem.setTextColor(theme.bad);
         problem.setTextSize(12);
@@ -4499,9 +4621,9 @@ public final class KioskActivity extends Activity {
 
     /** The width the Content pane's body has for its tiles, from the width of the screen. */
     private int paneWidthPx() {
-        int widthDp = getResources().getConfiguration().screenWidthDp;
-        int side = widthDp >= 600 ? 24 : 16;
-        int paneDp = widthDp >= 840 ? (widthDp - side * 2 - 16) / 2 : widthDp - side * 2;
+        int room = contentWidthDp();
+        int paneDp = getResources().getConfiguration().screenWidthDp >= 840
+                ? (room - 16) / 2 : room;
         // The card's own padding, 16 dp each side.
         return dp(paneDp - 32);
     }
@@ -6125,20 +6247,14 @@ public final class KioskActivity extends Activity {
         // own longer phrasing and why the row does not carry it.
         addAboutRow(creditsCard, theme, "Android robot", getString(R.string.android_robot_attribution));
 
-        // No explanatory line above these two buttons. They are rendered in-app rather than linked
-        // out because a kiosk under lock task has no browser to hand a URL to, which is a fact
-        // about the design, not something a reader of the Legal card needs told.
-        LinearLayout legalCard = card(theme, "Legal");
-        legalCard.addView(listRow(theme, getString(R.string.privacy_policy_title),
-                () -> showLegalDocument(R.string.privacy_policy_title, R.raw.privacy)),
-                matchWrapClose());
-        legalCard.addView(listRow(theme, getString(R.string.terms_title),
-                () -> showLegalDocument(R.string.terms_title, R.raw.terms)), matchWrapClose());
+        // No Legal card here. The privacy policy and the terms are rows of the About section on
+        // the settings page, two taps from the panel, and this page is one tap further in: the
+        // same two documents in both places was one of them too many (Juri, 2026-09-23).
 
         // Order chosen for cardGrid's round-robin: the two short cards share a lane, the taller
         // device card takes the other.
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
-                appCard, deviceCard, creditsCard, legalCard)), matchWrap());
+                appCard, deviceCard, creditsCard)), matchWrap());
 
         setContentView(scrollPage(theme, page));
     }
@@ -6169,8 +6285,8 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         // The version, not the app name: the terms themselves say "the version they apply to is shown
         // on the About screen", and a document should say which build it belongs to.
-        page.addView(pageHeading(theme, getString(titleRes), appVersionSummary(), this::showAbout),
-                matchWrap());
+        page.addView(pageHeading(theme, getString(titleRes), appVersionSummary(),
+                () -> showConfiguration(KioskConfig.load(this))), matchWrap());
 
         // The document and the line under it share this width, so they read as one column.
         int documentWidth = getResources().getConfiguration().screenWidthDp >= 720
@@ -6360,14 +6476,44 @@ public final class KioskActivity extends Activity {
     }
 
 
+    /**
+     * The widest a page's content ever gets, whatever the panel's own width.
+     *
+     * <p>Beyond this the gutters grow instead of the column: a settings page stretched across a
+     * very wide display turns every field into a bar, which is the thing the gutters exist to
+     * prevent in the first place.
+     */
+    private static final int MAX_CONTENT_DP = 1000;
+
+    /**
+     * Every page's column: the content centred with a gutter each side, so nothing is ever laid
+     * out against the glass (Juri, 2026-09-23, with the drawing in media/drafts/material3/).
+     *
+     * <p>5% of the width, whatever the shape of the screen (Juri, 2026-09-23: the 10% that
+     * landscape had was too much). Floored at Material's own margin for the size class, 16 dp
+     * compact and 24 dp from medium, so a genuinely small screen still has a readable column, and
+     * raised past the percentage once the column would pass {@link #MAX_CONTENT_DP}.
+     */
     private LinearLayout pageColumn(KioskTheme theme) {
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setBackgroundColor(theme.base);
-        // Material's margins: 16 dp on a compact width, 24 dp from a medium one.
-        int side = dp(getResources().getConfiguration().screenWidthDp >= 600 ? 24 : 16);
+        int side = dp(gutterDp());
         column.setPadding(side, dp(12), side, dp(32));
         return column;
+    }
+
+    /** The gutter each side of a page: see {@link #pageColumn}. */
+    private int gutterDp() {
+        int widthDp = getResources().getConfiguration().screenWidthDp;
+        int sideDp = Math.max(widthDp >= 600 ? 24 : 16, Math.round(widthDp * 0.05f));
+        return widthDp - sideDp * 2 > MAX_CONTENT_DP
+                ? (widthDp - MAX_CONTENT_DP) / 2 : sideDp;
+    }
+
+    /** What a page has to lay out in, the gutters taken off. */
+    private int contentWidthDp() {
+        return getResources().getConfiguration().screenWidthDp - gutterDp() * 2;
     }
 
 
@@ -6452,6 +6598,13 @@ public final class KioskActivity extends Activity {
             sub.setTextColor(theme.subtext);
             sub.setTextSize(12);
             titles.addView(sub);
+            if (getResources().getConfiguration().screenWidthDp < 840) {
+                // This line is the narrow app bar's chip: the readings are appended to what the
+                // page has to say for itself, and the same tick keeps them current.
+                statusLine = sub;
+                statusLinePrefix = subtitle;
+                updateStatusChip();
+            }
         }
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -6460,8 +6613,14 @@ public final class KioskActivity extends Activity {
         titleParams.rightMargin = dp(12);
         heading.addView(titles, titleParams);
 
-        heading.addView(buildStatusChip(theme), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // The chip only where the app bar has room for it, which is the rule the web page
+        // already follows: on a phone the title, three rows of readings and the theme toggle do
+        // not fit one bar, and the title was squeezed to "Murali / s" (measured 2026-09-23). Below
+        // 840 dp the same readings go on the subtitle line instead, one line, still live.
+        if (getResources().getConfiguration().screenWidthDp >= 840) {
+            heading.addView(buildStatusChip(theme), new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
         if (trailing != null) {
             LinearLayout.LayoutParams trailingParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -6528,13 +6687,35 @@ public final class KioskActivity extends Activity {
         return chip;
     }
 
+    /** The narrow app bar's status line, and what it says before the readings. */
+    private TextView statusLine;
+    private String statusLinePrefix = "";
+
     /**
-     * Writes the latest reading into the chip. Returns false once the screen holding it has gone, so
-     * the tick can stop.
+     * Writes the latest reading into the chip, or into the narrow app bar's line. Returns false
+     * once the screen holding either has gone, so the tick can stop.
      */
     private boolean updateStatusChip() {
+        boolean painted = false;
+        if (statusLine != null) {
+            if (statusLine.getParent() == null) {
+                statusLine = null;
+            } else {
+                SystemStats.RuntimeFacts line = KioskRuntimeState.lastFacts();
+                StringBuilder said = new StringBuilder(statusLinePrefix);
+                if (line != null && line.batteryPercent >= 0) {
+                    said.append(" · ").append(Math.round(line.batteryPercent))
+                            .append("% ").append(SystemStats.chargeStateLabel(line));
+                }
+                if (line != null && !line.ipAddress.isEmpty()) {
+                    said.append(" · ").append(line.ipAddress);
+                }
+                statusLine.setText(said);
+                painted = true;
+            }
+        }
         if (batteryValue == null || statusChipTheme == null) {
-            return false;
+            return painted;
         }
         if (batteryValue.getParent() == null) {
             clearStatusChip();
@@ -6565,6 +6746,8 @@ public final class KioskActivity extends Activity {
     }
 
     private void clearStatusChip() {
+        statusLine = null;
+        statusLinePrefix = "";
         batteryValue = null;
         batteryIcon = null;
         addressValue = null;
@@ -6717,6 +6900,37 @@ public final class KioskActivity extends Activity {
         return caption;
     }
 
+    /**
+     * What {@link #addField} leaves above a box: 16 dp of grid, then the 8 dp the floating label
+     * stands in. A button beside the box has to start below both to sit on the box's centre line.
+     */
+    private static final int FIELD_BOX_TOP_DP = 24;
+
+    /**
+     * Buttons beside a field, on the centre line of the box and not of the label (Juri,
+     * 2026-09-23). They stand in a slot that begins where the box begins and is as tall as the
+     * box, whatever height the box turns out to have, so nothing here depends on guessing that
+     * height: the old version aligned the button's foot to the box's foot and a taller box lifted
+     * it off centre.
+     *
+     * <p>{@code row} is the horizontal layout that already holds the field's own column.
+     */
+    private void addBesideBox(LinearLayout row, View... buttons) {
+        LinearLayout slot = new LinearLayout(this);
+        slot.setOrientation(LinearLayout.HORIZONTAL);
+        slot.setGravity(Gravity.CENTER_VERTICAL);
+        for (View button : buttons) {
+            LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            gap.leftMargin = dp(8);
+            slot.addView(button, gap);
+        }
+        LinearLayout.LayoutParams slotParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        slotParams.topMargin = dp(FIELD_BOX_TOP_DP);
+        row.addView(slot, slotParams);
+    }
+
     /** The whole field a caption from {@link #addField} belongs to, for showing or hiding it. */
     private static View fieldOf(TextView caption) {
         return caption.getParent() instanceof View ? (View) caption.getParent() : caption;
@@ -6810,6 +7024,11 @@ public final class KioskActivity extends Activity {
      * row for a setting that applies the moment it is touched (2026-09-23). Still a
      * {@link CompoundButton} to its callers, which read {@code isChecked} and listen for changes
      * exactly as they did with the check box it replaces.
+     *
+     * <p>Track and handle are drawn from the palette instead of being the platform's tinted: the
+     * stock track is a translucent bar, so the accent reached the screen as a muddy purple beside
+     * check boxes in the bright one (Juri, 2026-09-23). These are Material's own measurements, a
+     * 52 by 32 dp track with a 20 dp handle, which is also what the web admin's switch is.
      */
     private Switch themedSwitch(KioskTheme theme, String label, boolean checked) {
         Switch toggle = new Switch(this);
@@ -6820,13 +7039,77 @@ public final class KioskActivity extends Activity {
         toggle.setMinHeight(dp(48));
         toggle.setMinimumHeight(dp(48));
         toggle.setShowText(false);
-        toggle.setThumbTintList(new ColorStateList(new int[][] {
-                new int[] {android.R.attr.state_checked}, new int[0]},
-                new int[] {theme.onAccent(), theme.border}));
-        toggle.setTrackTintList(new ColorStateList(new int[][] {
-                new int[] {android.R.attr.state_checked}, new int[0]},
-                new int[] {theme.accent, theme.surfaceAlt}));
+        // Nothing to tint: the two drawables carry their own colours, and a tint left over from
+        // the platform theme would paint over them.
+        toggle.setThumbTintList(null);
+        toggle.setTrackTintList(null);
+        toggle.setTrackDrawable(switchTrack(theme));
+        toggle.setThumbDrawable(switchThumb(theme));
+        toggle.setSwitchMinWidth(dp(52));
+        toggle.setSwitchPadding(dp(16));
+        toggle.setThumbTextPadding(0);
         return toggle;
+    }
+
+    /**
+     * The switch's track: the accent filled when it is on, a hollow pill when it is off.
+     *
+     * <p>Its side padding is how the platform's Switch is told where the handle may travel, so
+     * 4 dp of track shows at each end. The width the Switch measures for itself from the handle,
+     * 2 x 20 + 4 + 4, comes to less than {@code switchMinWidth}, so the minimum decides it and
+     * the track is Material's 52 dp.
+     */
+    private android.graphics.drawable.Drawable switchTrack(KioskTheme theme) {
+        android.graphics.drawable.StateListDrawable track =
+                new android.graphics.drawable.StateListDrawable();
+        track.addState(new int[] {android.R.attr.state_checked}, switchTrackPill(theme, true));
+        track.addState(new int[0], switchTrackPill(theme, false));
+        return track;
+    }
+
+    private android.graphics.drawable.Drawable switchTrackPill(KioskTheme theme, boolean on) {
+        android.graphics.drawable.GradientDrawable pill =
+                theme.pill(on ? theme.accent : theme.surfaceAlt);
+        if (!on) {
+            pill.setStroke(dp(2), theme.border);
+        }
+        pill.setSize(dp(52), dp(32));
+        android.graphics.drawable.LayerDrawable held =
+                new android.graphics.drawable.LayerDrawable(
+                        new android.graphics.drawable.Drawable[] {pill});
+        held.setPadding(dp(4), 0, dp(4), 0);
+        return held;
+    }
+
+    /** The switch's handle: 20 dp, the colour that reads on the track it is standing on. */
+    private android.graphics.drawable.Drawable switchThumb(KioskTheme theme) {
+        android.graphics.drawable.StateListDrawable thumb =
+                new android.graphics.drawable.StateListDrawable();
+        thumb.addState(new int[] {android.R.attr.state_checked}, switchHandle(theme.onAccent()));
+        thumb.addState(new int[0], switchHandle(theme.border));
+        return thumb;
+    }
+
+    /**
+     * One state of the handle, held in 6 dp of nothing above and below: the Switch hands the
+     * handle the whole height of the track to draw in, and a bare oval there comes out as an
+     * ellipse as tall as the track.
+     *
+     * <p>A layer with an inset and not an {@code InsetDrawable}, which reports its inset as
+     * padding: the Switch takes a thumb's padding off the track it draws, and the track came out
+     * 20 dp tall instead of 32. A layer's inset is invisible to it, so only the handle shrinks.
+     */
+    private android.graphics.drawable.Drawable switchHandle(int fill) {
+        android.graphics.drawable.GradientDrawable handle =
+                new android.graphics.drawable.GradientDrawable();
+        handle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        handle.setColor(fill);
+        handle.setSize(dp(20), dp(20));
+        android.graphics.drawable.LayerDrawable held =
+                new android.graphics.drawable.LayerDrawable(
+                        new android.graphics.drawable.Drawable[] {handle});
+        held.setLayerInset(0, 0, dp(6), 0, dp(6));
+        return held;
     }
 
     /**

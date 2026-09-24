@@ -1287,8 +1287,13 @@ final class HttpAdminServer {
                 + "<path d=\"M3 10h18\"/>");
         paths.put("dash", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M8 21h8M3 9h18\"/>");
-        paths.put("mqtt", "<path d=\"M4 12a8 8 0 018-8M4 18a14 14 0 0114-14\"/>"
-                + "<circle cx=\"6\" cy=\"18\" r=\"2\"/>");
+        // A hub: four things joined to one in the middle, which is what a broker is. The
+        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them (Juri,
+        // 2026-09-23).
+        paths.put("mqtt", "<circle cx=\"12\" cy=\"12\" r=\"3\"/><circle cx=\"5\" cy=\"5\" r=\"1.5\"/>"
+                + "<circle cx=\"19\" cy=\"5\" r=\"1.5\"/><circle cx=\"5\" cy=\"19\" r=\"1.5\"/>"
+                + "<circle cx=\"19\" cy=\"19\" r=\"1.5\"/>"
+                + "<path d=\"M9.9 9.9L6.2 6.2M14.1 9.9l3.7-3.7M9.9 14.1l-3.7 3.7M14.1 14.1l3.7 3.7\"/>");
         paths.put("web", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
                 + "<path d=\"M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18\"/>");
         paths.put("esc", "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/>"
@@ -1367,7 +1372,7 @@ final class HttpAdminServer {
         sections.add(new String[] {"stats", "stats", "System stats", statsSummary(),
                 statsBody(config)});
         sections.add(new String[] {"quick", "bolt", "Quick actions",
-                "Reboot · Reload · Restart kiosk", quickActionsBody()});
+                "Reboot · Reload · Restart", quickActionsBody()});
         sections.add(new String[] {"about", "info", "About", "Muralis " + appVersionName(),
                 aboutBody()});
 
@@ -1411,9 +1416,14 @@ final class HttpAdminServer {
 
     // ---- the summaries: stored values only, never a status line the pages do not already carry
 
+    /**
+     * Each summary is one line of a list a third of the column wide, so it says the one thing
+     * that section is about and leaves out what the page already shows: the device id is the app
+     * bar's subtitle, the uptime is in the stats readout.
+     */
     private static String dashboardSummary(KioskConfig config) {
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
-        return (host.isEmpty() ? "No dashboard yet" : host) + " · " + config.deviceId;
+        return host.isEmpty() ? "No dashboard yet" : host;
     }
 
     private String sequencesSummary(KioskConfig config) {
@@ -1421,7 +1431,7 @@ final class HttpAdminServer {
             return "Not recorded yet";
         }
         return config.settingsSequence + " · " + config.launcherSequence
-                + (KioskConfig.escapePinSet(context) ? " · PIN set" : " · no PIN");
+                + (KioskConfig.escapePinSet(context) ? " · PIN" : "");
     }
 
     private String displaySummary() {
@@ -1429,7 +1439,7 @@ final class HttpAdminServer {
         String method = KioskConfig.displayOffMethodOf(context);
         return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
                 : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
-                + " · display off: "
+                + " · "
                 + (DisplayOffPolicy.SLEEP.equals(method) ? "screen off"
                         : DisplayOffPolicy.FILM.equals(method) ? "black film" : "automatic");
     }
@@ -1455,13 +1465,6 @@ final class HttpAdminServer {
             if (system != null && system.has("cpu_busy_percent")) {
                 text.append(text.length() > 0 ? " · " : "")
                         .append(Math.round(system.optDouble("cpu_busy_percent", 0))).append("% CPU");
-            }
-            long up = stats.optLong("app_uptime_ms", -1);
-            if (up >= 0) {
-                long minutes = up / 60_000L;
-                text.append(text.length() > 0 ? " · " : "").append("up ")
-                        .append(minutes >= 60 ? (minutes / 60) + "h" + (minutes % 60) + "m"
-                                : minutes + "m");
             }
             return text.length() == 0 ? "Live readings" : text.toString();
         } catch (RuntimeException unavailable) {
@@ -2491,7 +2494,7 @@ final class HttpAdminServer {
         html.append("<form class=\"beside newplaylist\" method=\"post\" action=\"/api/playlists\">")
                 .append(fieldWithId("new-playlist-name", "text", "name", "New playlist name", "",
                         " maxlength=\"" + PlaylistDocument.MAX_NAME_LENGTH + "\"", null))
-                .append("<button class=\"primary\" type=\"submit\">Create playlist</button></form>");
+                .append("<button class=\"primary\" type=\"submit\">Create</button></form>");
         return html.toString();
     }
 
@@ -3217,10 +3220,12 @@ final class HttpAdminServer {
                     + "certificate, so the password travels unencrypted. Use it on a trusted "
                     + "network only.</p>";
         }
+        // The sentence, then the fingerprint in a block of its own: 95 characters with no space
+        // to break at, so inline in the sentence it wrapped mid-value (Juri, 2026-09-23).
         return "<p class=\"hint\">Served over HTTPS with a certificate this panel made itself, so "
                 + "your browser warned once. Its SHA-256 fingerprint, to compare with the one the "
-                + "browser shows for this page: <code>" + escapeHtml(certificateFingerprint)
-                + "</code></p>";
+                + "browser shows for this page:</p>"
+                + "<p class=\"mono wrap\">" + escapeHtml(certificateFingerprint) + "</p>";
     }
 
     /** BoringSSL's words for "that was an HTTP request, not a handshake". */

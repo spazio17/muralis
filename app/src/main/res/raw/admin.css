@@ -35,9 +35,13 @@ html[data-theme=dark]{color-scheme:dark;
 --secondary-container:color-mix(in srgb,var(--accent-alt) 32%,var(--base));
 --error-container:color-mix(in srgb,var(--bad) 35%,var(--base));--on-error-container:color-mix(in srgb,var(--bad) 65%,white);--on-accent:#1e1e2e}
 *{box-sizing:border-box}
-body{margin:0;padding:12px 16px 40px;background:var(--base);color:var(--text);font-family:Roboto,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:20px}
-/* The column: 360 + 16 + 640, the list-detail pair, and the app bar spans exactly it. */
-main{max-width:1016px;margin:0 auto}
+body{margin:0;padding:12px 0 40px;background:var(--base);color:var(--text);font-family:Roboto,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:20px}
+/* The column, centred, with a gutter each side: 5% of the window, whatever the shape of it
+   (Juri, 2026-09-23, with the drawing in media/drafts/material3/). The app bar spans exactly
+   that column, which is what puts the theme picker over the panel's right edge rather than
+   the window's. It stops growing at 1000 px: past that the gutters take the rest,
+   because a field drawn across a very wide monitor is a bar. */
+main{width:90%;max-width:1000px;margin:0 auto}
 a{color:var(--accent-alt)}
 code{overflow-wrap:anywhere}
 /* ---- type ---- */
@@ -116,10 +120,12 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
 .field.dense input:focus{padding:0 11px}
 .field.dense .ib{position:absolute;right:0;top:0}
 .field.dense input{padding-right:44px}
-/* A button beside a field sits on the box's centre line; the floating label does not count. */
-.beside{display:flex;align-items:flex-end;gap:8px;margin-top:8px;flex-wrap:wrap}
+/* A button beside a field sits on the box's centre line; neither the floating label above the box
+   nor a helper line under it counts, which is why the button is placed from the top: 24 px for the
+   field's own margin and 8 px for half the difference between the 56 px box and the 40 px button. */
+.beside{display:flex;align-items:flex-start;gap:8px;margin-top:8px;flex-wrap:wrap}
 .beside .field{flex:1 1 200px}
-.beside button{margin-bottom:8px}
+.beside button{margin-top:32px}
 /* ---- selection controls ---- */
 label.check{display:flex;align-items:center;gap:12px;min-height:48px;color:var(--text);cursor:pointer;margin:0}
 input[type=checkbox]{appearance:none;-webkit-appearance:none;width:18px;height:18px;margin:0 3px;flex:none;border:2px solid var(--subtext);border-radius:2px;background:transparent;cursor:pointer;display:inline-grid;place-items:center}
@@ -187,7 +193,9 @@ header.appbar .field label{background:var(--base)}
 .sections .item.on .h{color:var(--on-secondary-container);font-weight:500}
 .sections .item .s{font-size:13px;line-height:18px}
 @media (min-width:840px){
-html.js .menu{display:grid;grid-template-columns:360px minmax(0,640px);gap:16px;align-items:start;max-width:none}
+/* The list is half the open section, the pair filling the column, Material's 24 px gutter
+   between them (his drawing: menu 30, gap 5, content 60). */
+html.js .menu{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;align-items:start;max-width:none}
 html.js .menu .sections{display:block}
 html.js .menu .boxes{background:transparent;border-radius:0;overflow:visible}
 html.js details.box{border-bottom:0;background:var(--card);border-radius:var(--radius)}
@@ -207,6 +215,8 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 #playlist-folders{grid-column:1;grid-row:1}#playlist-content{grid-column:2;grid-row:1/span 2}#playlist-held{grid-column:1;grid-row:2}
 }
 /* ---- stats readout ---- */
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;background:var(--lowest);border-radius:8px;padding:12px 14px;color:var(--subtext);margin:8px 0 0}
+.mono.wrap{overflow-wrap:anywhere}
 #stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
 /* ---- the rename pencil beside the title: a <details>, so it works with no scripting ---- */
 details.rename{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 1 auto;min-width:0}

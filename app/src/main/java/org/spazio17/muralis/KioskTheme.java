@@ -295,6 +295,14 @@ final class KioskTheme {
         return shape;
     }
 
+    /**
+     * The quietest plate: what a code block or a stats readout sits on, a step below the base.
+     * The web page's {@code --lowest} is the same colour.
+     */
+    int lowest() {
+        return light ? Color.WHITE : Color.parseColor("#11111b");
+    }
+
     /** Readable foreground for text drawn on top of an accent fill. */
     int onAccent() {
         return light ? Color.parseColor("#eff1f5") : Color.parseColor("#11111b");

@@ -103,7 +103,6 @@ var sum=document.getElementById('sum-stats');
 if(sum){var parts=[];
 if(sys.mem_used_kb&&sys.mem_total_kb){parts.push(Math.round(100*sys.mem_used_kb/sys.mem_total_kb)+'% memory');}
 if(sys.cpu_busy_percent!=null){parts.push(Math.round(sys.cpu_busy_percent)+'% CPU');}
-if(data.app_uptime_ms!=null){parts.push('up '+dur(data.app_uptime_ms));}
 if(parts.length){sum.textContent=parts.join(' \u00b7 ');}}
 var battery=document.getElementById('chip-battery');
 if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;

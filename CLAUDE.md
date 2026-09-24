@@ -798,25 +798,49 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   screenshots and missed the panel's Open dashboard button). The rules: the colour roles are
   derived from the palette (`KioskTheme.card/primaryContainer/secondaryContainer/...` and the
   `--card/--primary-container/...` mixes in `admin.css`), so a card, a container and its ink match
-  across the two surfaces; cards are the base lifted a step with a 12 dp corner and no border;
+  across the two surfaces; **every page is a centred column with a gutter of 5% of the width
+  each side, in every orientation and on both surfaces** (Juri, 2026-09-23; landscape had 10%
+  first and it was too much), floored at Material's own margin and capped so the column stops
+  growing at 1000 dp, past which the cap makes the gutter wider than 5%, and the app bar spans exactly that column,
+  which is what keeps the theme control off the glass; cards are the base lifted a step with a
+  12 dp corner and no border;
   text fields are outlined with the label on the border and the helper text under the box in the
   field's own slot, keeping its wording ("(blank keeps the current one)" is the one text that
   moved out of a label); buttons are 40 dp pills, filled for a card's one main action, tonal for
   the second, outlined for a command that acts now and stores nothing, text for navigation, and
   red only inside a confirmation; **anything repeated in a row is a 40 dp icon button** with a
   48 dp target, a tooltip and a spoken name (edit, delete, remove, save the name, the pager's
-  chevrons, the view); on/off settings are switches, the playlist in use is a radio, pictures in
+  chevrons, the view); on/off settings are switches drawn from the palette, a 52 by 32 dp track with a 20 dp
+  handle on both surfaces (the panel's come from `switchTrack`/`switchThumb`, because the
+  platform's track is translucent and turned the accent into a muddy purple), the playlist in use
+  is a radio, pictures in
   a playlist are check boxes on rows and check circles on tiles, and the header box over a page
   ticks or clears the page shown (the Select all and Select none buttons went). **The settings are
   one menu of sections**, each a glyph, its name and a one-line summary of stored values only:
   below 840 dp an accordion no wider than 720 dp with one section open and remembered
   (`admin_menu.js` on the web, UI preference `open_section` on the panel), from 840 dp Material's
-  list-detail, 360 dp of list and at most 640 dp of open section, so no panel spans a landscape
-  tablet; Quick actions (web only) and About are the last two sections, About holding the legal
-  pages and the version, which links to the repository on the web. **Back is the arrow in the app
-  bar, once**; the "← Back" buttons at head and foot went, and the theme control sits in the app
-  bar (segmented on a wide web page, one cycling icon button on a narrow one, the sun/moon on the
-  panel). **A folder is shown in one of four views**, list, details, small and big thumbnails,
+  list-detail, the list half the open section with Material's 24 dp gutter between them, so no
+  panel spans a landscape tablet; Quick actions (web only) and About are the last two sections,
+  About holding the legal pages and the version, which links to the repository on the web. The
+  summaries carry stored values and nothing the page already says, because the list is a third of
+  the column. **Open dashboard is a menu of one entry** under the panel's menu, in the main
+  colour, a card's gap below the list, and under the list in the two-column layout. It is the
+  same card as the menu above it, corner for corner and edge for edge, and only the colour sets
+  it apart; in the two-column layout it carries the list card's 8 dp of padding itself, so the
+  two glyph columns are one; it is still
+  the button that saves the connection fields before it opens the page. **A button beside a field
+  sits on the centre line of the box**, never the label's and never the helper line's
+  (`addBesideBox` on the panel, `.beside` on the web). The certificate's SHA-256
+  fingerprint and the system stats readout are code blocks on both surfaces, on the lowest
+  surface: white on a light theme, near-black on a dark one (`KioskTheme.lowest`, `--lowest`).
+  The privacy policy and the terms are rows of the About section and nowhere else: the panel's
+  Version and device details page carried them a second time until 2026-09-23, and a legal page's
+  back arrow returns to the settings. **Back is the arrow in the app
+  bar, once**; the "← Back" buttons at head and foot went. The theme control: the web's is the
+  app bar's (segmented on a wide page, one cycling icon button on a narrow one), because that bar
+  is on every page of it; **the panel's sun and moon is at the right of the Display section's
+  name** (Juri, 2026-09-23), which is the accordion's row or the open card's title, and it is the
+  only section that carries a control beside its name (`Section.action`). **A folder is shown in one of four views**, list, details, small and big thumbnails,
   cycled by one icon button in the Content card's head and stored as one preference for both
   surfaces (`KioskConfig.pictureViewOf`); thumbnails are made once by the panel into
   `cache/thumbs/` (`PictureLibrary.thumbnail`, 256 px JPEG, keyed by address) and served to the
