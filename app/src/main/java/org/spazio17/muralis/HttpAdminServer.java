@@ -1970,7 +1970,7 @@ final class HttpAdminServer {
                 .append("<div class=\"cardhead\"><h2>Folders</h2>")
                 // Closes every branch, or opens every one; the script paints which. Scripting
                 // only, like the carets: without it the tree follows the open folder instead.
-                .append("<button type=\"button\" class=\"ib tree\" id=\"tree-toggle\" title=\"Close every "
+                .append("<button type=\"button\" class=\"ib\" id=\"tree-toggle\" title=\"Close every "
                         + "folder\" aria-label=\"Close every folder\">").append(glyph("unfold_less"))
                 .append("</button></div>")
                 .append("<div id=\"folder-list\">")
@@ -2673,8 +2673,8 @@ final class HttpAdminServer {
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
         String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
-                "Screensaver first, a touch opens the page", saver.onWake)
-                + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "The page at once", saver.onWake);
+                "Show the screensaver first, a touch opens the page", saver.onWake)
+                + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once", saver.onWake);
         StringBuilder html = new StringBuilder(pageStart("Screensaver", null, "/"));
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");

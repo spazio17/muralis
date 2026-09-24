@@ -879,7 +879,7 @@ public final class KioskActivity extends Activity {
      *
      * <p>It used to call {@code webView.goBack()}, which let anyone standing at the panel walk the
      * dashboard's history backwards. Every Muralis screen that needs to go back has an explicit
-     * button for it ("← Back", "Cancel"), so nothing is unreachable.
+     * way back, the arrow in its app bar or a Cancel button, so nothing is unreachable.
      */
     // GestureBackNavigation suppressed with cause: lint's advice is to migrate to AndroidX's
     // OnBackPressedDispatcher, which this project cannot use (android.useAndroidX=false, and adding
@@ -1117,7 +1117,7 @@ public final class KioskActivity extends Activity {
      * react to the change either. Every layout decision that reads {@code screenWidthDp} was
      * therefore frozen at whatever the width had been when the screen was built: {@link #cardGrid}
      * kept two lanes in portrait, or one lane in landscape with every card and every field stretched
-     * the full width, and the foot button's row kept the wrong axis. The MQTT interval buttons are the
+     * the full width, and the Open dashboard row kept the wrong axis. The MQTT interval buttons are the
      * most visible casualty, since they share a row at weight 1 and simply elongate. Leaving the
      * screen for the dashboard and coming back fixed it, because that rebuilt the view tree, which
      * is precisely what this does without making the operator do it.
@@ -1810,7 +1810,7 @@ public final class KioskActivity extends Activity {
         LinearLayout dashboardCard = sectionBody(theme);
         // The box holds what is stored and nothing else; the example is a hint. It used to be
         // prefilled with a Home Assistant address as real text, so a fresh panel saved and loaded
-        // it at the first press of the foot button and showed an error page for a host that does
+        // it at the first press of Open dashboard and showed an error page for a host that does
         // not exist. See KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL for the two reasons.
         EditText urlInput = themedInput(theme, config.dashboardUrl, false);
         urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
@@ -1830,7 +1830,7 @@ public final class KioskActivity extends Activity {
         // the one that saves is at the foot and named after what it opens, so the nearer one was
         // pressed as if it were the save and the screen closed without one. Anyone who
         // misunderstands that button makes the same mistake, so it is gone rather than renamed.
-        // Nothing is lost: the foot button already returns to the stored dashboard, a kiosk
+        // Nothing is lost: Open dashboard already returns to the stored dashboard, a kiosk
         // restart does too, and Home Assistant keeps its own kiosk.home button.
         Button openOnce = secondaryButton(theme, "Open once");
         openOnce.setOnClickListener(view -> {
@@ -6177,27 +6177,6 @@ public final class KioskActivity extends Activity {
     /** Actions sit in a row on a wide screen and stack on a narrow one. */
 
     /**
-     * The page's one main action: centred, and wider than its text, so it is unmistakably the
-     * button of the page without being a bar across it (2026-09-09). Detached from the menu
-     * above it and in the main colour, exactly where it has always been (Juri, 2026-09-23).
-     */
-    private LinearLayout footButton(Button button) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setBaselineAligned(false);
-        row.setGravity(Gravity.CENTER_HORIZONTAL);
-        button.setTextSize(16);
-        button.setMinHeight(dp(48));
-        button.setMinimumHeight(dp(48));
-        button.setPadding(dp(32), 0, dp(32), 0);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.topMargin = dp(24);
-        row.addView(button, params);
-        return row;
-    }
-
-    /**
      * A warning banner shown when Muralis is not the device owner, or null when it is.
      *
      * <p>Deliberately a banner and not a hard failure: an un-provisioned install still works as a
@@ -6398,6 +6377,9 @@ public final class KioskActivity extends Activity {
         // where the app already says who it owes what to. See the string's comment for Google's
         // own longer phrasing and why the row does not carry it.
         addAboutRow(creditsCard, theme, "Android robot", getString(R.string.android_robot_attribution));
+        // Every glyph on both surfaces is drawn after Google's Material Symbols, as a stroke path
+        // of our own; the shapes are theirs and this says so.
+        addAboutRow(creditsCard, theme, "Icons", "After Material Symbols by Google (Apache 2.0)");
 
         // No Legal card here. The privacy policy and the terms are rows of the About section on
         // the settings page, two taps from the panel, and this page is one tap further in: the
@@ -7151,18 +7133,6 @@ public final class KioskActivity extends Activity {
         return input;
     }
 
-
-    private CheckBox themedCheckBox(KioskTheme theme, String label, boolean checked) {
-        CheckBox box = new CheckBox(this);
-        box.setText(label);
-        box.setTextColor(theme.text);
-        box.setTextSize(16);
-        box.setChecked(checked);
-        box.setMinHeight(dp(48));
-        box.setMinimumHeight(dp(48));
-        box.setButtonTintList(selectionTint(theme));
-        return box;
-    }
 
     /** The accent for a checked box or radio, the quiet colour for an empty one. */
     private static ColorStateList selectionTint(KioskTheme theme) {

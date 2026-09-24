@@ -78,7 +78,6 @@ button.primary:hover{background:color-mix(in srgb,var(--accent) 92%,black)}
 button.tonal,label.filebutton{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
 button.tonal:hover,label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
 button.text{border-color:transparent;padding:0 12px}
-button.danger{background:var(--bad);border-color:var(--bad);color:var(--on-accent)}
 button:disabled{opacity:.38;cursor:default}
 button svg,.btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-left:-8px}
 button.text svg{margin:0 -4px 0 0}
@@ -94,7 +93,6 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
 .actions form{display:inline;margin:0}
 .actions.tight{margin-top:8px}
 .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.row.between{justify-content:space-between}
 .row.tight{gap:0;flex-wrap:nowrap}
 /* ---- cards ---- */
 .card{background:var(--card);border-radius:var(--radius);padding:16px 16px 20px;min-width:0;margin:0}

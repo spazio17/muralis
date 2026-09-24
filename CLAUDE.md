@@ -651,7 +651,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   which read as a miscount. Nothing is written until Save, which is what makes Cancel mean
   something. The Screensaver
   page lists the playlists as the web page does, name, count, Use or "In use", Edit and Delete, with
-  the "New playlist name" box and Create playlist under the list (2026-09-19, the web panel copied;
+  the "New playlist name" box and Create under the list (2026-09-19, the web panel copied;
   the button used to sit above the list and open the draft page); Create makes an empty playlist at
   once and Edit is where its pictures are picked. The active row says "In use" in the same column so
   the action columns stay aligned.
@@ -732,7 +732,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   while a file is on its way.
   The stats poll runs on this page too, for the chip and for the fields it keeps current, so its
   readout element is optional: writing to the missing `#stats` threw on every tick and took the rest
-  of the poll down with it. **Use, Delete and Create playlist are silent since 2026-09-19:**
+  of the poll down with it. **Use, Delete and Create are silent since 2026-09-19:**
   `admin_playlists.js` posts them as fragments from the screensaver page and re-reads the table
   (`GET /api/playlists/table`) in place, so the "In use" mark moving, a row going or a row appearing
   is the whole answer; only a refusal is said, red, in the banner under the table. Before that, Use

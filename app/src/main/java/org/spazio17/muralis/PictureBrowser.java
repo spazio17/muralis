@@ -478,13 +478,6 @@ final class PictureBrowser {
         return page;
     }
 
-    /** Every picture in one folder, in the same order the pages show, for "select all". */
-    List<Entry> everyPicture(String relativePath) {
-        // One walk of the folder, not one per page: paging it a hundred at a time re-ran the
-        // whole cursor walk and sort for every page (review of 2026-09-19).
-        return new ArrayList<>(pictures(relativePath, 0, Integer.MAX_VALUE).entries);
-    }
-
     /** Whether a picture address is one of this panel's own MediaStore images. */
     static boolean isMedia(String uri) {
         return uri != null && uri.startsWith("content://media/");
