@@ -226,21 +226,6 @@ public final class KioskActivity extends Activity {
     private String lastSeenPictureSource = "";
     private ScreensaverPolicy.Settings pictureSettings;
     private volatile int pictureGeneration;
-    /** The system folder picker's result, for the Pictures screensaver's own folder. */
-    private static final int REQUEST_PICTURES_FOLDER = 21;
-    /** How long the panel waits in the folder picker for a person before taking the screen back. */
-    private static final long FOLDER_PICKER_PATIENCE_MS = 120_000L;
-    private final Runnable returnFromFolderPicker = new Runnable() {
-        @Override
-        public void run() {
-            if (inFront) {
-                return;
-            }
-            Log.i(TAG, "Nobody chose a folder in "
-                    + (FOLDER_PICKER_PATIENCE_MS / 1000) + "s; taking the screen back");
-            startActivity(new Intent(KioskActivity.this, KioskActivity.class));
-        }
-    };
     private final Runnable pictureAdvance = this::advancePicture;
     /**
      * When the last wake was judged. A wake from sleep reaches this activity twice, from
@@ -3466,13 +3451,9 @@ public final class KioskActivity extends Activity {
     private void changePlaylists(java.util.function.Function<PlaylistDocument, String> change) {
         PictureLibrary library = PictureLibrary.get(this);
         library.run(() -> {
-            PlaylistDocument document = library.playlists().load();
-            String refusal = change.apply(document);
-            if (refusal == null) {
-                refusal = library.playlists().store(document);
-            }
-            library.forgetLocalCount();
-            final String said = refusal;
+            // Under the library's lock with the web admin's and Home Assistant's edits, the same
+            // door every surface uses since 2026-09-19.
+            final String said = library.editPlaylists(change);
             library.onMain(() -> {
                 if (isFinishing() || isDestroyed()) {
                     return;
@@ -3498,7 +3479,7 @@ public final class KioskActivity extends Activity {
      */
     private void requestPicturePermission() {
         try {
-            requestPermissions(new String[] {PictureBrowser.permission()}, REQUEST_PICTURE_READ);
+            requestPermissions(PictureBrowser.permissionsToRequest(), REQUEST_PICTURE_READ);
         } catch (RuntimeException refused) {
             Log.w(TAG, "Cannot ask for the picture permission", refused);
             Toast.makeText(this, "This device would not show the permission request.",
@@ -3515,8 +3496,9 @@ public final class KioskActivity extends Activity {
         PictureLibrary library = PictureLibrary.get(this);
         library.browser().refresh();
         library.forgetLocalCount();
-        boolean allowed = granted.length > 0
-                && granted[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        // Judged by what the browser can now do, not by the first answer alone: Android 14's
+        // "Select photos" grants the second permission asked for and denies the first.
+        boolean allowed = library.browser().canReadStorage();
         Toast.makeText(this, allowed
                 ? "Muralis can read this panel's pictures now."
                 : "Without that permission Muralis can only show pictures uploaded to it.",
@@ -3608,6 +3590,12 @@ public final class KioskActivity extends Activity {
         final Pane selected;
         /** The tick box on screen for each picture, so Remove can untick without a repaint. */
         final java.util.Map<String, CheckBox> boxes = new java.util.LinkedHashMap<>();
+        /**
+         * Each held picture's "./folder/name" label, looked up once on the worker. The label is
+         * two MediaStore queries per picture, and the first version made them on the main thread
+         * on every tick, which on a big playlist was seconds of lag (review of 2026-09-19).
+         */
+        final java.util.Map<String, String> paths = new java.util.HashMap<>();
         /** True while this class sets a box itself, so the box's listener ignores that change. */
         boolean syncing;
         List<PictureBrowser.Folder> tree = new ArrayList<>();
@@ -4103,17 +4091,7 @@ public final class KioskActivity extends Activity {
     }
 
     private List<PictureBrowser.Entry> everyUpload(PictureLibrary library) {
-        List<PictureBrowser.Entry> all = new ArrayList<>();
-        int offset = 0;
-        while (true) {
-            PictureBrowser.Page page = library.uploads(offset,
-                    PictureBrowser.PAGE_SIZES[PictureBrowser.PAGE_SIZES.length - 1]);
-            all.addAll(page.entries);
-            if (!page.more || page.entries.isEmpty()) {
-                return all;
-            }
-            offset += page.entries.size();
-        }
+        return new ArrayList<>(library.uploads(0, Integer.MAX_VALUE).entries);
     }
 
     /**
@@ -4138,13 +4116,19 @@ public final class KioskActivity extends Activity {
                 + (draft.items.size() == 1 ? " picture" : " pictures"), false), matchWrapClose());
         PictureLibrary library = PictureLibrary.get(this);
         java.util.Map<String, String> captions = library.captions();
+        List<String> unnamed = new ArrayList<>();
         for (String uri : new ArrayList<>(draft.items)) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
             int pad = dp(6);
             row.setPadding(pad, pad, pad, pad);
             TextView path = new TextView(this);
-            path.setText(library.displayPath(uri));
+            String shown = screen.paths.get(uri);
+            if (shown == null) {
+                unnamed.add(uri);
+                shown = uri.substring(uri.lastIndexOf('/') + 1);
+            }
+            path.setText(shown);
             path.setTextColor(theme.text);
             path.setTextSize(13);
             path.setSingleLine(true);
@@ -4191,6 +4175,23 @@ public final class KioskActivity extends Activity {
             actsParams.topMargin = dp(4);
             row.addView(acts, actsParams);
             screen.selected.body.addView(row, matchWrapClose());
+        }
+        if (!unnamed.isEmpty()) {
+            // The labels arrive from the worker and the pane is painted once more; every name is
+            // in the map by then, so that second paint asks for nothing and this ends.
+            library.run(() -> {
+                java.util.Map<String, String> named = new java.util.HashMap<>();
+                for (String uri : unnamed) {
+                    named.put(uri, library.displayPath(uri));
+                }
+                library.onMain(() -> {
+                    if (screen.gone()) {
+                        return;
+                    }
+                    screen.paths.putAll(named);
+                    paintSelectedPane(screen);
+                });
+            });
         }
     }
 
@@ -4244,17 +4245,21 @@ public final class KioskActivity extends Activity {
             return;
         }
         library.run(() -> {
-            PlaylistDocument document = library.playlists().load();
-            String refusal = document.nameProblem(draft.name, draft.id);
-            String id = draft.id;
-            long now = System.currentTimeMillis();
-            if (refusal == null && id == null) {
-                id = library.playlists().newId();
-                refusal = document.create(id, draft.name, now);
-            } else if (refusal == null) {
-                refusal = document.rename(id, draft.name, now);
-            }
-            if (refusal == null) {
+            // One edit under the library's lock, like every other surface's: a Save that loaded,
+            // changed and stored on its own could store over a switch Home Assistant made meanwhile.
+            final String said = library.editPlaylists(document -> {
+                String refusal = document.nameProblem(draft.name, draft.id);
+                String id = draft.id;
+                long now = System.currentTimeMillis();
+                if (refusal == null && id == null) {
+                    id = library.playlists().newId();
+                    refusal = document.create(id, draft.name, now);
+                } else if (refusal == null) {
+                    refusal = document.rename(id, draft.name, now);
+                }
+                if (refusal != null) {
+                    return refusal;
+                }
                 PlaylistDocument.Playlist playlist = document.byId(id);
                 List<String> gone = new ArrayList<>(playlist.items);
                 gone.removeAll(draft.items);
@@ -4266,12 +4271,8 @@ public final class KioskActivity extends Activity {
                 if (document.active() == null) {
                     document.activate(id);
                 }
-            }
-            if (refusal == null) {
-                refusal = library.playlists().store(document);
-            }
-            library.forgetLocalCount();
-            final String said = refusal;
+                return refusal;
+            });
             library.onMain(() -> {
                 if (isFinishing() || isDestroyed()) {
                     return;
@@ -6786,20 +6787,15 @@ public final class KioskActivity extends Activity {
                     break;
                 }
                 if (configurationVisible || recorderVisible) {
-                    // Asked for while somebody is in the settings, from the web admin's "Show it
-                    // now" or a remote command: the page comes up first and the screensaver over
-                    // it, so the request is never accepted and then quietly ignored.
-                    showDashboard(KioskConfig.load(this).dashboardUrl);
+                    // The service already refuses a start while somebody is in the settings; a
+                    // broadcast that still arrives here is ignored rather than answered by
+                    // showing the dashboard over a half-made draft (review of 2026-09-19).
+                    break;
                 }
                 startScreensaver(KioskConfig.screensaverOf(this), "asked for");
                 break;
             case "screensaver.stop":
                 stopScreensaver("asked for");
-                break;
-            case "screensaver.pick_folder":
-                // Opens the playlist page rather than any system picker: there is no picker on
-                // this path any more, on either device.
-                showPlaylistPage(new PlaylistDraft());
                 break;
             case "display.orientation":
                 // The method reads the setting KioskService has already stored, so there is one

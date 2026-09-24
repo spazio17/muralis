@@ -33,8 +33,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
   `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
-  `webadmin.enabled`, `screensaver.start/stop/mode`, `system.reboot`, `telemetry.publish`;
-  `screensaver.playlist`;
+  `webadmin.enabled`, `screensaver.start/stop/mode/playlist/source/idle_seconds/off_seconds/
+  picture_seconds/dim_percent/url/on_wake/transition/credit_corner/shuffle/one_per_cycle/credit`,
+  `system.reboot`, `telemetry.publish`;
   the web admin alone adds `/api/pictures`, `/api/pictures/delete`, `/api/pictures/refresh` and the
   `/api/playlists` family for the picture playlists, which are not commands)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
@@ -574,7 +575,8 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   ends by returning to that page rather than to the dashboard); the commands are
   `screensaver.start` (refused, not accepted, when it cannot show: mode off, no address, kiosk
   stopped), `screensaver.stop` and `screensaver.mode`. The status document carries a
-  `screensaver` block (`active`, `mode`, the times, `summary`, `problem`; `url` admin-only), and
+  `screensaver` block (`active`, `mode`, the times, `summary`, `problem`, and `url`, shared rather
+  than admin-only because the Home Assistant text entity reads it), and
   `display.source` reads `screensaver` while the dim floor or the film is the screensaver's, so a
   lit dimmed page is never reported as display off. Home Assistant gets a select for the mode and
   one switch that is both state and control; no separate start/stop buttons, they would be the
@@ -758,6 +760,37 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   either one actually draws is listed and checked, and the only remaining miss is the 1 px row
   separator, which is decorative. Juri's rule, 2026-09-12: "we must make the themes look good",
   and no palette's name is a constraint.
+- **What the review of 2026-09-19 found and fixed, all on the branch's last day.** An upload from
+  a playlist's page landed in whichever playlist was in use, because the upload handler never
+  passed the page's id to `saveLocal`; it does now. Every playlist edit goes through
+  `PictureLibrary.editPlaylists`, one lock for the web admin, Home Assistant and the panel, where
+  each had its own load-modify-store and a tick in the browser could undo a switch from a card.
+  A playlists file that cannot be parsed is moved aside under a dated name and said for a day,
+  instead of being overwritten by the next save. A picture is dropped from a playlist only when
+  MediaStore answered for every picture and at least one is still there: a provider that does not
+  answer throws `PictureBrowser.Unavailable` rather than looking like a missing row, and every
+  picture vanishing at once is treated as an ejected card, not a deletion. The migration stores
+  only when it changed something, which ends a loop on an ordinary install waiting for its
+  permission (store, publish, list, migrate, store). The dropped-pictures sentence lasts ten
+  minutes instead of being swallowed by the first reader, which was the telemetry publish.
+  Discovery goes out again before a state publish when the playlist names differ from what it
+  announced, so a new or renamed playlist reaches the Home Assistant select without a reconnect.
+  `screensaver.start` is refused while an operator is in the settings, because the activity
+  answered it by showing the dashboard over a half-made draft. The web's Delete asks first, as the
+  panel does. The held rows' labels are looked up on the worker and cached per page. The
+  retired folder feature's leftovers went: the SAF keys in `KioskConfig`, the picker runnable, the
+  `screensaver.folder` and `screensaver.pick_folder` commands with their test, and the
+  `/api/pictures/folder/pick` route. `READ_MEDIA_VISUAL_USER_SELECTED` is declared and accepted
+  as a partial grant on Android 14, per the vendor's page; **not yet tried on an Android 14
+  device**. A second pass on 2026-09-20 closed what the first left half done: the panel's own Save,
+  Use, Delete and Create go through `editPlaylists` too; the permission result is judged by what
+  the browser can now read, not by the first answer; the activity ignores a `screensaver.start`
+  that arrives with settings open instead of showing the dashboard; the migration's matching step
+  retries by the minute, not per listing; playlist names for discovery come from the document last
+  read or written, not a third file read per publish; MediaStore names are cached for half a
+  minute so a listing under a stats poll is not a query per picture; a one-picture playlist whose
+  file is gone is still cleaned; and a store that throws without the permission still says
+  "picture". A separate security pass found nothing.
 - **Three weights, none of them hollow (chosen 2026-09-12 after five treatments were compared on
   the live pages).** Filled is the action of the thing it sits in and every action inside a list
   row; outlined is a command that acts now and stores nothing; **tonal** is navigation. Tonal

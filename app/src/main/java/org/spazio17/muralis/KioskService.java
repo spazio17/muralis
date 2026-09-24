@@ -1017,8 +1017,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * The screensaver as set and as showing. The page address is admin-only like the dashboard
-     * URL's neighbours: it can name an internal host. The sentence is the one every surface
+     * The screensaver as set and as showing. The page address is in the shared block, for the
+     * reason at the field: the Home Assistant text entity reads it. The sentence is the one every surface
      * prints, so the web admin's box and the tablet's card cannot describe the rule differently.
      */
     private org.json.JSONObject screensaverSnapshot(boolean includeAdminDetail) {
@@ -1129,15 +1129,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
             String source;
             double percent;
             if (!screenOn) {
-                // Judged before the override: a screen that is off has no brightness, whatever
-                // override the screensaver's dim floor left behind on the way down.
+                // Judged before the override: a dark screen reads as zero, whatever override the
+                // screensaver's dim floor left behind on the way down. Zero rather than null
+                // (Juri, 2026-09-23): a Home Assistant number showing "unknown" for a panel that
+                // is simply off looked like a fault, and a slider at zero is what a dark screen is.
                 source = "display_off";
-                percent = -1;
+                percent = 0;
             } else if (override >= 0) {
                 // The screensaver's dim floor and its film are window overrides too; naming them
-                // "display off" would report a lit, dimmed page as dark.
-                source = KioskRuntimeState.screensaverActive() ? "screensaver" : "display_off";
-                percent = override;
+                // "display off" would report a lit, dimmed page as dark. The film itself is the
+                // other dark state and reads zero like a sleeping screen, not the 1% its window
+                // override happens to be.
+                boolean saver = KioskRuntimeState.screensaverActive();
+                source = saver ? "screensaver" : "display_off";
+                percent = saver ? override : 0;
             } else {
                 source = auto ? "auto" : "manual";
                 percent = raw < 0 ? -1 : Math.min(100.0, 100.0 * raw / scale);
@@ -1153,6 +1158,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             display.put("auto", auto);
             display.put("has_light_sensor", hasLightSensor(this));
             display.put("source", source);
+            // Null only when the system setting itself could not be read; a dark panel is zero.
             display.put("brightness_percent",
                     percent < 0 ? org.json.JSONObject.NULL : Math.round(percent));
             display.put("system_raw", raw < 0 ? org.json.JSONObject.NULL : raw);
@@ -1821,6 +1827,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (KioskRuntimeState.wizardOnScreen()) {
             return "the first-start wizard is on screen";
         }
+        // Somebody is in the settings or picking pictures: the activity answers a start by
+        // showing the dashboard, which would throw their half-made draft away (review of
+        // 2026-09-19).
+        if (KioskRuntimeState.operatorOnScreen()) {
+            return "Muralis settings are open on the panel";
+        }
         PowerManager power = getSystemService(PowerManager.class);
         boolean screenOn = power == null || power.isInteractive();
         int visualOffBoot = KioskConfig.visualOffBootCount(this);
@@ -1846,22 +1858,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public String setScreensaverPlaylist(String name) {
         PictureLibrary library = PictureLibrary.get(this);
-        PlaylistDocument document = library.playlists().load();
-        String wanted = name == null ? "" : name.trim();
-        String refusal;
-        PlaylistDocument.Playlist named = wanted.isEmpty() ? null : document.byName(wanted);
-        // The Home Assistant select's own "no playlist" option is the word None, because a select
-        // cannot hold an empty option, so the word has to mean what the entity says it means or
-        // clearing the playlist from a card is refused (measured over MQTT 2026-09-10). A playlist
-        // actually called "None" still wins, which is why the lookup comes first.
-        if (named == null && MqttController.PLAYLIST_NONE.equalsIgnoreCase(wanted)) {
-            wanted = "";
-        }
-        if (wanted.isEmpty()) {
-            refusal = document.activate(null);
-        } else {
-            PlaylistDocument.Playlist playlist = named;
-            if (playlist == null) {
+        String asked = name == null ? "" : name.trim();
+        // Under the library's lock with the web admin's and the panel's edits, so a tick in the
+        // browser cannot store a copy that undoes this switch (review of 2026-09-19).
+        String refusal = library.editPlaylists(document -> {
+            String wanted = asked;
+            PlaylistDocument.Playlist named = wanted.isEmpty() ? null : document.byName(wanted);
+            // The Home Assistant select's own "no playlist" option is the word None, because a
+            // select cannot hold an empty option, so the word has to mean what the entity says
+            // it means or clearing the playlist from a card is refused (measured over MQTT
+            // 2026-09-10). A playlist actually called "None" still wins, which is why the lookup
+            // comes first.
+            if (named == null && MqttController.PLAYLIST_NONE.equalsIgnoreCase(wanted)) {
+                wanted = "";
+            }
+            if (wanted.isEmpty()) {
+                return document.activate(null);
+            }
+            if (named == null) {
                 StringBuilder known = new StringBuilder();
                 for (PlaylistDocument.Playlist other : document.all()) {
                     known.append(known.length() == 0 ? "" : ", ").append(other.name);
@@ -1870,35 +1884,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         ? "there are no playlists on this panel yet"
                         : "no playlist called " + wanted + "; this panel has " + known;
             }
-            refusal = document.activate(playlist.id);
-        }
-        if (refusal == null) {
-            refusal = library.playlists().store(document);
-        }
-        library.forgetLocalCount();
+            return document.activate(named.id);
+        });
         publishTelemetrySoon(this);
         return refusal;
-    }
-
-    @Override
-    public String setScreensaverFolder(String documentId) {
-        // Retired with folder-wide selection, and answered rather than removed so a caller that
-        // still sends it is told why instead of getting "unsupported".
-        return "Pictures are chosen individually in a playlist; folder-wide selection was retired.";
-    }
-
-    /**
-     * Opens the in-app playlist browser. This command never grants access or releases lock task;
-     * Android's grant screen is available only through an explicit button in local settings.
-     */
-    @Override
-    public String pickScreensaverFolder() {
-        if (!KioskRuntimeState.dashboardAlive() || !KioskRuntimeState.activityInFront()) {
-            return "Muralis is not on screen";
-        }
-        if (KioskRuntimeState.wizardOnScreen()) return "the first-start wizard is on screen";
-        sendUiCommand("screensaver.pick_folder", -1, null);
-        return null;
     }
 
     @Override

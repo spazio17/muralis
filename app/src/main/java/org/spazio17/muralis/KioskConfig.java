@@ -37,8 +37,6 @@ final class KioskConfig {
     private static final String SCREENSAVER_ONE_PER_CYCLE = "screensaver_one_per_cycle";
     private static final String SCREENSAVER_CREDIT = "screensaver_credit";
     private static final String SCREENSAVER_CREDIT_CORNER = "screensaver_credit_corner";
-    private static final String SCREENSAVER_FOLDER_URI = "screensaver_folder_uri";
-    private static final String SCREENSAVER_FOLDER_DOCUMENT = "screensaver_folder_document";
     /**
      * Retired 2026-08-29, when the two-way portrait switch became the three-way orientation
      * setting. Read only by the migration in {@link #orientationOf} and removed by the first
@@ -335,16 +333,6 @@ final class KioskConfig {
             return this;
         }
 
-        Editor screensaverFolderUri(String value) {
-            plain.putString(SCREENSAVER_FOLDER_URI, value);
-            return this;
-        }
-
-        Editor screensaverFolderDocument(String value) {
-            plain.putString(SCREENSAVER_FOLDER_DOCUMENT, value);
-            return this;
-        }
-
         Editor kioskStopped(boolean value) {
             plain.putBoolean(KIOSK_STOPPED, value);
             return this;
@@ -438,29 +426,6 @@ final class KioskConfig {
                 preferences.getBoolean(SCREENSAVER_ONE_PER_CYCLE, false),
                 preferences.getBoolean(SCREENSAVER_CREDIT, true),
                 ScreensaverPolicy.isCorner(corner) ? corner : ScreensaverPolicy.CORNER_BOTTOM_LEFT);
-    }
-
-    /**
-     * The folder the operator picked for the Pictures screensaver, as the tree URI the picker
-     * returned, or empty. Not part of {@link ScreensaverPolicy.Settings}: the policy decides
-     * timings, not where files live.
-     */
-    static String screensaverFolderUri(Context context) {
-        return storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(SCREENSAVER_FOLDER_URI, "");
-    }
-
-    /**
-     * Which folder inside the granted tree the pictures are read from, as a document id, or
-     * empty for the tree's own root. Separate from the grant because the grant covers the whole
-     * subtree: one tap on the panel, and every folder inside it can then be chosen from a
-     * distance (Juri, 2026-09-09).
-     */
-    static String screensaverFolderDocument(Context context) {
-        return storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(SCREENSAVER_FOLDER_DOCUMENT, "");
     }
 
     private static int clamp(int value, int min, int max) {

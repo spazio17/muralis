@@ -653,13 +653,6 @@ final class HttpAdminServer {
                             form.get("playlist"), form.get("uri"), selected);
             answerPictureChange(query, form, refusal == null ? "Playlist updated."
                     : refused("Not changed", refusal), refusal == null, output);
-        } else if (path.equals("/api/pictures/folder/pick") && method.equals("POST")) {
-            String refusal = kioskService.dispatch("screensaver.pick_folder",
-                    KioskCommandDispatcher.CommandArgs.EMPTY).detail;
-            boolean asked = refusal == null || refusal.isEmpty();
-            answerPictureChange(query, parseFormBody(headers, body), asked
-                    ? "The picture browser is open inside Muralis on the panel."
-                    : refused("Not opened", refusal), asked, output);
         } else if (path.startsWith("/api/playlists") && method.equals("POST")) {
             handlePlaylistChange(path, query, parseFormBody(headers, body), output);
         } else if (path.equals("/api/playlists") && method.equals("GET")) {
@@ -1456,9 +1449,14 @@ final class HttpAdminServer {
         try {
             org.json.JSONObject display = kioskService.statsJson().optJSONObject("display");
             if (display != null) {
-                percent = display.optInt("brightness_percent", 70);
                 sensorInCharge = display.optBoolean("auto", false);
                 mode = describeBrightnessMode(display.optString("source"), sensorInCharge);
+                // A dark panel reports zero, which this slider cannot show (its floor is 1%, the
+                // lowest level anyone can ask for); the mode label says "display off" instead and
+                // the slider keeps its resting position.
+                if (!"display off".equals(mode)) {
+                    percent = display.optInt("brightness_percent", 70);
+                }
             }
         } catch (RuntimeException unavailable) {
             // Fall back to the old fixed position rather than dropping the control.
@@ -1572,7 +1570,7 @@ final class HttpAdminServer {
             }
             String problem = part.data.length > MAX_PICTURE_BYTES
                     ? "larger than " + (MAX_PICTURE_BYTES / (1024 * 1024)) + " MB"
-                    : library.saveLocal(part.filename, part.data);
+                    : library.saveLocal(queryValue(query, "playlist"), part.filename, part.data);
             if (problem == null) {
                 stored++;
             } else {
@@ -1656,7 +1654,7 @@ final class HttpAdminServer {
      * 2026-09-12, so this panel is short again. Shown only for the Pictures mode with this panel
      * as the source; there is nothing to list when the pictures come from Bing.
      */
-    private String pictureLibraryBox(String at) {
+    private String pictureLibraryBox() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode)
                 && PictureSources.LOCAL.equals(saver.source);
@@ -1929,6 +1927,10 @@ final class HttpAdminServer {
             return "<p class=\"hint\">Pick a folder to begin.</p>";
         }
         PlaylistDocument.Playlist target = library.playlists().load().byId(playlistId);
+        if (target == null) {
+            // Deleted from another browser between the check above and this read.
+            return "<p class=\"hint bad\">That playlist is gone.</p>";
+        }
         int offset = browseOffset(token);
         StringBuilder html = new StringBuilder("<p class=\"where\">")
                 .append(escapeHtml(PictureBrowser.UPLOADS.equals(location) ? "Uploaded to Muralis"
@@ -2051,29 +2053,27 @@ final class HttpAdminServer {
     private void handlePlaylistChange(String path, String query, Map<String, String> form,
             OutputStream output) throws IOException {
         PictureLibrary library = PictureLibrary.get(context);
-        PlaylistDocument document = library.playlists().load();
         String id = form.getOrDefault("id", "");
-        String refusal;
-        String done;
         long now = System.currentTimeMillis();
+        java.util.function.Function<PlaylistDocument, String> change;
+        String done;
         switch (path) {
             case "/api/playlists/activate":
-                refusal = document.activate(id);
+                change = document -> document.activate(id);
                 // Nothing to say: the "In use" mark moving to the row is the whole answer, and a
                 // sentence on top of it was noise (Juri, 2026-09-19).
                 done = null;
                 break;
             case "/api/playlists/rename":
-                refusal = document.rename(id, form.getOrDefault("name", ""), now);
+                change = document -> document.rename(id, form.getOrDefault("name", ""), now);
                 done = "Playlist renamed.";
                 break;
             case "/api/playlists/delete":
-                refusal = document.delete(id);
+                change = document -> document.delete(id);
                 done = "Playlist deleted. The pictures themselves are not deleted.";
                 break;
             case "/api/playlists":
-                String fresh = library.playlists().newId();
-                refusal = document.create(fresh,
+                change = document -> document.create(library.playlists().newId(),
                         form.getOrDefault("name", ""), now);
                 done = "Playlist created. Open it to pick its pictures.";
                 break;
@@ -2081,10 +2081,9 @@ final class HttpAdminServer {
                 writeResponse(output, 404, "text/plain; charset=utf-8", bytes("Unknown\n"));
                 return;
         }
-        if (refusal == null) {
-            refusal = library.playlists().store(document);
-        }
-        library.forgetLocalCount();
+        // Under the library's lock, with the other two surfaces' edits: a load-modify-store of
+        // its own here lost whichever edit Home Assistant or the panel made meanwhile.
+        String refusal = library.editPlaylists(change);
         KioskService.publishTelemetrySoon(context);
         answerPictureChange(query, form,
                 refusal == null ? done : refused("Not changed", refusal), refusal == null, output);
@@ -2394,7 +2393,7 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append("</fieldset>")
 
-                .append(pictureLibraryBox(at))
+                .append(pictureLibraryBox())
                 .append("</div>")
                 .append(backRow());
         html.append(commandScript);
@@ -2433,7 +2432,7 @@ final class HttpAdminServer {
         if (form.containsKey("screensaver_mode")) {
             String mode = form.get("screensaver_mode");
             if (!ScreensaverPolicy.isMode(mode)) {
-                return "Not saved: the screensaver mode must be off, dim, film or url.";
+                return "Not saved: the screensaver mode must be off, dim, film, url or pictures.";
             }
             editor.screensaverMode(mode);
             changed = true;

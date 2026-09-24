@@ -80,9 +80,11 @@ if(sn&&ss.summary!=null){sn.textContent=ss.summary;sn.classList.toggle('bad',ss.
 var so=document.getElementById('screensaver-source-note');
 if(so&&ss.source_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
 so.textContent=ss.source_state+pic;so.classList.toggle('bad',ss.source_problem!=null);}
-// The slider follows the real backlight, except while the operator is actually dragging it.
+// The slider follows the real backlight, except while the operator is actually dragging it,
+// and except while the panel is dark: it reports zero then, below this slider's 1% floor, and
+// the mode label below says "display off" for it.
 var sl=document.getElementById('brightness');
-if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){
+if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null&&disp.source!=='display_off'){
 sl.value=disp.brightness_percent;
 var lbl=document.getElementById('brightness-value');
 if(lbl){lbl.textContent=disp.brightness_percent+'%';}}

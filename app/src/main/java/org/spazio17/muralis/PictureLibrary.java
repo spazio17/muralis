@@ -6,16 +6,12 @@ package org.spazio17.muralis;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.content.UriPermission;
-import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.DocumentsContract;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -55,9 +51,9 @@ import org.spazio17.muralis.PictureSources.Picture;
  * The Pictures screensaver's pictures: where they are kept, how the online sets are fetched and
  * how each one is decoded for the screen.
  *
- * <p>Local pictures are selected individually from persisted SAF grants and the private upload
- * store. Grants permit browsing; they do not automatically select new files. Android's picker is
- * only used to acquire access explicitly on the panel. No broad photo/storage permission.
+ * <p>Local pictures are the panel's own, read through MediaStore under the read permission a
+ * device owner grants itself, plus the private upload store; they are picked one by one into
+ * named playlists inside Muralis, on every device, and the system's picker is not used.
  *
  * <p><b>The online sets</b> (Bing, Wikimedia Commons) are the last {@link PictureSources#ONLINE_DAYS}
  * days' pictures, downloaded into the app's cache with a manifest of their credits, so the
@@ -327,6 +323,9 @@ final class PictureLibrary {
     }
 
     void forgetLocalCount() {
+        synchronized (knownNames) {
+            knownNames.clear();
+        }
         localCount = -1;
         revision.incrementAndGet();
     }
@@ -662,11 +661,6 @@ final class PictureLibrary {
         return new File(app.getFilesDir(), "pictures");
     }
 
-    /** Whether pictures can be reached at all: whether this panel may read its own. */
-    boolean folderReachable() {
-        return browser.canReadStorage();
-    }
-
     /**
      * Whether this panel browses its own storage.
      *
@@ -690,6 +684,26 @@ final class PictureLibrary {
     }
 
     /**
+     * One edit of the stored playlists, under this library's own lock.
+     *
+     * <p>Every surface came through a load-modify-store path of its own before 2026-09-19: the
+     * web admin on an HTTP worker, Home Assistant on the MQTT thread, the panel on the library
+     * worker. Two of them at once each stored a copy that lacked the other's change, so a tick
+     * in the browser could quietly undo a playlist switch from a card. They all come through
+     * here now, one at a time.
+     */
+    synchronized String editPlaylists(
+            java.util.function.Function<PlaylistDocument, String> change) {
+        PlaylistDocument document = playlists.load();
+        String refusal = change.apply(document);
+        if (refusal == null) {
+            refusal = playlists.store(document);
+        }
+        forgetLocalCount();
+        return refusal;
+    }
+
+    /**
      * Every selected local picture, from uploads and all saved folder grants. A supplied caption
      * is its title; otherwise the file name in words is used.
      */
@@ -702,17 +716,34 @@ final class PictureLibrary {
         }
         Map<String, String> captions = captions();
         List<String> gone = new ArrayList<>();
+        boolean unsure = false;
         // The playlist's own order, which is the point of storing a list rather than a set.
         for (String uri : active.items) {
-            String name = localName(uri);
+            String name;
+            try {
+                name = cachedLocalName(uri);
+            } catch (PictureBrowser.Unavailable notNow) {
+                // The store did not answer, which is not a missing file: the picture is kept
+                // under its address, and nothing is dropped from this listing.
+                unsure = true;
+                name = lastSegmentOf(uri);
+            }
             if (name == null) {
                 gone.add(uri);
                 continue;
             }
             pictures.add(localPicture(uri, name, captions));
         }
-        if (!gone.isEmpty()) {
+        // Only a definite answer edits a playlist: the store answered for every picture, and at
+        // least one of them is still there. Every picture vanishing at once is what an ejected
+        // card looks like, not what deleting looks like (review of 2026-09-19); a playlist of one
+        // picture has no such second witness and follows the rule that a deleted picture leaves.
+        if (!gone.isEmpty() && !unsure
+                && (gone.size() < active.items.size() || active.items.size() == 1)) {
             dropDeleted(active.id, gone);
+        } else if (!gone.isEmpty()) {
+            Log.i(TAG, gone.size() + " picture(s) not found and nothing removed: the store may "
+                    + "not be answering for them");
         }
         return pictures;
     }
@@ -730,28 +761,38 @@ final class PictureLibrary {
      * silently is indistinguishable from a bug.
      */
     private void dropDeleted(String playlistId, List<String> gone) {
-        PlaylistDocument document = playlists.load();
-        if (document.byId(playlistId) == null) {
-            return;
-        }
-        document.remove(playlistId, gone, System.currentTimeMillis());
-        if (playlists.store(document) == null) {
+        String refusal = editPlaylists(document -> {
+            if (document.byId(playlistId) == null) {
+                return "that playlist is gone";
+            }
+            document.remove(playlistId, gone, System.currentTimeMillis());
+            return null;
+        });
+        if (refusal == null) {
             deleted = gone.size();
+            deletedAt = android.os.SystemClock.elapsedRealtime();
             Log.i(TAG, "Removed " + gone.size() + " deleted picture(s) from the playlist");
-            forgetLocalCount();
         }
     }
 
     /** How many pictures were dropped because their files are gone, for one sentence. */
     private volatile int deleted;
+    private volatile long deletedAt;
+    /** How long the sentence is said for: long enough to be seen, not a permanent state. */
+    private static final long DELETED_NOTE_MS = 10 * 60 * 1000L;
 
-    /** The sentence about pictures that were dropped, or null. Said once, then forgotten. */
+    /**
+     * The sentence about pictures that were dropped, or null.
+     *
+     * <p>Said for ten minutes to every surface that asks, not swallowed by the first reader: it
+     * used to clear itself on the first read, and the first reader was the telemetry publish,
+     * so the web page and the tablet never saw it (review of 2026-09-19).
+     */
     String deletedNote() {
         int count = deleted;
-        if (count == 0) {
+        if (count == 0 || android.os.SystemClock.elapsedRealtime() - deletedAt > DELETED_NOTE_MS) {
             return null;
         }
-        deleted = 0;
         return count == 1
                 ? "One picture was removed from the playlist because its file is gone."
                 : count + " pictures were removed from the playlist because their files are gone.";
@@ -782,8 +823,47 @@ final class PictureLibrary {
         }
         // Only a panel that can read its own pictures may conclude that one is missing: without
         // the permission every answer is null, which would read as "every picture was deleted".
-        String name = browser.mediaName(uri);
+        // The same without the permission when the store throws instead, which API 26 and 28 do.
+        String name;
+        try {
+            name = browser.mediaName(uri);
+        } catch (PictureBrowser.Unavailable notNow) {
+            if (!browser.canReadStorage()) {
+                return "picture";
+            }
+            throw notNow;
+        }
         return name == null && !browser.canReadStorage() ? "picture" : name;
+    }
+
+    /**
+     * Names the store answered for the playlist's pictures, kept for half a minute.
+     *
+     * <p>{@link #listLocal} runs every five seconds under an open web admin page, and without
+     * this it asked MediaStore once per picture each time, a thousand queries every five seconds
+     * on the worker that also decodes the slideshow's pictures (review of 2026-09-19). A file
+     * deleted meanwhile is noticed within the half minute. Cleared by {@link #forgetLocalCount}.
+     */
+    private final java.util.Map<String, String> knownNames = new java.util.HashMap<>();
+    private long knownNamesAt;
+    private static final long KNOWN_NAMES_MS = 30_000L;
+
+    private String cachedLocalName(String uri) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        synchronized (knownNames) {
+            if (now - knownNamesAt > KNOWN_NAMES_MS) {
+                knownNames.clear();
+                knownNamesAt = now;
+            }
+            if (knownNames.containsKey(uri)) {
+                return knownNames.get(uri);
+            }
+        }
+        String name = localName(uri);
+        synchronized (knownNames) {
+            knownNames.put(uri, name);
+        }
+        return name;
     }
 
     private synchronized void ensurePlaylist() {
@@ -943,7 +1023,7 @@ final class PictureLibrary {
      * to be a JPEG, PNG or WebP by their signature and by decoding their header, because a
      * browser's declared type is whatever the file name says.
      */
-    synchronized String saveLocal(String filename, byte[] data) {
+    synchronized String saveLocal(String playlistId, String filename, byte[] data) {
         String mime = PictureSources.imageMime(data);
         if (mime == null) {
             return "not a JPEG, PNG or WebP picture";
@@ -975,7 +1055,10 @@ final class PictureLibrary {
                 throw new IOException("cannot store the picture");
             }
             ensurePlaylist();
-            String selection = selectPicture(Uri.fromFile(target).toString(), true);
+            // Into the playlist whose page the upload came from; only a caller that names none
+            // gets the one in use. The page's uploads used to land in whichever was playing.
+            String selection = selectPicture(playlistId == null || playlistId.isEmpty()
+                    ? null : playlistId, Uri.fromFile(target).toString(), true);
             forgetLocalCount();
             return selection == null ? null : "stored, but not selected: " + selection;
         } catch (IOException | RuntimeException failed) {
@@ -1174,7 +1257,12 @@ final class PictureLibrary {
      * looking at that page needs to see in order to take it out.
      */
     String displayPath(String url) {
-        String name = localName(url);
+        String name;
+        try {
+            name = localName(url);
+        } catch (PictureBrowser.Unavailable notNow) {
+            return lastSegmentOf(url);
+        }
         return name == null ? lastSegmentOf(url) + " (not found)" : displayPath(url, name);
     }
 
@@ -1225,8 +1313,12 @@ final class PictureLibrary {
                 if (!browser.canReadStorage()) {
                     return "This panel may not read its own pictures.";
                 }
-                if (browser.mediaName(url) == null) {
-                    return "Not a supported picture.";
+                try {
+                    if (browser.mediaName(url) == null) {
+                        return "Not a supported picture.";
+                    }
+                } catch (PictureBrowser.Unavailable notNow) {
+                    return "This panel's pictures could not be read just now.";
                 }
             } else {
                 return "That is not a picture this panel can read.";

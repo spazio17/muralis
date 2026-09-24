@@ -148,20 +148,8 @@ final class KioskCommandDispatcher {
         /** Back to the page, and the idle time starts again. */
         void screensaverStop();
 
-        /**
-         * Reads the screensaver's pictures from a folder inside the one the panel was given, or
-         * from its root for an empty id. Returns why not, or null.
-         */
-        String setScreensaverFolder(String documentId);
-
         /** Makes the named playlist the one in use, or none when the name is empty. */
         String setScreensaverPlaylist(String name);
-
-        /**
-         * Opens the system folder picker on the panel, for an operator who is standing at it or
-         * on the phone with somebody who is. Returns why not, or null.
-         */
-        String pickScreensaverFolder();
 
         /**
          * Stores one screensaver setting. The value arrives checked and canonical: this switch
@@ -293,23 +281,6 @@ final class KioskCommandDispatcher {
             case "screensaver.stop":
                 executor.screensaverStop();
                 return accepted();
-            case "screensaver.folder": {
-                // The value is a document id from the panel's own listing, and the executor
-                // refuses one the grant does not cover: an id is not a capability here.
-                String problem = executor.setScreensaverFolder(
-                        args.value == null ? "" : args.value);
-                if (problem != null) {
-                    return rejected(problem);
-                }
-                return accepted();
-            }
-            case "screensaver.pick_folder": {
-                String problem = executor.pickScreensaverFolder();
-                if (problem != null) {
-                    return rejected(problem);
-                }
-                return accepted();
-            }
             case "screensaver.mode":
                 if (!ScreensaverPolicy.isMode(args.value)) {
                     return rejected("value must be off, dim, film, url or pictures");

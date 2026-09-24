@@ -40,8 +40,17 @@ final class PicturePlaylists {
     private final Context app;
     private final SharedPreferences prefs;
     private volatile String persistenceProblem;
-    /** Names of pictures a migration could not carry across, for the operator to see once. */
+    /** A file that could not be read was kept under another name; said for a day. */
+    private volatile String damagedNote;
+    private volatile long damagedAt;
+    private static final long DAMAGED_NOTE_MS = 24 * 60 * 60 * 1000L;
+    /** Names of pictures a migration could not carry across, said until they match. */
     private volatile List<String> unmatched = new ArrayList<>();
+    /** When the unfinished matching step last ran, so it is retried by the minute, not per call. */
+    private long repointedAt;
+    private static final long REPOINT_RETRY_MS = 60_000L;
+    /** The playlist names of the document last read or written, joined, for discovery. */
+    private volatile String namesKey;
 
     PicturePlaylists(Context context) {
         app = context.getApplicationContext();
@@ -55,9 +64,11 @@ final class PicturePlaylists {
     /**
      * The stored document, or an empty one when there is none.
      *
-     * <p>An unreadable file is <em>not</em> treated as absent: it is logged, a problem is recorded
-     * for the screens to show, and an empty document is returned without ever being written back,
-     * so the bytes stay on disk for a later look rather than being replaced by nothing.
+     * <p>An unreadable file is <em>not</em> treated as absent: it is moved aside under a dated
+     * name, logged, and said on the screens for a day, and an empty document is returned. Moved
+     * rather than left in place, because every mutator stores what it loaded: the first version
+     * left the bytes where they were and the very next save wrote an empty document over them
+     * (review of 2026-09-19). The damaged bytes stay on disk for a later look.
      */
     synchronized PlaylistDocument load() {
         File file = file();
@@ -65,10 +76,19 @@ final class PicturePlaylists {
             return PlaylistDocument.empty();
         }
         try {
-            return PlaylistDocument.parse(readText(file));
+            PlaylistDocument document = PlaylistDocument.parse(readText(file));
+            namesKey = namesOf(document);
+            return document;
         } catch (IOException | IllegalArgumentException unreadable) {
-            Log.w(TAG, "Unreadable playlists, left on disk untouched", unreadable);
-            persistenceProblem = "The playlists could not be read. Nothing was changed.";
+            File kept = new File(file.getPath() + ".damaged-" + System.currentTimeMillis());
+            boolean moved = file.renameTo(kept);
+            Log.w(TAG, "Unreadable playlists, " + (moved ? "kept as " + kept.getName()
+                    : "could not be moved aside"), unreadable);
+            damagedNote = moved
+                    ? "The playlists could not be read; the file was kept as " + kept.getName()
+                            + " and a fresh start was made."
+                    : "The playlists could not be read.";
+            damagedAt = android.os.SystemClock.elapsedRealtime();
             return PlaylistDocument.empty();
         }
     }
@@ -93,8 +113,26 @@ final class PicturePlaylists {
             return persistenceProblem;
         }
         persistenceProblem = null;
+        namesKey = namesOf(document);
         KioskService.publishTelemetrySoon(app);
         return null;
+    }
+
+    /**
+     * The playlist names as one string, from the document last read or written, so a caller can
+     * tell that the set changed without reading the file again: the MQTT state publish asks on
+     * every publish (review of 2026-09-19). Null until the document has been read once.
+     */
+    String namesKey() {
+        return namesKey;
+    }
+
+    static String namesOf(PlaylistDocument document) {
+        StringBuilder names = new StringBuilder();
+        for (PlaylistDocument.Playlist playlist : document.all()) {
+            names.append(playlist.name).append('\u0000');
+        }
+        return names.toString();
     }
 
     /**
@@ -109,12 +147,17 @@ final class PicturePlaylists {
             return;
         }
         PlaylistDocument document = load();
+        boolean changed = false;
         int reached = done;
         if (reached < 1) {
-            document = carryTheOldSelection(document, uploads);
+            PlaylistDocument carried = carryTheOldSelection(document, uploads);
+            changed |= carried != document;
+            document = carried;
             reached = 1;
         }
-        if (reached < 2) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (reached < 2 && browser.canReadStorage()
+                && (repointedAt == 0 || now - repointedAt > REPOINT_RETRY_MS)) {
             // The addresses can only be matched against pictures this panel may read, so on an
             // ordinary install this step waits for the permission. Running it early would have
             // matched nothing (caught before it ran on the phone, 2026-09-10).
@@ -122,13 +165,22 @@ final class PicturePlaylists {
             // And it only counts as done once everything matched. A picture MediaStore has not
             // indexed yet is not a picture that is gone, so leaving the step unfinished lets a
             // later run pick it up rather than deciding against the operator once and for all.
-            if (browser.canReadStorage() && repointDocumentUris(document, browser)) {
+            // Retried by the minute, not on every listing: each run walks the whole picture
+            // index twice, and a listing comes every five seconds under an open web page.
+            repointedAt = now;
+            changed |= repointDocumentUris(document, browser) > 0;
+            if (unmatched.isEmpty()) {
                 reached = 2;
             }
         }
-        if (store(document) == null) {
-            prefs.edit().putInt(MIGRATION_KEY, reached).commit();
+        // Stored only when something changed. Storing regardless published telemetry, and the
+        // telemetry lists the pictures, which runs this again: on an ordinary install waiting
+        // for its permission that was a rewrite of the file and an MQTT publish every few
+        // seconds, for ever (review of 2026-09-19).
+        if (changed && store(document) != null) {
+            return;
         }
+        prefs.edit().putInt(MIGRATION_KEY, reached).commit();
     }
 
     /**
@@ -181,10 +233,11 @@ final class PicturePlaylists {
      * somebody's playlist. A document URI also still opens on its own persisted grant, so a kept
      * item keeps working meanwhile.
      *
-     * @return whether every address was matched, so the caller knows if the step is finished
+     * @return how many addresses were repointed; {@link #unmatched} says whether any were not
      */
-    private boolean repointDocumentUris(PlaylistDocument document, PictureBrowser browser) {
+    private int repointDocumentUris(PlaylistDocument document, PictureBrowser browser) {
         List<String> lost = new ArrayList<>();
+        int repointed = 0;
         Map<String, String> byPath = null;
         Map<String, String> byName = null;
         long now = System.currentTimeMillis();
@@ -211,6 +264,7 @@ final class PicturePlaylists {
                     lost.add(name.isEmpty() ? uri : name);
                 } else {
                     document.repoint(playlist.id, uri, match, now);
+                    repointed++;
                 }
             }
         }
@@ -219,7 +273,7 @@ final class PicturePlaylists {
             Log.i(TAG, "Migration could not match " + lost.size()
                     + " picture(s) to this panel yet; they are kept and will be retried");
         }
-        return lost.isEmpty();
+        return repointed;
     }
 
     /**
@@ -267,18 +321,6 @@ final class PicturePlaylists {
     }
 
     /**
-     * Pictures a migration could not carry across, for one sentence on the screens. Empty once the
-     * operator has been told, because it is a one-off event and not a state.
-     */
-    List<String> unmatched() {
-        return new ArrayList<>(unmatched);
-    }
-
-    void forgetUnmatched() {
-        unmatched = new ArrayList<>();
-    }
-
-    /**
      * A fresh playlist id: the wall clock in base 36 plus a counter, which is short, sortable and
      * cannot collide with one made in the same millisecond.
      */
@@ -290,7 +332,13 @@ final class PicturePlaylists {
     }
 
     String problem() {
-        return persistenceProblem;
+        if (persistenceProblem != null) {
+            return persistenceProblem;
+        }
+        String damaged = damagedNote;
+        return damaged != null
+                && android.os.SystemClock.elapsedRealtime() - damagedAt <= DAMAGED_NOTE_MS
+                ? damaged : null;
     }
 
     private static String readText(File file) throws IOException {

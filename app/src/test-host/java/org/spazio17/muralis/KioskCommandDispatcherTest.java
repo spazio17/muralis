@@ -535,39 +535,6 @@ public final class KioskCommandDispatcherTest {
                 .status.equals("accepted"), "an empty address clears it");
         require("".equals(executor.screensaverSettings.get(
                 KioskCommandDispatcher.ScreensaverSetting.URL)), "cleared");
-        testFolderCommands();
-    }
-
-    /**
-     * The folder inside the granted tree, and the picker. Both answer with a reason rather than
-     * accepting: a document id the grant does not cover is not a capability, and a panel that
-     * cannot take its screen back must not be left in a file browser.
-     */
-    private static void testFolderCommands() {
-        RecordingExecutor executor = new RecordingExecutor();
-        require(KioskCommandDispatcher.dispatch("screensaver.folder",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "primary:Pictures/Wall"),
-                executor).status.equals("accepted"), "a folder id was rejected");
-        require("primary:Pictures/Wall".equals(executor.lastFolderDocument), "id not forwarded");
-        require(KioskCommandDispatcher.dispatch("screensaver.folder",
-                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
-                "no id means the top of the folder that was granted");
-        require("".equals(executor.lastFolderDocument), "the empty id is the tree root");
-        executor.folderProblem = "that folder is not inside the folder this panel was given";
-        KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
-                "screensaver.folder",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "primary:Android/data"),
-                executor);
-        require(refused.status.equals("rejected") && refused.detail.contains("not inside"),
-                "a folder outside the grant must be refused with the reason: " + refused.detail);
-        require(KioskCommandDispatcher.dispatch("screensaver.pick_folder",
-                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
-                "the picker was refused where it should open");
-        executor.pickProblem = "the folder picker can only be opened at the panel on this install";
-        KioskCommandDispatcher.Result noPicker = KioskCommandDispatcher.dispatch(
-                "screensaver.pick_folder", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
-        require(noPicker.status.equals("rejected") && noPicker.detail.contains("at the panel"),
-                "an install that cannot come back must say so: " + noPicker.detail);
     }
 
     /**
@@ -711,20 +678,6 @@ public final class KioskCommandDispatcherTest {
             calls.add("screensaverStop");
         }
 
-        /** Non-null stands in for a folder the panel's grant does not cover. */
-        String folderProblem;
-        String lastFolderDocument;
-
-        @Override
-        public String setScreensaverFolder(String documentId) {
-            calls.add("setScreensaverFolder:" + documentId);
-            if (folderProblem != null) {
-                return folderProblem;
-            }
-            lastFolderDocument = documentId;
-            return null;
-        }
-
         String playlistProblem;
         String lastPlaylist;
 
@@ -736,15 +689,6 @@ public final class KioskCommandDispatcherTest {
             }
             lastPlaylist = name;
             return null;
-        }
-
-        /** Non-null stands in for an install where the picker cannot be opened from a distance. */
-        String pickProblem;
-
-        @Override
-        public String pickScreensaverFolder() {
-            calls.add("pickScreensaverFolder");
-            return pickProblem;
         }
 
         @Override

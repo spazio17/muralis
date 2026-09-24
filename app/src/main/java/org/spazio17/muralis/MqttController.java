@@ -266,8 +266,18 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     void publishState(JSONObject state) {
+        // The playlist select's options are part of discovery, and a playlist made, renamed or
+        // deleted since the last discovery is one Home Assistant cannot choose or shows as
+        // unknown (review of 2026-09-19). Discovery goes again before the state when they differ.
+        String names = PictureLibrary.get(appContext).playlists().namesKey();
+        if (names != null && !names.equals(announcedPlaylists)) {
+            publishDiscovery();
+        }
         publish(topicPrefix + "state", state.toString(), 0, true);
     }
+
+    /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
+    private volatile String announcedPlaylists = null;
 
     void publishCommandResult(String id, String status, String detail) {
         JSONObject result = new JSONObject();
@@ -665,6 +675,7 @@ final class MqttController implements MqttCallbackExtended {
             for (PlaylistDocument.Playlist playlist : playlists.all()) {
                 playlistNames.put(playlist.name);
             }
+            announcedPlaylists = PicturePlaylists.namesOf(playlists);
             components.put("screensaver_playlist", select(
                     "Screensaver playlist",
                     "screensaver.playlist",

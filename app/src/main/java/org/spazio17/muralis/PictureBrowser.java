@@ -170,8 +170,32 @@ final class PictureBrowser {
      * happen after this object was built.
      */
     boolean canReadStorage() {
-        return app.checkSelfPermission(permission())
+        if (app.checkSelfPermission(permission())
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return true;
+        }
+        // Android 14's "Select photos and videos": a partial grant, and enough to browse what
+        // the person chose. Without the permission declared, that answer only lasted the
+        // session and the dialog came back every time (vendor docs, 2026-09-19).
+        return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && app.checkSelfPermission(
+                        android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** What to ask for: the read permission, and from Android 14 the partial one beside it. */
+    static String[] permissionsToRequest() {
+        return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                ? new String[] {permission(),
+                        android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED}
+                : new String[] {permission()};
+    }
+
+    /** The store did not answer: a provider restarting, a volume mid-eject. Not a missing row. */
+    static final class Unavailable extends RuntimeException {
+        Unavailable(Throwable cause) {
+            super("MediaStore did not answer", cause);
+        }
     }
 
     private static boolean hasRelativePath() {
@@ -357,16 +381,9 @@ final class PictureBrowser {
 
     /** Every picture in one folder, in the same order the pages show, for "select all". */
     List<Entry> everyPicture(String relativePath) {
-        List<Entry> all = new ArrayList<>();
-        int offset = 0;
-        while (true) {
-            Page page = pictures(relativePath, offset, PAGE_SIZES[PAGE_SIZES.length - 1]);
-            all.addAll(page.entries);
-            if (!page.more || page.entries.isEmpty()) {
-                return all;
-            }
-            offset += page.entries.size();
-        }
+        // One walk of the folder, not one per page: paging it a hundred at a time re-ran the
+        // whole cursor walk and sort for every page (review of 2026-09-19).
+        return new ArrayList<>(pictures(relativePath, 0, Integer.MAX_VALUE).entries);
     }
 
     /** Whether a picture address is one of this panel's own MediaStore images. */
@@ -394,7 +411,9 @@ final class PictureBrowser {
             String name = cursor.getString(0);
             return name == null || name.isEmpty() ? "picture" : name;
         } catch (RuntimeException unreadable) {
-            return null;
+            // Not null: null means "no such picture", and a caller that takes it for that drops
+            // the picture from its playlist. A store that did not answer is a different thing.
+            throw new Unavailable(unreadable);
         }
     }
 

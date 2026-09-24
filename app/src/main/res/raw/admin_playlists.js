@@ -39,6 +39,11 @@ box.addEventListener('submit',function(event){
 var form=event.target;
 if(form.tagName!=='FORM'||(form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
 event.preventDefault();
+// Delete asks first, as the panel does: a playlist is gone for good, and Delete sits next to
+// Edit on a phone (review of 2026-09-19).
+if(/\/api\/playlists\/delete$/.test(form.action)){
+var row=form.closest('tr'),name=row&&row.querySelector('th')?row.querySelector('th').textContent:'this playlist';
+if(!window.confirm('Delete '+name+'? The pictures themselves are not deleted.')){return;}}
 // URL-encoded, not FormData: a FormData body is sent as multipart, and the server parses
 // multipart for the upload alone.
 var data=new URLSearchParams(new FormData(form));
