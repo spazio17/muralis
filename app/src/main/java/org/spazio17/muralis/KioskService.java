@@ -1043,6 +1043,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             saver.put("source", settings.source);
             saver.put("picture_s", settings.pictureSeconds);
             saver.put("transition", settings.transition);
+            saver.put("picture_fit", settings.pictureFit);
             saver.put("shuffle", settings.shuffle);
             saver.put("one_per_cycle", settings.onePerCycle);
             saver.put("credit", settings.credit);
@@ -1918,6 +1919,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 break;
             case TRANSITION:
                 editor.screensaverTransition(value);
+                break;
+            case PICTURE_FIT:
+                editor.screensaverPictureFit(value);
                 break;
             case CREDIT_CORNER:
                 editor.screensaverCreditCorner(value);

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material glyph, the same 24-unit stroke path the web page's glyph map draws for it: two
+     chevrons pointing at each other, the tree closing. White, tinted at runtime from the palette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M7,4 12,9 17,4M7,20 12,15 17,20"/>
+</vector>

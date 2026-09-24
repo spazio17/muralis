@@ -70,13 +70,71 @@ picked?fetch('/api/playlists/items?playlist='+encodeURIComponent(playlist),
 {credentials:'same-origin'}).then(text):null])
 .then(function(parts){folders.innerHTML=parts[0];content.innerHTML=parts[1];
 if(picked&&parts[2]!==null){picked.innerHTML=parts[2];}
-markSome();
+markSome();paintTree();
 try{history.replaceState(null,'',shown);}
 catch(ignored){}})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
 }
 
-function openFolder(target){at=target;reload();}
+// Which branches of the folder tree are open, kept here and painted over every fragment the
+// server sends: the server opens the top of the volume and the way down to the open folder, this
+// starts from that once and then the reader's carets decide (Juri, 2026-09-23). A folder's parent
+// is the path with its last segment taken off, as the panel reads it.
+var branches=null;
+function parentOf(path){var t=path.replace(/\/$/,''),i=t.lastIndexOf('/');return i<0?'':t.slice(0,i+1);}
+function paintTree(){
+var rows=Array.prototype.slice.call(folders.querySelectorAll('li.row'));
+if(branches===null){branches={};rows.forEach(function(li){
+if(li.dataset.kids&&li.classList.contains('open')){branches[li.dataset.at]='1';}});}
+var parents=0,openParents=0;
+rows.forEach(function(li){
+var path=li.dataset.at,kids=!!li.dataset.kids;
+if(kids){parents++;if(branches[path]){openParents++;}}
+li.classList.toggle('open',kids&&!!branches[path]);
+var caret=li.querySelector('.caret[role=button]');
+if(caret){caret.setAttribute('aria-label',(branches[path]?'Close ':'Open ')+li.querySelector('.name').textContent);}
+var shown=true;
+if(!li.dataset.top){var up=path;while(up!==''){up=parentOf(up);if(!branches[up]){shown=false;break;}}}
+li.classList.toggle('hidden',!shown);});
+var toggle=document.getElementById('tree-toggle');
+if(toggle){var all=openParents>=parents;
+toggle.innerHTML=all?'<svg viewBox="0 0 24 24"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></svg>'
+:'<svg viewBox="0 0 24 24"><path d="M7 9l5-5 5 5M7 15l5 5 5-5"/></svg>';
+var words=all?'Close every folder':'Open every folder';
+toggle.title=words;toggle.setAttribute('aria-label',words);toggle.dataset.all=all?'1':'';}
+}
+main.addEventListener('click',function(event){
+var caret=event.target.closest?event.target.closest('#folder-list .caret[role=button]'):null;
+if(caret){var li=caret.parentNode,path=li.dataset.at;
+if(branches[path]){delete branches[path];}else{branches[path]='1';}
+paintTree();return;}
+var toggle=event.target.closest?event.target.closest('#tree-toggle'):null;
+if(toggle){var rows=folders.querySelectorAll('li.row[data-kids]');
+if(toggle.dataset.all){branches={};}
+else{Array.prototype.forEach.call(rows,function(li){branches[li.dataset.at]='1';});}
+// The top of the volume stays open: closed, the tree would be one row saying "Internal storage".
+branches['']='1';
+paintTree();}
+});
+main.addEventListener('keydown',function(event){
+if(event.key!=='Enter'&&event.key!==' '){return;}
+var caret=event.target.closest?event.target.closest('#folder-list .caret[role=button]'):null;
+if(caret){event.preventDefault();caret.click();}
+});
+
+// Opening a folder opens its branch and the way down to it, so a tap never hides what it reached;
+// a second tap on the folder that is already open closes its branch again, so the row does what
+// the caret does and nobody has to find the caret (Juri, 2026-09-23: "make it dumb-proof").
+function openFolder(target){
+var row=null,rows=folders.querySelectorAll('li.row');
+for(var i=0;i<rows.length;i++){if(rows[i].dataset.at===target){row=rows[i];break;}}
+if(branches&&target===at&&row&&row.dataset.kids){
+if(branches[target]){delete branches[target];}else{branches[target]='1';}
+paintTree();return;}
+at=target;
+if(branches&&target!=='uploads'){var walk=target;branches[walk]='1';
+while(walk!==''){walk=parentOf(walk);branches[walk]='1';}}
+reload();}
 
 // The title is the playlist's name and the pencil beside it opens the rename box. Opening it
 // puts the cursor in the name; Cancel closes it; a refusal is said inside the box, under the name,
@@ -150,7 +208,7 @@ post(form).then(function(r){say(r.message,r.ok);return reload();})
 // set that state, so the fragment marks it and this reads the mark after every re-read.
 function markSome(){var all=document.getElementById('select-all');
 if(all){all.indeterminate=!!all.dataset.some;}}
-markSome();
+markSome();paintTree();
 
 main.addEventListener('submit',function(event){
 var form=event.target;

@@ -1311,6 +1311,9 @@ final class HttpAdminServer {
         paths.put("power", "<path d=\"M12 3v9M18.4 6.6a8 8 0 11-12.8 0\"/>");
         paths.put("open", "<path d=\"M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7"
                 + "a1 1 0 011-1h5\"/>");
+        // The Folders head's one button: chevrons closing on each other, or opening away.
+        paths.put("unfold_less", "<path d=\"M7 4l5 5 5-5M7 20l5-5 5 5\"/>");
+        paths.put("unfold_more", "<path d=\"M7 9l5-5 5 5M7 15l5 5 5-5\"/>");
         paths.put("theme", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
                 + "<path d=\"M12 3a9 9 0 010 18z\" fill=\"currentColor\"/>");
         return Collections.unmodifiableMap(paths);
@@ -1867,6 +1870,11 @@ final class HttpAdminServer {
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_NONE, "Cut", saver.transition));
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_FADE, "Fade", saver.transition));
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_SLIDE, "Slide", saver.transition));
+        StringBuilder fits = new StringBuilder();
+        fits.append(selectOption(ScreensaverPolicy.FIT_WHOLE, "Fit", saver.pictureFit));
+        fits.append(selectOption(ScreensaverPolicy.FIT_FILL, "Fill", saver.pictureFit));
+        fits.append(selectOption(ScreensaverPolicy.FIT_STRETCH, "Stretch", saver.pictureFit));
+        fits.append(selectOption(ScreensaverPolicy.FIT_ACTUAL, "Actual size", saver.pictureFit));
         StringBuilder corners = new StringBuilder();
         corners.append(selectOption(ScreensaverPolicy.CORNER_BOTTOM_LEFT, "Bottom left", saver.creditCorner));
         corners.append(selectOption(ScreensaverPolicy.CORNER_BOTTOM_RIGHT, "Bottom right", saver.creditCorner));
@@ -1895,6 +1903,10 @@ final class HttpAdminServer {
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
                 + selectField("screensaver-transition", null, "Change of picture",
                         "screensaver_transition", transitions.toString(), null)
+                + selectField("screensaver-fit", null, "How a picture fills the screen",
+                        "screensaver_picture_fit", fits.toString(),
+                        "Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
+                        + "it out of shape, Actual size does not scale it.")
                 + "<div class=\"switches\">"
                 + switchRow("screensaver-shuffle", "Shuffle the order",
                         " data-setting=\"screensaver_shuffle\"", saver.shuffle)
@@ -1954,7 +1966,13 @@ final class HttpAdminServer {
                 "/screensaver", false));
         html.append(said)
                 .append("<div class=\"two playlist\">")
-                .append("<section class=\"card\" id=\"playlist-folders\"><h2>Folders</h2>")
+                .append("<section class=\"card\" id=\"playlist-folders\">")
+                .append("<div class=\"cardhead\"><h2>Folders</h2>")
+                // Closes every branch, or opens every one; the script paints which. Scripting
+                // only, like the carets: without it the tree follows the open folder instead.
+                .append("<button type=\"button\" class=\"ib tree\" id=\"tree-toggle\" title=\"Close every "
+                        + "folder\" aria-label=\"Close every folder\">").append(glyph("unfold_less"))
+                .append("</button></div>")
                 .append("<div id=\"folder-list\">")
                 .append(folderList(browseLocation(at), playlist.id, size))
                 .append("</div>")
@@ -2127,15 +2145,17 @@ final class HttpAdminServer {
     }
 
     /**
-     * The Folders panel: every folder holding pictures, indented by depth, the open one marked,
-     * Uploaded to Muralis first.
+     * The Folders panel: the folder tree, indented by depth, the open one marked, a caret on every
+     * folder with folders under it, Uploaded to Muralis first.
      *
      * <p>A fragment of its own since 2026-09-19, when the browser's two panes became two panels;
      * {@code admin_pictures.js} fetches it from {@code /api/pictures/folders} and the open folder
      * from {@code /api/pictures/content}, so each action replaces exactly that much of the page
-     * and the reader keeps their place (Juri, 2026-09-10, C3). Flat and indented rather than a
-     * level at a time, because the whole tree comes from one query and hiding it would only add
-     * round trips; no depth rides along, the panel's own picture index hands back a path.
+     * and the reader keeps their place (Juri, 2026-09-10, C3). The whole tree comes down in one
+     * fragment, and which branches are open is decided in the browser: this method opens the top
+     * of the volume and the way down to the open folder, which is the tree a browser with no
+     * scripting gets and what the script starts from before the reader's own carets take over
+     * (Juri, 2026-09-23: every folder at once was a list nobody could read).
      *
      * <p>The count beside a folder is the pictures directly in it, not everything below it: a
      * folder that said 41 and opened onto three pictures read as a miscount (Juri, 2026-09-19).
@@ -2146,12 +2166,35 @@ final class HttpAdminServer {
         if (refusal != null) {
             return refusal;
         }
+        java.util.List<PictureBrowser.Folder> tree = library.browser().folders();
+        java.util.Set<String> parents = new java.util.HashSet<>();
+        for (PictureBrowser.Folder folder : tree) {
+            if (!folder.path.isEmpty()) {
+                parents.add(PictureBrowser.parentOf(folder.path));
+            }
+        }
+        java.util.Set<String> open = new java.util.HashSet<>();
+        open.add("");
+        String walk = location;
+        while (walk != null && !walk.isEmpty() && !PictureBrowser.UPLOADS.equals(walk)) {
+            walk = PictureBrowser.parentOf(walk);
+            open.add(walk);
+        }
         StringBuilder html = new StringBuilder("<ul class=\"folders\">");
         html.append(folderLink(PictureBrowser.UPLOADS, "Uploaded to Muralis",
-                library.uploadCount(), 0, location, playlistId, size));
-        for (PictureBrowser.Folder folder : library.browser().folders()) {
+                library.uploadCount(), 0, location, playlistId, size, false, false, true));
+        for (PictureBrowser.Folder folder : tree) {
+            boolean shown = true;
+            for (String above = folder.path; !above.isEmpty(); ) {
+                above = PictureBrowser.parentOf(above);
+                if (!open.contains(above)) {
+                    shown = false;
+                    break;
+                }
+            }
             html.append(folderLink(folder.path, folder.name, folder.pictures, folder.depth,
-                    location, playlistId, size));
+                    location, playlistId, size, parents.contains(folder.path),
+                    open.contains(folder.path), shown));
         }
         return html.append("</ul>").toString();
     }
@@ -2332,12 +2375,26 @@ final class HttpAdminServer {
      * works with no scripting and can be opened in a second tab; the script intercepts it and
      * swaps the fragment instead of reloading.
      */
+    /**
+     * One folder as a row: the caret if it has folders under it, then the link that opens it,
+     * with its glyph, its name and its count. {@code branchOpen} and {@code shown} are the
+     * server's opening position; the script keeps its own from there. The caret is a span and
+     * not a button, since without scripting it does nothing and must not look as if it did.
+     */
     private static String folderLink(String path, String label, int count, int depth,
-            String openPath, String playlistId, int size) {
+            String openPath, String playlistId, int size, boolean hasChildren,
+            boolean branchOpen, boolean shown) {
         boolean open = path.equals(openPath);
         String glyphName = PictureBrowser.UPLOADS.equals(path) ? "upload"
                 : path.isEmpty() ? "storage" : "folder";
-        return "<li style=\"padding-left:" + (Math.min(depth, 6) * 20) + "px\">"
+        return "<li class=\"row" + (shown ? "" : " hidden") + (branchOpen ? " open" : "")
+                + "\" style=\"padding-left:" + (Math.min(depth, 6) * 20) + "px\""
+                + " data-at=\"" + escapeHtml(path) + "\""
+                + (hasChildren ? " data-kids=\"1\"" : "")
+                + (PictureBrowser.UPLOADS.equals(path) ? " data-top=\"1\"" : "") + ">"
+                + (hasChildren ? "<span class=\"caret\" role=\"button\" tabindex=\"0\" aria-label=\""
+                        + (branchOpen ? "Close " : "Open ") + escapeHtml(label) + "\">"
+                        + glyph("down") + "</span>" : "<span class=\"caret none\"></span>")
                 + "<a class=\"folder" + (open ? " open" : "") + "\" href=\"/playlist?id="
                 + urlEncode(playlistId) + "&amp;at=" + urlEncode(path) + "&amp;n=" + size
                 + "\" data-at=\"" + escapeHtml(path) + "\">"
@@ -2782,6 +2839,14 @@ final class HttpAdminServer {
                 return "Not saved: the transition must be none, fade or slide.";
             }
             editor.screensaverTransition(transition);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_picture_fit")) {
+            String fit = form.get("screensaver_picture_fit");
+            if (!ScreensaverPolicy.isFit(fit)) {
+                return "Not saved: the fit must be fit, fill, stretch or actual.";
+            }
+            editor.screensaverPictureFit(fit);
             changed = true;
         }
         if (form.containsKey("screensaver_shuffle")) {

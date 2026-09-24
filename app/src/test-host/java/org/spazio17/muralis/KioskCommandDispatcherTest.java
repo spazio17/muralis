@@ -481,6 +481,7 @@ public final class KioskCommandDispatcherTest {
                 {"screensaver.picture_seconds", "30", "PICTURE_SECONDS", "30"},
                 {"screensaver.dim_percent", "8", "DIM_PERCENT", "8"},
                 {"screensaver.transition", "slide", "TRANSITION", "slide"},
+                {"screensaver.picture_fit", "fill", "PICTURE_FIT", "fill"},
                 {"screensaver.credit_corner", "top_right", "CREDIT_CORNER", "top_right"},
                 {"screensaver.on_wake", "dashboard", "ON_WAKE", "dashboard"},
         };
@@ -500,6 +501,7 @@ public final class KioskCommandDispatcherTest {
                 {"screensaver.picture_seconds", "0"},
                 {"screensaver.dim_percent", "0"},
                 {"screensaver.transition", "zoom"},
+                {"screensaver.picture_fit", "zoom"},
                 {"screensaver.credit_corner", "centre"},
                 {"screensaver.on_wake", "later"},
         };

@@ -232,7 +232,21 @@ details.rename .hint{flex:1 1 100%;margin:0}
 /* ---- folders: places, not actions, so they are links; the open one is a pill ---- */
 ul.folders li{border-bottom:1px solid var(--outline-variant)}
 ul.folders li:last-child{border-bottom:0}
-a.folder{display:flex;align-items:center;gap:12px;min-height:44px;padding:2px 8px 2px 0;color:var(--text);text-decoration:none;border-radius:999px}
+/* The folder tree: a caret in front of every folder that has folders under it, opening and closing
+   its branch and leaving the pictures alone; a closed branch's rows are hidden. The carets and the
+   head's button need the script, so without it they are not there and the tree simply follows the
+   open folder, which the server opens the way down to (Juri, 2026-09-23). */
+ul.folders li.row{display:flex;align-items:center}
+ul.folders li.hidden{display:none}
+ul.folders .caret{flex:none;width:32px;height:44px;display:inline-flex;align-items:center;justify-content:center;color:var(--subtext);cursor:pointer;border-radius:999px}
+ul.folders .caret:hover{background:color-mix(in srgb,var(--text) 6%,transparent)}
+ul.folders .caret svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transform:rotate(-90deg);transition:transform .15s}
+ul.folders li.open>.caret svg{transform:none}
+ul.folders .caret.none{cursor:default}
+ul.folders .caret.none:hover{background:transparent}
+html:not(.js) ul.folders .caret{visibility:hidden}
+html:not(.js) #tree-toggle{display:none}
+a.folder{display:flex;flex:1;min-width:0;align-items:center;gap:12px;min-height:44px;padding:2px 8px 2px 0;color:var(--text);text-decoration:none;border-radius:999px}
 a.folder:hover{background:color-mix(in srgb,var(--text) 6%,transparent)}
 a.folder.open{background:var(--secondary-container);color:var(--on-secondary-container);font-weight:500}
 a.folder .lead{width:40px}

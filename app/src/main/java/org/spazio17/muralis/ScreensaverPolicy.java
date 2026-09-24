@@ -48,6 +48,16 @@ final class ScreensaverPolicy {
     static final String TRANSITION_FADE = "fade";
     static final String TRANSITION_SLIDE = "slide";
 
+    /**
+     * How a picture is laid on the glass: the whole of it inside the screen, cropped to cover the
+     * screen, pulled out of shape to cover it, or left at the size it was taken (Juri,
+     * 2026-09-23). One setting for every picture, whatever its shape.
+     */
+    static final String FIT_WHOLE = "fit";
+    static final String FIT_FILL = "fill";
+    static final String FIT_STRETCH = "stretch";
+    static final String FIT_ACTUAL = "actual";
+
     /** The corner the credit line sits in. */
     static final String CORNER_BOTTOM_LEFT = "bottom_left";
     static final String CORNER_BOTTOM_RIGHT = "bottom_right";
@@ -96,17 +106,20 @@ final class ScreensaverPolicy {
         /** The credit line; only the local folder may switch it off, the sources require it. */
         final boolean credit;
         final String creditCorner;
+        /** How a picture is laid on the glass: {@link #FIT_WHOLE} and the three beside it. */
+        final String pictureFit;
 
         Settings(String mode, int idleSeconds, int offSeconds, String url, int dimPercent,
                 String onWake) {
             this(mode, idleSeconds, offSeconds, url, dimPercent, onWake, PictureSources.LOCAL,
                     DEFAULT_PICTURE_SECONDS, TRANSITION_FADE, false, false, true,
-                    CORNER_BOTTOM_LEFT);
+                    CORNER_BOTTOM_LEFT, FIT_WHOLE);
         }
 
         Settings(String mode, int idleSeconds, int offSeconds, String url, int dimPercent,
                 String onWake, String source, int pictureSeconds, String transition,
-                boolean shuffle, boolean onePerCycle, boolean credit, String creditCorner) {
+                boolean shuffle, boolean onePerCycle, boolean credit, String creditCorner,
+                String pictureFit) {
             this.mode = mode;
             this.idleSeconds = idleSeconds;
             this.offSeconds = offSeconds;
@@ -120,6 +133,7 @@ final class ScreensaverPolicy {
             this.onePerCycle = onePerCycle;
             this.credit = credit;
             this.creditCorner = creditCorner;
+            this.pictureFit = pictureFit;
         }
 
         /** The credit line as shown: the online sources require it whatever the switch says. */
@@ -143,6 +157,11 @@ final class ScreensaverPolicy {
     static boolean isTransition(String value) {
         return TRANSITION_NONE.equals(value) || TRANSITION_FADE.equals(value)
                 || TRANSITION_SLIDE.equals(value);
+    }
+
+    static boolean isFit(String value) {
+        return FIT_WHOLE.equals(value) || FIT_FILL.equals(value) || FIT_STRETCH.equals(value)
+                || FIT_ACTUAL.equals(value);
     }
 
     static boolean isCorner(String value) {

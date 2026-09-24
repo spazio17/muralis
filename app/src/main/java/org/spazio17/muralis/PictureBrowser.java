@@ -408,7 +408,7 @@ final class PictureBrowser {
     }
 
     /** "Pictures/holidays/" becomes "Pictures/"; "Pictures/" becomes "". */
-    private static String parentOf(String path) {
+    static String parentOf(String path) {
         String trimmed = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
         int slash = trimmed.lastIndexOf('/');
         return slash < 0 ? "" : trimmed.substring(0, slash + 1);
