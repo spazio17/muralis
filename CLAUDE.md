@@ -840,7 +840,17 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   app bar's (segmented on a wide page, one cycling icon button on a narrow one), because that bar
   is on every page of it; **the panel's sun and moon is at the right of the Display section's
   name** (Juri, 2026-09-23), which is the accordion's row or the open card's title, and it is the
-  only section that carries a control beside its name (`Section.action`). **A folder is shown in one of four views**, list, details, small and big thumbnails,
+  only section that carries a control beside its name (`Section.action`). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
+  folders under it opens and closes that branch and leaves the pictures alone, the head's one
+  icon button opens or closes every branch, a tap on a folder opens it and its branch and a second tap closes the branch, and the tree
+  starts on the top of the volume and the way down to the open folder (`PlaylistPage.expanded`
+  on the panel, `branches` in `admin_pictures.js` on the web, both seeded from that rule; the
+  server draws that opening position, which is also the tree a browser with no scripting gets,
+  since the carets and the button need it). **How a picture fills the screen** is one setting
+  for every picture, `screensaver.picture_fit`: Fit (the whole picture, the default and what the
+  panel always did), Fill (cropped to the edges), Stretch (pulled out of shape) or Actual size,
+  radios on the panel, a menu on the web, a select over MQTT, applied as the `ImageView` scale
+  type when the `PictureFrame` is built. **A folder is shown in one of four views**, list, details, small and big thumbnails,
   cycled by one icon button in the Content card's head and stored as one preference for both
   surfaces (`KioskConfig.pictureViewOf`); thumbnails are made once by the panel into
   `cache/thumbs/` (`PictureLibrary.thumbnail`, 256 px JPEG, keyed by address) and served to the

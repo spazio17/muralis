@@ -728,6 +728,16 @@ final class MqttController implements MqttCallbackExtended {
                     "screensaver.transition",
                     transitions,
                     "{{ value_json.screensaver.transition }}"));
+            org.json.JSONArray fits = new org.json.JSONArray();
+            fits.put(ScreensaverPolicy.FIT_WHOLE);
+            fits.put(ScreensaverPolicy.FIT_FILL);
+            fits.put(ScreensaverPolicy.FIT_STRETCH);
+            fits.put(ScreensaverPolicy.FIT_ACTUAL);
+            components.put("screensaver_picture_fit", select(
+                    "Screensaver picture fit",
+                    "screensaver.picture_fit",
+                    fits,
+                    "{{ value_json.screensaver.picture_fit }}"));
             org.json.JSONArray corners = new org.json.JSONArray();
             corners.put(ScreensaverPolicy.CORNER_BOTTOM_LEFT);
             corners.put(ScreensaverPolicy.CORNER_BOTTOM_RIGHT);

@@ -46,6 +46,9 @@ public final class ScreensaverPolicyTest {
                 "three transitions");
         require(ScreensaverPolicy.isCorner("bottom_left") && ScreensaverPolicy.isCorner("top_right")
                 && !ScreensaverPolicy.isCorner("centre"), "four corners");
+        require(ScreensaverPolicy.isFit("fit") && ScreensaverPolicy.isFit("fill")
+                && ScreensaverPolicy.isFit("stretch") && ScreensaverPolicy.isFit("actual")
+                && !ScreensaverPolicy.isFit("zoom"), "four ways to lay a picture on the glass");
         require(PictureSources.isSource("local") && PictureSources.isSource("bing")
                 && PictureSources.isSource("wikimedia") && !PictureSources.isSource("nasa"),
                 "three sources in this step");
@@ -176,13 +179,13 @@ public final class ScreensaverPolicyTest {
         require(showing.equals("Web page, only when asked for, the display stays on. Showing now."),
                 "idle 0, off 0 and active: " + showing);
         Settings pictures = new Settings("pictures", 120, 0, "", 20, "screensaver", "bing", 20,
-                "fade", false, false, false, "bottom_left");
+                "fade", false, false, false, "bottom_left", "fit");
         require(ScreensaverPolicy.describe(pictures, false).equals(
                 "Pictures from Bing image of the day after 2 min without a touch, the display stays on."),
                 "the source is named: " + ScreensaverPolicy.describe(pictures, false));
         require(pictures.creditShown(), "an online source shows the credit whatever the switch says");
         require(!new Settings("pictures", 120, 0, "", 20, "screensaver", "local", 20, "fade", false,
-                false, false, "bottom_left").creditShown(), "the local folder may switch it off");
+                false, false, "bottom_left", "fit").creditShown(), "the local folder may switch it off");
         String broken = ScreensaverPolicy.describe(new Settings("url", 120, 900, "", 20,
                 "screensaver"), false);
         require(broken.equals("Web page: the web-page screensaver needs a page address."),

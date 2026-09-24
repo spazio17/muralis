@@ -3175,6 +3175,7 @@ public final class KioskActivity extends Activity {
         LinearLayout sourceButtons;
         EditText pictureSecondsInput;
         RadioGroup transitionInput;
+        RadioGroup fitInput;
         CompoundButton shuffleBox;
         CompoundButton onePerCycleBox;
         CompoundButton creditBox;
@@ -3321,6 +3322,7 @@ public final class KioskActivity extends Activity {
                     checkRadioIfChanged(sourceInput, settings.source);
                     followIfIdle(pictureSecondsInput, String.valueOf(settings.pictureSeconds));
                     checkRadioIfChanged(transitionInput, settings.transition);
+                    checkRadioIfChanged(fitInput, settings.pictureFit);
                     setCheckedIfChanged(shuffleBox, settings.shuffle);
                     setCheckedIfChanged(onePerCycleBox, settings.onePerCycle);
                     setCheckedIfChanged(creditBox, settings.creditShown());
@@ -3588,6 +3590,30 @@ public final class KioskActivity extends Activity {
         group.addView(transitionInput, matchWrapClose());
         controls.transitionInput = transitionInput;
 
+        // How a picture is laid on the glass, one setting for all of them (Juri, 2026-09-23).
+        // Fit is the default and what the panel always did: these are somebody's photographs and
+        // somebody's licensed work, so nothing is cropped or pulled out of shape unless the
+        // operator asks for it.
+        TextView fitCaption = fieldCaption(theme, "How a picture fills the screen");
+        LinearLayout.LayoutParams fitParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        fitParams.topMargin = dp(14);
+        group.addView(fitCaption, fitParams);
+        RadioGroup fitInput = new RadioGroup(this);
+        radioChoice(theme, fitInput, "Fit", ScreensaverPolicy.FIT_WHOLE);
+        radioChoice(theme, fitInput, "Fill", ScreensaverPolicy.FIT_FILL);
+        radioChoice(theme, fitInput, "Stretch", ScreensaverPolicy.FIT_STRETCH);
+        radioChoice(theme, fitInput, "Actual size", ScreensaverPolicy.FIT_ACTUAL);
+        checkRadioIfChanged(fitInput, settings.pictureFit);
+        group.addView(fitInput, matchWrapClose());
+        controls.fitInput = fitInput;
+        TextView fitNote = new TextView(this);
+        fitNote.setText("Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
+                + "it out of shape, Actual size does not scale it.");
+        fitNote.setTextColor(theme.subtext);
+        fitNote.setTextSize(12);
+        group.addView(fitNote, matchWrapClose());
+
         CompoundButton shuffle = themedSwitch(theme, "Shuffle the order", settings.shuffle);
         LinearLayout.LayoutParams boxParams = matchWrapClose();
         boxParams.topMargin = dp(8);
@@ -3647,6 +3673,14 @@ public final class KioskActivity extends Activity {
                 return;
             }
             KioskConfig.edit(this).screensaverTransition((String) checked.getTag()).apply();
+            KioskService.publishTelemetrySoon(this);
+        });
+        fitInput.setOnCheckedChangeListener((radios, checkedId) -> {
+            View checked = radios.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            KioskConfig.edit(this).screensaverPictureFit((String) checked.getTag()).apply();
             KioskService.publishTelemetrySoon(this);
         });
         shuffle.setOnCheckedChangeListener((box, on) -> {
@@ -4079,6 +4113,15 @@ public final class KioskActivity extends Activity {
         android.graphics.drawable.Drawable selectAllDefault;
         PictureBrowser.Page listing;
         List<PictureBrowser.Folder> tree = new ArrayList<>();
+        /**
+         * The folders whose children are shown. Seeded once, with the top of the volume and the
+         * way down to whatever folder is open, so the tree opens on something useful and not on
+         * every folder this panel has ever held (Juri, 2026-09-23).
+         */
+        final java.util.Set<String> expanded = new java.util.HashSet<>();
+        /** The folders that have a folder under them, so only those are drawn with a caret. */
+        final java.util.Set<String> parents = new java.util.HashSet<>();
+        boolean treeSeeded;
         int uploadCount;
         String treeProblem;
 
@@ -4302,20 +4345,25 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The left pane: every folder that holds pictures, indented by depth, with the open one marked.
+     * The left pane: the folder tree, indented by depth, with the open one marked and a caret on
+     * every folder that has folders under it.
      *
-     * <p>Indented rather than one level at a time, because the whole tree is already known from
-     * one query and hiding it would only add taps. There is no depth limit: a cap was built on the
+     * <p>It used to show every folder the panel holds at once, which on a real library is a list
+     * nobody can read (Juri, 2026-09-23). A branch opens and closes on its caret, the head's
+     * button opens or closes the lot, and a tap on the folder itself opens it and its branch, then
+     * closes the branch on the next tap, so the row and the caret agree. There is no depth limit: a cap was built on the
      * morning of 2026-09-10 and removed the same day, since a folder five levels down is ordinary
      * and MediaStore hands back its path either way.
      *
      * <p>Drawn from what {@link PlaylistPage} is holding, so moving the open mark from one row to
-     * another costs no query at all.
+     * another, or opening a branch, costs no query at all.
      */
     private void paintFolderPane(PlaylistPage screen) {
+        seedTree(screen);
+        screen.folders.trailing(screen.tree.isEmpty() ? null : collapseAllButton(screen));
         screen.folders.clear();
         screen.folders.body.addView(folderRow(screen, "Uploaded to Muralis",
-                PictureBrowser.UPLOADS, 0, screen.uploadCount), matchWrapClose());
+                PictureBrowser.UPLOADS, 0, screen.uploadCount, false, false), matchWrapClose());
         if (screen.tree.isEmpty()) {
             screen.folders.body.addView(paneNote(screen.theme,
                     screen.treeProblem != null ? screen.treeProblem
@@ -4324,9 +4372,76 @@ public final class KioskActivity extends Activity {
             return;
         }
         for (PictureBrowser.Folder folder : screen.tree) {
+            if (!folderShown(screen, folder.path)) {
+                continue;
+            }
             screen.folders.body.addView(folderRow(screen, folder.name, folder.path, folder.depth,
-                    folder.pictures), matchWrapClose());
+                    folder.pictures, screen.parents.contains(folder.path),
+                    screen.expanded.contains(folder.path)), matchWrapClose());
         }
+    }
+
+    /**
+     * Which folders have folders under them, and which branches start open: the top of the volume
+     * and the way down to the folder that is open. Done once per page, then left to the reader.
+     */
+    private void seedTree(PlaylistPage screen) {
+        if (screen.treeSeeded || screen.tree.isEmpty()) {
+            return;
+        }
+        screen.treeSeeded = true;
+        for (PictureBrowser.Folder folder : screen.tree) {
+            if (!folder.path.isEmpty()) {
+                screen.parents.add(PictureBrowser.parentOf(folder.path));
+            }
+        }
+        screen.expanded.add("");
+        String walk = screen.draft.folder;
+        while (walk != null && !walk.isEmpty() && !PictureBrowser.UPLOADS.equals(walk)) {
+            walk = PictureBrowser.parentOf(walk);
+            screen.expanded.add(walk);
+        }
+    }
+
+    /** A folder is on screen when every folder above it is open. The top of the volume always is. */
+    private boolean folderShown(PlaylistPage screen, String path) {
+        String walk = path;
+        while (!walk.isEmpty()) {
+            walk = PictureBrowser.parentOf(walk);
+            if (!screen.expanded.contains(walk)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** True while every branch is open, which is what the head's button has to say. */
+    private boolean treeAllExpanded(PlaylistPage screen) {
+        return screen.expanded.containsAll(screen.parents);
+    }
+
+    /**
+     * The one control in the Folders head: closes every branch, or opens every one when they are
+     * already closed. The glyph says which it will do, the way the Content head's view button
+     * says which view is in force.
+     */
+    private ImageButton collapseAllButton(PlaylistPage screen) {
+        boolean all = treeAllExpanded(screen);
+        ImageButton button = iconButton(screen.theme,
+                all ? R.drawable.ic_unfold_less : R.drawable.ic_unfold_more,
+                all ? "Close every folder" : "Open every folder");
+        button.setOnClickListener(view -> {
+            if (all) {
+                screen.expanded.clear();
+            } else {
+                screen.expanded.addAll(screen.parents);
+            }
+            // The top of the volume stays open: closing it would leave one row saying
+            // "Internal storage" and nothing to reach the pictures with.
+            screen.expanded.add("");
+            paintFolderPane(screen);
+        });
+        return button;
     }
 
 
@@ -4335,7 +4450,7 @@ public final class KioskActivity extends Activity {
      * the secondary container, the way the web page and the settings list mark a selection.
      */
     private LinearLayout folderRow(PlaylistPage screen, String label, String path, int depth,
-            int count) {
+            int count, boolean hasChildren, boolean branchOpen) {
         KioskTheme theme = screen.theme;
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -4344,7 +4459,30 @@ public final class KioskActivity extends Activity {
         boolean open = path.equals(screen.draft.folder);
         row.setBackground(theme.ripple(theme.pill(open ? theme.secondaryContainer
                 : Color.TRANSPARENT), theme.pill(Color.WHITE), theme.text));
-        row.setPadding(dp(8) + dp(20) * Math.min(depth, 6), 0, dp(8), 0);
+        row.setPadding(dp(4) + dp(20) * Math.min(depth, 6), 0, dp(8), 0);
+        // The caret, its own target inside the row: it opens and closes the branch and leaves the
+        // pictures alone, which is what the reader asked of it. A folder with nothing under it
+        // keeps the space, so every name in the tree starts on one line.
+        if (hasChildren) {
+            ImageButton caret = new ImageButton(this);
+            caret.setImageResource(R.drawable.ic_expand_more);
+            caret.setImageTintList(ColorStateList.valueOf(open ? theme.onSecondaryContainer
+                    : theme.subtext));
+            caret.setRotation(branchOpen ? 0f : -90f);
+            caret.setScaleType(ImageView.ScaleType.CENTER);
+            caret.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
+                    Color.TRANSPARENT), theme.pill(Color.WHITE), theme.text));
+            caret.setContentDescription((branchOpen ? "Close " : "Open ") + label);
+            caret.setOnClickListener(view -> {
+                if (!screen.expanded.remove(path)) {
+                    screen.expanded.add(path);
+                }
+                paintFolderPane(screen);
+            });
+            row.addView(caret, new LinearLayout.LayoutParams(dp(32), dp(40)));
+        } else {
+            row.addView(new View(this), new LinearLayout.LayoutParams(dp(32), dp(1)));
+        }
         ImageView glyph = new ImageView(this);
         glyph.setImageResource(PictureBrowser.UPLOADS.equals(path) ? R.drawable.ic_upload
                 : path.isEmpty() ? R.drawable.ic_storage : R.drawable.ic_folder);
@@ -4381,8 +4519,20 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(16));
         numberParams.leftMargin = dp(8);
         row.addView(number, numberParams);
-        // The whole row is the target, not a button inside it: the sketch says "user taps this row".
-        row.setOnClickListener(view -> openFolder(screen, path));
+        // The rest of the row is the target, not a button inside it: the sketch says "user taps
+        // this row". It opens the folder and its branch with it, and a second tap on the folder
+        // that is already open closes the branch again, so the row does what the caret does and
+        // nobody has to find the caret (Juri, 2026-09-23: "make it dumb-proof").
+        row.setOnClickListener(view -> {
+            if (hasChildren) {
+                if (path.equals(screen.draft.folder) && screen.expanded.contains(path)) {
+                    screen.expanded.remove(path);
+                } else {
+                    screen.expanded.add(path);
+                }
+            }
+            openFolder(screen, path);
+        });
         return row;
     }
 
@@ -4395,6 +4545,8 @@ public final class KioskActivity extends Activity {
      */
     private void openFolder(PlaylistPage screen, String path) {
         if (path.equals(screen.draft.folder)) {
+            // The branch may still have opened under the tap, so the pane is redrawn even here.
+            paintFolderPane(screen);
             return;
         }
         screen.draft.folder = path;
@@ -8311,7 +8463,7 @@ public final class KioskActivity extends Activity {
      */
     private void showPictures(ScreensaverPolicy.Settings settings) {
         pictureSettings = settings;
-        pictureFrame = new PictureFrame(this, settings.creditCorner);
+        pictureFrame = new PictureFrame(this, settings.creditCorner, settings.pictureFit);
         screensaverLayer.addView(pictureFrame, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         screensaverLayer.setVisibility(View.VISIBLE);
@@ -8449,9 +8601,30 @@ public final class KioskActivity extends Activity {
     }
 
     /**
+     * The operator's "How a picture fills the screen" as the platform's own scaling: the whole
+     * picture inside the screen, cropped to cover it, pulled out of shape to cover it, or left at
+     * the size it was taken (Juri, 2026-09-23).
+     */
+    private static ImageView.ScaleType scaleTypeOf(String fit) {
+        if (ScreensaverPolicy.FIT_FILL.equals(fit)) {
+            return ImageView.ScaleType.CENTER_CROP;
+        }
+        if (ScreensaverPolicy.FIT_STRETCH.equals(fit)) {
+            return ImageView.ScaleType.FIT_XY;
+        }
+        if (ScreensaverPolicy.FIT_ACTUAL.equals(fit)) {
+            return ImageView.ScaleType.CENTER;
+        }
+        return ImageView.ScaleType.FIT_CENTER;
+    }
+
+    /**
      * Two picture views that take turns, so a fade or a slide has both the old and the new
-     * picture on screen, and a caption in the chosen corner. Fit inside, never cropped: these
-     * are somebody's photographs and somebody's licensed work, shown whole.
+     * picture on screen, and a caption in the chosen corner.
+     *
+     * <p>How a picture is laid in them is the operator's setting since 2026-09-23, and it is Fit
+     * unless they say otherwise: these are somebody's photographs and somebody's licensed work,
+     * so nothing is cropped or pulled out of shape by default.
      */
     private final class PictureFrame extends FrameLayout {
         private final ImageView[] views = new ImageView[2];
@@ -8460,12 +8633,12 @@ public final class KioskActivity extends Activity {
         private final TextView message;
         private String displayedCredit;
 
-        PictureFrame(Context context, String corner) {
+        PictureFrame(Context context, String corner, String fit) {
             super(context);
             setBackgroundColor(Color.BLACK);
             for (int i = 0; i < 2; i++) {
                 views[i] = new ImageView(context);
-                views[i].setScaleType(ImageView.ScaleType.FIT_CENTER);
+                views[i].setScaleType(scaleTypeOf(fit));
                 views[i].setAlpha(0f);
                 addView(views[i], new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));

@@ -28,7 +28,7 @@ final class KioskCommandDispatcher {
      */
     enum ScreensaverSetting {
         MODE, SOURCE, IDLE_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
-        CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
+        PICTURE_FIT, CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
     }
 
     static final class Result {
@@ -360,6 +360,12 @@ final class KioskCommandDispatcher {
                     return rejected("value must be none, fade or slide");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.TRANSITION, args.value);
+                return accepted();
+            case "screensaver.picture_fit":
+                if (!ScreensaverPolicy.isFit(args.value)) {
+                    return rejected("value must be fit, fill, stretch or actual");
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.PICTURE_FIT, args.value);
                 return accepted();
             case "screensaver.credit_corner":
                 if (!ScreensaverPolicy.isCorner(args.value)) {

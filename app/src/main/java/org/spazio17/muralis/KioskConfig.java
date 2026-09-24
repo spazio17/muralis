@@ -33,6 +33,7 @@ final class KioskConfig {
     private static final String SCREENSAVER_SOURCE = "screensaver_source";
     private static final String SCREENSAVER_PICTURE_SECONDS = "screensaver_picture_s";
     private static final String SCREENSAVER_TRANSITION = "screensaver_transition";
+    private static final String SCREENSAVER_PICTURE_FIT = "screensaver_picture_fit";
     private static final String SCREENSAVER_SHUFFLE = "screensaver_shuffle";
     private static final String SCREENSAVER_ONE_PER_CYCLE = "screensaver_one_per_cycle";
     private static final String SCREENSAVER_CREDIT = "screensaver_credit";
@@ -320,6 +321,11 @@ final class KioskConfig {
             return this;
         }
 
+        Editor screensaverPictureFit(String value) {
+            plain.putString(SCREENSAVER_PICTURE_FIT, value);
+            return this;
+        }
+
         Editor screensaverShuffle(boolean value) {
             plain.putBoolean(SCREENSAVER_SHUFFLE, value);
             return this;
@@ -412,6 +418,7 @@ final class KioskConfig {
         String source = preferences.getString(SCREENSAVER_SOURCE, PictureSources.LOCAL);
         String transition = preferences.getString(SCREENSAVER_TRANSITION,
                 ScreensaverPolicy.TRANSITION_FADE);
+        String fit = preferences.getString(SCREENSAVER_PICTURE_FIT, ScreensaverPolicy.FIT_WHOLE);
         String corner = preferences.getString(SCREENSAVER_CREDIT_CORNER,
                 ScreensaverPolicy.CORNER_BOTTOM_LEFT);
         return new ScreensaverPolicy.Settings(
@@ -432,7 +439,8 @@ final class KioskConfig {
                 preferences.getBoolean(SCREENSAVER_SHUFFLE, false),
                 preferences.getBoolean(SCREENSAVER_ONE_PER_CYCLE, false),
                 preferences.getBoolean(SCREENSAVER_CREDIT, true),
-                ScreensaverPolicy.isCorner(corner) ? corner : ScreensaverPolicy.CORNER_BOTTOM_LEFT);
+                ScreensaverPolicy.isCorner(corner) ? corner : ScreensaverPolicy.CORNER_BOTTOM_LEFT,
+                ScreensaverPolicy.isFit(fit) ? fit : ScreensaverPolicy.FIT_WHOLE);
     }
 
     private static int clamp(int value, int min, int max) {
