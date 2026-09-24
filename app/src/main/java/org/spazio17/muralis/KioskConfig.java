@@ -37,6 +37,8 @@ final class KioskConfig {
     private static final String SCREENSAVER_ONE_PER_CYCLE = "screensaver_one_per_cycle";
     private static final String SCREENSAVER_CREDIT = "screensaver_credit";
     private static final String SCREENSAVER_CREDIT_CORNER = "screensaver_credit_corner";
+    /** How a folder of pictures is shown on the playlist page: list, details, small or big. */
+    private static final String PICTURE_VIEW = "picture_view";
     /**
      * Retired 2026-08-29, when the two-way portrait switch became the three-way orientation
      * setting. Read only by the migration in {@link #orientationOf} and removed by the first
@@ -273,6 +275,11 @@ final class KioskConfig {
             return this;
         }
 
+        Editor pictureView(String value) {
+            plain.putString(PICTURE_VIEW, PictureBrowser.view(value));
+            return this;
+        }
+
         Editor screensaverIdleSeconds(int value) {
             plain.putInt(SCREENSAVER_IDLE_SECONDS, value);
             return this;
@@ -440,6 +447,17 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(STATS_OVERLAY, true);
+    }
+
+    /**
+     * How the playlist page shows a folder, one preference for the panel and the web page alike,
+     * so both open the next folder the same way (decided 2026-09-23). Same narrow-reader
+     * reasoning as {@link #statsOverlayEnabled}.
+     */
+    static String pictureViewOf(Context context) {
+        return PictureBrowser.view(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(PICTURE_VIEW, PictureBrowser.DEFAULT_VIEW));
     }
 
     /**

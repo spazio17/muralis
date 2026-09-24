@@ -97,6 +97,13 @@ if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
 show(lines.join('\n'));
+// The System stats section's one-line summary, on the settings page, so the closed row reads
+// like a status line without opening it.
+var sum=document.getElementById('sum-stats');
+if(sum){var parts=[];
+if(sys.mem_used_kb&&sys.mem_total_kb){parts.push(Math.round(100*sys.mem_used_kb/sys.mem_total_kb)+'% memory');}
+if(sys.cpu_busy_percent!=null){parts.push(Math.round(sys.cpu_busy_percent)+'% CPU');}
+if(parts.length){sum.textContent=parts.join(' \u00b7 ');}}
 var battery=document.getElementById('chip-battery');
 if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;
 battery.textContent=mains?'mains':(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');

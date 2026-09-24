@@ -1,202 +1,302 @@
 /*
-The app's own palette, dark and light, matching KioskTheme on the tablet. Sections flow into as many
-columns as the window allows rather than one tall stack, which on a landscape tablet or a
-desktop browser turned every text field into a full-width slab.
+Material 3 on the app's own palette (decided 2026-09-23, from the drawings in
+media/drafts/material3/). The colour roles below are derived from the twelve colours KioskTheme
+carries, so the two surfaces stay one design: a card is the base lifted a step, a container is
+the hue at a fraction over the base, and the label on a container is the hue's own ink.
+
+Two layouts, one document. Below 840 px the settings are one accordion (a <details> per section,
+one open at a time, no wider than 720 px); from 840 px, and only with scripting, the same
+sections stand in a list on the left and the open one on the right, Material's list-detail. No
+panel ever spans the screen: content lives in a centred column of at most 1016 px, which the app
+bar shares, so the title sits over the list's left edge and the theme picker over the panel's
+right edge (Juri, 2026-09-23).
 */
-:root{color-scheme:light dark;--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#606276;--accent:#8226ef;--accent-alt:#0a55eb;--ok:#227212;--warn:#905600;--bad:#c60e36;--ink-alt:#083e9e;--radius:14px}@media (prefers-color-scheme:dark){:root{--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91;--ink-alt:#9bb9ff}}html[data-theme=light]{color-scheme:light;--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#606276;--accent:#8226ef;--accent-alt:#0a55eb;--ok:#227212;--warn:#905600;--bad:#c60e36;--ink-alt:#083e9e}html[data-theme=dark]{color-scheme:dark;--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91;--ink-alt:#9bb9ff}*{box-sizing:border-box}body{margin:0;padding:1.5rem 1.25rem 4rem;background:var(--base);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.5}main{width:60%;min-width:min(100%,22rem);max-width:1100px;margin:0 auto}header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;margin-bottom:1.25rem}h1{font-size:1.8rem;margin:0;color:var(--accent);font-weight:650}.sub{color:var(--subtext);font-size:.9rem;margin:.1rem 0 0}
-/* The chip: one glyph per row so no bare percentage has to be guessed at. Monochrome in */
-/* the style of a Pixel status bar, matching StatusIcon on the tablet glyph for glyph. */
-.chip{display:flex;flex-direction:column;align-items:flex-end;gap:.15rem;line-height:1.3;font-size:.85rem;color:var(--subtext)}.chip .row{display:flex;align-items:center;gap:.45rem}.chip .row.pair{gap:1.1rem}.ico{width:17px;height:17px;flex:none;color:var(--text)}
-/* Badges above the sections, the way Home Assistant floats them over a view. */
-.topbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin:0 0 1.25rem}.topbar .themepick{margin-left:auto}.topbar form{margin:0}.topbar button{margin-top:0}.notice{margin:0 0 1.25rem;padding:.7rem .9rem;border-radius:10px;border-left:4px solid var(--bad);background:var(--mantle);color:var(--text);font-size:.9rem}label.slider{display:block;margin-top:.8rem;color:var(--text);font-size:.9rem}label.slider .readout{display:block;margin-top:.15rem;color:var(--subtext);font-size:.85rem;font-variant-numeric:tabular-nums}
-/* min-width:0 as well as width:100%: a range input carries an intrinsic minimum width */
-/* that width alone does not override, and that minimum is half of what pushed the */
-/* Display box off the screen. */
-label.slider input[type=range]{display:block;width:100%;min-width:0;margin-top:.35rem;accent-color:var(--accent)}.themepick{display:flex;gap:.25rem;background:var(--surface);padding:.25rem;border-radius:999px;border:1px solid var(--border)}
-/* Excluded from the 3D button treatment below: a segmented pill picker, not a */
-/* discrete action, and a shadowed edge on each pill would look like clutter. */
-.themepick button{margin:0;padding:.35rem .85rem;border:0;border-radius:999px;background:transparent;color:var(--subtext);font-size:.85rem;cursor:pointer;box-shadow:none;transition:none}.themepick button[aria-pressed=true]{background:var(--accent);color:var(--base);font-weight:600}
-/* The sections layout, the way Home Assistant's own Sections view packs cards: */
-/* vertical stacks where each card sits directly under the one above it. This was */
-/* display:grid, which places cards in ROWS, so every row grew to its tallest card */
-/* and the shorter neighbours trailed dead space below them (per the sketch of */
-/* 2026-08-25). Multicol packs by column instead: ~300px columns, as many as fit, */
-/* balanced by height, and a narrow phone degrades to the same single stack as */
-/* before. break-inside goes on the fieldset as well as the wrapper form because */
-/* some engines only honour it on the box that would actually fragment. */
-.grid{columns:300px;column-gap:1rem}
-.grid>*{break-inside:avoid;margin-bottom:1rem}
-.grid fieldset{break-inside:avoid}
-/* Each Save posts to this page with the box's own fragment, so the reply lands on the */
-/* box rather than at the top. scroll-margin keeps it off the very edge, and a message */
-/* about the save sits under the legend, which is where the operator is now looking. */
-fieldset{scroll-margin-top:1rem}
-fieldset .notice{margin:.7rem 0 0}
-/* min-width:0 is load-bearing, not tidying. A grid item defaults to min-width:auto, */
-/* meaning it refuses to be laid out narrower than its own min-content width, so one */
-/* box containing something wide and unshrinkable grows past its column and past the */
-/* screen while its neighbours sit correctly aligned. That is the Display box bug. */
-fieldset{border:1px solid var(--accent);background:var(--surface);margin:0;min-width:0;border-radius:var(--radius);padding:1rem 1.1rem 1.2rem}legend{padding:0 .4rem;font-weight:600;font-size:.95rem}label{display:block;margin-top:.7rem;color:var(--subtext);font-size:.8rem}input[type=text],input[type=password],input[type=number],select{width:100%;margin-top:.25rem;padding:.5rem .65rem;border-radius:10px;border:1px solid var(--border);background:var(--surface-alt);color:var(--text);font-size:.95rem}input:focus,select:focus{outline:none;border-color:var(--accent-alt);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent-alt) 30%,transparent)}input[type=checkbox]{width:auto;margin-right:.5rem;accent-color:var(--accent)}label.check{display:flex;align-items:center;color:var(--text);font-size:.9rem;margin-top:.7rem}.hint{color:var(--subtext);font-size:.78rem;margin:.5rem 0 0}.hint.bad{color:var(--bad)}
-/* A slight 3D lift: a coloured "bottom edge" plus a soft shadow, both gone on */
-/* :active and the button nudged down a pixel, so pressing one reads as pressing */
-/* something solid rather than just a colour change. */
-button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;border:1px solid var(--accent-alt);background:transparent;color:var(--accent-alt);font-family:inherit;font-size:.9rem;line-height:normal;cursor:pointer;box-shadow:0 2px 0 0 var(--accent-alt),0 2px 4px rgba(0,0,0,.18);transition:transform .08s ease,box-shadow .08s ease}button:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}button:active{transform:translateY(2px);box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}button.primary{background:var(--accent);border-color:var(--accent);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}
-/* The colours are a system, not decoration (Juri, 2026-09-11): the main colour is a press that */
-/* applies a setting permanently, the plain outline is a visible action that saves nothing, red */
-/* deletes something and green adds something. Same three shapes as button.primary, so a row of */
-/* mixed buttons still reads as one family. */
-button.danger{background:var(--bad);border-color:var(--bad);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--bad) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}
-button.danger:hover{background:color-mix(in srgb,var(--bad) 88%,black 12%)}
-button.danger:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}
-button.add{background:var(--ok);border-color:var(--ok);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--ok) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}
-button.add:hover{background:color-mix(in srgb,var(--ok) 88%,black 12%)}
-button.add:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}
-/* The tonal tier, chosen 2026-09-12 after comparing five treatments on the live pages. Three */
-/* weights, none of them hollow and none of them transparent: filled for the action of the thing */
-/* it sits in and for every action in a list row, outlined for a command that acts now and stores */
-/* nothing, tonal for navigation. Tonal rather than a text button because the same language is */
-/* mirrored on the panel's touch UI, where there is no hover, and a control that has no body */
-/* until you point at it is a control nobody finds. */
-/* The label is --ink-*, not the hue: the hue on a tint of itself cannot reach 4.5:1 at any */
-/* strength. Measured at 18%: 4.74 and 4.76 on the dark card, 4.87 and 5.47 on the light one, */
-/* with the full-strength border clearing the 3:1 non-text target in both. */
-/* Navigation: the same tonal weight in the secondary hue. A form with method=get goes somewhere
-   and changes nothing, which is exactly the set this tier is for. */
-form[method=get] button:not([class]){background:color-mix(in srgb,var(--accent-alt) 18%,var(--surface));border-color:var(--accent-alt);color:var(--ink-alt);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent-alt) 45%,var(--surface)),0 2px 4px rgba(0,0,0,.18)}
-form[method=get] button:not([class]):hover{background:color-mix(in srgb,var(--accent-alt) 28%,var(--surface))}
-form[method=get] button:not([class]):active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}
-/* The two rows that mixed a filled button with a hollow one, counted across the whole admin on
-   2026-09-12: Save + Open once, and Browse + Upload. A hollow button beside a filled sibling is
-   what read as abandoned, so both gain a body at the weight their row already carries. */
-#open-once{background:color-mix(in srgb,var(--accent-alt) 18%,var(--surface));border-color:var(--accent-alt);color:var(--ink-alt);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent-alt) 45%,var(--surface)),0 2px 4px rgba(0,0,0,.18)}
-#open-once:hover{background:color-mix(in srgb,var(--accent-alt) 28%,var(--surface))}
-.actions{display:flex;flex-wrap:wrap;gap:.4rem}.actions form{display:inline}#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;white-space:pre-wrap;background:var(--mantle);border-radius:10px;padding:.7rem;overflow-x:auto;color:var(--subtext);margin:.6rem 0 0}dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem .8rem;margin:.6rem 0 0;font-size:.85rem}dt{color:var(--subtext)}dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}a{color:var(--accent-alt)}
-/* The pre-check verdicts (admin_check.js): the border says whether the value would work right */
-/* now, the tooltip says why. Border only, no glow or fill, as decided 2026-08-24: the verdict is */
-/* an annotation, not an alarm. Cleared rather than guessed when the check itself cannot run. */
-input.check-ok{border-color:var(--ok)}
-input.check-bad,select.check-bad{border-color:var(--bad)}
+:root{color-scheme:light dark;
+--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#606276;--accent:#8226ef;--accent-alt:#0a55eb;--ok:#227212;--warn:#905600;--bad:#c60e36;--ink-alt:#083e9e;
+--card:color-mix(in srgb,var(--surface) 40%,var(--base));--card-high:var(--surface);--lowest:#ffffff;
+--outline:var(--border);--outline-variant:color-mix(in srgb,var(--border) 55%,var(--base));
+--primary-container:color-mix(in srgb,var(--accent) 18%,var(--base));--on-primary-container:color-mix(in srgb,var(--accent) 55%,black);
+--secondary-container:color-mix(in srgb,var(--accent-alt) 16%,var(--base));--on-secondary-container:var(--ink-alt);
+--error-container:color-mix(in srgb,var(--bad) 18%,var(--base));--on-error-container:color-mix(in srgb,var(--bad) 60%,black);
+--on-accent:#ffffff;--radius:12px}
+@media (prefers-color-scheme:dark){:root{
+--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91;--ink-alt:#9bb9ff;
+--lowest:#11111b;--on-primary-container:color-mix(in srgb,var(--accent) 65%,white);--primary-container:color-mix(in srgb,var(--accent) 35%,var(--base));
+--secondary-container:color-mix(in srgb,var(--accent-alt) 32%,var(--base));
+--error-container:color-mix(in srgb,var(--bad) 35%,var(--base));--on-error-container:color-mix(in srgb,var(--bad) 65%,white);--on-accent:#1e1e2e}}
+html[data-theme=light]{color-scheme:light;
+--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#606276;--accent:#8226ef;--accent-alt:#0a55eb;--ok:#227212;--warn:#905600;--bad:#c60e36;--ink-alt:#083e9e;
+--lowest:#ffffff;--on-primary-container:color-mix(in srgb,var(--accent) 55%,black);--primary-container:color-mix(in srgb,var(--accent) 18%,var(--base));
+--secondary-container:color-mix(in srgb,var(--accent-alt) 16%,var(--base));
+--error-container:color-mix(in srgb,var(--bad) 18%,var(--base));--on-error-container:color-mix(in srgb,var(--bad) 60%,black);--on-accent:#ffffff}
+html[data-theme=dark]{color-scheme:dark;
+--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91;--ink-alt:#9bb9ff;
+--lowest:#11111b;--on-primary-container:color-mix(in srgb,var(--accent) 65%,white);--primary-container:color-mix(in srgb,var(--accent) 35%,var(--base));
+--secondary-container:color-mix(in srgb,var(--accent-alt) 32%,var(--base));
+--error-container:color-mix(in srgb,var(--bad) 35%,var(--base));--on-error-container:color-mix(in srgb,var(--bad) 65%,white);--on-accent:#1e1e2e}
+*{box-sizing:border-box}
+body{margin:0;padding:12px 0 40px;background:var(--base);color:var(--text);font-family:Roboto,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:20px}
+/* The column, centred, with a gutter each side: 5% of the window, whatever the shape of it
+   (Juri, 2026-09-23, with the drawing in media/drafts/material3/). The app bar spans exactly
+   that column, which is what puts the theme picker over the panel's right edge rather than
+   the window's. It stops growing at 1000 px: past that the gutters take the rest,
+   because a field drawn across a very wide monitor is a bar. */
+main{width:90%;max-width:1000px;margin:0 auto}
+a{color:var(--accent-alt)}
+code{overflow-wrap:anywhere}
+/* ---- type ---- */
+h1{font-size:24px;line-height:32px;font-weight:400;margin:0;color:var(--text)}
+h2{font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0 0 4px}
+.sub{color:var(--subtext);font-size:12px;line-height:16px;margin:-2px 0 0;overflow-wrap:anywhere}
+.hint{color:var(--subtext);font-size:12px;line-height:16px;letter-spacing:.4px;margin:8px 0 0}
+.hint.bad{color:var(--bad)}
 .gone{display:none!important}
-details{margin-top:.7rem}details>summary{cursor:pointer;color:var(--accent-alt);font-size:.85rem;padding:.2rem 0;list-style:revert}details>summary:hover{color:var(--accent)}
-/* The mode as radios, matching the panel's own page. One per line, with the text beside the */
-/* dot rather than under it, and a comfortable target without the platform's dead band. */
-.radios{margin-top:.4rem}
-label.radio{display:flex;align-items:center;gap:.5rem;margin:0;padding:.3rem 0;color:var(--text);font-size:.9rem;cursor:pointer}
-label.radio input[type=radio]{appearance:none;-webkit-appearance:none;flex:none;width:16px;height:16px;margin:0;border:2px solid var(--border);border-radius:50%;background:transparent;cursor:pointer}
-label.radio input[type=radio]:hover{border-color:var(--accent-alt)}
-label.radio input[type=radio]:checked{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 3px var(--surface)}
-label.radio input[type=radio]:focus-visible{outline:2px solid var(--accent-alt);outline-offset:2px}
-/* The screensaver page's own layout, which is NOT the settings page's multicol. Multicol */
-/* balances by height, and with two boxes and four columns it put one in the first column and */
-/* one in the last, leaving a hand's width of nothing between them and making the right box jump */
-/* every time a scrollbar changed the width by a pixel (Juri, 2026-09-11, C18). A grid places */
-/* them adjacent and keeps them there. The whole page is narrower too: at 1400px everything was */
-/* simply too wide. */
-.saver{display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start}
-.saver.modes{grid-template-rows:min-content 1fr}
-#screensaver-mode-box{grid-column:1;grid-row:1}
-#screensaver-options{grid-column:2;grid-row:1/span 2}
-#screensaver-library{grid-column:1;grid-row:2}
-/* The playlist page the same way: Folders and In this playlist share the left column, Content */
-/* has the right one to itself and may grow. Left to flow, In this playlist landed in a row that */
-/* began under Content's foot (Juri, 2026-09-19). */
-.saver.playlist{grid-template-rows:min-content 1fr}
-#playlist-folders{grid-column:1;grid-row:1}
-#playlist-content{grid-column:2;grid-row:1/span 2}
-#playlist-held{grid-column:1;grid-row:2}
-@media (max-width:68rem){.saver{grid-template-columns:1fr}
-.saver.modes,.saver.playlist{grid-template-rows:auto}
-#screensaver-mode-box,#screensaver-options,#screensaver-library,#playlist-folders,#playlist-content,#playlist-held{grid-column:auto;grid-row:auto}}
-.saver>fieldset{min-width:0;margin:0}
-/* The playlist's name is the page's title and the pencil beside it opens the rename in place, */
-/* the way a pull request's title is edited. A <details>, so it works with no scripting; the */
-/* title hides while the box is open so the row does not say the name twice. */
-header>.titlerow{flex:1 1 auto}
-.titlerow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;min-width:0}
-.titlerow h1{overflow-wrap:anywhere;min-width:0}
-details.rename{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex:0 1 auto;min-width:0}
+/* ---- app bar ---- */
+header.appbar{display:flex;align-items:center;gap:8px;min-height:64px;margin:0 0 8px}
+header.appbar .titles{flex:1;min-width:0}
+header.appbar .titlerow{display:flex;align-items:center;gap:4px;min-width:0}
+header.appbar .titlerow h1{overflow-wrap:anywhere;min-width:0}
+/* The chip: one glyph per row, monochrome, matching StatusIcon on the tablet glyph for glyph. */
+.chip{display:none;flex-direction:column;align-items:flex-end;gap:2px;line-height:18px;font-size:12px;color:var(--subtext);margin-right:8px}
+.chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:16px;height:16px;flex:none;color:var(--text)}
+/* Segmented button for the theme on wide screens; one cycling icon button where there is no room
+   for three words beside the title. */
+.themepick{display:none;border:1px solid var(--outline);border-radius:999px;overflow:hidden;height:40px}
+.themepick button{margin:0;padding:0 16px;border:0;border-right:1px solid var(--outline);border-radius:0;background:transparent;color:var(--text);font-size:14px;font-weight:500;height:100%;box-shadow:none;display:inline-flex;align-items:center;gap:6px}
+.themepick button:last-child{border-right:0}
+.themepick button[aria-pressed=true]{background:var(--secondary-container);color:var(--on-secondary-container)}
+.themepick button[aria-pressed=true]::before{content:"\2713";font-size:13px}
+.themecycle{display:inline-flex}
+@media (min-width:840px){.chip{display:flex}.themepick{display:inline-flex}.ib.themecycle{display:none}}
+/* ---- buttons: filled for a card's one main action, tonal for the second, outlined for a command
+   that acts now and stores nothing, text for navigation, and a 40 px icon button for anything
+   repeated in a row. Never red outside a confirmation. ---- */
+button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 24px;margin:0;border-radius:999px;border:1px solid var(--outline);background:transparent;color:var(--accent);font-family:inherit;font-size:14px;font-weight:500;letter-spacing:.1px;line-height:20px;cursor:pointer;white-space:nowrap;text-decoration:none}
+button:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button.primary:hover{background:color-mix(in srgb,var(--accent) 92%,black)}
+button.tonal,label.filebutton{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
+button.tonal:hover,label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
+button.text{border-color:transparent;padding:0 12px}
+button.danger{background:var(--bad);border-color:var(--bad);color:var(--on-accent)}
+button:disabled{opacity:.38;cursor:default}
+button svg,.btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-left:-8px}
+button.text svg{margin:0 -4px 0 0}
+.ib{width:40px;height:40px;padding:0;margin:0;border:0;border-radius:50%;background:transparent;color:var(--subtext);display:inline-flex;align-items:center;justify-content:center;flex:none;cursor:pointer;text-decoration:none}
+.ib svg{width:24px;height:24px;margin:0;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ib:hover{background:color-mix(in srgb,var(--text) 10%,transparent);color:var(--text)}
+.ib.primary,button.ib.primary{background:transparent;border:0;color:var(--accent)}
+button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.ib.selected{background:var(--primary-container);color:var(--on-primary-container)}
+.ib.dis{opacity:.38;pointer-events:none}
+.ib:focus-visible,button:focus-visible,input:focus-visible,.folder:focus-visible{outline:2px solid var(--accent-alt);outline-offset:2px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:24px}
+.actions form{display:inline;margin:0}
+.actions.tight{margin-top:8px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row.between{justify-content:space-between}
+.row.tight{gap:0;flex-wrap:nowrap}
+/* ---- cards ---- */
+.card{background:var(--card);border-radius:var(--radius);padding:16px 16px 20px;min-width:0;margin:0}
+.card+.card{margin-top:16px}
+.card .cardhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-6px -6px 4px 0}
+.card .cardhead h2{margin:0}
+.notice{display:flex;align-items:center;gap:10px;background:var(--error-container);color:var(--on-error-container);border-radius:8px;padding:8px 12px;margin:0 0 16px;font-size:14px}
+.card .notice,.body .notice{margin:8px 0 0}
+/* ---- text fields: outlined, the label on the border, helper text 4 px under the box in the
+   field's own slot, keeping its wording (Juri, 2026-09-23). ---- */
+.field{position:relative;margin-top:24px;min-width:0}
+.field input,.field select{display:block;width:100%;height:56px;margin:0;padding:0 16px;border:1px solid var(--outline);border-radius:4px;background:transparent;color:var(--text);font-family:inherit;font-size:16px;appearance:none;-webkit-appearance:none}
+.field input:focus,.field select:focus{outline:none;border:2px solid var(--accent);padding:0 15px}
+.field label{position:absolute;top:-8px;left:12px;padding:0 4px;background:var(--card);font-size:12px;line-height:16px;color:var(--subtext);pointer-events:none;max-width:calc(100% - 24px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.field input:focus+label,.field select:focus+label{color:var(--accent)}
+.field select{padding-right:44px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:24px}
+.field .support{font-size:12px;line-height:16px;color:var(--subtext);margin:4px 16px 0}
+.field .support.bad{color:var(--bad)}
+.field input.check-ok{border-color:var(--ok)}
+.field input.check-bad,.field select.check-bad,input.check-bad{border-color:var(--bad)}
+.field.dense{margin-top:0}
+.field.dense input{height:40px;padding:0 12px;font-size:14px}
+.field.dense input:focus{padding:0 11px}
+.field.dense .ib{position:absolute;right:0;top:0}
+.field.dense input{padding-right:44px}
+/* A button beside a field sits on the box's centre line; neither the floating label above the box
+   nor a helper line under it counts, which is why the button is placed from the top: 24 px for the
+   field's own margin and 8 px for half the difference between the 56 px box and the 40 px button. */
+.beside{display:flex;align-items:flex-start;gap:8px;margin-top:8px;flex-wrap:wrap}
+.beside .field{flex:1 1 200px}
+.beside button{margin-top:32px}
+/* ---- selection controls ---- */
+label.check{display:flex;align-items:center;gap:12px;min-height:48px;color:var(--text);cursor:pointer;margin:0}
+input[type=checkbox]{appearance:none;-webkit-appearance:none;width:18px;height:18px;margin:0 3px;flex:none;border:2px solid var(--subtext);border-radius:2px;background:transparent;cursor:pointer;display:inline-grid;place-items:center}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:checked::after{content:"";width:5px;height:10px;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:translateY(-1px) rotate(45deg)}
+input[type=checkbox]:indeterminate{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:indeterminate::after{content:"";width:10px;height:2px;background:var(--on-accent)}
+label.switch{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;color:var(--text);cursor:pointer;margin:0;border-bottom:1px solid var(--outline-variant)}
+label.switch:last-of-type{border-bottom:0}
+label.switch input{appearance:none;-webkit-appearance:none;width:52px;height:32px;margin:0;flex:none;border-radius:16px;border:2px solid var(--outline);background:var(--surface-alt);position:relative;cursor:pointer;display:inline-block}
+label.switch input::after{content:"";position:absolute;top:6px;left:6px;width:16px;height:16px;border-radius:50%;background:var(--outline);transition:left .12s,width .12s,height .12s,top .12s}
+label.switch input:checked{background:var(--accent);border-color:var(--accent)}
+label.switch input:checked::after{left:22px;top:4px;width:20px;height:20px;background:var(--on-accent)}
+.radios{margin-top:4px}
+label.radio{display:flex;align-items:center;gap:12px;min-height:48px;margin:0;color:var(--text);font-size:16px;cursor:pointer;border-bottom:1px solid var(--outline-variant)}
+label.radio:last-child{border-bottom:0}
+input[type=radio]{appearance:none;-webkit-appearance:none;flex:none;width:20px;height:20px;margin:0 10px;border:2px solid var(--subtext);border-radius:50%;background:transparent;cursor:pointer;display:inline-grid;place-items:center}
+input[type=radio]:checked{border-color:var(--accent)}
+input[type=radio]:checked::after{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent)}
+label.slider{display:block;margin-top:16px;color:var(--text)}
+label.slider .readout{color:var(--subtext);font-size:12px;margin-left:6px}
+label.slider input[type=range]{display:block;width:100%;min-width:0;height:44px;margin:0;appearance:none;-webkit-appearance:none;background:transparent}
+label.slider input[type=range]::-webkit-slider-runnable-track{height:16px;border-radius:8px;background:var(--primary-container)}
+label.slider input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:4px;height:44px;margin-top:-14px;border-radius:2px;background:var(--text);border:0}
+label.slider input[type=range]::-moz-range-track{height:16px;border-radius:8px;background:var(--primary-container)}
+label.slider input[type=range]::-moz-range-progress{height:16px;border-radius:8px;background:var(--accent)}
+label.slider input[type=range]::-moz-range-thumb{width:4px;height:44px;border-radius:2px;background:var(--text);border:0}
+label.slider input[type=range]:disabled{opacity:.38}
+/* ---- lists ---- */
+ul.list,ul.pictures,ul.folders{list-style:none;margin:0;padding:0}
+ul.list li{display:flex;align-items:center;gap:12px;min-height:56px;padding:4px 0;border-bottom:1px solid var(--outline-variant)}
+ul.list li form.use{display:inline-flex;align-items:center;margin:0}
+.switches{margin-top:16px}
+ul.list li:last-child{border-bottom:0}
+ul.list li.two{min-height:72px}
+.lead{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;color:var(--subtext)}
+.lead svg,.trail svg,.sections svg,summary svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.text{flex:1;min-width:0}
+.text .h,.text .s{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.text .h{font-size:16px;line-height:24px;color:var(--text)}
+.text .s{font-size:14px;line-height:20px;color:var(--subtext)}
+.trail{display:inline-flex;align-items:center;flex:none;gap:0;color:var(--subtext);font-size:12px}
+.trail form{margin:0;display:inline-flex}
+.inuse{color:var(--ok);font-weight:500}
+li.link .h,a.rowlink{color:var(--accent)}
+a.rowlink{text-decoration:none;display:flex;align-items:center;gap:12px;flex:1;min-width:0}
+/* ---- the settings menu ---- */
+.menu{display:block;max-width:720px;margin:0 auto}
+.menu .sections{display:none}
+.menu .boxes{background:var(--card);border-radius:var(--radius);overflow:hidden}
+details.box{border-bottom:1px solid var(--outline-variant)}
+details.box:last-child{border-bottom:0}
+details.box>summary{list-style:none;display:flex;align-items:center;gap:12px;min-height:72px;padding:8px 16px;cursor:pointer}
+details.box>summary::-webkit-details-marker{display:none}
+details.box>summary .chev{color:var(--subtext);display:inline-flex;transition:transform .2s}
+details.box[open]>summary{background:var(--card-high)}
+details.box[open]>summary .chev{transform:rotate(180deg)}
+details.box>.body{padding:8px 16px 24px 68px}
+details.box>.body .field label{background:var(--card)}
+header.appbar .field label{background:var(--base)}
+.sections{background:var(--card);border-radius:var(--radius);padding:8px}
+.sections .item{display:flex;align-items:center;gap:12px;min-height:64px;padding:4px 12px;border-radius:999px;text-decoration:none;color:inherit}
+.sections .item:hover{background:color-mix(in srgb,var(--text) 6%,transparent)}
+.sections .item.on{background:var(--secondary-container)}
+.sections .item.on .h{color:var(--on-secondary-container);font-weight:500}
+.sections .item .s{font-size:13px;line-height:18px}
+@media (min-width:840px){
+/* The list is half the open section, the pair filling the column, Material's 24 px gutter
+   between them (his drawing: menu 30, gap 5, content 60). */
+html.js .menu{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;align-items:start;max-width:none}
+html.js .menu .sections{display:block}
+html.js .menu .boxes{background:transparent;border-radius:0;overflow:visible}
+html.js details.box{border-bottom:0;background:var(--card);border-radius:var(--radius)}
+html.js details.box:not([open]){display:none}
+html.js details.box>summary{display:none}
+html.js details.box>.body{padding:16px 16px 20px}
+html.js details.box>.body::before{content:attr(data-title);display:block;font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0 0 4px}
+}
+/* ---- pages with two columns ---- */
+.two{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
+.two>*{min-width:0}
+@media (min-width:840px){
+.two{grid-template-columns:1fr 1fr}
+.two.modes{grid-template-rows:min-content 1fr}
+#screensaver-mode-box{grid-column:1;grid-row:1}#screensaver-options{grid-column:2;grid-row:1/span 2}#screensaver-library{grid-column:1;grid-row:2}
+.two.playlist{grid-template-rows:min-content 1fr}
+#playlist-folders{grid-column:1;grid-row:1}#playlist-content{grid-column:2;grid-row:1/span 2}#playlist-held{grid-column:1;grid-row:2}
+}
+/* ---- stats readout ---- */
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;background:var(--lowest);border-radius:8px;padding:12px 14px;color:var(--subtext);margin:8px 0 0}
+.mono.wrap{overflow-wrap:anywhere}
+#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
+/* ---- the rename pencil beside the title: a <details>, so it works with no scripting ---- */
+details.rename{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 1 auto;min-width:0}
 details.rename[open]{flex:1 1 20rem}
-details.rename summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:2.2rem;height:2.2rem;border-radius:999px;color:var(--subtext);cursor:pointer}
+details.rename summary{list-style:none;display:inline-flex}
 details.rename summary::-webkit-details-marker{display:none}
-details.rename summary:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent);color:var(--accent-alt)}
-details.rename form{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0;flex:1 1 16rem;min-width:0}
-details.rename input[type=text]{flex:1 1 10rem;width:auto;margin-top:0;font-size:1.1rem;font-weight:600}
-details.rename button{margin-top:0}
+details.rename form{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin:0;flex:1 1 16rem;min-width:0}
+details.rename form .field{flex:1 1 10rem;margin-top:8px}
+details.rename form .field input{height:48px;font-size:20px}
+details.rename form button{margin-bottom:4px}
 details.rename .hint{flex:1 1 100%;margin:0}
 .titlerow:has(details[open]) h1{display:none}
-.actions.back{margin:0 0 1rem}
-.actions.back+*{margin-top:0}
-main>.actions.back:last-child{margin:1rem 0 0}
-/* The open folder's name, first line of Content. */
-.where{margin:0 0 .3rem;font-size:.9rem;color:var(--subtext);font-weight:600}
-/* Folders are places, not actions, so they are links. Forty buttons in a column read as forty */
-/* decisions (Juri, 2026-09-10, C7). */
-ul.folders{list-style:none;margin:.2rem 0 0;padding:0;font-size:.85rem}
-ul.folders li{border-bottom:1px solid var(--border)}
-a.folder{display:flex;align-items:center;gap:.4rem;padding:.35rem .3rem;color:var(--text);text-decoration:none;border-radius:8px}
-a.folder:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}
-a.folder.open{background:var(--mantle);color:var(--accent);font-weight:600}
-a.folder .count{margin-left:auto;color:var(--subtext);font-variant-numeric:tabular-nums;font-size:.78rem}
-a.pager{display:inline-block;margin-top:.6rem;margin-right:.5rem;color:var(--accent-alt)}
-/* Show 10 25 50 100 under Content, the one in force filled the way the theme picker marks its choice. */
-.sizes{display:flex;align-items:center;flex-wrap:wrap;gap:.25rem;margin:.6rem 0 0;font-size:.8rem;color:var(--subtext)}
-.sizes a{padding:.15rem .55rem;border-radius:999px;color:var(--accent-alt);text-decoration:none;font-variant-numeric:tabular-nums}
-.sizes a:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}
-.sizes a.on{background:var(--accent);color:var(--base);font-weight:600}
-/* One row per picture: the name, the credit box, then the actions hard against the right edge. */
-/* A grid rather than flex-wrap, so the three columns line up down the whole list instead of */
-/* each row wrapping where its own name happens to end (Juri, 2026-09-10, C8). */
-ul.pictures{list-style:none;margin:.2rem 0 0;padding:0;font-size:.85rem}
-ul.pictures li{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;padding:.35rem 0;border-bottom:1px solid var(--border)}
-ul.pictures li .name{flex:1 1 8rem;overflow-wrap:anywhere;min-width:0}
-ul.pictures li form{display:flex;align-items:center;gap:.35rem;margin:0;min-width:0}
-ul.pictures li form.caption{flex:3 1 14rem}
-ul.pictures li form.caption input{flex:1 1 6rem}
-ul.pictures li .acts{display:flex;gap:.4rem;justify-content:flex-end;white-space:nowrap;margin-left:auto}
-ul.pictures.picked li .name{flex:1 1 100%}
-ul.pictures li input[type=text]{margin-top:0;min-width:0}
-ul.pictures button{margin-top:0;padding:.25rem .6rem;font-size:.8rem;white-space:nowrap}
-
-/* Browse and Upload on one row and in one family. The file input is off screen rather than */
-/* hidden, so it keeps its focus ring and stays reachable from the keyboard; the word Browse is */
-/* its label, which is the whole of what opens the file dialog. */
-.uploadrow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.4rem}
+/* ---- folders: places, not actions, so they are links; the open one is a pill ---- */
+ul.folders li{border-bottom:1px solid var(--outline-variant)}
+ul.folders li:last-child{border-bottom:0}
+a.folder{display:flex;align-items:center;gap:12px;min-height:44px;padding:2px 8px 2px 0;color:var(--text);text-decoration:none;border-radius:999px}
+a.folder:hover{background:color-mix(in srgb,var(--text) 6%,transparent)}
+a.folder.open{background:var(--secondary-container);color:var(--on-secondary-container);font-weight:500}
+a.folder .lead{width:40px}
+a.folder .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--surface-alt);color:var(--text);font-size:11px;line-height:16px;font-weight:500;text-align:center;font-variant-numeric:tabular-nums}
+.badge.zero{background:transparent;color:var(--subtext)}
+/* ---- the open folder ---- */
+.where{margin:0 0 4px;font-size:12px;color:var(--subtext)}
+ul.pictures li{display:flex;align-items:center;gap:12px;min-height:56px;padding:4px 0;border-bottom:1px solid var(--outline-variant)}
+ul.pictures li:last-child{border-bottom:0}
+ul.pictures.details li{min-height:72px}
+ul.pictures li .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px}
+ul.pictures li form{margin:0;display:inline-flex;align-items:center}
+ul.pictures li .acts{display:inline-flex;align-items:center;margin-left:auto}
+ul.pictures.selecthead li{min-height:40px;border-bottom:1px solid var(--outline-variant)}
+ul.pictures.selecthead .s{color:var(--subtext);font-size:14px}
+img.thumb{display:block;width:40px;height:40px;border-radius:8px;object-fit:cover;background:var(--surface-alt);flex:none}
+ul.pictures.details img.thumb{width:48px;height:48px}
+.tiles{display:grid;gap:10px;margin-top:8px}
+.tiles.small{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
+.tiles.big{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.tile{display:flex;flex-direction:column;gap:4px;font-size:12px;min-width:0;position:relative}
+.tile .pic{position:relative;display:block;width:100%;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:var(--surface-alt);transition:transform .15s}
+.tiles.big .tile .pic{aspect-ratio:4/3}
+.tile .pic img{display:block;width:100%;height:100%;object-fit:cover}
+.tile.in .pic{transform:scale(.9)}
+.tile form.pick{position:absolute;top:6px;left:6px;margin:0}
+.tile form.pick input[type=checkbox]{width:22px;height:22px;margin:0;border-radius:50%;border-color:#fff;background:rgba(30,30,46,.55)}
+.tile form.pick input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+.tile form.bin{position:absolute;top:2px;right:2px;margin:0}
+.tile form.bin .ib{width:32px;height:32px;background:rgba(30,30,46,.55);color:#fff}
+.tile form.bin .ib svg{width:18px;height:18px}
+.tile .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.tile small{color:var(--subtext);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pager{display:flex;align-items:center;gap:8px;color:var(--subtext);font-size:14px;margin-top:8px}
+.pager span{flex:1;text-align:center}
+.sizes{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.sizes a.size{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--outline);font-size:14px;font-weight:500;color:var(--subtext);text-decoration:none;font-variant-numeric:tabular-nums}
+.sizes a.size.on{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
+.sizes a.size.on::before{content:"\2713";font-size:12px}
+/* ---- what the playlist holds: the picture, the path, then the credit field with its save tick
+   inside and the remove button beside it, both 40 px on one line ---- */
+ul.held li{display:grid;grid-template-columns:40px 1fr 48px;grid-template-areas:"pic name name" "pic cap acts";column-gap:12px;row-gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--outline-variant)}
+ul.held li:last-child{border-bottom:0}
+ul.held img.thumb{grid-area:pic;align-self:start;margin-top:2px}
+ul.held .name{grid-area:name;font-size:14px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ul.held form.caption{grid-area:cap;display:block;margin:0;min-width:0}
+ul.held .acts{grid-area:acts;display:flex;justify-content:center}
+ul.held .acts form{margin:0}
+/* ---- upload: Browse is the file input's label, the input itself off screen but focusable ---- */
+.uploadrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 input.offscreen{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
-label.filebutton{display:inline-block;margin:0;line-height:normal;padding:.5rem .9rem;border-radius:10px;border:1px solid var(--accent-alt);font-size:.9rem;cursor:pointer;transition:transform .08s ease,box-shadow .08s ease}
-label.filebutton:active{transform:translateY(2px);box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}
-label.filebutton{background:color-mix(in srgb,var(--accent-alt) 18%,var(--surface));border-color:var(--accent-alt);color:var(--ink-alt);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent-alt) 45%,var(--surface)),0 2px 4px rgba(0,0,0,.18)}
-label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 28%,var(--surface))}
+label.filebutton{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 24px;border-radius:999px;border:1px solid transparent;font-size:14px;font-weight:500;cursor:pointer;margin:0}
+label.filebutton svg{width:18px;height:18px;margin-left:-8px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 input.offscreen:focus-visible+label.filebutton{outline:2px solid var(--accent-alt);outline-offset:2px}
-.uploadrow .chosen{flex:0 1 auto;min-width:0;max-width:22rem;color:var(--subtext);font-size:.85rem;overflow-wrap:anywhere}
-.uploadrow button{margin-top:0;margin-left:auto}
-/* The playlists. This table had no styling of its own at all until 2026-09-10, so every cell */
-/* ran into the next at both widths it was tried at. The wrapper scrolls sideways rather than */
-/* letting a long name push the page wider than the window. */
-.tablewrap{overflow-x:auto;margin-top:.4rem}
-/* Sized to its content, not stretched: at full width the Rename cell took every spare pixel and */
-/* pushed Delete to the far edge of the card (Juri, 2026-09-11, C18). The wrapper scrolls where */
-/* the content is wider than the card, which on a phone it is. */
-table.playlists{width:100%;border-collapse:collapse;font-size:.85rem}
-table.playlists th,table.playlists td{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--border);vertical-align:middle}
-table.playlists thead th{color:var(--subtext);font-weight:600;font-size:.78rem;white-space:nowrap}
-table.playlists tbody th{font-weight:600;overflow-wrap:anywhere;min-width:7rem;width:100%}
-table.playlists td{width:1%;white-space:nowrap}
-table.playlists .acts{display:flex;gap:.4rem;align-items:center;justify-content:flex-end}
-table.playlists td.count{font-variant-numeric:tabular-nums;text-align:right}
-table.playlists td form{display:flex;gap:.35rem;align-items:center;margin:0}
-table.playlists td input[type=text]{margin-top:0;min-width:6rem;max-width:16rem}
-table.playlists button{margin-top:0;padding:.25rem .6rem;font-size:.8rem;white-space:nowrap}
-table.playlists .inuse{color:var(--ok);font-weight:600;white-space:nowrap}
-form.newplaylist{display:flex;gap:.4rem;align-items:center;margin-top:.6rem;flex-wrap:wrap}
-form.newplaylist input[type=text]{flex:1 1 12rem;margin-top:0;min-width:0}
-form.newplaylist button{margin-top:0}
-/* The upload's answer, directly under the button that produced it. Green for a success and red */
-/* only for a failure: it used to be red either way, so "1 picture stored." read as an error */
-/* (Juri, 2026-09-10, C4). It closes itself after five seconds and by its own cross. */
-.banner{display:flex;align-items:center;gap:.6rem;margin:.6rem 0 0;padding:.55rem .8rem;border-radius:10px;border-left:4px solid var(--ok);background:var(--mantle);color:var(--text);font-size:.85rem}
+.uploadrow .chosen{flex:1 1 auto;min-width:0;color:var(--subtext);font-size:12px;overflow-wrap:anywhere}
+.uploadrow button{margin-left:auto}
+/* ---- the banner that answers an upload or a refusal, red only for a failure ---- */
+.banner{display:flex;align-items:center;gap:10px;margin:12px 0 0;padding:8px 12px;border-radius:8px;background:var(--secondary-container);color:var(--on-secondary-container);font-size:14px}
 .banner span{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
-.banner.bad{border-left-color:var(--bad)}
-.banner .dismiss{flex:none;margin:0;padding:0 .4rem;border:0;background:transparent;box-shadow:none;color:var(--subtext);font-size:1.1rem;line-height:1}
-.banner .dismiss:hover{background:transparent;color:var(--text)}
-/* A certificate fingerprint is 95 characters with no space to break at. */
-.hint code{word-break:break-all}
+.banner.bad{background:var(--error-container);color:var(--on-error-container)}
+.banner .dismiss{flex:none;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;font-size:18px;line-height:1}
+.banner .dismiss:hover{background:color-mix(in srgb,var(--text) 10%,transparent)}
+/* ---- the legal pages ---- */
+div.doc{max-width:640px;margin:0 auto}
+div.doc h2{color:var(--accent);font-size:13px;letter-spacing:.1em;margin:26px 0 6px;font-weight:500}
+p.doc{margin:8px 0}

@@ -85,16 +85,72 @@ final class PictureBrowser {
     private static final Set<String> IMAGE_MIMES = new HashSet<>(
             java.util.Arrays.asList("image/jpeg", "image/png", "image/webp"));
 
+    /**
+     * Id, name, type, folder, then size, date and the two dimensions: the last four are what the
+     * details view shows under a name, and they come from the same row for nothing. WIDTH and
+     * HEIGHT exist on Images since API 16; a row the store never measured reads 0 and the view
+     * says nothing for it rather than "0 × 0".
+     */
     private static final String[] COLUMNS_MODERN = {
             android.provider.MediaStore.Images.Media._ID,
             android.provider.MediaStore.Images.Media.DISPLAY_NAME,
             android.provider.MediaStore.Images.Media.MIME_TYPE,
-            android.provider.MediaStore.Images.Media.RELATIVE_PATH};
+            android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+            android.provider.MediaStore.Images.Media.SIZE,
+            android.provider.MediaStore.Images.Media.DATE_MODIFIED,
+            android.provider.MediaStore.Images.Media.WIDTH,
+            android.provider.MediaStore.Images.Media.HEIGHT};
     private static final String[] COLUMNS_LEGACY = {
             android.provider.MediaStore.Images.Media._ID,
             android.provider.MediaStore.Images.Media.DISPLAY_NAME,
             android.provider.MediaStore.Images.Media.MIME_TYPE,
-            android.provider.MediaStore.Images.Media.DATA};
+            android.provider.MediaStore.Images.Media.DATA,
+            android.provider.MediaStore.Images.Media.SIZE,
+            android.provider.MediaStore.Images.Media.DATE_MODIFIED,
+            android.provider.MediaStore.Images.Media.WIDTH,
+            android.provider.MediaStore.Images.Media.HEIGHT};
+
+    /** The four ways a folder is shown, in the order the view button cycles through them. */
+    static final String VIEW_LIST = "list";
+    static final String VIEW_DETAILS = "details";
+    static final String VIEW_SMALL = "small";
+    static final String VIEW_BIG = "big";
+    static final String[] VIEWS = {VIEW_LIST, VIEW_DETAILS, VIEW_SMALL, VIEW_BIG};
+    static final String DEFAULT_VIEW = VIEW_LIST;
+
+    /** A stored or posted view name, or the default for anything that is not one. */
+    static String view(String value) {
+        for (String view : VIEWS) {
+            if (view.equals(value)) {
+                return view;
+            }
+        }
+        return DEFAULT_VIEW;
+    }
+
+    /** The view after this one: list, details, small thumbnails, big thumbnails, then list again. */
+    static String nextView(String current) {
+        for (int i = 0; i < VIEWS.length; i++) {
+            if (VIEWS[i].equals(current)) {
+                return VIEWS[(i + 1) % VIEWS.length];
+            }
+        }
+        return DEFAULT_VIEW;
+    }
+
+    /** "List", "Details", "Small thumbnails", "Big thumbnails": the button's own name. */
+    static String viewLabel(String view) {
+        switch (view(view)) {
+            case VIEW_DETAILS:
+                return "Details";
+            case VIEW_SMALL:
+                return "Small thumbnails";
+            case VIEW_BIG:
+                return "Big thumbnails";
+            default:
+                return "List";
+        }
+    }
 
     private final Context app;
     private volatile String browseProblem;
@@ -136,10 +192,50 @@ final class PictureBrowser {
     static final class Entry {
         final String uri;
         final String name;
+        /** Bytes on disk, or 0 when unknown. */
+        final long size;
+        /** Last modified, milliseconds since the epoch, or 0 when unknown. */
+        final long modifiedMs;
+        /** Pixels, or 0 when the store never measured the picture. */
+        final int width;
+        final int height;
 
         Entry(String uri, String name) {
+            this(uri, name, 0L, 0L, 0, 0);
+        }
+
+        Entry(String uri, String name, long size, long modifiedMs, int width, int height) {
             this.uri = uri;
             this.name = name;
+            this.size = size;
+            this.modifiedMs = modifiedMs;
+            this.width = width;
+            this.height = height;
+        }
+
+        /** "4000 × 3000 · 3.2 MB · 12 Jul 2025", whichever parts are known, or "". */
+        String details() {
+            StringBuilder text = new StringBuilder();
+            if (width > 0 && height > 0) {
+                text.append(width).append(" \u00d7 ").append(height);
+            }
+            if (size > 0) {
+                text.append(text.length() > 0 ? " \u00b7 " : "").append(sizeLabel(size));
+            }
+            if (modifiedMs > 0) {
+                text.append(text.length() > 0 ? " \u00b7 " : "").append(
+                        new java.text.SimpleDateFormat("d MMM yyyy", Locale.getDefault())
+                                .format(new java.util.Date(modifiedMs)));
+            }
+            return text.toString();
+        }
+
+        /** "410 kB", "3.2 MB": a size a person reads, never a byte count. */
+        static String sizeLabel(long bytes) {
+            if (bytes >= 1024L * 1024L) {
+                return String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024.0));
+            }
+            return Math.max(1, Math.round(bytes / 1024.0)) + " kB";
         }
     }
 
@@ -357,10 +453,13 @@ final class PictureBrowser {
                     continue;
                 }
                 String name = cursor.getString(1);
+                // DATE_MODIFIED is in seconds; the entry keeps milliseconds like everything else.
                 found.add(new Entry(android.content.ContentUris.withAppendedId(
                         android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                         cursor.getLong(0)).toString(),
-                        name == null || name.isEmpty() ? "Unnamed picture" : name));
+                        name == null || name.isEmpty() ? "Unnamed picture" : name,
+                        cursor.getLong(4), cursor.getLong(5) * 1000L,
+                        cursor.getInt(6), cursor.getInt(7)));
             }
         } catch (RuntimeException unreadable) {
             page.problem = "This panel's pictures could not be read.";

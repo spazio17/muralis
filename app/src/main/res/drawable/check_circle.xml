@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The two states of a tile's check circle, for CheckBox.setButtonDrawable. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_checked="true" android:drawable="@drawable/check_circle_on"/>
+    <item android:drawable="@drawable/check_circle_off"/>
+</selector>
