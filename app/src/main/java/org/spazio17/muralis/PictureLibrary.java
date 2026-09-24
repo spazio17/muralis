@@ -594,6 +594,16 @@ final class PictureLibrary {
      * own. Worker thread only.
      */
     Bitmap decode(String source, Picture picture, int maxWidth, int maxHeight) {
+        return decode(source, picture, maxWidth, maxHeight, true);
+    }
+
+    /**
+     * The same, with {@code forSlideshow} false for a thumbnail: a folder being browsed is not
+     * the playlist, so a picture there that cannot be read must not put "a selected picture
+     * cannot be read" under the screensaver.
+     */
+    private Bitmap decode(String source, Picture picture, int maxWidth, int maxHeight,
+            boolean forSlideshow) {
         try {
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
@@ -611,7 +621,7 @@ final class PictureLibrary {
                     maxWidth, maxHeight);
             try (InputStream in = openPicture(source, picture)) {
                 android.graphics.Bitmap bitmap = BitmapFactory.decodeStream(in, null, options);
-                if (bitmap != null && PictureSources.LOCAL.equals(source)) {
+                if (bitmap != null && forSlideshow && PictureSources.LOCAL.equals(source)) {
                     // A picture that reads again clears the sentence that said one could not.
                     // Without this the record outlived the fault: a folder renamed away and back
                     // left the panel saying "a selected picture cannot be read" through three
@@ -622,7 +632,9 @@ final class PictureLibrary {
                 return bitmap;
             }
         } catch (IOException | OutOfMemoryError | RuntimeException unreadable) {
-            problems.put(source, "A selected picture cannot be read. Check its storage or remove it from the playlist.");
+            if (forSlideshow) {
+                problems.put(source, "A selected picture cannot be read. Check its storage or remove it from the playlist.");
+            }
             Log.w(TAG, "Cannot decode " + picture.url + ": " + unreadable.getMessage());
             return null;
         }
@@ -648,6 +660,73 @@ final class PictureLibrary {
             throw new IOException("no stream for " + picture.url);
         }
         return own;
+    }
+
+    // ------------------------------------------------------------------ thumbnails
+
+    /** The longest side of a thumbnail: one size for both surfaces, scaled down by the view. */
+    static final int THUMBNAIL_PX = 256;
+
+    /**
+     * A small JPEG of one of this panel's own pictures, made once and kept in the cache folder.
+     *
+     * <p>One cache for both surfaces: the panel's tiles read the file and the web page fetches it
+     * through {@code /api/pictures/thumb}, so a folder opened on the web costs the panel one decode
+     * per picture, ever. Keyed by the address alone, since an upload never changes under its name
+     * and a MediaStore row that does is rare enough that a stale thumbnail is the smaller fault.
+     * Null when the picture cannot be read, which the caller shows as a blank tile rather than an
+     * error: the row's name still says what the picture is. Worker thread only.
+     */
+    File thumbnail(String uri) {
+        if (uri == null || !(isUpload(uri) || PictureBrowser.isMedia(uri))) {
+            return null;
+        }
+        File dir = new File(app.getCacheDir(), "thumbs");
+        File target = new File(dir, sha1(uri) + ".jpg");
+        if (target.isFile() && target.length() > 0) {
+            return target;
+        }
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            return null;
+        }
+        Picture picture = new Picture(uri, "", "", "");
+        Bitmap full = decode(PictureSources.LOCAL, picture, THUMBNAIL_PX, THUMBNAIL_PX, false);
+        if (full == null) {
+            return null;
+        }
+        try {
+            float scale = Math.min(1f, THUMBNAIL_PX / (float) Math.max(full.getWidth(),
+                    full.getHeight()));
+            Bitmap small = scale < 1f ? Bitmap.createScaledBitmap(full,
+                    Math.max(1, Math.round(full.getWidth() * scale)),
+                    Math.max(1, Math.round(full.getHeight() * scale)), true) : full;
+            File partial = new File(target.getPath() + ".part");
+            try (OutputStream out = new FileOutputStream(partial)) {
+                if (!small.compress(Bitmap.CompressFormat.JPEG, 82, out)) {
+                    throw new IOException("cannot encode the thumbnail");
+                }
+            }
+            if (small != full) {
+                small.recycle();
+            }
+            if (!partial.renameTo(target)) {
+                throw new IOException("cannot store the thumbnail");
+            }
+            return target;
+        } catch (IOException | RuntimeException failed) {
+            Log.w(TAG, "Cannot make a thumbnail for " + uri + ": " + failed.getMessage());
+            return null;
+        } finally {
+            full.recycle();
+        }
+    }
+
+    /** The thumbnail of a picture that is gone, so a deleted upload's name cannot be reused for it. */
+    private void forgetThumbnail(String uri) {
+        File thumb = new File(new File(app.getCacheDir(), "thumbs"), sha1(uri) + ".jpg");
+        if (thumb.isFile() && !thumb.delete()) {
+            Log.w(TAG, "Could not remove a thumbnail: " + thumb.getName());
+        }
     }
 
     // ------------------------------------------------------------------ the pictures at home
@@ -1094,6 +1173,7 @@ final class PictureLibrary {
             return "the picture could not be removed";
         }
         removeEverywhere(url);
+        forgetThumbnail(url);
         forgetLocalCount();
         return null;
     }
@@ -1215,7 +1295,14 @@ final class PictureLibrary {
                     || PictureSources.imageMime(header(file)) == null) {
                 continue;
             }
-            found.add(new PictureBrowser.Entry(Uri.fromFile(file).toString(), file.getName()));
+            // Dimensions from the header alone (inJustDecodeBounds reads no pixels): uploads are
+            // few, and the details view shows them beside MediaStore's own measurements.
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getPath(), bounds);
+            found.add(new PictureBrowser.Entry(Uri.fromFile(file).toString(), file.getName(),
+                    file.length(), file.lastModified(),
+                    Math.max(0, bounds.outWidth), Math.max(0, bounds.outHeight)));
         }
         return found;
     }

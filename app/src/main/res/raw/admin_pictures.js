@@ -70,6 +70,7 @@ picked?fetch('/api/playlists/items?playlist='+encodeURIComponent(playlist),
 {credentials:'same-origin'}).then(text):null])
 .then(function(parts){folders.innerHTML=parts[0];content.innerHTML=parts[1];
 if(picked&&parts[2]!==null){picked.innerHTML=parts[2];}
+markSome();
 try{history.replaceState(null,'',shown);}
 catch(ignored){}})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
@@ -96,6 +97,7 @@ main.addEventListener('click',function(event){
 var link=event.target.closest?event.target.closest('a.folder,a.pager,a.size'):null;
 if(!link){return;}
 event.preventDefault();
+if(link.classList.contains('dis')){return;}
 if(link.classList.contains('size')){
 // A new size starts the folder over: page three of ten is nowhere in particular at fifty.
 n=parseInt(link.dataset.n,10);
@@ -108,26 +110,62 @@ openFolder(link.dataset.at||'');
 // ticking a picture, naming it, removing it, deleting an upload and renaming the playlist. It is
 // on <main> rather than on the browser because the name box and the held-pictures list are
 // outside the browser and would otherwise navigate to /api/... and leave that address in the bar.
-main.addEventListener('submit',function(event){
-var form=event.target;
-if(form.tagName!=='FORM'||form.id==='picture-upload'){return;}
-// A GET form is navigation, not a change: Edit opens the playlist's page and must be left alone.
-if((form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
-event.preventDefault();
+function post(form){
 // URL-encoded, not FormData: a FormData body is sent as multipart, and the server parses
 // multipart for the upload alone. Posted as multipart these fields arrived empty, so ticking a
 // picture was refused with "Supply a boolean selection" (caught in the browser, 2026-09-10).
 var data=new URLSearchParams(new FormData(form));
 if(at===null){data.delete('at');}else{data.set('at',at);}
 data.set('playlist',playlist);
-fetch(form.action+'?fragment=1',{method:'POST',credentials:'same-origin',
+return fetch(form.action+'?fragment=1',{method:'POST',credentials:'same-origin',
 headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
 .then(function(r){return r.text();})
 .then(function(text){var ok=true,message=text;
 try{var parsed=JSON.parse(text);ok=parsed.ok!==false;message=parsed.message||'';}
 catch(ignored){ok=false;}
-if(form.closest&&form.closest('details.rename')){renamed(form,ok,message);return;}
-say(message,ok);
+return {ok:ok,message:message,form:form};});}
+
+// A picture's check box, in a row or in a tile's corner, is the form that puts it in the
+// playlist or takes it out: ticking posts at once, no button. The header box ticks or clears
+// every picture on the page whose state differs, then the panels are re-read once.
+main.addEventListener('change',function(event){
+var box=event.target;
+if(!box||box.type!=='checkbox'){return;}
+if(box.id==='select-all'){
+var want=box.checked,forms=Array.prototype.slice.call(content.querySelectorAll('form.pick'));
+var due=forms.filter(function(f){var b=f.querySelector('input[type=checkbox]');return b&&b.checked!==want;});
+due.forEach(function(f){var b=f.querySelector('input[type=checkbox]');b.checked=want;b.disabled=true;});
+Promise.all(due.map(post)).then(function(results){
+var refused=results.filter(function(r){return !r.ok;})[0];
+say(refused?refused.message:'',!refused);return reload();})
+.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+return;}
+var form=box.closest?box.closest('form.pick'):null;
+if(!form){return;}
+box.disabled=true;
+post(form).then(function(r){say(r.message,r.ok);return reload();})
+.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+});
+// The header box shows a dash while only some of the page is in the playlist; only a script can
+// set that state, so the fragment marks it and this reads the mark after every re-read.
+function markSome(){var all=document.getElementById('select-all');
+if(all){all.indeterminate=!!all.dataset.some;}}
+markSome();
+
+main.addEventListener('submit',function(event){
+var form=event.target;
+if(form.tagName!=='FORM'||form.id==='picture-upload'){return;}
+// A GET form is navigation, not a change: Edit opens the playlist's page and must be left alone.
+if((form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
+event.preventDefault();
+// Deleting a file asks first, as the panel does: an icon button carries no word to slow the
+// hand down, and the file is gone for good.
+if(/\/api\/pictures\/delete$/.test(form.action)){
+var tile=form.closest('li,.tile'),named=tile&&tile.querySelector('.name,.h');
+if(!window.confirm('Delete '+(named?named.textContent.trim():'this picture')+'? The file is removed from this panel.')){return;}}
+post(form).then(function(r){
+if(form.closest&&form.closest('details.rename')){renamed(form,r.ok,r.message);return;}
+say(r.message,r.ok);
 return reload();})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
 });

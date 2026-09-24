@@ -11,6 +11,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -121,6 +122,7 @@ final class HttpAdminServer {
     private final String themeScript;
     private final String pictureScript;
     private final String playlistScript;
+    private final String menuScript;
     private final String pageCss;
 
 
@@ -180,6 +182,7 @@ final class HttpAdminServer {
         themeScript = script(R.raw.admin_theme);
         pictureScript = script(R.raw.admin_pictures);
         playlistScript = script(R.raw.admin_playlists);
+        menuScript = script(R.raw.admin_menu);
         pageCss = readRawText(R.raw.admin);
     }
 
@@ -631,6 +634,13 @@ final class HttpAdminServer {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(folderContent(browseTarget(query), queryValue(query, "playlist"),
                             PictureBrowser.pageSize(queryValue(query, "n")))));
+        } else if (path.equals("/api/pictures/thumb") && method.equals("GET")) {
+            serveThumbnail(queryValue(query, "uri"), output);
+        } else if (path.equals("/api/pictures/view") && method.equals("POST")) {
+            // How a folder is shown, one preference for the panel and this page; see folderContent.
+            Map<String, String> form = parseFormBody(headers, body);
+            KioskConfig.edit(context).pictureView(form.get("view")).apply();
+            answerPictureChange(query, form, "", true, output);
         } else if (path.equals("/api/pictures") && method.equals("POST")) {
             handlePictureUpload(headers, body, query, output);
         } else if (path.equals("/api/pictures/delete") && method.equals("POST")) {
@@ -1173,194 +1183,441 @@ final class HttpAdminServer {
         return buildSettingsPage(null, "");
     }
 
+
     /**
-     * The head, header and theme picker every page on this server shares.
+     * The head, app bar and theme picker every page on this server shares.
      *
      * <p>One method rather than one copy per page, so a page added later cannot come out looking
      * like a different application. The subtitle is what each page has to say for itself: the
-     * panel's id on the settings page, the way back on any page below it.
+     * panel's id on the settings page, nothing on a page below it.
      */
     private String pageStart(String title, String subtitle) {
         return pageStart(title, subtitle, null);
     }
 
+
     /**
-     * The same, with the way back sharing the theme picker's row.
-     *
-     * <p>One row rather than two (Juri, 2026-09-12): Back on the left, above the left panel, the
-     * picker on the right, above the right one. The row exists whether or not a page has both, so
-     * a page with only one of them still lines that one up with its column.
+     * The same, with the way back as the arrow at the left of the app bar, where every Material
+     * screen has it and once only: the Back buttons at the head and foot of a page went with the
+     * redesign of 2026-09-23.
      */
-    private String pageStart(String title, String subtitle, String leading) {
+    private String pageStart(String title, String subtitle, String backTo) {
         // A page below the settings page says its name and nothing else: the panel's id, its
         // address and its load belong where somebody is configuring the panel, not on a page
         // about one feature of it (Juri, 2026-09-11, C15).
-        String heading = subtitle == null
-                ? "<header><div><h1>" + escapeHtml(title) + "</h1></div></header>"
-                : "<header><div><h1>" + escapeHtml(title) + "</h1><p class=\"sub\">"
-                        + escapeHtml(subtitle) + "</p></div>" + statusChip() + "</header>";
-        return pageStartWith(heading, leading);
+        String titles = "<div class=\"titles\"><h1>" + escapeHtml(title) + "</h1>"
+                + (subtitle == null ? "" : "<p class=\"sub\">" + escapeHtml(subtitle) + "</p>")
+                + "</div>";
+        return pageStartWith(titles, backTo, subtitle != null);
     }
 
-    /** The same shell around a heading a page has built for itself: the playlist's own name. */
-    private String pageStartWith(String heading, String leading) {
+
+    /**
+     * The same shell around a title block a page has built for itself: the playlist's own name.
+     *
+     * <p>The {@code js} class on the root element is set by the one inline script this server
+     * emits, in the head so it is there before the first paint: the list-detail layout of the
+     * settings page needs scripting to open a section from its list, so the stylesheet applies it
+     * only where scripting runs and every other browser gets the accordion, which works with none.
+     */
+    private String pageStartWith(String titles, String backTo, boolean chip) {
         return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-                + "<title>Muralis admin</title><style>" + pageCss + "</style></head>"
-                + "<body><main>" + heading
-                + "<div class=\"topbar\">"
-                + (leading == null ? "" : leading)
-                + "<div class=\"themepick\" role=\"group\" aria-label=\"Colour theme\">"
-                + "<button type=\"button\" data-theme=\"system\">Auto</button>"
-                + "<button type=\"button\" data-theme=\"light\">Light</button>"
-                + "<button type=\"button\" data-theme=\"dark\">Dark</button>"
-                + "</div></div>";
+                + "<title>Muralis admin</title><style>" + pageCss + "</style>"
+                + "<script>document.documentElement.className+=' js';</script></head>"
+                + "<body><main><header class=\"appbar\">"
+                + (backTo == null ? "" : iconLink(backTo, "back", "Back"))
+                + titles
+                + (chip ? statusChip() : "")
+                + themePicker()
+                + "</header>";
     }
 
     /**
-     * The settings page, optionally carrying one message about the box named by {@code
-     * noticeSection}.
+     * Auto, Light and Dark as a segmented button where the app bar has room, and one cycling icon
+     * button where it has not; the stylesheet shows one or the other, {@code admin_theme.js}
+     * drives both.
+     */
+    private static String themePicker() {
+        return "<div class=\"themepick\" role=\"group\" aria-label=\"Colour theme\">"
+                + "<button type=\"button\" data-theme=\"system\">Auto</button>"
+                + "<button type=\"button\" data-theme=\"light\">Light</button>"
+                + "<button type=\"button\" data-theme=\"dark\">Dark</button></div>"
+                + "<button type=\"button\" class=\"ib themecycle\" data-theme-cycle=\"1\""
+                + " title=\"Colour theme\" aria-label=\"Colour theme\">" + glyph("theme")
+                + "</button>";
+    }
+
+    /**
+     * Material's glyphs, inline so they take the text colour, one path each. Names rather than
+     * markup at the call sites, so a glyph is drawn the same wherever it appears and the panel's
+     * vector drawables can carry the same shapes.
+     */
+    private static final Map<String, String> GLYPHS = glyphs();
+
+    private static Map<String, String> glyphs() {
+        Map<String, String> paths = new HashMap<>();
+        paths.put("back", "<path d=\"M19 12H5M12 19l-7-7 7-7\"/>");
+        paths.put("pencil", "<path d=\"M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z\"/>");
+        paths.put("trash", "<path d=\"M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3\"/>");
+        paths.put("minus", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M8 12h8\"/>");
+        paths.put("check", "<path d=\"M5 12l5 5L20 7\"/>");
+        paths.put("prev", "<path d=\"M15 6l-6 6 6 6\"/>");
+        paths.put("next", "<path d=\"M9 6l6 6-6 6\"/>");
+        paths.put("down", "<path d=\"M6 9l6 6 6-6\"/>");
+        paths.put("list", "<path d=\"M4 6h16M4 12h16M4 18h16\"/>");
+        paths.put("details", "<rect x=\"3\" y=\"4\" width=\"5\" height=\"5\" rx=\"1\"/>"
+                + "<path d=\"M11 6.5h10\"/><rect x=\"3\" y=\"14\" width=\"5\" height=\"5\" rx=\"1\"/>"
+                + "<path d=\"M11 16.5h10M11 19.5h6\"/>");
+        StringBuilder small = new StringBuilder();
+        for (String y : new String[] {"3", "9.5", "16"}) {
+            for (String x : new String[] {"3", "9.5", "16"}) {
+                small.append("<rect x=\"").append(x).append("\" y=\"").append(y)
+                        .append("\" width=\"5\" height=\"5\" rx=\"1\"/>");
+            }
+        }
+        paths.put("small", small.toString());
+        paths.put("big", "<rect x=\"3\" y=\"3\" width=\"8\" height=\"8\" rx=\"1.5\"/>"
+                + "<rect x=\"13\" y=\"3\" width=\"8\" height=\"8\" rx=\"1.5\"/>"
+                + "<rect x=\"3\" y=\"13\" width=\"8\" height=\"8\" rx=\"1.5\"/>"
+                + "<rect x=\"13\" y=\"13\" width=\"8\" height=\"8\" rx=\"1.5\"/>");
+        paths.put("upload", "<path d=\"M12 16V4M6 10l6-6 6 6M4 20h16\"/>");
+        paths.put("folder", "<path d=\"M3 7h6l2 2h10v10H3z\"/>");
+        paths.put("storage", "<rect x=\"3\" y=\"6\" width=\"18\" height=\"14\" rx=\"2\"/>"
+                + "<path d=\"M3 10h18\"/>");
+        paths.put("dash", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"14\" rx=\"2\"/>"
+                + "<path d=\"M8 21h8M3 9h18\"/>");
+        paths.put("mqtt", "<path d=\"M4 12a8 8 0 018-8M4 18a14 14 0 0114-14\"/>"
+                + "<circle cx=\"6\" cy=\"18\" r=\"2\"/>");
+        paths.put("web", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
+                + "<path d=\"M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18\"/>");
+        paths.put("esc", "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/>"
+                + "<path d=\"M7 7h.01M17 7h.01M7 17h.01M17 17h.01\"/>");
+        paths.put("disp", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2"
+                + "M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
+        paths.put("saver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/>"
+                + "<path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
+        paths.put("stats", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
+        paths.put("bolt", "<path d=\"M13 2L4 14h7l-1 8 9-12h-7z\"/>");
+        paths.put("info", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 11v5M12 8h.01\"/>");
+        paths.put("reboot", "<path d=\"M4 4v6h6M20 20v-6h-6M20 9A8 8 0 006.3 5.3L4 10"
+                + "M4 15a8 8 0 0013.7 3.7L20 14\"/>");
+        paths.put("reload", "<path d=\"M21 12a9 9 0 11-3-6.7M21 3v6h-6\"/>");
+        paths.put("power", "<path d=\"M12 3v9M18.4 6.6a8 8 0 11-12.8 0\"/>");
+        paths.put("open", "<path d=\"M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7"
+                + "a1 1 0 011-1h5\"/>");
+        paths.put("theme", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
+                + "<path d=\"M12 3a9 9 0 010 18z\" fill=\"currentColor\"/>");
+        return Collections.unmodifiableMap(paths);
+    }
+
+    private static String glyph(String name) {
+        return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + GLYPHS.get(name) + "</svg>";
+    }
+
+    /** A 40 px icon button that submits its form; the label is its tooltip and its spoken name. */
+    private static String iconButton(String glyphName, String label, String extraClass) {
+        return "<button type=\"submit\" class=\"ib" + (extraClass.isEmpty() ? "" : " " + extraClass)
+                + "\" title=\"" + escapeHtml(label) + "\" aria-label=\"" + escapeHtml(label) + "\">"
+                + glyph(glyphName) + "</button>";
+    }
+
+    /** The same shape as a link: Back, Edit. */
+    private static String iconLink(String href, String glyphName, String label) {
+        return "<a class=\"ib\" href=\"" + escapeHtml(href) + "\" title=\"" + escapeHtml(label)
+                + "\" aria-label=\"" + escapeHtml(label) + "\">" + glyph(glyphName) + "</a>";
+    }
+
+
+    /**
+     * The settings page: one list of sections, each a glyph, its name and a one-line summary of
+     * what is stored, opening in place (Juri's drawing of 2026-09-23). Inside are the essentials;
+     * a section with more behind it ends with a text button that opens its own page.
      *
-     * <p>The message goes inside that box rather than at the top of the page. Each box is its own
-     * form posting to this same page, so a save re-renders everything and the browser lands
-     * wherever the fragment in the form's action points: at the box that was saved. A banner above
-     * the first box would then be off screen, which is how the operator used to lose both their
-     * place and the reason their save was refused.
-     *
+     * <p>The message about a refused save goes inside the section it is about, and that section
+     * is the one open, so the reader lands on the reason rather than at the top of the page.
+     * {@code admin_menu.js} keeps one section open at a time and remembers which; without it the
+     * sections are plain {@code <details>} and still work.
      */
     private String buildSettingsPage(String notice, String noticeSection) {
         KioskConfig config = KioskConfig.load(context);
         StringBuilder html = new StringBuilder(pageStart("Muralis", config.deviceId));
 
-        // Only what no box on this page can carry: everything posted from a Save button names a
-        // section, and that message is drawn in the section instead.
+        // Only what no section can carry: everything posted from a Save button names a section,
+        // and that message is drawn in the section instead.
         if (notice != null && !BOXED_SECTIONS.contains(noticeSection)) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
 
-        // Every box that can be saved carries its own form and its own button, so no control is
-        // stranded away from the thing that saves it.
-        html.append("<div class=\"grid\">")
+        java.util.List<String[]> sections = new java.util.ArrayList<>();
+        sections.add(new String[] {"dashboard", "dash", "Dashboard",
+                dashboardSummary(config), dashboardBody(config, notice, noticeSection)});
+        sections.add(new String[] {"mqtt", "mqtt", "MQTT",
+                config.mqttHost.isEmpty() ? "Not configured" : config.mqttHost + ":" + config.mqttPort,
+                mqttBody(config, notice, noticeSection)});
+        sections.add(new String[] {"webadmin", "web", "Local web admin",
+                "Port " + config.httpPort + (tlsFactory == null ? " · HTTP" : " · HTTPS")
+                        + (config.webAdminEnabled ? "" : " · off"),
+                webAdminBody(config, notice, noticeSection)});
+        sections.add(new String[] {"sequences", "esc", "Escape sequences",
+                sequencesSummary(config), sequencesBody(config, notice, noticeSection)});
+        sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
+        sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
+                screensaverBody()});
+        sections.add(new String[] {"stats", "stats", "System stats", statsSummary(),
+                statsBody(config)});
+        sections.add(new String[] {"quick", "bolt", "Quick actions",
+                "Reboot · Reload · Restart kiosk", quickActionsBody()});
+        sections.add(new String[] {"about", "info", "About", "Muralis " + appVersionName(),
+                aboutBody()});
 
-                .append(sectionFormStart("dashboard", "Dashboard", notice, noticeSection))
-                // Each Save box carries the values it was rendered from, so a submit from a page
-                // that has gone stale is refused instead of reverting a newer change; see
-                // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
-                .append(baselineField(config.dashboardUrl + "|" + config.deviceId))
-                .append(urlField("dashboard_url", "Dashboard URL", config.dashboardUrl))
-                .append(field("text", "device_id", "Device ID", config.deviceId))
-                // Two buttons on one input, the shape the tablet's Dashboard card has had since
-                // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it
-                // until the next kiosk restart and stores nothing (kiosk.open_url, never
-                // set_url). It used to be a separate "Open a URL now" box with a "Go" button,
-                // which was removed on 2026-09-08 so the two surfaces offer the same thing in
-                // the same place. Open once is a submit button with its own formaction, so with
-                // scripting unavailable the browser still posts the box to /api/command (which
-                // reads dashboard_url for it, see handleCommand); with scripting, commandScript
-                // intercepts the click and reports the result inline like every other command.
-                .append("<p class=\"hint\">Open once shows the address until the next kiosk ")
-                .append("restart and stores nothing.</p>")
-                .append(sectionFormEnd("Save",
-                        "<button type=\"submit\" id=\"open-once\" name=\"cmnd\" "
-                                + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
-                                + "formmethod=\"post\">Open once</button>"))
-
-                .append(sectionFormStart("mqtt", "MQTT", notice, noticeSection))
-                .append(baselineField(
-                        config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername))
-                .append(urlField("mqtt_host", "Broker host", config.mqttHost))
-                .append(field("number", "mqtt_port", "Broker port",
-                        Integer.toString(config.mqttPort)))
-                .append(field("text", "mqtt_username", "Username", config.mqttUsername))
-                .append(field("password", "mqtt_password",
-                        "Password (blank keeps the current one)", ""))
-                .append(sectionFormEnd("Save"))
-
-                .append(sectionFormStart("webadmin", "Local web admin", notice, noticeSection))
-                .append(baselineField(Integer.toString(config.httpPort)))
-                .append(field("number", "http_port", "Port", Integer.toString(config.httpPort)))
-                .append(field("password", "http_admin_password",
-                        "Admin password (blank keeps the current one)", ""))
-                .append("<p class=\"hint\">At least ").append(MIN_ADMIN_PASSWORD_LENGTH)
-                .append(" characters. No username.</p>")
-                .append(certificateHint())
-                .append(sectionFormEnd("Save"))
-
-                .append(sectionFormStart("sequences", "Escape sequences", notice, noticeSection))
-                .append("<input type=\"hidden\" name=\"sequence_baseline\" value=\"")
-                .append(escapeHtml(config.settingsSequence + "|" + config.launcherSequence))
-                .append("\">")
-                .append("<p class=\"hint\">Corner taps in order: TL, TR, BL, BR, separated by ")
-                .append("commas. Between ").append(EscapeSequence.MIN_LENGTH).append(" and ")
-                .append(EscapeSequence.MAX_LENGTH).append(" taps. Recording them on the tablet ")
-                .append("is easier than typing them here.</p>")
-                .append(field("text", "settings_sequence", "Open Muralis settings",
-                        config.settingsSequence))
-                .append(field("text", "launcher_sequence", "Leave Muralis for the home screen",
-                        config.launcherSequence))
-                .append("<p class=\"hint\">Optional PIN, asked after either combination: ")
-                .append(EscapePin.MIN_LENGTH).append(" to ").append(EscapePin.MAX_LENGTH)
-                .append(" digits. A combination can be watched and repeated; a PIN has to be known. ")
-                .append(KioskConfig.escapePinSet(context) ? "One is set." : "None is set.").append("</p>")
-                .append(field("password", "escape_pin", "PIN (blank keeps the current one)", ""))
-                .append(KioskConfig.escapePinSet(context)
-                        ? "<label class=\"check\"><input type=\"checkbox\" name=\"escape_pin_clear\" "
-                                + "value=\"1\">Remove the PIN</label>"
-                        : "")
-                .append(sectionFormEnd("Save"))
-
-                // Kept sorted by label; add new actions in alphabetical place. There is no
-                // "Main dashboard" (kiosk.home) action any more, dropped 2026-09-07 together with
-                // the tablet's button of the same name: on the tablet it was pressed in place of
-                // the save, and it was decided that the two surfaces offer the same set. The way back
-                // from a one-off URL is "Restart kiosk", which the one-off box's hint already
-                // promises, and Home Assistant keeps its kiosk.home button.
-                .append("<fieldset><legend>Quick actions</legend><div class=\"actions\">")
-                .append(quickAction("system.reboot", "Reboot"))
-                .append(quickAction("kiosk.reload", "Reload"))
-                .append(quickAction("kiosk.restart", "Restart kiosk"))
-                .append("</div></fieldset>")
-
-                .append("<fieldset><legend>Display</legend><div class=\"actions\">")
-                .append(quickAction("display.wake", "Display on"))
-                .append(quickAction("display.visual_off", "Display off"))
-                .append("</div>")
-                .append(brightnessControl())
-                .append(autoBrightnessControl())
-                .append(writeSettingsHint())
-                .append(orientationControl())
-                .append(displayOffControl())
-                .append("</fieldset>")
-
-                .append(screensaverCard())
-
-                // The switch sits under the readout it governs, so "what is this?" and "show
-                // it on the glass too" are one glance apart. No form and no Save button: it stands
-                // alone and applies itself, the way the brightness controls already did.
-                // data-setting names the field it posts; see settingScript.
-                .append("<fieldset><legend>System stats</legend>")
-                .append("<pre id=\"stats\">loading...</pre>")
-                .append("<label class=\"check\"><input type=\"checkbox\" ")
-                .append("data-setting=\"stats_overlay\" id=\"stats-overlay\"")
-                .append(config.statsOverlay ? " checked" : "")
-                .append("> Show system stats on the dashboard</label>")
-                .append("</fieldset>")
-
-                .append("<fieldset><legend>Legal</legend><div class=\"actions\">")
-                .append(navButton("/privacy", context.getString(R.string.privacy_policy_title)))
-                .append(navButton("/terms", context.getString(R.string.terms_title)))
-                .append("</div></fieldset>")
-
-                .append("</div>");
+        StringBuilder nav = new StringBuilder("<nav class=\"sections\" aria-label=\"Sections\">");
+        StringBuilder boxes = new StringBuilder("<div class=\"boxes\">");
+        for (String[] section : sections) {
+            String key = section[0];
+            boolean open = notice != null && key.equals(noticeSection);
+            nav.append("<a class=\"item\" href=\"#box-").append(key).append("\" data-box=\"box-")
+                    .append(key).append("\">").append(summaryRow(section[1], section[2],
+                            section[3], key)).append("</a>");
+            boxes.append("<details class=\"box\" id=\"box-").append(key).append("\"")
+                    .append(open ? " open" : "").append("><summary>")
+                    .append(summaryRow(section[1], section[2], section[3], null))
+                    .append("<span class=\"chev\">").append(glyph("down")).append("</span>")
+                    .append("</summary><div class=\"body\" data-title=\"")
+                    .append(escapeHtml(section[2])).append("\">").append(section[4])
+                    .append("</div></details>");
+        }
+        nav.append("</nav>");
+        boxes.append("</div>");
+        html.append("<div class=\"menu\">").append(nav).append(boxes).append("</div>");
 
         html.append(commandScript);
         html.append(settingScript);
         html.append(checkScript);
         html.append(statsScript);
         html.append(themeScript);
+        html.append(menuScript);
         html.append("</main></body></html>");
         return html.toString();
     }
+
+    /** A section's glyph, name and summary, as the list on the left and the row of its box show it. */
+    private static String summaryRow(String glyphName, String title, String summary, String sumKey) {
+        return "<span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(title) + "</span><span class=\"s\""
+                + (sumKey == null ? "" : " id=\"sum-" + sumKey + "\"") + ">"
+                + escapeHtml(summary) + "</span></span>";
+    }
+
+    // ---- the summaries: stored values only, never a status line the pages do not already carry
+
+    private static String dashboardSummary(KioskConfig config) {
+        String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
+        return (host.isEmpty() ? "No dashboard yet" : host) + " · " + config.deviceId;
+    }
+
+    private String sequencesSummary(KioskConfig config) {
+        if (config.settingsSequence.isEmpty() || config.launcherSequence.isEmpty()) {
+            return "Not recorded yet";
+        }
+        return config.settingsSequence + " · " + config.launcherSequence
+                + (KioskConfig.escapePinSet(context) ? " · PIN set" : " · no PIN");
+    }
+
+    private String displaySummary() {
+        String orientation = KioskConfig.orientationOf(context);
+        String method = KioskConfig.displayOffMethodOf(context);
+        return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
+                : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
+                + " · display off: "
+                + (DisplayOffPolicy.SLEEP.equals(method) ? "screen off"
+                        : DisplayOffPolicy.FILM.equals(method) ? "black film" : "automatic");
+    }
+
+    private String screensaverSummary() {
+        ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
+        String name = screensaverOptionsTitle(saver.mode);
+        name = name.substring(0, name.length() - " options".length());
+        return ScreensaverPolicy.OFF.equals(saver.mode) ? "Off"
+                : name + " · after " + saver.idleSeconds + " s";
+    }
+
+    /** Memory, load and uptime from the same document the poll reads; the script keeps it current. */
+    private String statsSummary() {
+        try {
+            org.json.JSONObject stats = kioskService.statsJson();
+            org.json.JSONObject system = stats.optJSONObject("system");
+            StringBuilder text = new StringBuilder();
+            if (system != null && system.optLong("mem_total_kb", 0) > 0) {
+                text.append(Math.round(100.0 * system.optLong("mem_used_kb", 0)
+                        / system.optLong("mem_total_kb", 1))).append("% memory");
+            }
+            if (system != null && system.has("cpu_busy_percent")) {
+                text.append(text.length() > 0 ? " · " : "")
+                        .append(Math.round(system.optDouble("cpu_busy_percent", 0))).append("% CPU");
+            }
+            long up = stats.optLong("app_uptime_ms", -1);
+            if (up >= 0) {
+                long minutes = up / 60_000L;
+                text.append(text.length() > 0 ? " · " : "").append("up ")
+                        .append(minutes >= 60 ? (minutes / 60) + "h" + (minutes % 60) + "m"
+                                : minutes + "m");
+            }
+            return text.length() == 0 ? "Live readings" : text.toString();
+        } catch (RuntimeException unavailable) {
+            return "Live readings";
+        }
+    }
+
+    private String appVersionName() {
+        try {
+            String name = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0).versionName;
+            return name == null ? "" : name;
+        } catch (android.content.pm.PackageManager.NameNotFoundException impossible) {
+            return "";
+        }
+    }
+
+    // ---- the bodies, each the section's essentials in the texts the page has always had
+
+    private String dashboardBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("dashboard", notice, noticeSection)
+                // Each Save box carries the values it was rendered from, so a submit from a page
+                // that has gone stale is refused instead of reverting a newer change; see
+                // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
+                + baselineField(config.dashboardUrl + "|" + config.deviceId)
+                + urlField("dashboard_url", "Dashboard URL", config.dashboardUrl)
+                + field("text", "device_id", "Device ID", config.deviceId, "",
+                        "Open once shows the address until the next kiosk restart and stores nothing.")
+                // Two buttons on one input, the shape the tablet's Dashboard card has had since
+                // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it until
+                // the next kiosk restart and stores nothing (kiosk.open_url, never set_url). Open
+                // once is a submit button with its own formaction, so with scripting unavailable
+                // the browser still posts the box to /api/command (which reads dashboard_url for
+                // it, see handleCommand); with scripting, commandScript intercepts the click.
+                + sectionFormEnd("Save",
+                        "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
+                                + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
+                                + "formmethod=\"post\">Open once</button>");
+    }
+
+    private String mqttBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("mqtt", notice, noticeSection)
+                + baselineField(config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername)
+                + urlField("mqtt_host", "Broker host", config.mqttHost)
+                + field("number", "mqtt_port", "Broker port", Integer.toString(config.mqttPort))
+                + field("text", "mqtt_username", "Username", config.mqttUsername)
+                + field("password", "mqtt_password", "Password", "", "", BLANK_KEEPS)
+                + sectionFormEnd("Save");
+    }
+
+    /** The one hint that left a label's brackets for the field's own slot under the box. */
+    private static final String BLANK_KEEPS = "Blank keeps the current one.";
+
+    private String webAdminBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("webadmin", notice, noticeSection)
+                + baselineField(Integer.toString(config.httpPort))
+                + field("number", "http_port", "Port", Integer.toString(config.httpPort))
+                + field("password", "http_admin_password", "Admin password", "", "", BLANK_KEEPS)
+                + "<p class=\"hint\">At least " + MIN_ADMIN_PASSWORD_LENGTH
+                + " characters. No username.</p>"
+                + certificateHint()
+                + sectionFormEnd("Save");
+    }
+
+    private String sequencesBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("sequences", notice, noticeSection)
+                + "<input type=\"hidden\" name=\"sequence_baseline\" value=\""
+                + escapeHtml(config.settingsSequence + "|" + config.launcherSequence) + "\">"
+                + "<p class=\"hint\">Corner taps in order: TL, TR, BL, BR, separated by commas. "
+                + "Between " + EscapeSequence.MIN_LENGTH + " and " + EscapeSequence.MAX_LENGTH
+                + " taps. Recording them on the tablet is easier than typing them here.</p>"
+                + field("text", "settings_sequence", "Open Muralis settings", config.settingsSequence)
+                + field("text", "launcher_sequence", "Leave Muralis for the home screen",
+                        config.launcherSequence)
+                + "<p class=\"hint\">Optional PIN, asked after either combination: "
+                + EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH
+                + " digits. A combination can be watched and repeated; a PIN has to be known. "
+                + (KioskConfig.escapePinSet(context) ? "One is set." : "None is set.") + "</p>"
+                + field("password", "escape_pin", "PIN", "", "", BLANK_KEEPS)
+                + (KioskConfig.escapePinSet(context)
+                        ? "<label class=\"check\"><input type=\"checkbox\" name=\"escape_pin_clear\" "
+                                + "value=\"1\">Remove the PIN</label>"
+                        : "")
+                + sectionFormEnd("Save");
+    }
+
+    private String displayBody() {
+        return "<div class=\"actions tight\">"
+                + quickAction("display.wake", "Display on", "tonal", null)
+                + quickAction("display.visual_off", "Display off", "tonal", null)
+                + "</div>"
+                + brightnessControl()
+                + autoBrightnessControl()
+                + writeSettingsHint()
+                + orientationControl()
+                + displayOffControl();
+    }
+
+    private String screensaverBody() {
+        ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
+        boolean problem = saver.enabled()
+                && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
+        // A menu here and radios on the screensaver page, deliberately: this is one section among
+        // nine, while the page's chooser decides what the rest of that page says.
+        return selectField("screensaver-mode", null, "Mode", "screensaver_mode",
+                screensaverModeOptions(saver), null)
+                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
+                + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
+                + "</p>"
+                // No "Back to the page" beside these: it ends a showing screensaver, which is what
+                // Display on already does to a lit panel (Juri, 2026-09-11, C16).
+                + "<div class=\"actions\">"
+                + quickAction("screensaver.start", "Preview", "tonal", null)
+                + "<a class=\"btn text\" href=\"/screensaver\">More screensaver settings"
+                + glyph("next") + "</a></div>";
+    }
+
+    private String statsBody(KioskConfig config) {
+        // The switch sits under the readout it governs. No form and no Save button: it stands
+        // alone and applies itself, the way the brightness controls do; see settingScript.
+        return "<pre id=\"stats\">loading...</pre>"
+                + switchRow("stats-overlay", "Show system stats on the dashboard",
+                        " data-setting=\"stats_overlay\"", config.statsOverlay);
+    }
+
+    private String quickActionsBody() {
+        // Kept sorted by label. There is no "Main dashboard" (kiosk.home) action any more, dropped
+        // 2026-09-07 together with the tablet's button of the same name; the way back from a
+        // one-off URL is "Restart kiosk", and Home Assistant keeps its kiosk.home button.
+        return "<div class=\"actions tight\">"
+                + quickAction("system.reboot", "Reboot", "", "reboot")
+                + quickAction("kiosk.reload", "Reload", "", "reload")
+                + quickAction("kiosk.restart", "Restart kiosk", "", "power")
+                + "</div>";
+    }
+
+    private String aboutBody() {
+        // The two legal pages and the version, which links to the repository (Juri, 2026-09-23).
+        // Rendered in-app rather than linked out, for the reason renderLegalPage gives.
+        return "<ul class=\"list\">"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/privacy\"><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.privacy_policy_title))
+                + "</span></span><span class=\"trail\">" + glyph("next") + "</span></a></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/terms\"><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
+                + "</span></span><span class=\"trail\">" + glyph("next") + "</span></a></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
+                + "\" target=\"_blank\" rel=\"noopener\"><span class=\"text\"><span class=\"h\">"
+                + "Muralis " + escapeHtml(appVersionName()) + "</span><span class=\"s\">"
+                + REPOSITORY_URL.replaceFirst("^https://", "") + "</span></span>"
+                + "<span class=\"trail\">" + glyph("open") + "</span></a></li>"
+                + "</ul>";
+    }
+
+    private static final String REPOSITORY_URL = "https://github.com/spazio17/muralis";
+
 
     /**
      * Renders one legal document ({@code res/raw/privacy.txt} or {@code terms.txt}) as a
@@ -1375,17 +1632,8 @@ final class HttpAdminServer {
      * cannot be told one thing here and another on the published page.
      */
     private String renderLegalPage(String title, int rawRes) {
-        StringBuilder html = new StringBuilder();
-        html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
-                .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-                .append("<title>").append(escapeHtml(title)).append(" &middot; Muralis</title>")
-                .append("<style>").append(pageCss)
-                .append("main{max-width:640px}h2{color:var(--accent);font-size:1rem;"
-                        + "letter-spacing:.04em;margin:1.6rem 0 .4rem}"
-                        + "p.doc{margin:.2rem 0}</style></head><body><main>")
-                .append("<div class=\"topbar\">").append(navButton("/", "\u2190 Back"))
-                .append("</div>")
-                .append("<h1>").append(escapeHtml(title)).append("</h1>");
+        StringBuilder html = new StringBuilder(pageStart(title, null, "/"));
+        html.append("<div class=\"doc\">");
         for (String block : readRawText(rawRes).trim().split("\n\\s*\n")) {
             String content = block.trim();
             if (content.isEmpty()) {
@@ -1410,8 +1658,7 @@ final class HttpAdminServer {
                 .append("<a href=\"").append(escapeHtml(publicUrl)).append("\">")
                 .append(escapeHtml(publicUrl)).append("</a>")
                 .append(escapeHtml(template.substring(urlAt + 4))).append(".</p>");
-        html.append(backRow());
-        html.append("</main></body></html>");
+        html.append("</div>").append(themeScript).append("</main></body></html>");
         return html.toString();
     }
 
@@ -1514,8 +1761,9 @@ final class HttpAdminServer {
         return autoMode ? "automatic" : "manual";
     }
 
+
     /**
-     * The orientation toggle. A command rather than a {@code data-setting}, deliberately: a setting
+     * The orientation menu. A command rather than a {@code data-setting}, deliberately: a setting
      * post only persists, while this has to turn the panel now, and the command path already carries
      * the change through KioskService to the activity that owns the window.
      */
@@ -1523,18 +1771,32 @@ final class HttpAdminServer {
         String current = KioskConfig.orientationOf(context);
         StringBuilder options = new StringBuilder();
         // "auto" only where an accelerometer exists to drive it, the same gate the
-        // auto-brightness checkbox above sits behind.
+        // auto-brightness switch above sits behind.
         if (KioskService.hasAccelerometer(context)) {
             options.append(selectOption("auto", "Auto-rotate", current));
         }
         options.append(selectOption("landscape", "Landscape", current));
         options.append(selectOption("portrait", "Portrait", current));
-        // A plain label, not label.check: that class is display:flex for a checkbox and its text,
-        // and a select carries width:100%, so the two fought over one line and the caption ended
-        // up beside the control instead of above it, alone among this page's fields. The default
-        // block label is what Port, Broker host and every other field here already use.
-        return "<label>Orientation<select id=\"orientation\">"
-                + options + "</select></label>";
+        return selectField("orientation", null, "Orientation", null, options.toString(), null);
+    }
+
+    /**
+     * One picture's thumbnail, made by the panel once and kept; see {@code PictureLibrary.thumbnail}.
+     *
+     * <p>Only the panel's own pictures, MediaStore rows and uploads, which is what the library
+     * answers for: any other address is refused before a file is opened, so this route cannot be
+     * pointed at a file on the device. A day of caching in the browser, private to it, because a
+     * picture under the same address does not change.
+     */
+    private void serveThumbnail(String uri, OutputStream output) throws IOException {
+        File thumb = PictureLibrary.get(context).thumbnail(uri);
+        if (thumb == null) {
+            writeResponse(output, 404, "text/plain", bytes("No thumbnail"));
+            return;
+        }
+        byte[] data = java.nio.file.Files.readAllBytes(thumb.toPath());
+        writeResponse(output, 200, "image/jpeg", data,
+                Collections.singletonMap("Cache-Control", "private, max-age=86400"));
     }
 
     /**
@@ -1587,12 +1849,7 @@ final class HttpAdminServer {
         answerPictureChange(query, none, notice, stored > 0, output);
     }
 
-    /**
-     * The Pictures mode's settings: where the pictures come from and how they are shown.
-     *
-     * <p>Which pictures a panel actually has is a different question and lives in
-     * {@link #pictureLibraryBox}, because it needs the width and this box does not.
-     */
+
     private String pictureOptions(ScreensaverPolicy.Settings saver) {
         PictureLibrary library = PictureLibrary.get(context);
         boolean local = PictureSources.LOCAL.equals(saver.source);
@@ -1614,8 +1871,8 @@ final class HttpAdminServer {
         corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right", saver.creditCorner));
 
         String online = "<div id=\"screensaver-online\"" + (local ? " class=\"gone\"" : "") + ">"
-                + "<form method=\"post\" action=\"/api/pictures/refresh\" style=\"display:inline\">"
-                + "<button type=\"submit\">Fetch the pictures again</button></form>"
+                + "<div class=\"actions tight\"><form method=\"post\" action=\"/api/pictures/refresh\">"
+                + "<button type=\"submit\">Fetch the pictures again</button></form></div>"
                 + "<p class=\"hint\">Bing's archive is an unofficial endpoint; its pictures are "
                 + "copyrighted and shown with the line Bing prints under them. Wikimedia Commons "
                 + "pictures carry free licences that require the author and licence to be named, "
@@ -1624,79 +1881,62 @@ final class HttpAdminServer {
         String sourceProblem = library.problem(saver.source);
         return "<div id=\"screensaver-pictures\""
                 + (ScreensaverPolicy.PICTURES.equals(saver.mode) ? "" : " class=\"gone\"") + ">"
-                + "<label>Pictures from<select id=\"screensaver-source\" data-setting=\"screensaver_source\">"
-                + sources + "</select></label>"
+                + selectField("screensaver-source", null, "Pictures from", "screensaver_source",
+                        sources.toString(), null)
                 + "<p class=\"hint" + (sourceProblem != null ? " bad" : "") + "\" id=\"screensaver-source-note\">"
                 + escapeHtml(library.state(saver.source)) + "</p>"
                 + online
-                + "<label>Each picture stays for (seconds)"
-                + "<input type=\"number\" id=\"screensaver-picture-s\" data-setting=\"screensaver_picture_s\""
-                + " min=\"1\" max=\"" + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\" value=\""
-                + saver.pictureSeconds + "\"></label>"
-                + "<label>Change of picture<select id=\"screensaver-transition\" data-setting=\"screensaver_transition\">"
-                + transitions + "</select></label>"
-                + "<label class=\"check\"><input type=\"checkbox\" id=\"screensaver-shuffle\" data-setting=\"screensaver_shuffle\""
-                + (saver.shuffle ? " checked" : "") + "> Shuffle the order</label>"
-                + "<label class=\"check\"><input type=\"checkbox\" id=\"screensaver-one\" data-setting=\"screensaver_one_per_cycle\""
-                + (saver.onePerCycle ? " checked" : "") + "> One picture per screensaver</label>"
-                + "<label class=\"check\"><input type=\"checkbox\" id=\"screensaver-credit\" data-setting=\"screensaver_credit\""
-                + (saver.creditShown() ? " checked" : "") + (local ? "" : " disabled")
-                + "> Show the title and credit line</label>"
-                + "<label>Credit line in the corner<select id=\"screensaver-corner\" data-setting=\"screensaver_credit_corner\">"
-                + corners + "</select></label>"
+                + fieldWithId("screensaver-picture-s", "number", null,
+                        "Each picture stays for (seconds)", String.valueOf(saver.pictureSeconds),
+                        " data-setting=\"screensaver_picture_s\" min=\"1\" max=\""
+                                + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
+                + selectField("screensaver-transition", null, "Change of picture",
+                        "screensaver_transition", transitions.toString(), null)
+                + "<div class=\"switches\">"
+                + switchRow("screensaver-shuffle", "Shuffle the order",
+                        " data-setting=\"screensaver_shuffle\"", saver.shuffle)
+                + switchRow("screensaver-one", "One picture per screensaver",
+                        " data-setting=\"screensaver_one_per_cycle\"", saver.onePerCycle)
+                + switchRow("screensaver-credit", "Show the title and credit line",
+                        " data-setting=\"screensaver_credit\"" + (local ? "" : " disabled"),
+                        saver.creditShown())
+                + "</div>"
+                + selectField("screensaver-corner", null, "Credit line in the corner",
+                        "screensaver_credit_corner", corners.toString(), null)
                 + "</div>";
     }
+
 
     /**
      * The playlists on the screensaver page: the list and nothing else.
      *
-     * <p>The browser, the upload and the rename box moved to the playlist's own page on
-     * 2026-09-12, so this panel is short again. Shown only for the Pictures mode with this panel
-     * as the source; there is nothing to list when the pictures come from Bing.
+     * <p>Shown only for the Pictures mode with this panel as the source; there is nothing to list
+     * when the pictures come from Bing. A card since 2026-09-23, with the list re-read in place by
+     * {@code admin_playlists.js} and the banner under it speaking only for a refusal: the radio
+     * moving, a row going or a row appearing is the whole answer to Use, Delete and Create.
      */
     private String pictureLibraryBox() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode)
                 && PictureSources.LOCAL.equals(saver.source);
         PictureLibrary library = PictureLibrary.get(context);
-        StringBuilder html = new StringBuilder("<fieldset id=\"screensaver-library\"")
-                .append(shown ? "" : " class=\"gone\"").append("><legend>Playlist</legend>");
+        StringBuilder html = new StringBuilder("<section class=\"card")
+                .append(shown ? "" : " gone").append("\" id=\"screensaver-library\">")
+                .append("<h2>Playlist</h2>");
         if (!library.browsesOwnStorage()) {
             return html.append("<p class=\"hint bad\">This panel may not read its own pictures ")
                     .append("yet. Allow it on the panel's Screensaver settings; Android will only ")
-                    .append("ask there.</p></fieldset>").toString();
+                    .append("ask there.</p></section>").toString();
         }
-        // The table sits in a box of its own so admin_playlists.js can re-read it in place, and
-        // the banner under it speaks only for a refusal: the "In use" mark moving, a row going or
-        // a row appearing is the whole answer to Use, Delete and Create (Juri, 2026-09-19).
         return html.append("<div id=\"playlist-table\">")
                 .append(playlistTable(library.playlists().load())).append("</div>")
                 .append("<p class=\"banner bad gone\" id=\"playlist-banner\" role=\"status\">")
                 .append("<span></span><button type=\"button\" class=\"dismiss\" ")
                 .append("aria-label=\"Close\">&times;</button></p>")
-                .append("</fieldset>").toString();
+                .append("</section>").toString();
     }
 
-    /**
-     * One playlist's own page: its name as the title, the folders, the open folder, and what it
-     * holds.
-     *
-     * <p>The web admin used to edit the playlist that happened to be playing, from a browser
-     * embedded in the screensaver page, with renaming as a text box in a table column. Juri's
-     * decision of 2026-09-12: the two surfaces should be arranged alike, and the panel's shape is
-     * the better one, so the web gets the page and the screensaver page gets its list back.
-     *
-     * <p>Three panels since 2026-09-19, the panel's own arrangement: Folders and, under it, In this
-     * playlist in the left column, Content in the right one with the column to itself, the upload
-     * at the foot of Folders because that is where a picture arrives. The name is the page's
-     * title, renamed through the pencil beside it; the Name panel that held it was one more box
-     * for a thing nobody does daily. Content shows {@code size} pictures at a time, ten unless the
-     * address says otherwise.
-     *
-     * <p>Unlike the panel this page applies as it goes rather than collecting a draft behind a
-     * Save: every other control in this admin already works that way, and a draft would need the
-     * whole selection carried in the browser.
-     */
+
     private String buildPlaylistPage(String notice, String id, String at, int size) {
         PictureLibrary library = PictureLibrary.get(context);
         PlaylistDocument document = library.playlists().load();
@@ -1704,39 +1944,38 @@ final class HttpAdminServer {
         String said = notice == null || notice.isEmpty() ? ""
                 : "<p class=\"notice\">" + escapeHtml(notice) + "</p>";
         if (playlist == null) {
-            return pageStart("Picture playlist", null, navButton("/screensaver", "← Back"))
-                    + said + "<p class=\"hint bad\">That playlist is gone.</p>"
-                    + backRow("/screensaver") + pageEnd();
+            return pageStart("Picture playlist", null, "/screensaver")
+                    + said + "<p class=\"hint bad\">That playlist is gone.</p>" + pageEnd();
         }
         StringBuilder html = new StringBuilder(pageStartWith(playlistHeading(playlist),
-                navButton("/screensaver", "← Back")));
+                "/screensaver", false));
         html.append(said)
-                .append("<div class=\"saver playlist\">")
-                .append("<fieldset id=\"playlist-folders\"><legend>Folders</legend>")
+                .append("<div class=\"two playlist\">")
+                .append("<section class=\"card\" id=\"playlist-folders\"><h2>Folders</h2>")
                 .append("<div id=\"folder-list\">")
                 .append(folderList(browseLocation(at), playlist.id, size))
                 .append("</div>")
                 .append(uploadForm(playlist.id))
-                .append("</fieldset>")
-                .append("<fieldset id=\"playlist-content\"><legend>Content</legend>")
+                .append("</section>")
+                .append("<section class=\"card\" id=\"playlist-content\">")
                 .append("<div id=\"folder-content\">")
                 .append(folderContent(at, playlist.id, size))
                 .append("</div>")
-                .append("</fieldset>")
-                .append("<fieldset id=\"playlist-held\">")
-                .append("<legend>In this playlist</legend>")
+                .append("</section>")
+                .append("<section class=\"card\" id=\"playlist-held\">")
+                .append("<h2>In this playlist</h2>")
                 .append("<div id=\"playlist-items\">")
                 .append(playlistItems(playlist, library))
                 .append("</div>")
-                .append("</fieldset>")
-                .append("</div>")
-                .append(backRow("/screensaver"));
+                .append("</section>")
+                .append("</div>");
         return html.append(pageEnd()).toString();
     }
 
+
     /**
-     * The page's title is the playlist's own name, with a pencil beside it that opens the rename
-     * in place, the way a pull request's title is edited (Juri, 2026-09-19).
+     * The page's title is the playlist's own name, with the rename pencil beside it in the app
+     * bar, the way a pull request's title is edited (Juri, 2026-09-19).
      *
      * <p>A {@code <details>} rather than a box the script makes: it opens, closes and posts with
      * no scripting at all, and the script only keeps the answer on this page. The Cancel button
@@ -1744,44 +1983,38 @@ final class HttpAdminServer {
      * for a browser without one.
      */
     private String playlistHeading(PlaylistDocument.Playlist playlist) {
-        return "<header><div class=\"titlerow\"><h1 id=\"playlist-name\">"
+        return "<div class=\"titles\"><div class=\"titlerow\"><h1 id=\"playlist-name\">"
                 + escapeHtml(playlist.name) + "</h1>"
                 + "<details class=\"rename\">"
-                + "<summary aria-label=\"Rename this playlist\" title=\"Rename\">" + PENCIL
-                + "</summary>"
+                + "<summary class=\"ib\" aria-label=\"Rename this playlist\" title=\"Rename\">"
+                + glyph("pencil") + "</summary>"
                 + "<form method=\"post\" action=\"/api/playlists/rename\">"
                 + hidden("id", playlist.id)
                 // So the answer comes back as this page rather than as the screensaver page,
                 // which is the rule every form on this page follows.
                 + hidden("playlist", playlist.id)
-                + "<input type=\"text\" name=\"name\" maxlength=\"" + PlaylistDocument.MAX_NAME_LENGTH
-                + "\" value=\"" + escapeHtml(playlist.name) + "\" aria-label=\"Playlist name\""
-                + " autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\" required>"
+                + fieldWithId("rename-name", "text", "name", "Playlist name", playlist.name,
+                        " maxlength=\"" + PlaylistDocument.MAX_NAME_LENGTH + "\" required", null)
                 + "<button class=\"primary\" type=\"submit\">Save</button>"
-                + "<button type=\"button\" class=\"cancel\">Cancel</button>"
+                + "<button type=\"button\" class=\"text cancel\">Cancel</button>"
                 + "<span class=\"hint bad gone\" role=\"alert\"></span>"
                 + "</form></details>"
                 + "<noscript><style>details.rename .cancel{display:none}</style></noscript>"
-                + "</div></header>";
+                + "</div></div>";
     }
 
-    /** Material's edit pencil, inline so it takes the text colour like the chip's glyphs. */
-    private static final String PENCIL = "<svg class=\"pencil\" viewBox=\"0 0 24 24\" width=\"20\""
-            + " height=\"20\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M3 17.25V21h3.75"
-            + "L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0"
-            + "l-1.83 1.83 3.75 3.75 1.83-1.83z\"/></svg>";
+
 
     /**
-     * Everything the playlist holds, with the folder prepended, exactly as the panel's own
-     * Selected pane lists it.
+     * Everything the playlist holds: the picture, the folder and the name, then the box that
+     * names it for its credit with the save tick inside and the remove button beside it, both
+     * 40 px on one line (Juri, 2026-09-23).
      *
      * <p>The folder is prepended because this list is the one place two pictures with the same
      * name from two folders sit next to each other (Juri, 2026-09-10). It is a fragment of its
      * own because a tick in the browser changes it, and the page must not reload to say so.
-     *
-     * <p>Remove takes the picture out of this playlist and is the main colour, not red: red on
-     * these pages deletes a file or a playlist, and this deletes neither. It posts to the same
-     * endpoint the browser's toggle does, with the selection off.
+     * Remove takes the picture out of this playlist and deletes nothing; it posts to the same
+     * endpoint the browser's tick does, with the selection off.
      */
     private String playlistItems(PlaylistDocument.Playlist playlist, PictureLibrary library) {
         StringBuilder html = new StringBuilder();
@@ -1795,28 +2028,43 @@ final class HttpAdminServer {
                     .append(" add its pictures.</p>").toString();
         }
         Map<String, String> captions = library.captions();
-        html.append("<ul class=\"pictures picked\">");
+        html.append("<ul class=\"pictures held\">");
+        int index = 0;
         for (String uri : playlist.items) {
-            html.append("<li><span class=\"name\">")
+            html.append("<li>").append(thumbnail(uri))
+                    .append("<span class=\"name\">")
                     .append(escapeHtml(library.displayPath(uri))).append("</span>")
                     .append("<form class=\"caption\" method=\"post\"")
                     .append(" action=\"/api/pictures/caption\">")
                     .append(hidden("name", uri)).append(hidden("playlist", playlist.id))
-                    .append("<input type=\"text\" name=\"caption\" maxlength=\"200\"")
-                    .append(" placeholder=\"Name for the credit\" value=\"")
-                    .append(escapeHtml(captions.getOrDefault(uri, "")))
-                    .append("\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\">")
-                    .append("<button class=\"primary\" type=\"submit\">Save")
-                    .append("</button></form>")
+                    .append("<div class=\"field dense\"><input type=\"text\" id=\"caption-")
+                    .append(index).append("\" name=\"caption\" maxlength=\"200\" placeholder=\" \"")
+                    .append(" value=\"").append(escapeHtml(captions.getOrDefault(uri, "")))
+                    .append("\"").append(MACHINE_TEXT).append(">")
+                    .append("<label for=\"caption-").append(index)
+                    .append("\">Name for the credit</label>")
+                    .append(iconButton("check", "Save the name", "primary"))
+                    .append("</div></form>")
                     .append("<span class=\"acts\">")
                     .append("<form method=\"post\" action=\"/api/pictures/select\">")
                     .append(hidden("uri", uri)).append(hidden("playlist", playlist.id))
                     .append(hidden("selected", "false"))
-                    .append("<button class=\"primary\" type=\"submit\">Remove</button></form>")
-                    .append("</span></li>");
+                    .append(iconButton("minus", "Remove from the playlist", ""))
+                    .append("</form></span></li>");
+            index++;
         }
         return html.append("</ul>").toString();
     }
+
+    /**
+     * A picture's thumbnail as an image tag, fetched from this server and made by the panel once;
+     * see {@code PictureLibrary.thumbnail}. A picture that cannot be read leaves a plain tile.
+     */
+    private static String thumbnail(String uri) {
+        return "<img class=\"thumb\" src=\"/api/pictures/thumb?uri=" + urlEncode(uri)
+                + "\" alt=\"\" loading=\"lazy\" onerror=\"this.style.visibility='hidden'\">";
+    }
+
 
     /** The upload form and the banner that answers it, on the page where pictures are chosen. */
     private String uploadForm(String playlistId) {
@@ -1827,14 +2075,14 @@ final class HttpAdminServer {
                 + "<p class=\"hint\">Add pictures (JPEG, PNG or WebP; up to "
                 + (MAX_UPLOAD_BYTES / (1024 * 1024)) + " MB per upload)</p>"
                 // The file input itself is off screen and the word Browse is its label, so only
-                // that word opens the file dialog. It used to be a <label> around the whole
-                // caption and the input, which made the entire row a target (2026-09-11, C9).
+                // that word opens the file dialog (2026-09-11, C9).
                 + "<div class=\"uploadrow\">"
                 + "<input type=\"file\" id=\"picture-file\" name=\"picture\""
                 + " accept=\"image/jpeg,image/png,image/webp\" multiple class=\"offscreen\">"
-                + "<label class=\"filebutton\" for=\"picture-file\">Browse</label>"
+                + "<label class=\"filebutton\" for=\"picture-file\">" + glyph("upload")
+                + "Browse</label>"
                 + "<span class=\"chosen\" id=\"picture-chosen\">No file chosen</span>"
-                + "<button class=\"add\" type=\"submit\">Upload</button>"
+                + "<button class=\"primary\" type=\"submit\">Upload</button>"
                 + "</div></form>"
                 // Directly under the button that fills it, so the answer to "did that work" is
                 // where the eye already is rather than at the top of a page that scrolled away.
@@ -1905,34 +2153,39 @@ final class HttpAdminServer {
         return html.append("</ul>").toString();
     }
 
+
     /**
-     * The Content panel: the open folder, named on its first line, a page of its pictures with
-     * the toggle that adds each to the playlist, the choice of how many a page shows, and the
-     * way to the next page.
+     * The Content card: its head with the view button, the open folder's name, the header check
+     * box that selects or clears the page, then the pictures in the view in force, list, details,
+     * small or big thumbnails, and the way to the next page.
      *
-     * <p>Add is green while it adds and the main colour once the picture is in: his two rules
-     * for this button meeting on one toggle (2026-09-11, the note). No caption box here: naming a
-     * picture belongs to the list of what the playlist holds, where the panel's own page puts
-     * it, and a second copy of the same field in every folder row left both too narrow (2026-09-12).
+     * <p>The whole card is the fragment, head included, because the view button shows the view
+     * that is on and changes with it. In or out of the playlist is a check box on every row and a
+     * check circle on every tile, the same control the panel uses, posted the moment it changes;
+     * an upload keeps its bin, which asks first. The view is one preference for the panel and
+     * this page alike ({@code KioskConfig.pictureViewOf}), so both open the next folder the same
+     * way (Juri, 2026-09-23).
      */
     private String folderContent(String token, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
         String refusal = browserRefusal(library, playlistId);
+        String view = KioskConfig.pictureViewOf(context);
+        StringBuilder html = new StringBuilder(contentHead(view, token, playlistId, size));
         if (refusal != null) {
-            return refusal;
+            return html.append(refusal).toString();
         }
         String location = browseLocation(token);
         if (location == null) {
             // Nothing opened yet, the same first sight the panel's own page offers.
-            return "<p class=\"hint\">Pick a folder to begin.</p>";
+            return html.append("<p class=\"hint\">Pick a folder to begin.</p>").toString();
         }
         PlaylistDocument.Playlist target = library.playlists().load().byId(playlistId);
         if (target == null) {
             // Deleted from another browser between the check above and this read.
-            return "<p class=\"hint bad\">That playlist is gone.</p>";
+            return html.append("<p class=\"hint bad\">That playlist is gone.</p>").toString();
         }
         int offset = browseOffset(token);
-        StringBuilder html = new StringBuilder("<p class=\"where\">")
+        html.append("<p class=\"where\">")
                 .append(escapeHtml(PictureBrowser.UPLOADS.equals(location) ? "Uploaded to Muralis"
                         : location.isEmpty() ? "Internal storage" : trimSlash(location)))
                 .append("</p>");
@@ -1942,46 +2195,76 @@ final class HttpAdminServer {
         if (page.problem != null) {
             html.append("<p class=\"hint bad\">").append(escapeHtml(page.problem)).append("</p>");
         }
-        html.append("<ul class=\"pictures\">");
-        for (PictureBrowser.Entry entry : page.entries) {
-            boolean selected = target.items.contains(entry.uri);
-            html.append("<li><span class=\"name\">").append(escapeHtml(entry.name)).append("</span>")
-                    .append("<span class=\"acts\">")
-                    .append("<form method=\"post\" action=\"/api/pictures/select\">")
-                    .append(hidden("uri", entry.uri)).append(hidden("at", token))
-                    .append(hidden("n", String.valueOf(size)))
-                    .append(hidden("playlist", target.id))
-                    .append(hidden("selected", String.valueOf(!selected)))
-                    .append("<button class=\"").append(selected ? "primary" : "add")
-                    .append("\" type=\"submit\">")
-                    .append(selected ? "In the playlist" : "Add to playlist")
-                    .append("</button></form>");
-            // Only an upload gets a Delete: a file the person picked in their own storage
-            // leaves the playlist but is never removed from disk here.
-            if (library.isUpload(entry.uri)) {
-                html.append("<form method=\"post\" action=\"/api/pictures/delete\">")
-                        .append(hidden("uri", entry.uri)).append(hidden("at", token))
-                        .append(hidden("n", String.valueOf(size)))
-                        .append(hidden("playlist", target.id))
-                        .append("<button class=\"danger\" type=\"submit\">Delete the file")
-                        .append("</button></form>");
-            }
-            html.append("</span></li>");
-        }
-        html.append("</ul>");
         if (page.entries.isEmpty() && page.problem == null) {
             html.append("<p class=\"hint\">No pictures directly in this folder.</p>");
         }
-        if (page.available > page.entries.size()) {
-            html.append("<p class=\"hint\">").append(offset + 1).append(" to ")
-                    .append(offset + page.entries.size()).append(" of ").append(page.available)
-                    .append("</p>");
+        if (!page.entries.isEmpty()) {
+            int held = 0;
+            for (PictureBrowser.Entry entry : page.entries) {
+                if (target.items.contains(entry.uri)) {
+                    held++;
+                }
+            }
+            html.append(selectAllRow(held, page.entries.size(), page.available));
+            boolean tiles = PictureBrowser.VIEW_SMALL.equals(view) || PictureBrowser.VIEW_BIG.equals(view);
+            html.append(tiles ? "<div class=\"tiles " + view + "\">"
+                    : "<ul class=\"pictures " + view + "\">");
+            for (PictureBrowser.Entry entry : page.entries) {
+                boolean selected = target.items.contains(entry.uri);
+                String pick = pickForm(entry.uri, selected, token, size, target.id);
+                // Only an upload gets a bin: a file the person picked in their own storage leaves
+                // the playlist but is never removed from disk here.
+                String bin = library.isUpload(entry.uri)
+                        ? "<form method=\"post\" action=\"/api/pictures/delete\" class=\"bin\">"
+                                + hidden("uri", entry.uri) + hidden("at", token)
+                                + hidden("n", String.valueOf(size)) + hidden("playlist", target.id)
+                                + iconButton("trash", "Delete the file", "") + "</form>"
+                        : "";
+                if (tiles) {
+                    html.append("<div class=\"tile").append(selected ? " in" : "").append("\">")
+                            .append("<span class=\"pic\">").append(thumbnail(entry.uri))
+                            .append(pick).append(bin).append("</span>")
+                            .append("<span class=\"name\">").append(escapeHtml(entry.name)).append("</span>");
+                    if (PictureBrowser.VIEW_BIG.equals(view) && !entry.details().isEmpty()) {
+                        html.append("<small>").append(escapeHtml(entry.details())).append("</small>");
+                    }
+                    html.append("</div>");
+                } else {
+                    html.append("<li>").append(pick);
+                    if (PictureBrowser.VIEW_DETAILS.equals(view)) {
+                        html.append(thumbnail(entry.uri))
+                                .append("<span class=\"text\"><span class=\"h\">")
+                                .append(escapeHtml(entry.name)).append("</span><span class=\"s\">")
+                                .append(escapeHtml(entry.details())).append("</span></span>");
+                    } else {
+                        html.append("<span class=\"name\">").append(escapeHtml(entry.name))
+                                .append("</span>");
+                    }
+                    if (!bin.isEmpty()) {
+                        html.append("<span class=\"acts\">").append(bin).append("</span>");
+                    }
+                    html.append("</li>");
+                }
+            }
+            html.append(tiles ? "</div>" : "</ul>");
         }
-        // Show 10, 25, 50 or 100, the one in force filled, only where there is more than the
-        // smallest page to show. A size link starts the folder over: page three of ten is nowhere
-        // in particular at fifty.
+        if (page.available > page.entries.size()) {
+            // Previous and Next as chevrons around the count: a pager everybody has seen.
+            html.append("<div class=\"pager\">")
+                    .append(pageLink(Math.max(0, offset - size) + "|" + location, "prev",
+                            "Previous page", target.id, size, offset > 0))
+                    .append("<span>").append(offset + 1).append(" to ")
+                    .append(offset + page.entries.size()).append(" of ").append(page.available)
+                    .append("</span>")
+                    .append(pageLink((offset + size) + "|" + location, "next", "Next page",
+                            target.id, size, page.more))
+                    .append("</div>");
+        }
+        // Show 10, 25, 50 or 100 as chips, the one in force filled, only where there is more than
+        // the smallest page to show. A size link starts the folder over: page three of ten is
+        // nowhere in particular at fifty.
         if (page.available > PictureBrowser.PAGE_SIZES[0]) {
-            html.append("<p class=\"sizes\">Show");
+            html.append("<div class=\"sizes\">");
             for (int choice : PictureBrowser.PAGE_SIZES) {
                 html.append("<a class=\"size").append(choice == size ? " on" : "")
                         .append("\" href=\"/playlist?id=").append(urlEncode(target.id))
@@ -1990,21 +2273,56 @@ final class HttpAdminServer {
                         .append("\" data-n=\"").append(choice).append("\">").append(choice)
                         .append("</a>");
             }
-            html.append("</p>");
+            html.append("</div>");
         }
-        html.append("<div class=\"actions\">");
-        if (offset > 0) {
-            html.append(pageLink(Math.max(0, offset - size) + "|" + location,
-                    "Previous page", target.id, size));
-        }
-        if (page.more) {
-            html.append(pageLink((offset + size) + "|" + location, "Next page", target.id, size));
-        }
-        return html.append("</div>").toString();
+        return html.toString();
     }
 
     /**
-     * One folder as a link rather than a button.
+     * The Content card's head: its name and the view button, which shows the view in force and
+     * moves to the next one, list, details, small thumbnails, big thumbnails, then list again.
+     */
+    private static String contentHead(String view, String token, String playlistId, int size) {
+        String next = PictureBrowser.nextView(view);
+        return "<div class=\"cardhead\"><h2>Content</h2>"
+                + "<form method=\"post\" action=\"/api/pictures/view\" class=\"view\">"
+                + hidden("view", next) + hidden("playlist", playlistId) + hidden("at", token)
+                + hidden("n", String.valueOf(size))
+                + iconButton(view, PictureBrowser.viewLabel(view) + ". Switch to "
+                        + PictureBrowser.viewLabel(next).toLowerCase(Locale.ROOT), "selected")
+                + "</form></div>";
+    }
+
+    /**
+     * The header check box, in the same column as the rows' boxes: ticked when every picture on
+     * the page is in the playlist, a dash while only some are, empty otherwise. The script ticks
+     * or clears the page from it; without scripting it is a readout.
+     */
+    private static String selectAllRow(int held, int shown, int available) {
+        String state = held == 0 ? "" : held == shown ? " checked" : " data-some=\"1\"";
+        return "<ul class=\"pictures selecthead\"><li>"
+                + "<span class=\"lead\"><input type=\"checkbox\" id=\"select-all\"" + state
+                + " aria-label=\"Select all on this page\"></span>"
+                + "<span class=\"text\"><span class=\"s\">Select all"
+                + (available > shown ? " on this page" : "") + " · " + held + " of "
+                + available + " in the playlist</span></span></li></ul>";
+    }
+
+    /** The check box that puts a picture in the playlist or takes it out, posted on change. */
+    private static String pickForm(String uri, boolean selected, String token, int size,
+            String playlistId) {
+        return "<form method=\"post\" action=\"/api/pictures/select\" class=\"pick\">"
+                + hidden("uri", uri) + hidden("at", token) + hidden("n", String.valueOf(size))
+                + hidden("playlist", playlistId) + hidden("selected", String.valueOf(!selected))
+                + "<span class=\"lead\"><input type=\"checkbox\"" + (selected ? " checked" : "")
+                + " aria-label=\"In the playlist\"></span>"
+                + "<noscript><button class=\"text\" type=\"submit\">"
+                + (selected ? "Remove" : "Add") + "</button></noscript></form>";
+    }
+
+
+    /**
+     * One folder as a link rather than a button, with its glyph and its count as a badge.
      *
      * <p>A button is a thing that does something; a folder is a place you go, and a list of forty
      * buttons reads as forty decisions (Juri, 2026-09-10, C7). It is a real {@code href} so it
@@ -2014,18 +2332,27 @@ final class HttpAdminServer {
     private static String folderLink(String path, String label, int count, int depth,
             String openPath, String playlistId, int size) {
         boolean open = path.equals(openPath);
-        return "<li style=\"padding-left:" + (Math.min(depth, 6) * 14) + "px\">"
+        String glyphName = PictureBrowser.UPLOADS.equals(path) ? "upload"
+                : path.isEmpty() ? "storage" : "folder";
+        return "<li style=\"padding-left:" + (Math.min(depth, 6) * 20) + "px\">"
                 + "<a class=\"folder" + (open ? " open" : "") + "\" href=\"/playlist?id="
                 + urlEncode(playlistId) + "&amp;at=" + urlEncode(path) + "&amp;n=" + size
                 + "\" data-at=\"" + escapeHtml(path) + "\">"
-                + escapeHtml(label) + " <span class=\"count\">" + count + "</span></a></li>";
+                + "<span class=\"lead\">" + glyph(glyphName) + "</span>"
+                + "<span class=\"name\">" + escapeHtml(label) + "</span>"
+                + "<span class=\"badge" + (count == 0 ? " zero" : "") + "\">" + count
+                + "</span></a></li>";
     }
 
-    /** Previous and Next: the same link, carrying an offset and the page size as well as a folder. */
-    private static String pageLink(String token, String label, String playlistId, int size) {
-        return "<a class=\"pager\" href=\"/playlist?id=" + urlEncode(playlistId)
-                + "&amp;at=" + urlEncode(token) + "&amp;n=" + size
-                + "\" data-at=\"" + escapeHtml(token) + "\">" + escapeHtml(label) + "</a>";
+
+    /** Previous or Next as a chevron, carrying an offset and the page size as well as a folder. */
+    private static String pageLink(String token, String glyphName, String label, String playlistId,
+            int size, boolean enabled) {
+        return "<a class=\"ib pager" + (enabled ? "" : " dis") + "\" href=\"/playlist?id="
+                + urlEncode(playlistId) + "&amp;at=" + urlEncode(token) + "&amp;n=" + size
+                + "\" data-at=\"" + escapeHtml(token) + "\" title=\"" + label + "\" aria-label=\""
+                + label + "\"" + (enabled ? "" : " aria-disabled=\"true\"") + ">" + glyph(glyphName)
+                + "</a>";
     }
 
     /** "Pictures/holidays/" reads as "Pictures/holidays" in a heading, as it does on the panel. */
@@ -2114,13 +2441,14 @@ final class HttpAdminServer {
         return TinyJson.write(answer);
     }
 
+
     /**
-     * The playlists as a real table: name and count, then Use, a rename box and Delete.
+     * The playlists as a Material list: the radio in front of a row says which one plays, the
+     * name and the count are the row, and Edit and Delete are the two icon buttons at its end.
      *
-     * <p>A {@code <table>} with header scopes rather than divs, so it is a table to a screen
-     * reader and to keyboard navigation as well as to the eye, which is what parity with the panel
-     * means here. It had no styling of its own at all until 2026-09-10, so every cell ran into the
-     * next one at both widths Juri tried it at (his C6).
+     * <p>Use is not a button any more (2026-09-23): the radio is the state and the control at
+     * once, posted the moment it is picked. Without scripting the radio still marks the playlist
+     * in use and a Use button appears beside it, so the page works either way.
      */
     private String playlistTable(PlaylistDocument document) {
         StringBuilder html = new StringBuilder();
@@ -2128,41 +2456,42 @@ final class HttpAdminServer {
             html.append("<p class=\"hint\">No playlists yet. Name one below, then open it and "
                     + "pick its pictures.</p>");
         } else {
-            html.append("<div class=\"tablewrap\"><table class=\"playlists\"><tbody>");
+            html.append("<ul class=\"list\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
-                html.append("<tr><th scope=\"row\">").append(escapeHtml(playlist.name))
-                        .append("</th><td class=\"count\">").append(playlist.items.size())
-                        .append("</td><td>");
-                if (playlist.active) {
-                    html.append("<span class=\"inuse\">In use</span>");
-                } else {
-                    html.append("<form method=\"post\" action=\"/api/playlists/activate\">")
-                            .append(hidden("id", playlist.id))
-                            .append("<button class=\"primary\" type=\"submit\">Use")
-                            .append("</button></form>");
-                }
-                // Edit opens the playlist's own page, where its name and its pictures both live.
-                // The rename box that used to own a column of this table is gone with it: nobody
-                // renames a playlist often enough to spend a column on it (Juri, 2026-09-12).
-                html.append("</td><td><span class=\"acts\">")
-                        .append("<form method=\"get\" action=\"/playlist\">")
+                int count = playlist.items.size();
+                html.append("<li class=\"two\">")
+                        .append("<form method=\"post\" action=\"/api/playlists/activate\" class=\"use\">")
                         .append(hidden("id", playlist.id))
-                        .append("<button class=\"add\" type=\"submit\">Edit</button></form>")
+                        .append("<span class=\"lead\"><input type=\"radio\" name=\"active\" value=\"")
+                        .append(escapeHtml(playlist.id)).append("\"")
+                        .append(playlist.active ? " checked" : "")
+                        .append(" aria-label=\"Use ").append(escapeHtml(playlist.name))
+                        .append("\"></span>")
+                        .append(playlist.active ? ""
+                                : "<noscript><button class=\"text\" type=\"submit\">Use</button></noscript>")
+                        .append("</form>")
+                        .append("<span class=\"text\"><span class=\"h\">").append(escapeHtml(playlist.name))
+                        .append("</span><span class=\"s\">").append(count)
+                        .append(count == 1 ? " picture" : " pictures")
+                        .append(playlist.active ? " · <span class=\"inuse\">in use</span>" : "")
+                        .append("</span></span>")
+                        // Edit opens the playlist's own page, where its name and its pictures both
+                        // live; Delete asks first, in the script, as the panel does.
+                        .append("<span class=\"trail\">")
+                        .append(iconLink("/playlist?id=" + urlEncode(playlist.id), "pencil", "Edit"))
                         .append("<form method=\"post\" action=\"/api/playlists/delete\">")
                         .append(hidden("id", playlist.id))
-                        .append("<button class=\"danger\" type=\"submit\">Delete")
-                        .append("</button></form>")
-                        .append("</span></td></tr>");
+                        .append(iconButton("trash", "Delete", ""))
+                        .append("</form></span></li>");
             }
-            html.append("</tbody></table></div>");
+            html.append("</ul>");
         }
-        // Naming a playlist before picking its pictures is the panel's own order.
-        html.append("<form class=\"newplaylist\" method=\"post\" action=\"/api/playlists\">")
-                .append("<input type=\"text\" name=\"name\" maxlength=\"")
-                .append(PlaylistDocument.MAX_NAME_LENGTH)
-                .append("\" placeholder=\"New playlist name\"")
-                .append(" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\">")
-                .append("<button class=\"add\" type=\"submit\">Create playlist</button></form>");
+        // Naming a playlist before picking its pictures is the panel's own order. The button sits
+        // on the box's centre line, not the label's.
+        html.append("<form class=\"beside newplaylist\" method=\"post\" action=\"/api/playlists\">")
+                .append(fieldWithId("new-playlist-name", "text", "name", "New playlist name", "",
+                        " maxlength=\"" + PlaylistDocument.MAX_NAME_LENGTH + "\"", null))
+                .append("<button class=\"primary\" type=\"submit\">Create playlist</button></form>");
         return html.toString();
     }
 
@@ -2236,37 +2565,7 @@ final class HttpAdminServer {
                         + "\">";
     }
 
-    /**
-     * The Screensaver card on the settings page: the mode, the sentence it adds up to, the two
-     * actions, and the way to the rest of it.
-     *
-     * <p>The rest used to be a {@code <details>} inside this card, which meant a two-pane picture
-     * browser and a playlist table were unfolding inside a 300 px column of a multi-column page.
-     * They have a page of their own now, which Juri asked for in as many words: "More screensaver
-     * settings should open its own page same as the APP version because it is more clear to work
-     * on" (2026-09-10, C5).
-     */
-    private String screensaverCard() {
-        ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
-        boolean problem = saver.enabled()
-                && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
-        return "<fieldset><legend>Screensaver</legend>"
-                + "<label>Mode<select id=\"screensaver-mode\" data-setting=\"screensaver_mode\">"
-                + screensaverModeOptions(saver) + "</select></label>"
-                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
-                + escapeHtml(ScreensaverPolicy.describe(saver,
-                        KioskRuntimeState.screensaverActive()))
-                + "</p>"
-                // No "Back to the page" beside these. It ends a showing screensaver, which is
-                // exactly what Display on already does to a lit panel, and on a dark panel it
-                // ends one without lighting the panel, which is not something a person presses a
-                // button for. The tablet's own screensaver page never had it. The command
-                // (screensaver.stop) is unchanged for MQTT and the API (Juri, 2026-09-11, C16).
-                + "<div class=\"actions\">"
-                + quickAction("screensaver.start", "Preview")
-                + navButton("/screensaver", "More screensaver settings")
-                + "</div></fieldset>";
-    }
+
 
     /**
      * The mode as a menu, for the settings page's own Screensaver card.
@@ -2308,30 +2607,7 @@ final class HttpAdminServer {
                 + (value.equals(current) ? " checked" : "") + ">" + escapeHtml(label) + "</label>";
     }
 
-    /**
-     * The screensaver's own page: the mode, that mode's options, and the playlist.
-     *
-     * <p>Three panels and no more, named the way Juri set them out on 2026-09-11: "Screensaver
-     * mode" holds the mode chooser and nothing else; the second is named after the mode that is
-     * chosen ("Dimmed page options", "Black film option", "Web page options", "Pictures options")
-     * and holds everything that mode uses, ending with the sentence it all adds up to; and
-     * "Playlist" appears only for the Pictures mode with this panel as the source.
-     *
-     * <p><b>Off has no second panel at all</b>, his decision and his words: "it is Off so there is
-     * no settings for it in any case". The times are still stored and still apply the moment a
-     * mode is picked.
-     *
-     * <p>This also fixes what he found on the way: with any mode but Pictures the second panel was
-     * still headed "Pictures" and was empty, because it held the picture fields alone while the
-     * web page's address and the dimmed brightness sat in the first panel. Every mode's fields are
-     * in the panel named after it now.
-     *
-     * <p>{@code at} is where the folder browser is looking. It is a per-request value that is
-     * never stored, so two browsers on two machines cannot fight over it, and it rides in the
-     * query string rather than in a POST body so that reloading this page, or coming back to it
-     * after the session has lapsed and signing in again, shows the same folder instead of a bare
-     * "Not found" (2026-09-10, C1).
-     */
+
     private String buildScreensaverPage(String notice, String at) {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean problem = saver.enabled()
@@ -2339,48 +2615,49 @@ final class HttpAdminServer {
         String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
                 "Screensaver first, a touch opens the page", saver.onWake)
                 + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "The page at once", saver.onWake);
-        StringBuilder html = new StringBuilder(
-                pageStart("Screensaver", null, navButton("/", "\u2190 Back")));
+        StringBuilder html = new StringBuilder(pageStart("Screensaver", null, "/"));
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        html.append("<div class=\"saver modes\">")
-                .append("<fieldset id=\"screensaver-mode-box\"><legend>Screensaver mode</legend>")
+        html.append("<div class=\"two modes\">")
+                .append("<section class=\"card\" id=\"screensaver-mode-box\"><h2>Screensaver mode</h2>")
                 .append(screensaverModeChoices(saver))
-                .append("</fieldset>")
+                .append("</section>")
 
-                .append("<fieldset id=\"screensaver-options\"")
-                .append(ScreensaverPolicy.OFF.equals(saver.mode) ? " class=\"gone\"" : "")
-                .append("><legend id=\"screensaver-options-title\">")
-                .append(escapeHtml(screensaverOptionsTitle(saver.mode))).append("</legend>")
-                .append("<label>Idle before the screensaver (seconds, 0 = off)")
-                .append("<input type=\"number\" id=\"screensaver-idle\" data-setting=\"screensaver_idle_s\"")
-                .append(" min=\"0\" max=\"").append(ScreensaverPolicy.MAX_SECONDS)
-                .append("\" step=\"1\" value=\"").append(saver.idleSeconds).append("\"></label>")
-                .append("<label>Screensaver before display off (seconds, 0 = never)")
-                .append("<input type=\"number\" id=\"screensaver-off\" data-setting=\"screensaver_off_s\"")
-                .append(" min=\"0\" max=\"").append(ScreensaverPolicy.MAX_SECONDS)
-                .append("\" step=\"1\" value=\"").append(saver.offSeconds).append("\"></label>")
-                .append("<label id=\"screensaver-url-field\"")
-                .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"")
-                .append(">Web page to show")
-                .append("<input type=\"text\" id=\"screensaver-url\" data-setting=\"screensaver_url\"")
-                .append(" inputmode=\"url\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"")
-                .append(" placeholder=\"").append(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL)
-                .append("\" value=\"").append(escapeHtml(saver.url)).append("\"></label>")
-                .append("<label id=\"screensaver-dim-field\"")
-                .append(ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"")
-                .append(">Brightness while dimmed (percent)")
-                .append("<input type=\"number\" id=\"screensaver-dim\" data-setting=\"screensaver_dim_percent\"")
-                .append(" min=\"1\" max=\"100\" step=\"1\" value=\"").append(saver.dimPercent)
-                .append("\"></label>")
+                .append("<section class=\"card")
+                .append(ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
+                .append("\" id=\"screensaver-options\"><h2 id=\"screensaver-options-title\">")
+                .append(escapeHtml(screensaverOptionsTitle(saver.mode))).append("</h2>")
+                .append(fieldWithId("screensaver-idle", "number", null,
+                        "Idle before the screensaver (seconds, 0 = off)",
+                        String.valueOf(saver.idleSeconds),
+                        " data-setting=\"screensaver_idle_s\" min=\"0\" max=\""
+                                + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
+                .append(fieldWithId("screensaver-off", "number", null,
+                        "Screensaver before display off (seconds, 0 = never)",
+                        String.valueOf(saver.offSeconds),
+                        " data-setting=\"screensaver_off_s\" min=\"0\" max=\""
+                                + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
+                .append("<div id=\"screensaver-url-field\"")
+                .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
+                .append(fieldWithId("screensaver-url", "text", null, "Web page to show", saver.url,
+                        " data-setting=\"screensaver_url\" inputmode=\"url\"", null))
+                .append("</div>")
+                .append("<div id=\"screensaver-dim-field\"")
+                .append(ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
+                .append(fieldWithId("screensaver-dim", "number", null,
+                        "Brightness while dimmed (percent)", String.valueOf(saver.dimPercent),
+                        " data-setting=\"screensaver_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
+                        null))
+                .append("</div>")
                 // Gone rather than greyed out where it does not apply: a control that can never
                 // be enabled is clutter (Juri, 2026-09-11).
-                .append("<label id=\"screensaver-wake-field\"")
+                .append("<div id=\"screensaver-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
-                .append(">After a wake from display off")
-                .append("<select id=\"screensaver-on-wake\" data-setting=\"screensaver_on_wake\">")
-                .append(onWake).append("</select></label>")
+                .append(">")
+                .append(selectField("screensaver-on-wake", null, "After a wake from display off",
+                        "screensaver_on_wake", onWake, null))
+                .append("</div>")
                 .append(pictureOptions(saver))
                 // The sentence it all adds up to, last in the panel, which is where Juri put it:
                 // the settings above it, then what they mean in one line.
@@ -2389,13 +2666,12 @@ final class HttpAdminServer {
                         KioskRuntimeState.screensaverActive())))
                 .append("</p>")
                 .append("<div class=\"actions\">")
-                .append(quickAction("screensaver.start", "Preview"))
+                .append(quickAction("screensaver.start", "Preview", "tonal", null))
                 .append("</div>")
-                .append("</fieldset>")
+                .append("</section>")
 
                 .append(pictureLibraryBox())
-                .append("</div>")
-                .append(backRow());
+                .append("</div>");
         html.append(commandScript);
         html.append(settingScript);
         html.append(pictureScript);
@@ -2536,8 +2812,9 @@ final class HttpAdminServer {
                 + ">" + label + "</option>";
     }
 
+
     /**
-     * How "Display off" darkens the panel, as a select posted the moment it changes, with the
+     * How "Display off" darkens the panel, as a menu posted the moment it changes, with the
      * sentence the tablet's Display card shows under it, kept current by the stats poll. The real
      * screen-off is offered only to a device owner, the same gate the tablet applies.
      */
@@ -2549,40 +2826,31 @@ final class HttpAdminServer {
             options.append(selectOption(DisplayOffPolicy.SLEEP, "Turn the screen off", current));
         }
         options.append(selectOption(DisplayOffPolicy.FILM, "Black film", current));
-        return "<label>Display off<select id=\"display-off-method\" "
-                + "data-setting=\"display_off_method\">" + options + "</select></label>"
+        return selectField("display-off-method", null, "Display off", "display_off_method",
+                options.toString(), null)
                 + "<p class=\"hint" + (KioskService.displayOffWarning(context) ? " bad" : "")
                 + "\" id=\"display-off-note\">"
                 + escapeHtml(KioskService.describeDisplayOff(context)) + "</p>";
     }
 
+
     /**
-     * The automatic-brightness control: a checkbox showing state, or nothing at all.
+     * The automatic-brightness switch, showing state, or nothing at all.
      *
      * <p>Omitted entirely on hardware with no ambient light sensor, because a control that cannot work
      * is worse than an absent one. The command behind it agrees:
      * {@code display.auto_brightness} is rejected with "this device has no ambient light sensor"
-     * rather than silently accepted.
-     *
-     * <p><b>This was a button whose label flipped</b>, reading "Switch to manual brightness" when
-     * automatic was on. Two problems, and the second was a bug. It described an action while looking
-     * like a statement of state, which is genuinely ambiguous; and the state was read once when the
-     * page was rendered and never refreshed, so if the mode changed afterwards, from the tablet's own
-     * shade toggle or another browser, the button kept sending the stale value and did the opposite of
-     * what it said. A checkbox shows the state directly, and {@code statsScript} keeps it honest by
-     * syncing it from every poll.
-     *
-     * <p>It maps to exactly the setting a person toggles next to the brightness slider in the
-     * notification shade: {@code Settings.System.SCREEN_BRIGHTNESS_MODE}, system-wide, not an
-     * app-local preference.
+     * rather than silently accepted. A switch shows the state directly, and {@code statsScript}
+     * keeps it honest by syncing it from every poll; it maps to exactly the setting a person
+     * toggles next to the brightness slider in the notification shade,
+     * {@code Settings.System.SCREEN_BRIGHTNESS_MODE}.
      */
     private String autoBrightnessControl() {
         if (!KioskService.hasLightSensor(context)) {
             return "";
         }
-        boolean on = KioskService.isAutoBrightnessOn(context);
-        return "<label class=\"check\"><input type=\"checkbox\" id=\"auto-brightness\""
-                + (on ? " checked" : "") + "> Adjust brightness automatically</label>";
+        return switchRow("auto-brightness", "Adjust brightness automatically", "",
+                KioskService.isAutoBrightnessOn(context));
     }
 
     /**
@@ -2668,34 +2936,34 @@ final class HttpAdminServer {
             + "<circle cx=\"12\" cy=\"16\" r=\"1.5\" fill=\"currentColor\" "
             + "stroke=\"none\"/></svg>";
 
+
     /**
-     * Opens a box that is itself a form, so its save button sits inside it.
+     * Opens a section's form, so its Save button sits inside it.
      *
-     * <p>The action carries the box's own fragment. A browser applies the fragment of the URL it
-     * posted to when it renders the reply, so a save comes back to the box it was made in instead
-     * of at the top of the page, which on a phone is several screens away from the MQTT fields.
-     * Confirmed against Chrome rather than assumed. {@code notice}, when it is about this box,
-     * is drawn under the legend for the same reason.
+     * <p>The action carries the section's own fragment. A browser applies the fragment of the URL
+     * it posted to when it renders the reply, so a save comes back to the section it was made in
+     * instead of at the top of the page. {@code notice}, when it is about this section, is drawn
+     * at its top for the same reason.
      */
-    private static String sectionFormStart(String section, String legend, String notice,
-            String noticeSection) {
+    private static String sectionFormStart(String section, String notice, String noticeSection) {
         String message = notice != null && section.equals(noticeSection)
                 ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>"
                 : "";
-        return "<form method=\"post\" action=\"/#box-" + section + "\"><fieldset id=\"box-"
-                + section + "\"><legend>" + escapeHtml(legend) + "</legend>" + message
+        return "<form method=\"post\" action=\"/#box-" + section + "\">" + message
                 + "<input type=\"hidden\" name=\"section\" value=\"" + section + "\">";
     }
 
+
     private static String sectionFormEnd(String label) {
-        return "<button class=\"primary\" type=\"submit\">" + escapeHtml(label)
-                + "</button></fieldset></form>";
+        return "<div class=\"actions\"><button class=\"primary\" type=\"submit\">"
+                + escapeHtml(label) + "</button></div></form>";
     }
+
 
     /** The same, with a second button beside Save; the caller supplies that button's markup. */
     private static String sectionFormEnd(String label, String besideHtml) {
         return "<div class=\"actions\"><button class=\"primary\" type=\"submit\">"
-                + escapeHtml(label) + "</button>" + besideHtml + "</div></fieldset></form>";
+                + escapeHtml(label) + "</button>" + besideHtml + "</div></form>";
     }
 
     /** The hidden input staleFormRefusal checks on submit. */
@@ -2703,8 +2971,10 @@ final class HttpAdminServer {
         return "<input type=\"hidden\" name=\"baseline\" value=\"" + escapeHtml(value) + "\">";
     }
 
+
     /**
-     * One labelled input. A text box on this page holds a machine value, an address, a host, an
+     * One outlined text field: the box, its label on the border, and the helper text under it in
+     * the field's own slot. A text box on this page holds a machine value, an address, a host, an
      * id, a username, and a phone browser's keyboard treats a plain text box as prose: a full stop
      * ends a sentence, so it gains a space and a capital, and unknown words are corrected. The
      * tablet's own settings screen turns the same habits off with its input types (see
@@ -2716,52 +2986,80 @@ final class HttpAdminServer {
      * before the server's own normalisation could add one.
      */
     private static String field(String type, String name, String label, String value) {
-        return field(type, name, label, value, "");
+        return field(type, name, label, value, "", null);
     }
 
+
     private static String field(String type, String name, String label, String value,
-            String extraAttributes) {
-        return "<label>" + escapeHtml(label) + "<input type=\"" + type + "\" name=\"" + name
-                + "\" value=\"" + escapeHtml(value) + "\"" + (type.equals("text") ? MACHINE_TEXT : "")
-                + extraAttributes + "></label>";
+            String extraAttributes, String support) {
+        return fieldWithId("f-" + name, type, name, label, value, extraAttributes, support);
+    }
+
+    /**
+     * The same field with its id chosen by the caller, for the controls the scripts find by id.
+     * The placeholder is one space so {@code :placeholder-shown} could tell an empty box from a
+     * filled one; the label floats on the border either way, which is what keeps the layout still.
+     */
+    private static String fieldWithId(String id, String type, String name, String label,
+            String value, String extraAttributes, String support) {
+        return "<div class=\"field\"><input type=\"" + type + "\" id=\"" + id + "\""
+                + (name == null ? "" : " name=\"" + name + "\"")
+                + " value=\"" + escapeHtml(value) + "\" placeholder=\" \""
+                + (type.equals("text") ? MACHINE_TEXT : "") + extraAttributes + ">"
+                + "<label for=\"" + id + "\">" + escapeHtml(label) + "</label>"
+                + (support == null ? "" : "<p class=\"support\">" + escapeHtml(support) + "</p>")
+                + "</div>";
+    }
+
+    /**
+     * One outlined menu, the field's shape with a chevron: {@code dataSetting} names the field it
+     * posts the moment it changes (see settingScript), or null for a menu a command script drives.
+     */
+    private static String selectField(String id, String name, String label, String dataSetting,
+            String options, String support) {
+        return "<div class=\"field\"><select id=\"" + id + "\""
+                + (name == null ? "" : " name=\"" + name + "\"")
+                + (dataSetting == null ? "" : " data-setting=\"" + dataSetting + "\"") + ">"
+                + options + "</select><label for=\"" + id + "\">" + escapeHtml(label) + "</label>"
+                + (support == null ? "" : "<p class=\"support\">" + escapeHtml(support) + "</p>")
+                + "</div>";
+    }
+
+    /**
+     * An on/off setting as a switch, its words at the left and the switch at the right, the
+     * Material row for a setting that applies the moment it is touched. Still a checkbox to the
+     * scripts, which read {@code checked} and post it.
+     */
+    private static String switchRow(String id, String label, String attributes, boolean on) {
+        return "<label class=\"switch\"><span>" + escapeHtml(label) + "</span>"
+                + "<input type=\"checkbox\" id=\"" + id + "\"" + attributes
+                + (on ? " checked" : "") + "></label>";
     }
 
     /** A text box holding a URL or a host name: the URL keyboard on a phone, see {@link #field}. */
     private static String urlField(String name, String label, String value) {
-        return field("text", name, label, value, " inputmode=\"url\"");
+        return field("text", name, label, value, " inputmode=\"url\"", null);
     }
 
     /** See {@link #field}: a text box that must not be autocorrected, capitalised or spellchecked. */
     private static final String MACHINE_TEXT =
             " autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"";
 
-    private static String quickAction(String command, String label) {
-        return "<form class=\"cmd\" method=\"post\" action=\"/api/command\" style=\"display:inline\">"
-                + "<input type=\"hidden\" name=\"cmnd\" value=\"" + command + "\">"
-                + "<button type=\"submit\">" + escapeHtml(label) + "</button></form>";
-    }
 
-    /** A plain navigation, styled as a button rather than a hyperlink, matching quickAction(). */
     /**
-     * The way back, at the top and at the bottom of a page below the settings page.
-     *
-     * <p>Both ends, because a page you have to scroll to read is a page you have to scroll back
-     * up to leave, and just "Back" because that is what the word means here (Juri, 2026-09-11,
-     * C12 and C13).
+     * A command as a button: outlined, since it acts now and stores nothing, or tonal where it
+     * is the second action of its section. The glyph is optional and leads the label.
      */
-    private static String backRow() {
-        return backRow("/");
+    private static String quickAction(String command, String label, String buttonClass,
+            String glyphName) {
+        return "<form class=\"cmd\" method=\"post\" action=\"/api/command\">"
+                + "<input type=\"hidden\" name=\"cmnd\" value=\"" + command + "\">"
+                + "<button type=\"submit\"" + (buttonClass.isEmpty() ? "" : " class=\"" + buttonClass + "\"")
+                + ">" + (glyphName == null ? "" : glyph(glyphName)) + escapeHtml(label)
+                + "</button></form>";
     }
 
-    /** The same row for a page whose way back is not the settings page. */
-    private static String backRow(String path) {
-        return "<div class=\"actions back\">" + navButton(path, "\u2190 Back") + "</div>";
-    }
 
-    private static String navButton(String path, String label) {
-        return "<form method=\"get\" action=\"" + path + "\" style=\"display:inline\">"
-                + "<button type=\"submit\">" + escapeHtml(label) + "</button></form>";
-    }
 
     private static String escapeHtml(String value) {
         if (value == null) {

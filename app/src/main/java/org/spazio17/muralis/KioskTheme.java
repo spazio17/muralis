@@ -47,6 +47,25 @@ final class KioskTheme {
     final int bad;
     final boolean light;
 
+    // Material 3's colour roles, derived from the palette above rather than kept as a second
+    // list (2026-09-23): the web page's stylesheet mixes the same fractions from the same
+    // twelve colours, so a card, a container and its ink match across the two surfaces.
+    /** A card: the base lifted a step (surface-container-low). */
+    final int card;
+    /** The open row of an accordion, and anything that sits on a card and needs a step more. */
+    final int cardHigh;
+    /** Hairlines between rows, quieter than the outline a field draws. */
+    final int outlineVariant;
+    /** The selected icon button's disc, and the filled part of a slider's track. */
+    final int primaryContainer;
+    final int onPrimaryContainer;
+    /** A tonal button, the selected row of a list, a chip that is on. */
+    final int secondaryContainer;
+    final int onSecondaryContainer;
+    /** A refusal's banner. */
+    final int errorContainer;
+    final int onErrorContainer;
+
     private KioskTheme(int base, int mantle, int surface, int surfaceAlt, int border, int text,
             int subtext, int accent, int accentAlt, int ok, int warn, int bad,
             int inkAlt, boolean light) {
@@ -64,6 +83,43 @@ final class KioskTheme {
         this.bad = bad;
         this.inkAlt = inkAlt;
         this.light = light;
+        this.card = mix(surface, base, 0.4f);
+        this.cardHigh = surface;
+        this.outlineVariant = mix(border, base, 0.55f);
+        this.primaryContainer = mix(accent, base, light ? 0.18f : 0.35f);
+        this.onPrimaryContainer = light ? mix(accent, Color.BLACK, 0.55f) : mix(accent, Color.WHITE, 0.65f);
+        this.secondaryContainer = mix(accentAlt, base, light ? 0.16f : 0.32f);
+        this.onSecondaryContainer = inkAlt;
+        this.errorContainer = mix(bad, base, light ? 0.18f : 0.35f);
+        this.onErrorContainer = light ? mix(bad, Color.BLACK, 0.6f) : mix(bad, Color.WHITE, 0.65f);
+    }
+
+    /** A pill: Material's full corner, for every button with words in it. */
+    GradientDrawable pill(int fill) {
+        return panel(fill, 999f);
+    }
+
+    /** A hollow pill, for the outlined button. */
+    GradientDrawable pillOutlined(int strokePx, int strokeColor) {
+        GradientDrawable shape = pill(Color.TRANSPARENT);
+        shape.setStroke(strokePx, strokeColor);
+        return shape;
+    }
+
+    /**
+     * {@code content} with Material's press feedback over it: an ink ripple in the tint, bounded
+     * by the content's own shape (or by {@code mask} where the content is transparent, as an icon
+     * button's is). The lifted edge the buttons used to carry is gone with the redesign; a ripple
+     * is what every Material control answers a touch with.
+     */
+    Drawable ripple(Drawable content, Drawable mask, int tint) {
+        return new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(withAlpha(tint, 0x33)), content, mask);
+    }
+
+    /** The colour at another opacity, for ripples and disabled states. */
+    static int withAlpha(int color, int alpha) {
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
     }
 
     static KioskTheme of(boolean lightTheme) {

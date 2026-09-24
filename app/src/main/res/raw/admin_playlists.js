@@ -34,7 +34,14 @@ return fetch('/api/playlists/table',{credentials:'same-origin'})
 .catch(function(){say(unreachable);});
 }
 
-// Edit is a GET form and navigation to the playlist's own page; it is left alone.
+// The radio in front of a row is Use: picking it posts the form it sits in, at once.
+box.addEventListener('change',function(event){
+var radio=event.target;
+if(!radio||radio.type!=='radio'||radio.name!=='active'){return;}
+var form=radio.closest?radio.closest('form.use'):null;
+if(form){form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}});
+
+// Edit is a link to the playlist's own page; it is left alone.
 box.addEventListener('submit',function(event){
 var form=event.target;
 if(form.tagName!=='FORM'||(form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
@@ -42,7 +49,7 @@ event.preventDefault();
 // Delete asks first, as the panel does: a playlist is gone for good, and Delete sits next to
 // Edit on a phone (review of 2026-09-19).
 if(/\/api\/playlists\/delete$/.test(form.action)){
-var row=form.closest('tr'),name=row&&row.querySelector('th')?row.querySelector('th').textContent:'this playlist';
+var row=form.closest('li'),name=row&&row.querySelector('.h')?row.querySelector('.h').textContent:'this playlist';
 if(!window.confirm('Delete '+name+'? The pictures themselves are not deleted.')){return;}}
 // URL-encoded, not FormData: a FormData body is sent as multipart, and the server parses
 // multipart for the upload alone.
