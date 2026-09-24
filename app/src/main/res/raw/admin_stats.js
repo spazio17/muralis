@@ -53,8 +53,19 @@ follow('screensaver-off',ss.off_s);
 follow('screensaver-url',ss.url);
 follow('screensaver-dim',ss.dim_percent);
 follow('screensaver-on-wake',ss.on_wake);
+follow('screensaver-source',ss.source);
+follow('screensaver-picture-s',ss.picture_s);
+follow('screensaver-transition',ss.transition);
+follow('screensaver-shuffle',ss.shuffle);
+follow('screensaver-one',ss.one_per_cycle);
+if(ss.source==='local'){follow('screensaver-credit',ss.credit);}
+follow('screensaver-corner',ss.credit_corner);
+if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
 var sn=document.getElementById('screensaver-note');
 if(sn&&ss.summary!=null){sn.textContent=ss.summary;sn.classList.toggle('bad',ss.problem!=null);}
+var so=document.getElementById('screensaver-source-note');
+if(so&&ss.source_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
+so.textContent=ss.source_state+pic;so.classList.toggle('bad',ss.source_problem!=null);}
 // The slider follows the real backlight, except while the operator is actually dragging it.
 var sl=document.getElementById('brightness');
 if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){

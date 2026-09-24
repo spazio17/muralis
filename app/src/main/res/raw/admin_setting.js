@@ -38,11 +38,19 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-setting]'),functio
 function screensaverFields(){var mode=document.getElementById('screensaver-mode');
 if(!mode){return;}
 var url=document.getElementById('screensaver-url-field'),dim=document.getElementById('screensaver-dim-field'),wake=document.getElementById('screensaver-on-wake');
+var pictures=document.getElementById('screensaver-pictures'),source=document.getElementById('screensaver-source');
+var local=document.getElementById('screensaver-local'),online=document.getElementById('screensaver-online'),credit=document.getElementById('screensaver-credit');
 if(url){url.classList.toggle('gone',mode.value!=='url');}
 if(dim){dim.classList.toggle('gone',mode.value!=='dim');}
-if(wake){var applies=mode.value==='url'||mode.value==='dim';wake.disabled=!applies;wake.title=applies?'':'The black film has nothing to glance at: a wake shows the page.';}}
+if(pictures){pictures.classList.toggle('gone',mode.value!=='pictures');}
+if(wake){var applies=mode.value==='url'||mode.value==='dim'||mode.value==='pictures';wake.disabled=!applies;wake.title=applies?'':'The black film has nothing to glance at: a wake shows the page.';}
+if(source){var isLocal=source.value==='local';
+if(local){local.classList.toggle('gone',!isLocal);}
+if(online){online.classList.toggle('gone',isLocal);}
+if(credit){credit.disabled=!isLocal;if(!isLocal){credit.checked=true;}credit.title=isLocal?'':'The online sources require their credit line.';}}}
 window.muralisScreensaverFields=screensaverFields;
-var saverMode=document.getElementById('screensaver-mode');
+var saverMode=document.getElementById('screensaver-mode'),saverSource=document.getElementById('screensaver-source');
 if(saverMode){saverMode.addEventListener('change',screensaverFields);}
+if(saverSource){saverSource.addEventListener('change',screensaverFields);}
 screensaverFields();
 })();

@@ -51,37 +51,24 @@ final class HttpAdminServer {
             new java.util.HashSet<>(java.util.Arrays.asList(
                     "dashboard", "mqtt", "webadmin", "sequences")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
+    private static final int HANDSHAKE_TIMEOUT_MS = 2_000;
     /** Long enough for a socket close to land, short enough that a reload never looks like a hang. */
     private static final int SHUTDOWN_WAIT_MS = 1_000;
     private static final int MAX_REQUEST_LINE_LENGTH = 4_096;
     private static final int MAX_HEADER_LINES = 40;
     private static final int MAX_BODY_BYTES = 16_384;
     /**
-     * Eight rather than four, so one misbehaving host cannot own every worker.
-     *
-     * <p>Raised together with {@link #PER_HOST_CONNECTIONS}: the two numbers only mean anything as a
-     * pair. Six held by one host out of eight workers leaves two free for everyone else, which is
-     * the difference between an admin server that is slow during an attack and one that is simply
-     * absent. Threads that spend their lives blocked on a socket cost a stack and nothing else, and
-     * measured on the panel the whole server answers a request in 13 to 47 ms, so these are idle
-     * essentially all the time.
+     * The one request that carries megabytes: the picture upload for the screensaver's local
+     * folder. Its body budget and deadline are its own; every other request keeps the 16 KB
+     * and eight seconds that suit commands and settings. A browser sends every chosen file in
+     * one request, so the whole-request cap is the working limit a person sees on the page.
      */
-    private static final int WORKER_THREADS = 8;
-    /**
-     * Concurrent connections allowed from a single remote address.
-     *
-     * <p>Bounding the total (see {@link #ACCEPT_QUEUE_DEPTH}) stops the panel being bricked, but on
-     * its own it does not keep the admin server reachable: measured against the panel, 300 sockets
-     * from one host left exactly {@code WORKER_THREADS + ACCEPT_QUEUE_DEPTH} held and every
-     * legitimate request refused, because the flooding host held all of them. A per-host cap is what
-     * makes the difference, and on a home LAN it is effective, because the attacker is a device on
-     * that LAN rather than a botnet with a thousand source addresses.
-     *
-     * <p>Six because that is also the per-host limit browsers use, and every response here sets
-     * {@code Connection: close} with all CSS and JS inlined, so one operator page load plus its
-     * polling XHRs stays under it. A refused poll is retried on the next tick and costs nothing.
-     */
-    private static final int PER_HOST_CONNECTIONS = 6;
+    private static final int MAX_UPLOAD_BYTES = 24 * 1024 * 1024;
+    private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
+    private static final int UPLOAD_DEADLINE_MS = 120_000;
+    /** Browser preconnects need headroom; twelve from one address leave four workers free. */
+    private static final int WORKER_THREADS = 16;
+    private static final int PER_HOST_CONNECTIONS = 12;
     /**
      * How many accepted connections may wait for a worker before the next one is refused.
      *
@@ -168,6 +155,12 @@ final class HttpAdminServer {
      * one per attempt.
      */
     private final AuthThrottle authThrottle = new AuthThrottle();
+    // Process-wide: a controller reload must not overlap two 24 MB upload bodies.
+    private static final java.util.concurrent.Semaphore uploadSlot =
+            new java.util.concurrent.Semaphore(1);
+    private final java.util.concurrent.ScheduledExecutorService connectionDeadlines =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+    private long lastCapacityLogMs;
     private ExecutorService workers;
     private Thread acceptThread;
     private volatile boolean running;
@@ -237,6 +230,7 @@ final class HttpAdminServer {
 
     void stop() {
         running = false;
+        connectionDeadlines.shutdownNow();
         KioskRuntimeState.publishHttpAdminState(false, KioskRuntimeState.httpAdminPort(),
                 "stopped");
         if (serverSocket != null) {
@@ -296,13 +290,12 @@ final class HttpAdminServer {
             }
             String host = remoteHostOf(socket);
             if (!reserveHostSlot(host)) {
-                // Silently, and without reading a byte. Logging here would hand an attacker a way
-                // to fill the panel's log by connecting, and there is nothing an operator could do
-                // with one line per refused socket anyway.
+                logCapacityRefusal();
                 closeQuietly(socket);
                 continue;
             }
             try {
+                liveSockets.add(socket);
                 workers.execute(() -> {
                     try {
                         handleConnection(socket);
@@ -311,9 +304,19 @@ final class HttpAdminServer {
                     }
                 });
             } catch (RejectedExecutionException busy) {
+                liveSockets.remove(socket);
+                logCapacityRefusal();
                 releaseHostSlot(host);
                 closeQuietly(socket);
             }
+        }
+    }
+
+    private void logCapacityRefusal() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastCapacityLogMs >= 30_000L) {
+            lastCapacityLogMs = now;
+            Log.w(TAG, "Web admin connection capacity reached; refusing new connections");
         }
     }
 
@@ -361,9 +364,17 @@ final class HttpAdminServer {
         // before. Declared here so the failure barrier below answers on the right one; a 500
         // written to the raw socket under TLS would be plaintext inside the encrypted stream.
         Socket channel = socket;
+        // Held separately from the channel so a wrapper whose handshake failed is still released:
+        // autoClose is false, so closing it sends at most a TLS alert and never touches the raw
+        // socket, which is what lets the redirect's lingering close below finish the job.
+        SSLSocket tlsToRelease = null;
         OutputStream output = null;
+        boolean uploadHeld = false;
+        java.util.concurrent.ScheduledFuture<?> deadline = null;
         try {
-            socket.setSoTimeout(SOCKET_TIMEOUT_MS);
+            socket.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
+            deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                    HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             // Every connection is handed to TLS first. Android's Conscrypt wraps the socket's file
             // descriptor, not its streams, so nothing can be peeked before it and handed back:
             // the handshake itself is the protocol detector. BoringSSL names a plain HTTP request
@@ -376,6 +387,15 @@ final class HttpAdminServer {
                 SSLSocket tls = (SSLSocket) tlsFactory.createSocket(
                         socket, null, socket.getPort(), false);
                 tls.setUseClientMode(false);
+                tls.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
+                tlsToRelease = tls;
+                // Assigned only once the handshake has succeeded, which is what makes the
+                // plain-HTTP redirect below survive. Set before it (as it briefly was on
+                // 2026-09-10), the barrier at the end closes this wrapper over the same file
+                // descriptor the redirect was just written to, and Conscrypt's teardown of a
+                // socket whose handshake failed takes the reply with it: the 301's headers
+                // reached the browser, its 50 byte body never did, and the connection ended in
+                // an RST, so Chrome drew an empty page and Firefox hung. Measured, both engines.
                 try {
                     tls.startHandshake();
                 } catch (IOException refused) {
@@ -394,13 +414,17 @@ final class HttpAdminServer {
             }
             // Wrapped, so both readLine and readBody inherit the whole-request deadline without
             // either of them having to know about it. See REQUEST_DEADLINE_MS.
-            InputStream input = new DeadlineInputStream(plain, REQUEST_DEADLINE_MS);
+            DeadlineInputStream input = new DeadlineInputStream(plain, REQUEST_DEADLINE_MS);
             output = channel.getOutputStream();
 
             String requestLine = readLine(input, MAX_REQUEST_LINE_LENGTH);
             if (requestLine == null || requestLine.isEmpty()) {
                 return;
             }
+            deadline.cancel(false);
+            deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                    REQUEST_DEADLINE_MS, TimeUnit.MILLISECONDS);
+            channel.setSoTimeout(SOCKET_TIMEOUT_MS);
             String[] parts = requestLine.split(" ", 3);
             if (parts.length < 2) {
                 writeResponse(output, 400, "text/plain", bytes("Bad Request"));
@@ -422,8 +446,12 @@ final class HttpAdminServer {
                 }
             }
 
-            byte[] body = readBody(input, headers);
-
+            // Credentials first, body second, always. The picture upload is allowed megabytes,
+            // and reading them before judging the password would let anyone on the network have
+            // this panel allocate 24 MB per worker thread on demand, an OutOfMemoryError that no
+            // barrier below catches (2026-09-09 review). Answering a request before its body is
+            // read is what every HTTP server does with a 401, and this server closes the
+            // connection after every response anyway.
             String remoteHost = remoteHostOf(socket);
             // elapsedRealtime, not wall time: a lockout must not be escapable by setting the clock,
             // and must not stall while the device is suspended.
@@ -457,11 +485,41 @@ final class HttpAdminServer {
                 return;
             }
             authThrottle.recordSuccess(remoteHost, nowMs);
+            if (method.equals("POST")) {
+                String refusal = crossSiteRefusal(headers);
+                if (refusal != null) {
+                    writeResponse(output, 403, "text/plain", bytes("Forbidden: " + refusal));
+                    return;
+                }
+            }
+            String requestPath = target.split("\\?", 2)[0];
+            boolean upload = method.equals("POST") && requestPath.equals("/api/pictures");
+            if (upload) {
+                uploadHeld = uploadSlot.tryAcquire();
+                if (!uploadHeld) {
+                    writeResponse(output, 503, "text/plain", bytes("Another upload is in progress"),
+                            Collections.singletonMap("Retry-After", "5"));
+                    return;
+                }
+                input.extend(UPLOAD_DEADLINE_MS);
+                deadline.cancel(false);
+                deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                        UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
+            }
+            byte[] body;
+            try {
+                body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES : MAX_BODY_BYTES);
+            } catch (BodyTooLargeException tooLarge) {
+                writeResponse(output, 413, "text/plain",
+                        bytes("Payload Too Large: " + tooLarge.getMessage()));
+                return;
+            }
+
 
             route(method, target, headers, body, output);
         } catch (IOException exception) {
             Log.w(TAG, "HTTP admin connection error", exception);
-        } catch (RuntimeException unexpected) {
+        } catch (RuntimeException | OutOfMemoryError unexpected) {
             // The barrier that keeps a bad request from killing the panel.
             //
             // These run on an ExecutorService worker, so an escaping RuntimeException reaches
@@ -470,6 +528,10 @@ final class HttpAdminServer {
             // any input, and it was reachable from a single malformed query string -- URLDecoder
             // throws IllegalArgumentException on a truncated escape like "100%", which the
             // documented `?cmnd=kiosk.set_url&url=...` workflow makes easy to send by accident.
+            //
+            // OutOfMemoryError is caught with it since 2026-09-09: the upload path allocates a
+            // body of its own size, and a panel that dies rather than refusing one request is
+            // the failure this barrier exists to prevent.
             //
             // Fail soft like the rest of the app: log it, answer 500, keep serving.
             Log.w(TAG, "HTTP admin request failed", unexpected);
@@ -481,13 +543,16 @@ final class HttpAdminServer {
                 // to say to this client; the point was to survive, and we have.
             }
         } finally {
+            if (deadline != null) deadline.cancel(false);
+            if (uploadHeld) uploadSlot.release();
             liveSockets.remove(socket);
-            if (channel != socket) {
-                // Sends the TLS close_notify and frees the native session now rather than at GC;
-                // autoClose was false, so the raw socket below is still ours to close.
-                closeQuietly(channel);
+            if (tlsToRelease != null) {
+                // Sends the TLS close_notify where there was a session, and frees the native one
+                // now rather than at GC. autoClose was false, so the raw socket below is still
+                // ours, which is the whole point: the FIN and the drain come after this.
+                closeQuietly(tlsToRelease);
             }
-            closeQuietly(socket);
+            lingeringClose(socket);
         }
     }
 
@@ -528,6 +593,56 @@ final class HttpAdminServer {
             }
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
+        } else if (path.equals("/api/pictures") && method.equals("POST")) {
+            handlePictureUpload(headers, body, output);
+        } else if (path.equals("/api/pictures/delete") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String refusal = PictureLibrary.get(context).deleteLocal(form.get("uri"));
+            KioskService.publishTelemetrySoon(context);
+            writeResponse(output, refusal == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage(refusal == null ? "Picture removed."
+                            : "Not removed: " + refusal + ".", "screensaver",
+                            form.getOrDefault("document", ""))));
+        } else if (path.equals("/api/pictures/caption") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String refusal = PictureLibrary.get(context)
+                    .setCaption(form.get("name"), form.getOrDefault("caption", ""));
+            writeResponse(output, refusal == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage(refusal == null ? "Caption saved."
+                            : "Not saved: " + refusal + ".", "screensaver", form.getOrDefault("document", ""))));
+        } else if (path.equals("/api/pictures/folder/browse") && method.equals("POST")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage(null,
+                    "screensaver", parseFormBody(headers, body).getOrDefault("document", ""))));
+        } else if (path.equals("/api/pictures/select") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            Boolean selected = KioskCommandDispatcher.parseEnabledFlag(form.get("selected"));
+            String refusal = selected == null ? "Supply a boolean selection"
+                    : PictureLibrary.get(context).selectPicture(form.get("uri"), selected);
+            writeResponse(output, refusal == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage(refusal == null
+                            ? "Playlist updated."
+                            : "Not changed: " + refusal + ".", "screensaver",
+                            form.getOrDefault("document", ""))));
+        } else if (path.equals("/api/pictures/folder/pick") && method.equals("POST")) {
+            String refusal = kioskService.dispatch("screensaver.pick_folder",
+                    KioskCommandDispatcher.CommandArgs.EMPTY).detail;
+            boolean asked = refusal == null || refusal.isEmpty();
+            writeResponse(output, asked ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage(asked
+                            ? "The picture browser is open inside Muralis on the panel."
+                            : "Not opened: " + refusal + ".", "screensaver", "")));
+        } else if (path.equals("/api/pictures/folder/forget") && method.equals("POST")) {
+            String refusal = PictureLibrary.get(context)
+                    .forgetFolder(parseFormBody(headers, body).getOrDefault("document", ""));
+            writeResponse(output, refusal == null ? 200 : 400, "text/html; charset=utf-8", bytes(buildSettingsPage(
+                    refusal == null ? "Folder access forgotten. Selected entries are kept until you remove them."
+                            : "Not forgotten: " + refusal,
+                    "screensaver")));
+        } else if (path.equals("/api/pictures/refresh") && method.equals("POST")) {
+            PictureLibrary.get(context).refresh(KioskConfig.screensaverOf(context).source, null);
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage(
+                    "Fetching the pictures again; the sentence in the Screensaver box updates "
+                            + "when it is done.", "screensaver")));
         } else if (path.equals("/api/command") && method.equals("POST")) {
             handleCommand(method, query, headers, body, output);
         } else if (path.equals("/api/command") && method.equals("GET")) {
@@ -1035,7 +1150,11 @@ final class HttpAdminServer {
     }
 
     private String buildSettingsPage() {
-        return buildSettingsPage(null, "");
+        return buildSettingsPage(null, "", "");
+    }
+
+    private String buildSettingsPage(String notice, String noticeSection) {
+        return buildSettingsPage(notice, noticeSection, "");
     }
 
     /**
@@ -1047,8 +1166,11 @@ final class HttpAdminServer {
      * wherever the fragment in the form's action points: at the box that was saved. A banner above
      * the first box would then be off screen, which is how the operator used to lose both their
      * place and the reason their save was refused.
+     *
+     * <p>{@code browseFolder} is where the picture folder browser is looking, a per-request value
+     * that is never stored: two browsers on two machines must not fight over it.
      */
-    private String buildSettingsPage(String notice, String noticeSection) {
+    private String buildSettingsPage(String notice, String noticeSection, String browseFolder) {
         KioskConfig config = KioskConfig.load(context);
         StringBuilder html = new StringBuilder();
         html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
@@ -1167,7 +1289,8 @@ final class HttpAdminServer {
                 .append(displayOffControl())
                 .append("</fieldset>")
 
-                .append(screensaverBox())
+                .append(screensaverBox(browseFolder, "screensaver".equals(noticeSection)
+                        || !browseFolder.isEmpty()))
 
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands
@@ -1366,16 +1489,234 @@ final class HttpAdminServer {
     }
 
     /**
-     * The screensaver's fields, one per stored setting, each posted the moment it changes through
-     * the same instant path as the display-off method, plus the sentence the tablet shows and the
-     * two quick actions. The vocabulary and the ranges are {@link ScreensaverPolicy}'s; nothing
-     * here decides anything.
+     * Pictures for the local playlist, as many as the browser put in one request.
+     * Each is checked by its bytes, not its name, stored in the private app store, and the page comes
+     * back with what happened to every file, so a picture that was refused is named rather than
+     * silently missing from the list.
      */
+    private void handlePictureUpload(Map<String, String> headers, byte[] body,
+            OutputStream output) throws IOException {
+        String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
+        if (boundary == null) {
+            writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsPage(
+                    "Not uploaded: the request was not a file upload.", "screensaver")));
+            return;
+        }
+        PictureLibrary library = PictureLibrary.get(context);
+        int stored = 0;
+        StringBuilder problems = new StringBuilder();
+        java.util.List<MultipartForm.Part> parts = MultipartForm.parse(body, boundary);
+        if (parts.isEmpty() && body.length > 0) {
+            // Nothing parsed out of a body that had bytes: the request ended before its closing
+            // boundary, so the browser or the network cut it off mid-upload.
+            writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsPage(
+                    "Not uploaded: the upload did not arrive complete. Please try again.",
+                    "screensaver")));
+            return;
+        }
+        for (MultipartForm.Part part : parts) {
+            if (part.filename.isEmpty() || part.data.length == 0) {
+                continue;
+            }
+            String problem = part.data.length > MAX_PICTURE_BYTES
+                    ? "larger than " + (MAX_PICTURE_BYTES / (1024 * 1024)) + " MB"
+                    : library.saveLocal(part.filename, part.data);
+            if (problem == null) {
+                stored++;
+            } else {
+                problems.append(problems.length() > 0 ? " " : "")
+                        .append(part.filename).append(": ").append(problem).append('.');
+            }
+        }
+        KioskService.publishTelemetrySoon(context);
+        String notice = stored == 0 && problems.length() == 0
+                ? "Not uploaded: no file was chosen."
+                : (stored > 0 ? stored + (stored == 1 ? " picture" : " pictures") + " stored."
+                        : "Not uploaded.")
+                        + (problems.length() > 0 ? " " + problems : "");
+        writeResponse(output, stored > 0 ? 200 : 400, "text/html; charset=utf-8",
+                bytes(buildSettingsPage(notice, "screensaver")));
+    }
+
+    /**
+     * The Pictures mode's part of the Screensaver box: the source with its sentence, the folder's
+     * upload form and list where the source is the folder, the fetch button where it is online,
+     * then duration, transition, order and the credit line. Shown for that mode only, and the
+     * folder or online parts for their source only (admin_setting.js).
+     */
+    private String picturesControls(ScreensaverPolicy.Settings saver, String browseFolder) {
+        PictureLibrary library = PictureLibrary.get(context);
+        boolean local = PictureSources.LOCAL.equals(saver.source);
+        StringBuilder sources = new StringBuilder();
+        sources.append(selectOption(PictureSources.LOCAL,
+                "This panel: uploads and folders of your own", saver.source));
+        sources.append(selectOption(PictureSources.BING, "Bing image of the day (unofficial, credited)",
+                saver.source));
+        sources.append(selectOption(PictureSources.WIKIMEDIA,
+                "Wikimedia Commons picture of the day (credited)", saver.source));
+        StringBuilder transitions = new StringBuilder();
+        transitions.append(selectOption(ScreensaverPolicy.TRANSITION_NONE, "Cut", saver.transition));
+        transitions.append(selectOption(ScreensaverPolicy.TRANSITION_FADE, "Fade", saver.transition));
+        transitions.append(selectOption(ScreensaverPolicy.TRANSITION_SLIDE, "Slide", saver.transition));
+        StringBuilder corners = new StringBuilder();
+        corners.append(selectOption(ScreensaverPolicy.CORNER_BOTTOM_LEFT, "Bottom left", saver.creditCorner));
+        corners.append(selectOption(ScreensaverPolicy.CORNER_BOTTOM_RIGHT, "Bottom right", saver.creditCorner));
+        corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_LEFT, "Top left", saver.creditCorner));
+        corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right", saver.creditCorner));
+
+        StringBuilder folder = new StringBuilder();
+        folder.append("<div id=\"screensaver-local\"").append(local ? "" : " class=\"gone\"").append(">");
+        folder.append(pictureBrowser(browseFolder));
+        folder.append("<form method=\"post\" action=\"/api/pictures\" enctype=\"multipart/form-data\">")
+                .append("<label>Add pictures (JPEG, PNG or WebP; up to ")
+                .append(MAX_UPLOAD_BYTES / (1024 * 1024)).append(" MB per upload)")
+                .append("<input type=\"file\" name=\"picture\" accept=\"image/jpeg,image/png,image/webp\" multiple>")
+                .append("</label><button type=\"submit\">Upload</button></form>");
+        folder.append("</div>");
+
+        String online = "<div id=\"screensaver-online\"" + (local ? " class=\"gone\"" : "") + ">"
+                + "<form method=\"post\" action=\"/api/pictures/refresh\" style=\"display:inline\">"
+                + "<button type=\"submit\">Fetch the pictures again</button></form>"
+                + "<p class=\"hint\">Bing's archive is an unofficial endpoint; its pictures are "
+                + "copyrighted and shown with the line Bing prints under them. Wikimedia Commons "
+                + "pictures carry free licences that require the author and licence to be named, "
+                + "which the credit line does.</p></div>";
+
+        String sourceProblem = library.problem(saver.source);
+        return "<div id=\"screensaver-pictures\""
+                + (ScreensaverPolicy.PICTURES.equals(saver.mode) ? "" : " class=\"gone\"") + ">"
+                + "<label>Pictures from<select id=\"screensaver-source\" data-setting=\"screensaver_source\">"
+                + sources + "</select></label>"
+                + "<p class=\"hint" + (sourceProblem != null ? " bad" : "") + "\" id=\"screensaver-source-note\">"
+                + escapeHtml(library.state(saver.source)) + "</p>"
+                + folder + online
+                + "<label>Each picture stays for (seconds)"
+                + "<input type=\"number\" id=\"screensaver-picture-s\" data-setting=\"screensaver_picture_s\""
+                + " min=\"1\" max=\"" + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\" value=\""
+                + saver.pictureSeconds + "\"></label>"
+                + "<label>Change of picture<select id=\"screensaver-transition\" data-setting=\"screensaver_transition\">"
+                + transitions + "</select></label>"
+                + "<label class=\"check\"><input type=\"checkbox\" id=\"screensaver-shuffle\" data-setting=\"screensaver_shuffle\""
+                + (saver.shuffle ? " checked" : "") + "> Shuffle the order</label>"
+                + "<label class=\"check\"><input type=\"checkbox\" id=\"screensaver-one\" data-setting=\"screensaver_one_per_cycle\""
+                + (saver.onePerCycle ? " checked" : "") + "> One picture per screensaver, the next one next time</label>"
+                + "<label class=\"check\"><input type=\"checkbox\" id=\"screensaver-credit\" data-setting=\"screensaver_credit\""
+                + (saver.creditShown() ? " checked" : "") + (local ? "" : " disabled")
+                + "> Show the title and credit line (always on for the online sources)</label>"
+                + "<label>Credit line in the corner<select id=\"screensaver-corner\" data-setting=\"screensaver_credit_corner\">"
+                + corners + "</select></label>"
+                + "</div>";
+    }
+
+    /**
+     * The browse token is {@code offset|depth|location}, or a bare location for the first page.
+     * The depth rides along because a document id is opaque and cannot be measured against the
+     * tree it came from; see {@link PicturePlaylist#MAX_DEPTH}.
+     */
+    private String pictureBrowser(String token) {
+        String location = token;
+        int offset = 0;
+        int depth = 0;
+        int separator = token.indexOf('|');
+        if (separator >= 0) {
+            offset = boundedToken(token.substring(0, separator), 100_000);
+            String rest = token.substring(separator + 1);
+            int second = rest.indexOf('|');
+            if (second >= 0) {
+                depth = boundedToken(rest.substring(0, second), PicturePlaylist.MAX_DEPTH);
+                location = rest.substring(second + 1);
+            } else {
+                location = rest;
+            }
+        }
+        PictureLibrary library = PictureLibrary.get(context);
+        PicturePlaylist.Page page = library.browse(location, offset, depth);
+        StringBuilder html = new StringBuilder("<p class=\"hint\">Open saved folders and select pictures for one playlist. "
+                + "To grant a new folder, use Grant access on the tablet's Screensaver settings. "
+                + "Android asks once; browsing here stays inside Muralis.</p>");
+        html.append(pictureFolderForm("/api/pictures/folder/browse", "", "Saved folders"));
+        if (page.problem != null) html.append("<p class=\"bad\">").append(escapeHtml(page.problem)).append("</p>");
+        java.util.Map<String, String> captions = library.captions();
+        html.append("<ul class=\"pictures\">");
+        for (PicturePlaylist.Entry entry : page.entries) {
+            html.append("<li>");
+            if (entry.folder) {
+                String into = entry.uri.startsWith("content:")
+                        ? "0|" + Math.min(PicturePlaylist.MAX_DEPTH, depth + 1) + "|" + entry.uri
+                        : entry.uri;
+                html.append(pictureFolderForm("/api/pictures/folder/browse", into, entry.name));
+                if (location.isEmpty() && entry.uri.startsWith("content:")) {
+                    android.net.Uri uri = android.net.Uri.parse(entry.uri);
+                    String root = android.provider.DocumentsContract.buildTreeDocumentUri(uri.getAuthority(),
+                            android.provider.DocumentsContract.getTreeDocumentId(uri)).toString();
+                    html.append(pictureFolderForm("/api/pictures/folder/forget", root, "Forget access"));
+                }
+            } else {
+                html.append("<span>").append(escapeHtml(entry.name)).append("</span>")
+                        .append("<form method=\"post\" action=\"/api/pictures/select\">")
+                        .append(hidden("uri", entry.uri)).append(hidden("document", token))
+                        .append(hidden("selected", String.valueOf(!entry.selected)))
+                        .append("<button type=\"submit\">").append(entry.selected ? "Remove from playlist" : "Add to playlist")
+                        .append("</button></form>");
+                html.append("<form method=\"post\" action=\"/api/pictures/caption\">")
+                        .append(hidden("name", entry.uri)).append(hidden("document", token))
+                        .append("<input name=\"caption\" maxlength=\"200\" placeholder=\"Caption\" value=\"")
+                        .append(escapeHtml(captions.getOrDefault(entry.uri, captions.getOrDefault(entry.name, ""))))
+                        .append("\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\">")
+                        .append("<button type=\"submit\">Save caption</button></form>");
+                if (PictureLibrary.isStored(entry.uri)) html.append("<form method=\"post\" action=\"/api/pictures/delete\">")
+                        .append(hidden("uri", entry.uri)).append(hidden("document", token))
+                        .append("<button type=\"submit\">Delete uploaded file</button></form>");
+            }
+            html.append("</li>");
+        }
+        html.append("</ul>");
+        if (page.deeperFoldersHidden) {
+            html.append("<p class=\"hint\">Folders below this one are not shown: the browser goes ")
+                    .append(PicturePlaylist.MAX_DEPTH)
+                    .append(" levels past a folder you granted, which is as deep as pictures live.</p>");
+        }
+        if (offset > 0) html.append(pictureFolderForm("/api/pictures/folder/browse",
+                Math.max(0, offset - PicturePlaylist.PAGE_SIZE) + "|" + depth + "|" + location,
+                "Previous page"));
+        if (page.more) html.append(pictureFolderForm("/api/pictures/folder/browse",
+                (offset + PicturePlaylist.PAGE_SIZE) + "|" + depth + "|" + location, "Next page"));
+        return html.toString();
+    }
+
+    /** One non-negative number from a browse token, clamped, never a reason to fail a page. */
+    private static int boundedToken(String value, int ceiling) {
+        try {
+            return Math.max(0, Math.min(ceiling, Integer.parseInt(value.trim())));
+        } catch (NumberFormatException notANumber) {
+            return 0;
+        }
+    }
+
+    private static String hidden(String name, String value) {
+        return "<input type=\"hidden\" name=\"" + name + "\" value=\"" + escapeHtml(value) + "\">";
+    }
+
+    /** One button of the folder chooser: a form, because every state change here is a POST. */
+    private static String pictureFolderForm(String action, String document, String label) {
+        return "<form method=\"post\" action=\"" + action + "\" style=\"display:inline\">"
+                + "<input type=\"hidden\" name=\"document\" value=\"" + escapeHtml(document)
+                + "\"><button type=\"submit\">" + escapeHtml(label) + "</button></form>";
+    }
+
     /** Why the wake choice is greyed out for the film; the same words admin_setting.js uses. */
     static final String WAKE_CHOICE_FILM_NOTE =
             "The black film has nothing to glance at: a wake shows the page.";
 
-    private String screensaverBox() {
+    /**
+     * The Screensaver box in the two levels the tablet's settings screen has (Juri, 2026-09-09):
+     * the card is the mode, the sentence it adds up to and the two actions, and everything else
+     * sits behind "More screensaver settings", which is a plain {@code <details>} so it needs no
+     * script and the fields inside it stay in the document, where the stats poll keeps them
+     * current. It is rendered open after anything that re-renders the page from inside it, a
+     * caption saved or a folder chosen, because collapsing on the operator mid-task is rude.
+     */
+    private String screensaverBox(String browseFolder, boolean expanded) {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
@@ -1384,12 +1725,22 @@ final class HttpAdminServer {
         modes.append(selectOption(ScreensaverPolicy.DIM, "Dimmed page", saver.mode));
         modes.append(selectOption(ScreensaverPolicy.FILM, "Black film", saver.mode));
         modes.append(selectOption(ScreensaverPolicy.URL, "Web page", saver.mode));
+        modes.append(selectOption(ScreensaverPolicy.PICTURES, "Pictures", saver.mode));
         String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
                 "Screensaver first, a touch opens the page", saver.onWake)
                 + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "The page at once", saver.onWake);
         return "<fieldset><legend>Screensaver</legend>"
                 + "<label>Mode<select id=\"screensaver-mode\" data-setting=\"screensaver_mode\">"
                 + modes + "</select></label>"
+                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
+                + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
+                + "</p>"
+                + "<div class=\"actions\">"
+                + quickAction("screensaver.start", "Show it now")
+                + quickAction("screensaver.stop", "Back to the page")
+                + "</div>"
+                + "<details" + (expanded ? " open" : "") + ">"
+                + "<summary>More screensaver settings</summary>"
                 + "<label>Idle before the screensaver (seconds, 0 = off)"
                 + "<input type=\"number\" id=\"screensaver-idle\" data-setting=\"screensaver_idle_s\""
                 + " min=\"0\" max=\"" + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\" value=\""
@@ -1415,13 +1766,8 @@ final class HttpAdminServer {
                 + (ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " disabled title=\""
                         + WAKE_CHOICE_FILM_NOTE + "\"")
                 + ">" + onWake + "</select></label>"
-                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
-                + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
-                + "</p>"
-                + "<div class=\"actions\">"
-                + quickAction("screensaver.start", "Show it now")
-                + quickAction("screensaver.stop", "Back to the page")
-                + "</div></fieldset>";
+                + picturesControls(saver, browseFolder)
+                + "</details></fieldset>";
     }
 
     /**
@@ -1482,6 +1828,50 @@ final class HttpAdminServer {
                 return "Not saved: the wake choice must be screensaver or dashboard.";
             }
             editor.screensaverOnWake(onWake);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_source")) {
+            String source = form.get("screensaver_source");
+            if (!PictureSources.isSource(source)) {
+                return "Not saved: the picture source must be local, bing or wikimedia.";
+            }
+            editor.screensaverSource(source);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_picture_s")) {
+            Integer seconds = ScreensaverPolicy.parsePictureSeconds(form.get("screensaver_picture_s"));
+            if (seconds == null) {
+                return "Not saved: the time per picture " + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".";
+            }
+            editor.screensaverPictureSeconds(seconds);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_transition")) {
+            String transition = form.get("screensaver_transition");
+            if (!ScreensaverPolicy.isTransition(transition)) {
+                return "Not saved: the transition must be none, fade or slide.";
+            }
+            editor.screensaverTransition(transition);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_shuffle")) {
+            editor.screensaverShuffle(isTrue(form.get("screensaver_shuffle")));
+            changed = true;
+        }
+        if (form.containsKey("screensaver_one_per_cycle")) {
+            editor.screensaverOnePerCycle(isTrue(form.get("screensaver_one_per_cycle")));
+            changed = true;
+        }
+        if (form.containsKey("screensaver_credit")) {
+            editor.screensaverCredit(isTrue(form.get("screensaver_credit")));
+            changed = true;
+        }
+        if (form.containsKey("screensaver_credit_corner")) {
+            String corner = form.get("screensaver_credit_corner");
+            if (!ScreensaverPolicy.isCorner(corner)) {
+                return "Not saved: the corner must be bottom_left, bottom_right, top_left or top_right.";
+            }
+            editor.screensaverCreditCorner(corner);
             changed = true;
         }
         if (changed) {
@@ -1821,11 +2211,16 @@ final class HttpAdminServer {
      * deadline that moves under either condition is one an attacker can wait out.
      */
     private static final class DeadlineInputStream extends java.io.FilterInputStream {
-        private final long deadlineAtMs;
+        private long deadlineAtMs;
 
         DeadlineInputStream(InputStream wrapped, int budgetMs) {
             super(wrapped);
             this.deadlineAtMs = android.os.SystemClock.elapsedRealtime() + budgetMs;
+        }
+
+        /** More time for the one request that is allowed a large body; see MAX_UPLOAD_BYTES. */
+        void extend(int budgetMs) {
+            deadlineAtMs = android.os.SystemClock.elapsedRealtime() + budgetMs;
         }
 
         private void checkDeadline() throws IOException {
@@ -1908,7 +2303,14 @@ final class HttpAdminServer {
         return buffer.size() == 0 ? null : buffer.toString("UTF-8");
     }
 
-    private static byte[] readBody(InputStream input, Map<String, String> headers)
+    /** A body past its budget; answered with 413 where the caller can, dropped otherwise. */
+    private static final class BodyTooLargeException extends IOException {
+        BodyTooLargeException(String message) {
+            super(message);
+        }
+    }
+
+    private static byte[] readBody(InputStream input, Map<String, String> headers, int limit)
             throws IOException {
         String lengthHeader = headers.get("content-length");
         if (lengthHeader == null) {
@@ -1923,8 +2325,9 @@ final class HttpAdminServer {
         if (length <= 0) {
             return new byte[0];
         }
-        if (length > MAX_BODY_BYTES) {
-            throw new IOException("request body too large");
+        if (length > limit) {
+            throw new BodyTooLargeException("the request carries " + length + " bytes, the limit is "
+                    + limit);
         }
         byte[] body = new byte[length];
         int read = 0;
@@ -1956,8 +2359,14 @@ final class HttpAdminServer {
             header.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
         }
         header.append("\r\n");
-        output.write(header.toString().getBytes(StandardCharsets.US_ASCII));
-        output.write(body);
+        // Header and body in one write, so a reply that fits leaves in a single segment. Two
+        // writes let a close race the second one, which is half of how the plain-HTTP redirect
+        // lost its body (2026-09-10); the other half was closing the wrong socket.
+        byte[] head = header.toString().getBytes(StandardCharsets.US_ASCII);
+        byte[] whole = new byte[head.length + body.length];
+        System.arraycopy(head, 0, whole, 0, head.length);
+        System.arraycopy(body, 0, whole, head.length, body.length);
+        output.write(whole);
         output.flush();
     }
 
@@ -1971,6 +2380,8 @@ final class HttpAdminServer {
                 return "Bad Request";
             case 401:
                 return "Unauthorized";
+            case 403:
+                return "Forbidden";
             case 404:
                 return "Not Found";
             case 405:
@@ -1979,6 +2390,8 @@ final class HttpAdminServer {
                 return "Payload Too Large";
             case 429:
                 return "Too Many Requests";
+            case 503:
+                return "Service Unavailable";
             default:
                 return "Error";
         }
@@ -1994,5 +2407,50 @@ final class HttpAdminServer {
         } catch (IOException ignored) {
             // The socket is being discarded either way.
         }
+    }
+
+    /** How long a lingering close spends draining a client's unread bytes before giving up. */
+    private static final int LINGER_DRAIN_MS = 500;
+
+    /**
+     * Closes a connection the way a web server has to: FIN first, then drain, then close.
+     *
+     * <p>Every response here carries {@code Connection: close}, and several of them are written
+     * <em>before</em> the request body has been read, deliberately: a 401, a 403, a 413 and a 503
+     * all answer without allocating megabytes. That leaves bytes in the receive buffer, and
+     * closing a socket with unread received data makes the kernel send an RST instead of a FIN
+     * (RFC 1122's rule, and Linux implements it), which throws away the reply the client has not
+     * read yet. The client then reports a network error rather than showing the 401 that was
+     * actually sent. Apache calls the answer a lingering close and nginx calls it
+     * {@code lingering_close}; both do exactly this: half-close so the FIN goes out, read and
+     * discard whatever the client was still sending for a bounded moment, then close for real.
+     *
+     * <p>Bounded at {@link #LINGER_DRAIN_MS} and at one buffer per read, because a client that
+     * keeps sending must not be able to hold a worker here.
+     */
+    private static void lingeringClose(Socket socket) {
+        try {
+            if (socket.isClosed()) {
+                return;
+            }
+            try {
+                socket.shutdownOutput();
+            } catch (IOException | UnsupportedOperationException noHalfClose) {
+                // A TLS socket refuses this; its own close already sent close_notify.
+            }
+            socket.setSoTimeout(LINGER_DRAIN_MS);
+            byte[] scratch = new byte[4096];
+            long deadline = android.os.SystemClock.elapsedRealtime() + LINGER_DRAIN_MS;
+            InputStream in = socket.getInputStream();
+            while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                if (in.read(scratch) < 0) {
+                    break;
+                }
+            }
+        } catch (IOException | RuntimeException done) {
+            // A timeout, a reset from the other side, or a stream already gone. Either way the
+            // reply has had its chance to leave and there is nothing else to wait for.
+        }
+        closeQuietly(socket);
     }
 }

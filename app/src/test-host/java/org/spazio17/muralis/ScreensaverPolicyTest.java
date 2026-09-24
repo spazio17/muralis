@@ -36,11 +36,19 @@ public final class ScreensaverPolicyTest {
     }
 
     private static void testVocabulary() {
-        for (String mode : new String[] {"off", "dim", "film", "url"}) {
+        for (String mode : new String[] {"off", "dim", "film", "url", "pictures"}) {
             require(ScreensaverPolicy.isMode(mode), mode + " must be a mode");
         }
-        require(!ScreensaverPolicy.isMode("pictures") && !ScreensaverPolicy.isMode("")
+        require(!ScreensaverPolicy.isMode("photos") && !ScreensaverPolicy.isMode("")
                 && !ScreensaverPolicy.isMode(null), "anything else must be refused");
+        require(ScreensaverPolicy.isTransition("none") && ScreensaverPolicy.isTransition("fade")
+                && ScreensaverPolicy.isTransition("slide") && !ScreensaverPolicy.isTransition("zoom"),
+                "three transitions");
+        require(ScreensaverPolicy.isCorner("bottom_left") && ScreensaverPolicy.isCorner("top_right")
+                && !ScreensaverPolicy.isCorner("centre"), "four corners");
+        require(PictureSources.isSource("local") && PictureSources.isSource("bing")
+                && PictureSources.isSource("wikimedia") && !PictureSources.isSource("nasa"),
+                "three sources in this step");
         require(ScreensaverPolicy.isOnWake("screensaver")
                 && ScreensaverPolicy.isOnWake("dashboard")
                 && !ScreensaverPolicy.isOnWake("page"), "two on-wake choices, no third");
@@ -59,13 +67,16 @@ public final class ScreensaverPolicyTest {
         require(ScreensaverPolicy.parseSeconds("9999999") == null, "absurdly long input is refused");
         require(ScreensaverPolicy.parseSeconds("+5") == null && ScreensaverPolicy.parseSeconds("1e3") == null,
                 "a sign or an exponent is not a whole number here");
-        require(ScreensaverPolicy.secondsProblem("x").contains("86400"),
-                "the refusal must name the range");
+        require(ScreensaverPolicy.SECONDS_RULE.contains("86400")
+                && ScreensaverPolicy.DIM_RULE.contains("100")
+                && ScreensaverPolicy.PICTURE_SECONDS_RULE.contains("1 to"),
+                "every surface's refusal names the rule, and the rule names its range");
         require(ScreensaverPolicy.parseDimPercent("1") == 1 && ScreensaverPolicy.parseDimPercent("100") == 100,
                 "1 to 100 for the dim floor");
         require(ScreensaverPolicy.parseDimPercent("0") == null && ScreensaverPolicy.parseDimPercent("101") == null,
                 "0 is the film, 101 is nothing");
-        require(ScreensaverPolicy.dimPercentProblem("0") != null, "the dim refusal exists");
+        require(ScreensaverPolicy.parsePictureSeconds("0") == null
+                && ScreensaverPolicy.parsePictureSeconds("1") == 1, "a picture shows for at least a second");
     }
 
     private static void testModeProblem() {
@@ -142,6 +153,7 @@ public final class ScreensaverPolicyTest {
         require(!ScreensaverPolicy.screensaverFirst(settings("film", 120, 900)),
                 "a wake to the black film is no wake: the choice does not apply");
         require(ScreensaverPolicy.wakeChoiceApplies("url") && ScreensaverPolicy.wakeChoiceApplies("dim")
+                && ScreensaverPolicy.wakeChoiceApplies("pictures")
                 && !ScreensaverPolicy.wakeChoiceApplies("film") && !ScreensaverPolicy.wakeChoiceApplies("off"),
                 "the surfaces grey the choice out exactly where it does not apply");
         require(!ScreensaverPolicy.screensaverFirst(new Settings("url", 120, 900, "", 20,
@@ -163,6 +175,14 @@ public final class ScreensaverPolicyTest {
         String showing = ScreensaverPolicy.describe(settings("url", 0, 0), true);
         require(showing.equals("Web page, only when asked for, the display stays on. Showing now."),
                 "idle 0, off 0 and active: " + showing);
+        Settings pictures = new Settings("pictures", 120, 0, "", 20, "screensaver", "bing", 20,
+                "fade", false, false, false, "bottom_left");
+        require(ScreensaverPolicy.describe(pictures, false).equals(
+                "Pictures from Bing image of the day after 2 min without a touch, the display stays on."),
+                "the source is named: " + ScreensaverPolicy.describe(pictures, false));
+        require(pictures.creditShown(), "an online source shows the credit whatever the switch says");
+        require(!new Settings("pictures", 120, 0, "", 20, "screensaver", "local", 20, "fade", false,
+                false, false, "bottom_left").creditShown(), "the local folder may switch it off");
         String broken = ScreensaverPolicy.describe(new Settings("url", 120, 900, "", 20,
                 "screensaver"), false);
         require(broken.equals("Web page: the web-page screensaver needs a page address."),

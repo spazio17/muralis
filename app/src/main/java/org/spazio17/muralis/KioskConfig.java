@@ -30,6 +30,15 @@ final class KioskConfig {
     private static final String SCREENSAVER_URL = "screensaver_url";
     private static final String SCREENSAVER_DIM_PERCENT = "screensaver_dim_percent";
     private static final String SCREENSAVER_ON_WAKE = "screensaver_on_wake";
+    private static final String SCREENSAVER_SOURCE = "screensaver_source";
+    private static final String SCREENSAVER_PICTURE_SECONDS = "screensaver_picture_s";
+    private static final String SCREENSAVER_TRANSITION = "screensaver_transition";
+    private static final String SCREENSAVER_SHUFFLE = "screensaver_shuffle";
+    private static final String SCREENSAVER_ONE_PER_CYCLE = "screensaver_one_per_cycle";
+    private static final String SCREENSAVER_CREDIT = "screensaver_credit";
+    private static final String SCREENSAVER_CREDIT_CORNER = "screensaver_credit_corner";
+    private static final String SCREENSAVER_FOLDER_URI = "screensaver_folder_uri";
+    private static final String SCREENSAVER_FOLDER_DOCUMENT = "screensaver_folder_document";
     /**
      * Retired 2026-08-29, when the two-way portrait switch became the three-way orientation
      * setting. Read only by the migration in {@link #orientationOf} and removed by the first
@@ -291,6 +300,51 @@ final class KioskConfig {
             return this;
         }
 
+        Editor screensaverSource(String value) {
+            plain.putString(SCREENSAVER_SOURCE, value);
+            return this;
+        }
+
+        Editor screensaverPictureSeconds(int value) {
+            plain.putInt(SCREENSAVER_PICTURE_SECONDS, value);
+            return this;
+        }
+
+        Editor screensaverTransition(String value) {
+            plain.putString(SCREENSAVER_TRANSITION, value);
+            return this;
+        }
+
+        Editor screensaverShuffle(boolean value) {
+            plain.putBoolean(SCREENSAVER_SHUFFLE, value);
+            return this;
+        }
+
+        Editor screensaverOnePerCycle(boolean value) {
+            plain.putBoolean(SCREENSAVER_ONE_PER_CYCLE, value);
+            return this;
+        }
+
+        Editor screensaverCredit(boolean value) {
+            plain.putBoolean(SCREENSAVER_CREDIT, value);
+            return this;
+        }
+
+        Editor screensaverCreditCorner(String value) {
+            plain.putString(SCREENSAVER_CREDIT_CORNER, value);
+            return this;
+        }
+
+        Editor screensaverFolderUri(String value) {
+            plain.putString(SCREENSAVER_FOLDER_URI, value);
+            return this;
+        }
+
+        Editor screensaverFolderDocument(String value) {
+            plain.putString(SCREENSAVER_FOLDER_DOCUMENT, value);
+            return this;
+        }
+
         Editor kioskStopped(boolean value) {
             plain.putBoolean(KIOSK_STOPPED, value);
             return this;
@@ -360,6 +414,11 @@ final class KioskConfig {
         String mode = preferences.getString(SCREENSAVER_MODE, ScreensaverPolicy.OFF);
         String onWake = preferences.getString(SCREENSAVER_ON_WAKE,
                 ScreensaverPolicy.WAKE_SCREENSAVER);
+        String source = preferences.getString(SCREENSAVER_SOURCE, PictureSources.LOCAL);
+        String transition = preferences.getString(SCREENSAVER_TRANSITION,
+                ScreensaverPolicy.TRANSITION_FADE);
+        String corner = preferences.getString(SCREENSAVER_CREDIT_CORNER,
+                ScreensaverPolicy.CORNER_BOTTOM_LEFT);
         return new ScreensaverPolicy.Settings(
                 ScreensaverPolicy.isMode(mode) ? mode : ScreensaverPolicy.OFF,
                 clamp(preferences.getInt(SCREENSAVER_IDLE_SECONDS,
@@ -369,7 +428,39 @@ final class KioskConfig {
                 preferences.getString(SCREENSAVER_URL, ""),
                 clamp(preferences.getInt(SCREENSAVER_DIM_PERCENT,
                         ScreensaverPolicy.DEFAULT_DIM_PERCENT), 1, 100),
-                ScreensaverPolicy.isOnWake(onWake) ? onWake : ScreensaverPolicy.WAKE_SCREENSAVER);
+                ScreensaverPolicy.isOnWake(onWake) ? onWake : ScreensaverPolicy.WAKE_SCREENSAVER,
+                PictureSources.isSource(source) ? source : PictureSources.LOCAL,
+                clamp(preferences.getInt(SCREENSAVER_PICTURE_SECONDS,
+                        ScreensaverPolicy.DEFAULT_PICTURE_SECONDS), 1, ScreensaverPolicy.MAX_SECONDS),
+                ScreensaverPolicy.isTransition(transition) ? transition
+                        : ScreensaverPolicy.TRANSITION_FADE,
+                preferences.getBoolean(SCREENSAVER_SHUFFLE, false),
+                preferences.getBoolean(SCREENSAVER_ONE_PER_CYCLE, false),
+                preferences.getBoolean(SCREENSAVER_CREDIT, true),
+                ScreensaverPolicy.isCorner(corner) ? corner : ScreensaverPolicy.CORNER_BOTTOM_LEFT);
+    }
+
+    /**
+     * The folder the operator picked for the Pictures screensaver, as the tree URI the picker
+     * returned, or empty. Not part of {@link ScreensaverPolicy.Settings}: the policy decides
+     * timings, not where files live.
+     */
+    static String screensaverFolderUri(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(SCREENSAVER_FOLDER_URI, "");
+    }
+
+    /**
+     * Which folder inside the granted tree the pictures are read from, as a document id, or
+     * empty for the tree's own root. Separate from the grant because the grant covers the whole
+     * subtree: one tap on the panel, and every folder inside it can then be chosen from a
+     * distance (Juri, 2026-09-09).
+     */
+    static String screensaverFolderDocument(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(SCREENSAVER_FOLDER_DOCUMENT, "");
     }
 
     private static int clamp(int value, int min, int max) {
@@ -474,6 +565,16 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getInt(SCREENSAVER_BOOT_COUNT, -1);
+    }
+
+    static long screensaverSinceMs(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getLong("screensaver_since_ms", -1L);
+    }
+
+    static void recordScreensaverSinceMs(Context context, long sinceMs) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putLong("screensaver_since_ms", sinceMs).commit();
     }
 
     static void recordVisualOffBootCount(Context context, int bootCount) {

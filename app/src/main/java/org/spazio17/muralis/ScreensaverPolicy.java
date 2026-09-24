@@ -40,6 +40,19 @@ final class ScreensaverPolicy {
     static final String FILM = "film";
     /** Another web page, shown over the dashboard, which stays loaded underneath. */
     static final String URL = "url";
+    /** Pictures from a {@link PictureSources} source, full screen, with the credit line. */
+    static final String PICTURES = "pictures";
+
+    /** How one picture gives way to the next. */
+    static final String TRANSITION_NONE = "none";
+    static final String TRANSITION_FADE = "fade";
+    static final String TRANSITION_SLIDE = "slide";
+
+    /** The corner the credit line sits in. */
+    static final String CORNER_BOTTOM_LEFT = "bottom_left";
+    static final String CORNER_BOTTOM_RIGHT = "bottom_right";
+    static final String CORNER_TOP_LEFT = "top_left";
+    static final String CORNER_TOP_RIGHT = "top_right";
 
     /** After a wake from display off, the screensaver first: a glance, then a touch for the page. */
     static final String WAKE_SCREENSAVER = "screensaver";
@@ -49,11 +62,13 @@ final class ScreensaverPolicy {
     static final int DEFAULT_IDLE_SECONDS = 120;
     static final int DEFAULT_OFF_SECONDS = 900;
     static final int DEFAULT_DIM_PERCENT = 20;
+    static final int DEFAULT_PICTURE_SECONDS = 20;
     /** A day. Any longer means "never", which 0 already says. */
     static final int MAX_SECONDS = 86_400;
-    /** The two range rules as sentences, for every surface's refusal. */
+    /** The range rules as sentences: every surface's refusal names the rule, not the value. */
     static final String SECONDS_RULE = "must be a whole number of seconds, 0 to " + MAX_SECONDS;
     static final String DIM_RULE = "must be a whole number from 1 to 100";
+    static final String PICTURE_SECONDS_RULE = "must be a whole number of seconds, 1 to " + MAX_SECONDS;
 
     /** Where the panel is in the diagram above. {@code DARK} is display off, by either method. */
     enum Stage { DASHBOARD, SCREENSAVER, DARK }
@@ -71,15 +86,45 @@ final class ScreensaverPolicy {
         final String url;
         final int dimPercent;
         final String onWake;
+        /** The pictures mode: where from, how long each, how they change, in what order. */
+        final String source;
+        final int pictureSeconds;
+        final String transition;
+        final boolean shuffle;
+        /** One picture per screensaver: chosen at the start, kept until the page returns. */
+        final boolean onePerCycle;
+        /** The credit line; only the local folder may switch it off, the sources require it. */
+        final boolean credit;
+        final String creditCorner;
 
         Settings(String mode, int idleSeconds, int offSeconds, String url, int dimPercent,
                 String onWake) {
+            this(mode, idleSeconds, offSeconds, url, dimPercent, onWake, PictureSources.LOCAL,
+                    DEFAULT_PICTURE_SECONDS, TRANSITION_FADE, false, false, true,
+                    CORNER_BOTTOM_LEFT);
+        }
+
+        Settings(String mode, int idleSeconds, int offSeconds, String url, int dimPercent,
+                String onWake, String source, int pictureSeconds, String transition,
+                boolean shuffle, boolean onePerCycle, boolean credit, String creditCorner) {
             this.mode = mode;
             this.idleSeconds = idleSeconds;
             this.offSeconds = offSeconds;
             this.url = url == null ? "" : url;
             this.dimPercent = dimPercent;
             this.onWake = onWake;
+            this.source = source;
+            this.pictureSeconds = pictureSeconds;
+            this.transition = transition;
+            this.shuffle = shuffle;
+            this.onePerCycle = onePerCycle;
+            this.credit = credit;
+            this.creditCorner = creditCorner;
+        }
+
+        /** The credit line as shown: the online sources require it whatever the switch says. */
+        boolean creditShown() {
+            return credit || !PictureSources.LOCAL.equals(source);
         }
 
         boolean enabled() {
@@ -91,7 +136,23 @@ final class ScreensaverPolicy {
     }
 
     static boolean isMode(String value) {
-        return OFF.equals(value) || DIM.equals(value) || FILM.equals(value) || URL.equals(value);
+        return OFF.equals(value) || DIM.equals(value) || FILM.equals(value) || URL.equals(value)
+                || PICTURES.equals(value);
+    }
+
+    static boolean isTransition(String value) {
+        return TRANSITION_NONE.equals(value) || TRANSITION_FADE.equals(value)
+                || TRANSITION_SLIDE.equals(value);
+    }
+
+    static boolean isCorner(String value) {
+        return CORNER_BOTTOM_LEFT.equals(value) || CORNER_BOTTOM_RIGHT.equals(value)
+                || CORNER_TOP_LEFT.equals(value) || CORNER_TOP_RIGHT.equals(value);
+    }
+
+    /** Seconds per picture: at least one, or a slideshow becomes a flicker. */
+    static Integer parsePictureSeconds(String text) {
+        return parseWhole(text, 1, MAX_SECONDS);
     }
 
     static boolean isOnWake(String value) {
@@ -106,17 +167,9 @@ final class ScreensaverPolicy {
         return parseWhole(text, 0, MAX_SECONDS);
     }
 
-    static String secondsProblem(String text) {
-        return parseSeconds(text) == null ? SECONDS_RULE : null;
-    }
-
     /** The dim floor as typed: 1 to 100. Not 0, which is the film wearing a dim's name. */
     static Integer parseDimPercent(String text) {
         return parseWhole(text, 1, 100);
-    }
-
-    static String dimPercentProblem(String text) {
-        return parseDimPercent(text) == null ? DIM_RULE : null;
     }
 
     private static Integer parseWhole(String text, int min, int max) {
@@ -194,7 +247,7 @@ final class ScreensaverPolicy {
 
     /** Whether the on-wake choice means anything in this mode; false for the film and for off. */
     static boolean wakeChoiceApplies(String mode) {
-        return URL.equals(mode) || DIM.equals(mode);
+        return URL.equals(mode) || DIM.equals(mode) || PICTURES.equals(mode);
     }
 
     static String modeName(String mode) {
@@ -205,6 +258,8 @@ final class ScreensaverPolicy {
                 return "Black film";
             case URL:
                 return "Web page";
+            case PICTURES:
+                return "Pictures";
             case OFF:
             default:
                 return "Off";
@@ -246,6 +301,9 @@ final class ScreensaverPolicy {
             return modeName(settings.mode) + ": " + problem + ".";
         }
         StringBuilder text = new StringBuilder(modeName(settings.mode));
+        if (PICTURES.equals(settings.mode)) {
+            text.append(" from ").append(PictureSources.sourceName(settings.source));
+        }
         if (settings.idleSeconds > 0) {
             text.append(" after ").append(describeDuration(settings.idleSeconds))
                     .append(" without a touch");

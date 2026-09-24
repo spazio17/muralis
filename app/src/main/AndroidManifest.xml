@@ -33,6 +33,11 @@
          android:foregroundServiceType on KioskService below. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- No storage or photo permission for the Pictures screensaver, deliberately (2026-09-09):
+         the web admin's uploads live in the app's own files, and a folder of the operator's own
+         is read through the system's folder picker, whose grant is persisted. Declaring
+         READ_MEDIA_IMAGES would mean access to every picture on the device and a declared use
+         case in Play's photo and video policy, for a feature that wants one folder. -->
     <!-- Runtime permission from API 33 for the notification KioskService must
          post to stay alive. Ask for it at runtime; a denial must not be fatal. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

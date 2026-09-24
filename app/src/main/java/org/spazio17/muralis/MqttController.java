@@ -54,6 +54,13 @@ final class MqttController implements MqttCallbackExtended {
     /** Same ceiling as a command name; long enough for any honest correlation id. */
     private static final int MAX_COMMAND_ID_LENGTH = 96;
 
+    /** Missing or non-boolean telemetry resets an MQTT switch to unknown, never confidently off. */
+    private static String screensaverBooleanTemplate(String field) {
+        return "{% set s = value_json.get('screensaver', {}) %}{% if s is mapping %}"
+                + "{{ 'ON' if s.get('" + field + "') is sameas true else 'OFF' if s.get('"
+                + field + "') is sameas false else 'None' }}{% else %}None{% endif %}";
+    }
+
     private final KioskConfig config;
     private final CommandListener commandListener;
     private final String topicPrefix;
@@ -643,6 +650,7 @@ final class MqttController implements MqttCallbackExtended {
             screensaverModes.put(ScreensaverPolicy.DIM);
             screensaverModes.put(ScreensaverPolicy.FILM);
             screensaverModes.put(ScreensaverPolicy.URL);
+            screensaverModes.put(ScreensaverPolicy.PICTURES);
             components.put("screensaver_mode", select(
                     "Screensaver mode",
                     "screensaver.mode",
@@ -652,7 +660,88 @@ final class MqttController implements MqttCallbackExtended {
                     "Screensaver",
                     "{\"command\":\"screensaver.start\"}",
                     "{\"command\":\"screensaver.stop\"}",
-                    "{{ 'ON' if value_json.screensaver.active else 'OFF' }}"));
+                    screensaverBooleanTemplate("active")));
+            // Every screensaver setting, not a chosen few: "everything must be controllable
+            // remotely" (Juri, 2026-09-09). They are all commands as well, so a caller that
+            // would rather publish a command than use an entity can.
+            org.json.JSONArray pictureSources = new org.json.JSONArray();
+            pictureSources.put(PictureSources.LOCAL);
+            pictureSources.put(PictureSources.BING);
+            pictureSources.put(PictureSources.WIKIMEDIA);
+            components.put("screensaver_source", select(
+                    "Screensaver source",
+                    "screensaver.source",
+                    pictureSources,
+                    "{{ value_json.screensaver.source }}"));
+            components.put("screensaver_idle", number(
+                    "Screensaver idle time",
+                    "screensaver.idle_seconds",
+                    0, ScreensaverPolicy.MAX_SECONDS, "s",
+                    "{{ value_json.screensaver.idle_s }}"));
+            components.put("screensaver_display_off", number(
+                    "Screensaver to display off",
+                    "screensaver.off_seconds",
+                    0, ScreensaverPolicy.MAX_SECONDS, "s",
+                    "{{ value_json.screensaver.off_s }}"));
+            components.put("screensaver_picture_time", number(
+                    "Screensaver picture time",
+                    "screensaver.picture_seconds",
+                    1, ScreensaverPolicy.MAX_SECONDS, "s",
+                    "{{ value_json.screensaver.picture_s }}"));
+            components.put("screensaver_dim", number(
+                    "Screensaver dim brightness",
+                    "screensaver.dim_percent",
+                    1, 100, "%",
+                    "{{ value_json.screensaver.dim_percent }}"));
+            org.json.JSONArray transitions = new org.json.JSONArray();
+            transitions.put(ScreensaverPolicy.TRANSITION_NONE);
+            transitions.put(ScreensaverPolicy.TRANSITION_FADE);
+            transitions.put(ScreensaverPolicy.TRANSITION_SLIDE);
+            components.put("screensaver_transition", select(
+                    "Screensaver transition",
+                    "screensaver.transition",
+                    transitions,
+                    "{{ value_json.screensaver.transition }}"));
+            org.json.JSONArray corners = new org.json.JSONArray();
+            corners.put(ScreensaverPolicy.CORNER_BOTTOM_LEFT);
+            corners.put(ScreensaverPolicy.CORNER_BOTTOM_RIGHT);
+            corners.put(ScreensaverPolicy.CORNER_TOP_LEFT);
+            corners.put(ScreensaverPolicy.CORNER_TOP_RIGHT);
+            components.put("screensaver_credit_corner", select(
+                    "Screensaver credit corner",
+                    "screensaver.credit_corner",
+                    corners,
+                    "{{ value_json.screensaver.credit_corner }}"));
+            org.json.JSONArray wakeChoices = new org.json.JSONArray();
+            wakeChoices.put(ScreensaverPolicy.WAKE_SCREENSAVER);
+            wakeChoices.put(ScreensaverPolicy.WAKE_DASHBOARD);
+            components.put("screensaver_on_wake", select(
+                    "Screensaver after a wake",
+                    "screensaver.on_wake",
+                    wakeChoices,
+                    "{{ value_json.screensaver.on_wake }}"));
+            components.put("screensaver_shuffle", toggle(
+                    "Screensaver shuffle",
+                    "{\"command\":\"screensaver.shuffle\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"screensaver.shuffle\",\"args\":{\"enabled\":false}}",
+                    screensaverBooleanTemplate("shuffle")));
+            components.put("screensaver_one_per_cycle", toggle(
+                    "Screensaver one picture per cycle",
+                    "{\"command\":\"screensaver.one_per_cycle\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"screensaver.one_per_cycle\",\"args\":{\"enabled\":false}}",
+                    screensaverBooleanTemplate("one_per_cycle")));
+            components.put("screensaver_credit", toggle(
+                    "Screensaver credit line",
+                    "{\"command\":\"screensaver.credit\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"screensaver.credit\",\"args\":{\"enabled\":false}}",
+                    screensaverBooleanTemplate("credit")));
+            components.put("screensaver_url", valueText(
+                    "Screensaver page",
+                    "screensaver.url",
+                    "{{ value_json.screensaver.url }}"));
+            components.put("screensaver_picture", sensor(
+                    "Screensaver picture", null, null, null,
+                    "{{ value_json.screensaver.picture.title | default('', true) }}"));
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
@@ -902,6 +991,40 @@ final class MqttController implements MqttCallbackExtended {
      * go through a command payload; the box would refuse it in the frontend before it ever
      * reached the panel.
      */
+    /**
+     * A number a person types or nudges in Home Assistant. Box mode rather than a slider: these
+     * are durations in seconds, where a slider's resolution is a guess and a typed value is
+     * exact.
+     */
+    private JSONObject number(String name, String command, int min, int max, String unit,
+            String valueTemplate) throws JSONException {
+        JSONObject box = new JSONObject();
+        box.put("p", "number");
+        box.put("name", name);
+        box.put("unique_id", uniqueId(name));
+        box.put("command_topic", topicPrefix + "command");
+        box.put("command_template",
+                "{\"command\":\"" + command + "\",\"args\":{\"value\":\"{{ value | int }}\"}}");
+        box.put("min", min);
+        box.put("max", max);
+        box.put("step", 1);
+        box.put("mode", "box");
+        if (unit != null) {
+            box.put("unit_of_measurement", unit);
+        }
+        box.put("value_template", valueTemplate);
+        return box;
+    }
+
+    /** A text box whose command takes {@code value}, as the screensaver's settings do. */
+    private JSONObject valueText(String name, String command, String valueTemplate)
+            throws JSONException {
+        JSONObject box = text(name, command, valueTemplate);
+        box.put("command_template",
+                "{\"command\":\"" + command + "\",\"args\":{\"value\":{{ value | tojson }}}}");
+        return box;
+    }
+
     private JSONObject text(String name, String command, String valueTemplate)
             throws JSONException {
         JSONObject box = new JSONObject();

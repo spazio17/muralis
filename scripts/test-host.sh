@@ -68,7 +68,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
-            ScreensaverPolicy; do
+            ScreensaverPolicy PictureSources TinyJson MultipartForm; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -88,6 +88,8 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/KioskCommandDispatcher.java" \
     "${pure_java_dir}/DisplayOffPolicy.java" \
     "${pure_java_dir}/ScreensaverPolicy.java" \
+    "${pure_java_dir}/PictureSources.java" \
+    "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
 
@@ -155,8 +157,22 @@ java -cp "${test_dir}/pin" org.spazio17.muralis.EscapePinTest
 mkdir -p "${test_dir}/screensaver"
 javac -d "${test_dir}/screensaver" \
     "${pure_java_dir}/ScreensaverPolicy.java" \
+    "${pure_java_dir}/PictureSources.java" \
+    "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/ScreensaverPolicyTest.java"
 java -cp "${test_dir}/screensaver" org.spazio17.muralis.ScreensaverPolicyTest
+
+# The picture sources' parsers against recorded Bing and Wikimedia answers: the credit line is a
+# licence obligation. And the upload body parser, where one boundary byte off corrupts pictures.
+mkdir -p "${test_dir}/pictures"
+javac -d "${test_dir}/pictures" \
+    "${pure_java_dir}/PictureSources.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${pure_java_dir}/MultipartForm.java" \
+    "${host_test_dir}/PictureSourcesTest.java" \
+    "${host_test_dir}/MultipartFormTest.java"
+java -cp "${test_dir}/pictures" org.spazio17.muralis.PictureSourcesTest
+java -cp "${test_dir}/pictures" org.spazio17.muralis.MultipartFormTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \

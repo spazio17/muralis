@@ -536,21 +536,26 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-            // POST_NOTIFICATIONS is the only runtime permission this app declares, and it does not
-            // exist before API 33; on the API 26 MediaPad the notification simply posts.
-            return;
+        // Nothing for the Pictures screensaver: its folder is reached through the picker's
+        // persisted grant, which is not a runtime permission and cannot be granted from here
+        // (2026-09-09).
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            // POST_NOTIFICATIONS does not exist before API 33; on the API 26 MediaPad the
+            // notification simply posts.
+            grantOwnPermission(policy, admin, android.Manifest.permission.POST_NOTIFICATIONS);
         }
+    }
+
+    /** Fail soft: KioskActivity still asks the user the ordinary way, and the service runs either way. */
+    private void grantOwnPermission(DevicePolicyManager policy,
+            android.content.ComponentName admin, String permission) {
         try {
-            boolean granted = policy.setPermissionGrantState(admin, getPackageName(),
-                    android.Manifest.permission.POST_NOTIFICATIONS,
+            boolean granted = policy.setPermissionGrantState(admin, getPackageName(), permission,
                     DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED);
-            Log.i(TAG, "POST_NOTIFICATIONS auto-grant as device owner: "
+            Log.i(TAG, permission + " auto-grant as device owner: "
                     + (granted ? "applied" : "refused"));
         } catch (SecurityException | IllegalArgumentException refused) {
-            // Fail soft: KioskActivity still asks the user the ordinary way, and the foreground
-            // service runs either way.
-            Log.w(TAG, "Could not auto-grant POST_NOTIFICATIONS", refused);
+            Log.w(TAG, "Could not auto-grant " + permission, refused);
         }
     }
 
@@ -1023,9 +1028,35 @@ public final class KioskService extends Service implements KioskCommandDispatche
             saver.put("off_s", settings.offSeconds);
             saver.put("dim_percent", settings.dimPercent);
             saver.put("on_wake", settings.onWake);
+            // The page address is in the shared block, not behind includeAdminDetail: the Home
+            // Assistant text entity reads it, and a redacted field is an undefined template,
+            // which Jinja renders as empty and snaps back on every edit, the trap the web-admin
+            // switch fell into in 2026-08. It is an address on the operator's own network, the
+            // same class of value as the dashboard URL, which is shared for the same reason.
+            saver.put("url", settings.url);
+            saver.put("source", settings.source);
+            saver.put("picture_s", settings.pictureSeconds);
+            saver.put("transition", settings.transition);
+            saver.put("shuffle", settings.shuffle);
+            saver.put("one_per_cycle", settings.onePerCycle);
+            saver.put("credit", settings.credit);
+            saver.put("credit_corner", settings.creditCorner);
+            // The source's own sentence and the picture on the glass, so the web admin and a
+            // Home Assistant card can say "Pictures from Bing, 7 pictures" and name what is up.
+            PictureLibrary library = PictureLibrary.get(this);
+            saver.put("source_state", library.state(settings.source));
+            String sourceProblem = library.problem(settings.source);
+            saver.put("source_problem",
+                    sourceProblem == null ? org.json.JSONObject.NULL : sourceProblem);
+            saver.put("folder_chosen", library.folderReachable());
+            saver.put("folder_lost", library.folderLost());
             if (includeAdminDetail) {
-                saver.put("url", settings.url);
+                saver.put("folder", library.folderName());
             }
+            org.json.JSONObject picture = new org.json.JSONObject();
+            picture.put("title", KioskRuntimeState.screensaverPictureTitle());
+            picture.put("credit", KioskRuntimeState.screensaverPictureCredit());
+            saver.put("picture", picture);
             saver.put("problem", problem == null ? org.json.JSONObject.NULL : problem);
             saver.put("summary", ScreensaverPolicy.describe(settings, active));
         } catch (org.json.JSONException impossible) {
@@ -1776,7 +1807,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (KioskConfig.kioskStopped(this)) {
             return "the kiosk is stopped";
         }
-        if (!KioskRuntimeState.dashboardAlive()) {
+        if (!KioskRuntimeState.dashboardAlive() || !KioskRuntimeState.activityInFront()) {
             return "Muralis is not on screen";
         }
         if (KioskRuntimeState.wizardOnScreen()) {
@@ -1798,8 +1829,71 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     @Override
-    public void setScreensaverMode(String value) {
-        KioskConfig.edit(this).screensaverMode(value).apply();
+    public String setScreensaverFolder(String documentId) {
+        return PictureLibrary.get(this).setReadingFolder(documentId);
+    }
+
+    /**
+     * Opens the in-app playlist browser. This command never grants access or releases lock task;
+     * Android's grant screen is available only through an explicit button in local settings.
+     */
+    @Override
+    public String pickScreensaverFolder() {
+        if (!KioskRuntimeState.dashboardAlive() || !KioskRuntimeState.activityInFront()) {
+            return "Muralis is not on screen";
+        }
+        if (KioskRuntimeState.wizardOnScreen()) return "the first-start wizard is on screen";
+        sendUiCommand("screensaver.pick_folder", -1, null);
+        return null;
+    }
+
+    @Override
+    public void setScreensaverSetting(KioskCommandDispatcher.ScreensaverSetting setting,
+            String value) {
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        switch (setting) {
+            case MODE:
+                editor.screensaverMode(value);
+                break;
+            case SOURCE:
+                editor.screensaverSource(value);
+                break;
+            case IDLE_SECONDS:
+                editor.screensaverIdleSeconds(Integer.parseInt(value));
+                break;
+            case OFF_SECONDS:
+                editor.screensaverOffSeconds(Integer.parseInt(value));
+                break;
+            case PICTURE_SECONDS:
+                editor.screensaverPictureSeconds(Integer.parseInt(value));
+                break;
+            case DIM_PERCENT:
+                editor.screensaverDimPercent(Integer.parseInt(value));
+                break;
+            case URL:
+                editor.screensaverUrl(value);
+                break;
+            case TRANSITION:
+                editor.screensaverTransition(value);
+                break;
+            case CREDIT_CORNER:
+                editor.screensaverCreditCorner(value);
+                break;
+            case ON_WAKE:
+                editor.screensaverOnWake(value);
+                break;
+            case SHUFFLE:
+                editor.screensaverShuffle(Boolean.parseBoolean(value));
+                break;
+            case ONE_PER_CYCLE:
+                editor.screensaverOnePerCycle(Boolean.parseBoolean(value));
+                break;
+            case CREDIT:
+            default:
+                editor.screensaverCredit(Boolean.parseBoolean(value));
+                break;
+        }
+        editor.apply();
         publishTelemetrySoon(this);
     }
 

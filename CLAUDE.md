@@ -33,7 +33,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
   `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
-  `webadmin.enabled`, `screensaver.start/stop/mode`, `system.reboot`, `telemetry.publish`)
+  `webadmin.enabled`, `screensaver.start/stop/mode`, `system.reboot`, `telemetry.publish`;
+  the web admin alone adds `/api/pictures`, `/api/pictures/delete` and `/api/pictures/refresh`
+  for the screensaver's local folder and online sets, which are not commands)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
@@ -522,23 +524,29 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   externally disabled, and `KeyguardViewMediator` records "reshow when re-enabled" before it ever
   checks that the device owner disabled the lock screen; `stopLockTask()` re-enables it, so the
   launcher hand-over came up behind a lock screen. It cannot be dismissed while hidden (the request
-  errors), so `openSystemLauncher` drops the pin first, lifts any brightness override, and
-  `dismissKeyguardForLauncher` retries `requestDismissKeyguard` on a 100 ms clock until the reshown
-  keyguard accepts it. **Only for a device owner whose keyguard is not secure**, where the lock
-  screen is disabled and the dismissal is therefore silent: a real credential stays Android's to
-  ask for, and an ordinary install never asks. Measured on both panels 2026-09-10: with a device
-  PIN set, no dismissal was requested at all and Android's lock screen took the screen. A callback
-  is not a deadline, so an independent 1.2 s timer hands the screen over even where a vendor never
-  answers (on the Lenovo the request went at +0 ms, a retry at +113 ms and the launcher started at
-  +1,206 ms, so the deadline is what completed it), and `onResume` does not re-apply the kiosk
-  policy while a hand-over is pending, which would otherwise re-pin the screen mid-retry. Each
-  hand-over carries a generation, so a repeated escape and a late callback cannot start the
-  launcher twice. Measured on the Huawei BAH2-W19 (API 26, EMUI 8) 2026-09-19, after a `lockNow`
-  sleep and after a power-button sleep: EMUI leaves nothing to reshow, `isKeyguardLocked` stays
-  false and the same deadline starts the launcher at +1.21 s with no lock screen over it; with a
-  device PIN set there, no dismissal was requested and the launcher started 9 ms after lock task
-  ended. Lock task was re-applied on the way back in every run, on both panels.
-  it, and the policy does not need it, it only reads the answer.
+  errors), so `openSystemLauncher` drops the pin first, clears the screensaver and any brightness
+  override, and `dismissKeyguardForLauncher` retries `requestDismissKeyguard` on a 100 ms clock
+  until the reshown keyguard accepts it (one retry on the Lenovo). **Only for a device owner whose
+  keyguard is not secure**, where the lock screen is disabled and the dismissal is therefore
+  silent: a real credential stays Android's to ask for, and an ordinary install never asks. A
+  callback is not a deadline, so an independent 1.2 s timer hands the screen over even where a
+  vendor never answers, and `onResume` does not re-apply the kiosk policy while the hand-over is
+  pending, which would otherwise re-pin the screen mid-retry. Each hand-over carries a generation,
+  so a repeated escape and a late callback cannot start the launcher twice. Measured on the Lenovo
+  2026-09-10, sleeping with `lockNow` and then escaping: the first dismissal request at +0 ms, a
+  retry at +113 ms, the launcher started at +1,206 ms, so the deadline is what completed the
+  hand-over rather than any callback; the launcher was usable with no keyguard over it, brightness
+  came back to the system value, returning to Muralis re-pinned the screen, and two escapes in a
+  row started the launcher exactly once. With a real credential set on the same panel **no
+  dismissal was requested at all** and Android's lock screen took the screen, which is the point.
+  The cost of the deadline is that an escape from an awake panel also waits out the 1.2 s, because
+  the poll waits for a keyguard that never appears; that was true of the first version of this fix
+  too, and it is a second of patience against a bricked hand-over.
+  Measured on the Huawei BAH2-W19 (API 26, EMUI 8) 2026-09-19, after a `lockNow` sleep and after a
+  power-button sleep: EMUI leaves nothing to reshow, `isKeyguardLocked` stays false and the same
+  deadline starts the launcher at +1.21 s with no lock screen over it; with a device PIN set there,
+  no dismissal was requested and the launcher started 9 ms after lock task ended. Lock task was
+  re-applied on the way back in every run, on both panels.
 - **The screensaver is a quieter page after a chosen idle time, and then Display off after a
   second one (built 2026-09-09, from the design note of that day).** Three modes in this step,
   `dim` (the page at a brightness floor), `film` (the black view Display off uses) and `url` (a
@@ -569,8 +577,124 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   `display.source` reads `screensaver` while the dim floor or the film is the screensaver's, so a
   lit dimmed page is never reported as display off. Home Assistant gets a select for the mode and
   one switch that is both state and control; no separate start/stop buttons, they would be the
-  switch twice over. Pictures (a local folder, then Bing and Wikimedia Commons with credit lines)
-  are the next steps of the same design; the camera and microphone are not part of it.
+  switch twice over. The camera and microphone are not part of it.
+- **Pictures: local playlists, Bing and Wikimedia Commons.** `PictureSources` and `TinyJson` stay
+  pure and host-tested. JSON has nesting and value limits and rejects malformed numbers and raw
+  control characters. **A third party chooses the addresses this panel connects to, so those
+  addresses are confined rather than trusted**: HTTPS only, one of four exact approved hosts
+  (`www.bing.com`, `commons.wikimedia.org`, `upload.wikimedia.org`, `thumb.wikimedia.org`), no
+  userinfo, no non-standard port, no fragment, and the check is repeated on every redirect hop,
+  which is why redirects are followed by hand and capped at three. Bing's `urlbase` must start
+  `/th?id=`, so a hostile answer cannot rewrite the authority through path concatenation. That is
+  destination confinement, not proof of safe bytes: a compromised approved service can still send
+  a decoder input, a wrong credit or an objectionable picture. A separate download worker keeps
+  network waits out of the disk and decode queue, so a slow fetch cannot stall the slideshow that
+  is already cached. Seven entries per source are cached with a manifest, fresh for 20 hours,
+  checked at every screensaver start and hourly; a failed fetch keeps the last usable cache and
+  says so in the source's sentence, measured on the Lenovo 2026-09-10 with the radio off and the
+  manifest artificially aged: the cache survived the failed refresh untouched.
+- **A folder grant is access, not a playlist.** `PicturePlaylist` persists individual selected
+  document URIs, names and up to 16 folder grants; new selections stop at 1,000 pictures. Existing
+  single-folder selections migrate once, without deleting originals. Both interfaces browse one
+  directory at a time, 100 rows per page, and select files from multiple folders. New files become
+  browsable, not silently selected. The old `screensaver.folder` command refuses with a migration
+  explanation; its stored folder fields remain only for migration.
+  Android's SAF picker is still required to grant access without broad storage permissions.
+  Only the explicit, locally PIN-gated settings action opens it and releases lock task; an owner
+  gets the existing two-minute return timer. Remote `screensaver.pick_folder` now opens Muralis's
+  own browser, refuses while the activity is not foreground, and does not release lock task.
+  Normal browsing never opens another app. Uploads need no SAF grant and join the local playlist.
+  No new manifest permission, dependency or API-level split, and the built APK declares no photo
+  or storage permission of any kind. A saved grant is not proof that its storage is present:
+  unavailable files keep their selection and the source's sentence says a selected picture cannot
+  be read, measured 2026-09-10 by renaming a granted folder away and back. Verified on hardware
+  the same day, on the device-owner Lenovo (Android 10) and the ordinary-install Huawei
+  (Android 9): two grants held at once, individual selection from both into one playlist,
+  a 2,601-file folder listed 100 rows to a page in under a second with HTTPS and MQTT still
+  answering in a fifth of a second, 60 non-image files in a folder filtered out of the listing,
+  and the migration from the old single stored folder carried every previous selection across
+  without deleting anything. **A crafted document URI cannot widen a grant**: one that names
+  another folder through a granted tree's authority is refused by the provider, and one whose tree
+  is not a saved root is refused by the playlist even where Android still holds a persisted grant
+  for it. What is still untested is a genuinely stalled provider, which is the one case a page
+  size cannot bound, and a legacy folder holding tens of thousands of files.
+- **Captions and uploads.** Captions use document URI keys, with legacy filename fallback, at most
+  200 characters. That avoids *new* same-name collisions across folders, but **a caption written
+  before the playlist existed is keyed by file name alone and therefore bleeds onto every
+  same-named file in every other folder until each one is given its own caption** (measured
+  2026-09-10: a second folder's `pd_2.jpg` was shown on the glass under the first folder's
+  "The Great Wave off Kanagawa, Hokusai"). The fix is a migration that rewrites the legacy keys
+  onto the URIs they were selected as, which is not built. Only uploaded picture files
+  may be deleted; selected external files are merely deselected. Multipart parsing rejects the
+  whole truncated request and preserves boundary-prefix bytes inside images. Authentication and
+  cross-site checks precede body allocation. Only exact POST `/api/pictures` gets 24 MiB/120 s;
+  one process-wide upload permit prevents multiplying that allocation by worker count. Other
+  requests retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
+- **Credited display.** Decode uses a power-of-two sample with at most 2,097,152 ARGB pixels
+  (8 MiB) per bitmap, independent of image shape. Generation and frame/source checks discard stale
+  work, including work invalidated by sleep. Wake resumes an interrupted initial decode even for
+  one-picture-per-cycle. **The credit line is the title and the names, and never a web address**
+  (2026-09-10, after reading the lines on the panel): Commons carries artist, licence short name,
+  "Wikimedia Commons" and the supplied Credit and Attribution notices, and Bing its `copyright`
+  line verbatim, while the licence address and the source-page address stay in the picture and in
+  the cache manifest without reaching the glass, because a wall panel is read from across a room
+  and nobody types a URL off one. A supplied notice that is nothing but an address is dropped for
+  the same reason; one that names somebody is shown as the source worded it. Online credits cannot
+  be disabled. **One credit panel at a time**, decided the same day: the outgoing picture keeps the
+  line until it has left the glass and the incoming one takes it in the transition's end action.
+  Stacking both attributions was built that morning and rejected that afternoon, because a second
+  panel appearing over a picture still on screen reads as a fault; the caption always names a
+  picture that is visible either way. If a full credit cannot fit, refuse the image rather than
+  ellipsize, because an ellipsis is not attribution. Error messages clear old pictures and picture
+  telemetry. The composed credit is what a cache manifest stores, so
+  `PictureLibrary.ATTRIBUTION_VERSION` invalidates every manifest an older build wrote; it is 3.
+  Attribution is not evidence of permission to redistribute Bing photographs: its unofficial
+  endpoint remains an opt-in product/legal risk, not a licence supplied by Muralis.
+- **Settings stay shared.** The existing dispatcher validates every screensaver setting on all
+  three surfaces. All fifteen screensaver discovery entities are announced (read back off the
+  broker 2026-09-10: 35 components in the device document, fifteen of them the screensaver's), and
+  the four boolean switches use a template that renders `None`, which Home Assistant reads as
+  unknown, for a missing field, a null, a non-boolean and a `screensaver` block that is not a
+  mapping; nine such payloads were rendered through Jinja to check it. **Actual Home Assistant
+  consumption is still unverified**, because no instance consumed the document in this round; the
+  structure and the templates are what has been checked. **A mode changed under a showing
+  screensaver ends it** and the next one comes after the idle time in the new mode, which is
+  deliberate and documented at `tickScreensaver`; a same-mode change (a dim floor, a transition,
+  a playlist revision) is re-applied in place **with the clock towards display off left where it
+  was**, measured on the Lenovo: a 40 s off timer still fired at 40 s across an in-place change at
+  10 s. The same-boot screensaver start timestamp survives an activity rebuild too, measured the
+  same way across `kiosk.restart`. **A local decode failure is remembered until the process
+  restarts and nothing clears it on a later success**, so a panel whose storage came back keeps
+  saying a selected picture cannot be read: found 2026-09-10, cleared only by the reboot, and the
+  in-memory `problems` map is why. The secondary WebView handles renderer death and leaves the
+  saver, which is code-reviewed but **not demonstrated**: killing another app's isolated renderer
+  needs root, and root is disabled by a system setting on the test ROM. Renderer memory cannot be
+  inferred from the app's own heap and is reported as its own process: on the Lenovo the app sat
+  at 162 to 187 MB and the renderer at 95 to 126 MB across dashboard, second WebView, one picture,
+  repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
+  renderer death, and file descriptors steady at 188 to 191 (210 while the second WebView is up).
+- **The HTTPS server's capacity is sized for a browser, not for curl.** 16 workers, 12 connections
+  per host, a queue depth of 8, and a socket that has sent nothing by 2 s is closed, which is what
+  keeps a browser's speculative connections from spending the whole per-host budget. Measured on
+  the Lenovo 2026-09-10 against the failure reported that morning: six silent sockets held open
+  from one address no longer cost anything, the admin page still loads in half a second; twelve or
+  twenty do refuse the next connection, immediately rather than after a ten-second hang, and
+  capacity is back inside 2.6 s without anyone closing them. Capacity refusals are logged, one
+  line per 30 s. Failed TLS wrappers and queued sockets close on shutdown. **The plain-HTTP
+  redirect is still broken for a real browser** (2026-09-10): the 301 arrives with its headers and
+  `Content-Length: 50` but the 50-byte body never does, and the connection ends in a reset, so
+  Chrome renders an empty document and Firefox hangs. curl prints the headers it got and looks
+  fine, which is how this survived the morning's diagnosis. `handleConnection` now assigns
+  `channel = tls` *before* the handshake, so the `finally` block closes the TLS wrapper over the
+  same file descriptor after `redirectToHttps` has written to the raw socket; before this change
+  `channel` was still the raw socket on that path. HTTPS itself is unaffected: Chrome renders the
+  whole 47 KB admin page over `https://`.
+- **Fleet is not implemented by a local playlist.** Section 10b of the fleet design still owns
+  content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
+  never cross-panel IDs. Keep uploads alongside grants so removed or cloud storage is not required
+  for a self-contained panel. No claim of fleet compatibility, and none of unattended readiness:
+  the open items are in `../review-screensaver-keyguard-2026-09-10.md`, and the two that are
+  defects rather than gaps are the plain-HTTP redirect above and the legacy caption keys.
 
 ## Platform constraints that shape the code
 

@@ -55,6 +55,10 @@ final class KioskRuntimeState {
     private static volatile String overlayText = "";
     private static volatile String overlayHtml = "";
     private static volatile boolean dashboardAlive;
+    private static volatile boolean activityInFront;
+
+    static void publishActivityInFront(boolean inFront) { activityInFront = inFront; }
+    static boolean activityInFront() { return activityInFront; }
     private static volatile long lastRecycleAtMs = -1;
     private static volatile String lastRecycleReason = "";
     private static final AtomicInteger recycles = new AtomicInteger();
@@ -263,6 +267,23 @@ final class KioskRuntimeState {
 
     static boolean screensaverActive() {
         return screensaverActive;
+    }
+
+    private static volatile String screensaverPictureTitle = "";
+    private static volatile String screensaverPictureCredit = "";
+
+    /** The picture on the glass, for the status document; empty when none is showing. */
+    static void publishScreensaverPicture(String title, String credit) {
+        screensaverPictureTitle = title == null ? "" : title;
+        screensaverPictureCredit = credit == null ? "" : credit;
+    }
+
+    static String screensaverPictureTitle() {
+        return screensaverPictureTitle;
+    }
+
+    static String screensaverPictureCredit() {
+        return screensaverPictureCredit;
     }
 
     static boolean dashboardAlive() {

@@ -452,16 +452,121 @@ public final class KioskCommandDispatcherTest {
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
                 "mode without a value must be rejected");
         require(KioskCommandDispatcher.dispatch("screensaver.mode",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "pictures"), executor)
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "photos"), executor)
                 .status.equals("rejected"), "an unknown mode must be rejected");
-        require(executor.lastScreensaverMode == null, "executor ran despite a bad mode");
+        require(executor.screensaverSettings.isEmpty(), "executor ran despite a bad mode");
         require(KioskCommandDispatcher.dispatch("screensaver.mode",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "url"), executor)
                 .status.equals("accepted"), "url is a mode");
-        require("url".equals(executor.lastScreensaverMode), "mode not forwarded");
+        require("url".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.MODE)), "mode not forwarded");
         require(KioskCommandDispatcher.dispatch("screensaver.mode",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "off"), executor)
                 .status.equals("accepted"), "off is a mode too: it is how the screensaver is switched off");
+        testScreensaverSettingCommands();
+    }
+
+    /**
+     * Every screensaver setting is a command, because MQTT and HTTP must be able to set what the
+     * two user interfaces can (Juri, 2026-09-09). The table below is the whole vocabulary: a
+     * good value forwarded canonically, a bad one refused with its rule.
+     */
+    private static void testScreensaverSettingCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        String[][] good = {
+                {"screensaver.source", "wikimedia", "SOURCE", "wikimedia"},
+                {"screensaver.idle_seconds", " 45 ", "IDLE_SECONDS", "45"},
+                {"screensaver.off_seconds", "0", "OFF_SECONDS", "0"},
+                {"screensaver.picture_seconds", "30", "PICTURE_SECONDS", "30"},
+                {"screensaver.dim_percent", "8", "DIM_PERCENT", "8"},
+                {"screensaver.transition", "slide", "TRANSITION", "slide"},
+                {"screensaver.credit_corner", "top_right", "CREDIT_CORNER", "top_right"},
+                {"screensaver.on_wake", "dashboard", "ON_WAKE", "dashboard"},
+        };
+        for (String[] row : good) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("accepted"), row[0] + " was rejected: " + result.detail);
+            require(row[3].equals(executor.screensaverSettings.get(
+                    KioskCommandDispatcher.ScreensaverSetting.valueOf(row[2]))),
+                    row[0] + " stored " + executor.screensaverSettings.get(
+                            KioskCommandDispatcher.ScreensaverSetting.valueOf(row[2])));
+        }
+        String[][] bad = {
+                {"screensaver.source", "nasa"},
+                {"screensaver.idle_seconds", "2 min"},
+                {"screensaver.off_seconds", "-1"},
+                {"screensaver.picture_seconds", "0"},
+                {"screensaver.dim_percent", "0"},
+                {"screensaver.transition", "zoom"},
+                {"screensaver.credit_corner", "centre"},
+                {"screensaver.on_wake", "later"},
+        };
+        for (String[] row : bad) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("rejected"), row[0] + " accepted " + row[1]);
+            require(!result.detail.isEmpty(), row[0] + " refused without a reason");
+        }
+        // The three flags take the same enabled parsing as every other flag in this app.
+        for (String command : new String[] {"screensaver.shuffle", "screensaver.one_per_cycle",
+                "screensaver.credit"}) {
+            require(KioskCommandDispatcher.dispatch(command,
+                    KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                    command + " without a flag was accepted");
+            require(KioskCommandDispatcher.dispatch(command,
+                    new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.TRUE), executor)
+                    .status.equals("accepted"), command + " with true was rejected");
+        }
+        require("true".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.SHUFFLE)), "shuffle stored");
+        // The screensaver's page: the dashboard's own validator, and empty is how it is cleared.
+        require(KioskCommandDispatcher.dispatch("screensaver.url",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "example.com"), executor)
+                .status.equals("rejected"), "a schemeless page address was accepted");
+        require(KioskCommandDispatcher.dispatch("screensaver.url",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "https://example.com/frame"),
+                executor).status.equals("accepted"), "a page address was rejected");
+        require("https://example.com/frame".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.URL)), "the page address is stored");
+        require(KioskCommandDispatcher.dispatch("screensaver.url",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
+                .status.equals("accepted"), "an empty address clears it");
+        require("".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.URL)), "cleared");
+        testFolderCommands();
+    }
+
+    /**
+     * The folder inside the granted tree, and the picker. Both answer with a reason rather than
+     * accepting: a document id the grant does not cover is not a capability, and a panel that
+     * cannot take its screen back must not be left in a file browser.
+     */
+    private static void testFolderCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("screensaver.folder",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "primary:Pictures/Wall"),
+                executor).status.equals("accepted"), "a folder id was rejected");
+        require("primary:Pictures/Wall".equals(executor.lastFolderDocument), "id not forwarded");
+        require(KioskCommandDispatcher.dispatch("screensaver.folder",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
+                "no id means the top of the folder that was granted");
+        require("".equals(executor.lastFolderDocument), "the empty id is the tree root");
+        executor.folderProblem = "that folder is not inside the folder this panel was given";
+        KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
+                "screensaver.folder",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "primary:Android/data"),
+                executor);
+        require(refused.status.equals("rejected") && refused.detail.contains("not inside"),
+                "a folder outside the grant must be refused with the reason: " + refused.detail);
+        require(KioskCommandDispatcher.dispatch("screensaver.pick_folder",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
+                "the picker was refused where it should open");
+        executor.pickProblem = "the folder picker can only be opened at the panel on this install";
+        KioskCommandDispatcher.Result noPicker = KioskCommandDispatcher.dispatch(
+                "screensaver.pick_folder", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(noPicker.status.equals("rejected") && noPicker.detail.contains("at the panel"),
+                "an install that cannot come back must say so: " + noPicker.detail);
     }
 
     private static final class RecordingExecutor implements KioskCommandDispatcher.Executor {
@@ -564,7 +669,8 @@ public final class KioskCommandDispatcherTest {
 
         /** Non-null stands in for a panel whose screensaver cannot run right now. */
         String screensaverProblem;
-        String lastScreensaverMode;
+        final java.util.Map<KioskCommandDispatcher.ScreensaverSetting, String> screensaverSettings =
+                new java.util.LinkedHashMap<>();
 
         @Override
         public String screensaverStart() {
@@ -577,10 +683,34 @@ public final class KioskCommandDispatcherTest {
             calls.add("screensaverStop");
         }
 
+        /** Non-null stands in for a folder the panel's grant does not cover. */
+        String folderProblem;
+        String lastFolderDocument;
+
         @Override
-        public void setScreensaverMode(String value) {
-            calls.add("setScreensaverMode:" + value);
-            lastScreensaverMode = value;
+        public String setScreensaverFolder(String documentId) {
+            calls.add("setScreensaverFolder:" + documentId);
+            if (folderProblem != null) {
+                return folderProblem;
+            }
+            lastFolderDocument = documentId;
+            return null;
+        }
+
+        /** Non-null stands in for an install where the picker cannot be opened from a distance. */
+        String pickProblem;
+
+        @Override
+        public String pickScreensaverFolder() {
+            calls.add("pickScreensaverFolder");
+            return pickProblem;
+        }
+
+        @Override
+        public void setScreensaverSetting(KioskCommandDispatcher.ScreensaverSetting setting,
+                String value) {
+            calls.add("setScreensaverSetting:" + setting + "=" + value);
+            screensaverSettings.put(setting, value);
         }
 
         @Override

@@ -20,6 +20,17 @@ final class KioskCommandDispatcher {
     private KioskCommandDispatcher() {
     }
 
+    /**
+     * The screensaver's settings as commands, so every one of them can be set over MQTT and HTTP
+     * and not only in the two user interfaces (Juri, 2026-09-09). One executor method rather
+     * than a dozen: the validation is here, where the repo keeps it, and the executor's job is
+     * one {@code KioskConfig.edit} call.
+     */
+    enum ScreensaverSetting {
+        MODE, SOURCE, IDLE_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
+        CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
+    }
+
     static final class Result {
         final String status;
         final String detail;
@@ -137,8 +148,24 @@ final class KioskCommandDispatcher {
         /** Back to the page, and the idle time starts again. */
         void screensaverStop();
 
-        /** Stores the mode; the value has been checked against ScreensaverPolicy already. */
-        void setScreensaverMode(String value);
+        /**
+         * Reads the screensaver's pictures from a folder inside the one the panel was given, or
+         * from its root for an empty id. Returns why not, or null.
+         */
+        String setScreensaverFolder(String documentId);
+
+        /**
+         * Opens the system folder picker on the panel, for an operator who is standing at it or
+         * on the phone with somebody who is. Returns why not, or null.
+         */
+        String pickScreensaverFolder();
+
+        /**
+         * Stores one screensaver setting. The value arrives checked and canonical: this switch
+         * validates every one of them against {@link ScreensaverPolicy} and
+         * {@link PictureSources} before calling, so the executor only writes.
+         */
+        void setScreensaverSetting(ScreensaverSetting setting, String value);
 
         /**
          * Publishes the telemetry document now.
@@ -263,12 +290,110 @@ final class KioskCommandDispatcher {
             case "screensaver.stop":
                 executor.screensaverStop();
                 return accepted();
+            case "screensaver.folder": {
+                // The value is a document id from the panel's own listing, and the executor
+                // refuses one the grant does not cover: an id is not a capability here.
+                String problem = executor.setScreensaverFolder(
+                        args.value == null ? "" : args.value);
+                if (problem != null) {
+                    return rejected(problem);
+                }
+                return accepted();
+            }
+            case "screensaver.pick_folder": {
+                String problem = executor.pickScreensaverFolder();
+                if (problem != null) {
+                    return rejected(problem);
+                }
+                return accepted();
+            }
             case "screensaver.mode":
                 if (!ScreensaverPolicy.isMode(args.value)) {
-                    return rejected("value must be off, dim, film or url");
+                    return rejected("value must be off, dim, film, url or pictures");
                 }
-                executor.setScreensaverMode(args.value);
+                executor.setScreensaverSetting(ScreensaverSetting.MODE, args.value);
                 return accepted();
+            case "screensaver.source":
+                if (!PictureSources.isSource(args.value)) {
+                    return rejected("value must be local, bing or wikimedia");
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.SOURCE, args.value);
+                return accepted();
+            case "screensaver.idle_seconds":
+            case "screensaver.off_seconds": {
+                Integer seconds = ScreensaverPolicy.parseSeconds(args.value);
+                if (seconds == null) {
+                    return rejected("value " + ScreensaverPolicy.SECONDS_RULE);
+                }
+                executor.setScreensaverSetting(command.endsWith("idle_seconds")
+                        ? ScreensaverSetting.IDLE_SECONDS : ScreensaverSetting.OFF_SECONDS,
+                        String.valueOf(seconds));
+                return accepted();
+            }
+            case "screensaver.picture_seconds": {
+                Integer seconds = ScreensaverPolicy.parsePictureSeconds(args.value);
+                if (seconds == null) {
+                    return rejected("value " + ScreensaverPolicy.PICTURE_SECONDS_RULE);
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.PICTURE_SECONDS,
+                        String.valueOf(seconds));
+                return accepted();
+            }
+            case "screensaver.dim_percent": {
+                Integer percent = ScreensaverPolicy.parseDimPercent(args.value);
+                if (percent == null) {
+                    return rejected("value " + ScreensaverPolicy.DIM_RULE);
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.DIM_PERCENT,
+                        String.valueOf(percent));
+                return accepted();
+            }
+            case "screensaver.url": {
+                // The one-off page's own rules, and an empty value is how the address is cleared,
+                // which leaves the mode stored and refused at start time with the reason.
+                String url = args.url != null ? args.url : args.value;
+                if (url != null && url.trim().isEmpty()) {
+                    executor.setScreensaverSetting(ScreensaverSetting.URL, "");
+                    return accepted();
+                }
+                String error = validateDashboardUrl(url);
+                if (error != null) {
+                    return rejected(error);
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.URL, url.trim());
+                return accepted();
+            }
+            case "screensaver.on_wake":
+                if (!ScreensaverPolicy.isOnWake(args.value)) {
+                    return rejected("value must be screensaver or dashboard");
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.ON_WAKE, args.value);
+                return accepted();
+            case "screensaver.transition":
+                if (!ScreensaverPolicy.isTransition(args.value)) {
+                    return rejected("value must be none, fade or slide");
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.TRANSITION, args.value);
+                return accepted();
+            case "screensaver.credit_corner":
+                if (!ScreensaverPolicy.isCorner(args.value)) {
+                    return rejected(
+                            "value must be bottom_left, bottom_right, top_left or top_right");
+                }
+                executor.setScreensaverSetting(ScreensaverSetting.CREDIT_CORNER, args.value);
+                return accepted();
+            case "screensaver.shuffle":
+            case "screensaver.one_per_cycle":
+            case "screensaver.credit": {
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                ScreensaverSetting which = command.endsWith("shuffle") ? ScreensaverSetting.SHUFFLE
+                        : command.endsWith("credit") ? ScreensaverSetting.CREDIT
+                                : ScreensaverSetting.ONE_PER_CYCLE;
+                executor.setScreensaverSetting(which, args.enabled ? "true" : "false");
+                return accepted();
+            }
             case "telemetry.publish": {
                 // The executor answers for itself: with no broker configured, or a session that is
                 // down, "accepted" would be the accepted no-op shape system.shutdown was deleted
