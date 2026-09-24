@@ -102,7 +102,4 @@ final class EscapePin {
         return bytes;
     }
 
-    static byte[] utf8(String text) {
-        return text.getBytes(StandardCharsets.UTF_8);
-    }
 }

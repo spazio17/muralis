@@ -21,7 +21,21 @@
      composition was balanced around the stand's foot rather than around the screen. That is 9.5px
      out of place in the 512px listing icon: small enough to read as "something is slightly off"
      without being nameable (noted 2026-09-07). Every path is therefore two units lower than the
-     first stand-free draft, and nothing else about the drawing changed. -->
+     first stand-free draft, and nothing else about the drawing changed.
+
+     Redrawn on 2026-09-23, with the app's Material 3 redesign, in three ways and no more:
+
+       * **The camera sits in the bezel, not on the glass.** It was a mauve dot just inside the
+         frame, which is where no tablet has ever put a camera (Juri). It is now a dark dot centred
+         on the bezel stroke itself, drawn in the background colour so it reads as a hole in the
+         frame, which is what a camera is.
+       * **The corners are rounded**, the panel a little more and the tiles from square to 2 units,
+         because every card the app draws has a 12 dp corner and the icon was the one square thing
+         left in the product.
+       * **The colours are the app's own**, read out of KioskTheme's dark palette rather than
+         approximated: #c08cff is its accent and #7aa2ff its second accent, the same pair the store
+         banner washes the ground with. The ground is the palette's base, in
+         res/values/ic_launcher_background.xml. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -34,19 +48,23 @@
          the guaranteed 18..90 square. The bezel is the outermost mark, so it alone decides where
          the glyph sits; measure both spans before changing a coordinate here. -->
     <path
-        android:pathData="M30,30 L78,30 A4,4 0 0 1 82,34 L82,74 A4,4 0 0 1 78,78 L30,78 A4,4 0 0 1 26,74 L26,34 A4,4 0 0 1 30,30 Z"
-        android:strokeColor="#CBA6F7"
+        android:pathData="M32,30 L76,30 A6,6 0 0 1 82,36 L82,72 A6,6 0 0 1 76,78 L32,78 A6,6 0 0 1 26,72 L26,36 A6,6 0 0 1 32,30 Z"
+        android:strokeColor="#C08CFF"
         android:strokeWidth="4"
         android:fillColor="#00000000" />
 
-    <!-- The front camera: what makes this a tablet and not a monitor. Centred on the top bezel. -->
+    <!-- The front camera: what makes this a tablet and not a monitor. A 2.5-unit hole centred on
+         the 4-unit top bezel stroke, in the background colour, so 0.75 of the frame shows above and
+         below it. Drawn after the bezel, because it is a hole in the bezel. -->
     <path
-        android:pathData="M52.2,33.2 A1.8,1.8 0 1 1 55.8,33.2 A1.8,1.8 0 1 1 52.2,33.2 Z"
-        android:fillColor="#CBA6F7" />
+        android:pathData="M52.75,30 A1.25,1.25 0 1 1 55.25,30 A1.25,1.25 0 1 1 52.75,30 Z"
+        android:fillColor="#1E1E2E" />
 
-    <!-- Dashboard tiles: two rows, wide and narrow alternating, echoing a card layout. -->
-    <path android:pathData="M33,40 L57,40 L57,52 L33,52 Z" android:fillColor="#CBA6F7" />
-    <path android:pathData="M61,40 L75,40 L75,52 L61,52 Z" android:fillColor="#7F5AF0" />
-    <path android:pathData="M33,56 L47,56 L47,68 L33,68 Z" android:fillColor="#7F5AF0" />
-    <path android:pathData="M51,56 L75,56 L75,68 L51,68 Z" android:fillColor="#CBA6F7" />
+    <!-- Dashboard tiles: two rows, wide and narrow alternating, echoing a card layout. Their field
+         is 33..75 across and 40..68 down, which leaves 5 either side and 8 above and below inside
+         the frame, so the block sits centred in the glass. -->
+    <path android:pathData="M35,40 L55,40 A2,2 0 0 1 57,42 L57,50 A2,2 0 0 1 55,52 L35,52 A2,2 0 0 1 33,50 L33,42 A2,2 0 0 1 35,40 Z" android:fillColor="#C08CFF" />
+    <path android:pathData="M63,40 L73,40 A2,2 0 0 1 75,42 L75,50 A2,2 0 0 1 73,52 L63,52 A2,2 0 0 1 61,50 L61,42 A2,2 0 0 1 63,40 Z" android:fillColor="#7AA2FF" />
+    <path android:pathData="M35,56 L45,56 A2,2 0 0 1 47,58 L47,66 A2,2 0 0 1 45,68 L35,68 A2,2 0 0 1 33,66 L33,58 A2,2 0 0 1 35,56 Z" android:fillColor="#7AA2FF" />
+    <path android:pathData="M53,56 L73,56 A2,2 0 0 1 75,58 L75,66 A2,2 0 0 1 73,68 L53,68 A2,2 0 0 1 51,66 L51,58 A2,2 0 0 1 53,56 Z" android:fillColor="#C08CFF" />
 </vector>

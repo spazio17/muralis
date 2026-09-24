@@ -9,7 +9,7 @@
 # compile and run these suites: dispatcher, provisioning, request origin, system
 # bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
 # retry, system stats, recycle policy, recovery policy, server probe policy,
-# escape sequence and relaunch policy.
+# escape sequence, relaunch policy and the self-signed certificate.
 
 set -euo pipefail
 
@@ -68,7 +68,8 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
-            ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument; do
+            ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
+            SelfSignedCertificate; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -197,6 +198,12 @@ javac -d "${test_dir}/signature" \
     "${pure_java_dir}/PurchaseSignature.java" \
     "${host_test_dir}/PurchaseSignatureTest.java"
 java -cp "${test_dir}/signature" org.spazio17.muralis.PurchaseSignatureTest
+
+mkdir -p "${test_dir}/certificate"
+javac -d "${test_dir}/certificate" \
+    "${pure_java_dir}/SelfSignedCertificate.java" \
+    "${host_test_dir}/SelfSignedCertificateTest.java"
+java -cp "${test_dir}/certificate" org.spazio17.muralis.SelfSignedCertificateTest
 
 javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \
