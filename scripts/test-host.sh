@@ -68,7 +68,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
-            ScreensaverPolicy PictureSources TinyJson MultipartForm; do
+            ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -104,6 +104,16 @@ javac -d "${test_dir}/origin" \
     "${pure_java_dir}/RequestOrigin.java" \
     "${host_test_dir}/RequestOriginTest.java"
 java -cp "${test_dir}/origin" org.spazio17.muralis.RequestOriginTest
+
+# The playlist invariants a database would have held with a UNIQUE column and a transaction, and
+# which this app holds in one JSON document instead: unique names, one active playlist, an ordered
+# item list, and a reorder that refuses a stale order rather than half-applying it.
+mkdir -p "${test_dir}/playlist"
+javac -d "${test_dir}/playlist" \
+    "${pure_java_dir}/PlaylistDocument.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/PlaylistDocumentTest.java"
+java -cp "${test_dir}/playlist" org.spazio17.muralis.PlaylistDocumentTest
 
 # Where the corner tap targets land, per device, from whatever the platform reports. Extracted
 # from the activity because three of its four cases need a device with visible system bars, and

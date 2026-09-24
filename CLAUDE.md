@@ -34,8 +34,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   switch (`kiosk.start/stop/reload/restart/set_url`,
   `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
   `webadmin.enabled`, `screensaver.start/stop/mode`, `system.reboot`, `telemetry.publish`;
-  the web admin alone adds `/api/pictures`, `/api/pictures/delete` and `/api/pictures/refresh`
-  for the screensaver's local folder and online sets, which are not commands)
+  `screensaver.playlist`;
+  the web admin alone adds `/api/pictures`, `/api/pictures/delete`, `/api/pictures/refresh` and the
+  `/api/playlists` family for the picture playlists, which are not commands)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
@@ -593,43 +594,122 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   checked at every screensaver start and hourly; a failed fetch keeps the last usable cache and
   says so in the source's sentence, measured on the Lenovo 2026-09-10 with the radio off and the
   manifest artificially aged: the cache survived the failed refresh untouched.
-- **A folder grant is access, not a playlist.** `PicturePlaylist` persists individual selected
-  document URIs, names and up to 16 folder grants; new selections stop at 1,000 pictures. Existing
-  single-folder selections migrate once, without deleting originals. Both interfaces browse one
-  directory at a time, 100 rows per page, and select files from multiple folders. New files become
-  browsable, not silently selected. The old `screensaver.folder` command refuses with a migration
-  explanation; its stored folder fields remain only for migration.
-  Android's SAF picker is still required to grant access without broad storage permissions.
-  Only the explicit, locally PIN-gated settings action opens it and releases lock task; an owner
-  gets the existing two-minute return timer. Remote `screensaver.pick_folder` now opens Muralis's
-  own browser, refuses while the activity is not foreground, and does not release lock task.
-  Normal browsing never opens another app. Uploads need no SAF grant and join the local playlist.
-  No new manifest permission, dependency or API-level split, and the built APK declares no photo
-  or storage permission of any kind. A saved grant is not proof that its storage is present:
-  unavailable files keep their selection and the source's sentence says a selected picture cannot
-  be read, measured 2026-09-10 by renaming a granted folder away and back. Verified on hardware
-  the same day, on the device-owner Lenovo (Android 10) and the ordinary-install Huawei
-  (Android 9): two grants held at once, individual selection from both into one playlist,
-  a 2,601-file folder listed 100 rows to a page in under a second with HTTPS and MQTT still
-  answering in a fifth of a second, 60 non-image files in a folder filtered out of the listing,
-  and the migration from the old single stored folder carried every previous selection across
-  without deleting anything. **A crafted document URI cannot widen a grant**: one that names
-  another folder through a granted tree's authority is refused by the provider, and one whose tree
-  is not a saved root is refused by the playlist even where Android still holds a persisted grant
-  for it. What is still untested is a genuinely stalled provider, which is the one case a page
-  size cannot bound, and a legacy folder holding tens of thousands of files.
-- **Captions and uploads.** Captions use document URI keys, with legacy filename fallback, at most
-  200 characters. That avoids *new* same-name collisions across folders, but **a caption written
-  before the playlist existed is keyed by file name alone and therefore bleeds onto every
-  same-named file in every other folder until each one is given its own caption** (measured
-  2026-09-10: a second folder's `pd_2.jpg` was shown on the glass under the first folder's
-  "The Great Wave off Kanagawa, Hokusai"). The fix is a migration that rewrites the legacy keys
-  onto the URIs they were selected as, which is not built. Only uploaded picture files
-  may be deleted; selected external files are merely deselected. Multipart parsing rejects the
-  whole truncated request and preserves boundary-prefix bytes inside images. Authentication and
-  cross-site checks precede body allocation. Only exact POST `/api/pictures` gets 24 MiB/120 s;
-  one process-wide upload permit prevents multiplying that allocation by worker count. Other
-  requests retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
+- **Named playlists, one browser, and no folder grants (reworked 2026-09-10).** Juri's rules, from
+  the specification in `../spec-screensaver-picture-mode.md` and his sketch
+  `../folders-pictures-selection.jpg`: several named playlists exist, exactly one plays, a playlist
+  holds individually chosen pictures from any number of folders, a deleted picture leaves the
+  playlist, and a picture removed from a playlist is **not** deleted from disk. His words on the
+  browser settle the shape: "Tablet and phone behaves identically when creating playlist and
+  selecting photos. Even if the phone has the possibility to exit muralis and use the android's file
+  browser, it is still Muralis that must handle the folder and image selections, reason why the
+  build is one only and it must integrate on both devices the in-muralis picture browser."
+  **`PlaylistDocument`** (pure, host-tested) holds the whole set and the rules: unique case-folded
+  names, at most one active, an ordered item list, a duplicate add is a no-op, 32 playlists and
+  1,000 pictures each. **`PicturePlaylists`** is only its storage: one JSON document at
+  `files/playlists.json` replaced by an atomic rename, which is what makes "zero or one active" and
+  "a reorder is one transaction" true by construction without a database. Items are a **list**
+  because the selection this replaced was a `StringSet` and therefore had no order a slideshow
+  could honour; `reorder` takes the whole new order and answers "the playlist changed while it was
+  being reordered" rather than half-applying a stale one. Malformed JSON **throws** and the file is
+  left on disk, because reading it as empty would discard somebody's playlists after one
+  interrupted write.
+- **One browser on every device, reading MediaStore.** `PictureBrowser` replaced
+  `PicturePlaylist`, and the whole SAF path is deleted with it: `ACTION_OPEN_DOCUMENT_TREE`,
+  `takePersistableUriPermission`, granted roots, `MAX_FOLDERS`, the picker's two-minute patience
+  timer, "a saved folder has lost access", and a picture that could be held twice under two
+  different addresses. What differs between devices is only how the read permission arrives: a
+  device owner grants it to itself silently in `KioskService.grantOwnRuntimePermissions`, an
+  ordinary install is asked once by the system dialog from the Screensaver page, which is the one
+  thing Android will not let an app do for itself. **Why MediaStore and not directories:**
+  `File.listFiles()` on `/storage/emulated/0` was written first and does not work, because at
+  Play's `targetSdk` floor scoped storage grants shared media *through MediaStore* and not through
+  the filesystem, so it returns null (measured on the Lenovo). The alternative that does give paths
+  is `MANAGE_EXTERNAL_STORAGE`, which Play treats as very restricted. So a folder is MediaStore's
+  `RELATIVE_PATH` and a picture is a `content://media/...` id. **There is no depth limit.** A
+  `maxdepth` of 3 was built on the morning of 2026-09-10 and deleted the same day: Juri agreed with
+  the specification against his own earlier instruction, because `Pictures/2026/Italy/Rome/Vatican`
+  is depth five and ordinary, and there is nothing for a cap to save when the folders come from an
+  index rather than a walk. Verified on the API 26 tablet: that exact path is reachable and its
+  pictures selectable. The folder index is cached for 30 s and dropped by `refresh()`, so going
+  back into a folder is instant, which is the thing the gallery apps this was modelled on get wrong.
+- **The Picture playlist page is one page for creating and editing**, built from the sketch: folders
+  on the left, the tapped folder's pictures on the right, and everything picked underneath with its
+  folder path prepended so two files called `test.jpg` read apart. A button per selected row sets
+  the friendly name the screensaver credits it by, which is the existing caption and not a second
+  field. Nothing is written until Save, which is what makes Cancel mean something. The Screensaver
+  page carries "Create playlist" with the playlists listed under it, each row offering Use, Edit and
+  Delete, the active one saying "In use" in the same column so the action columns stay aligned.
+  Deleting the playlist in use leaves none in use and the sentence says so, rather than a black
+  panel. Every question this feature asks is a screen the app draws itself: an `AlertDialog` came up
+  in Android's light theme over a dark panel **and took the immersive mode with it**, so a
+  navigation bar appeared on a locked kiosk (measured on API 26).
+- **Every tap on that page repaints one pane, not the screen.** The first version answered a folder
+  tap, a tick and a Remove by calling `showPlaylistPage` again, which is correct and unusable: the
+  page was rebuilt from the top, so picking twenty pictures meant scrolling back down twenty times.
+  `PlaylistPage` holds the three panes and the tick box of every picture on screen, and each action
+  touches only what it changed: a folder tap repaints the folder list from the tree already in
+  memory and re-reads the right pane, a tick repaints the Selected pane alone, and Remove also
+  unticks the box if that folder happens to be open, so the two panes cannot disagree. A background
+  read that finishes for a page that has been left, or for a folder somebody has since navigated
+  away from, is dropped rather than painted. `showPlaylistPage` itself is now only arrival and
+  rotation. **List actions use a smaller button than the rest of the app** (`rowButton`): a wall
+  panel's buttons are sized for standing distance and three of them at that size fill a playlist row
+  and crowd out the name they belong to. And a pair of short labels stays side by side on a phone
+  (`pairedButtonRow`, Select all/Select none and Cancel/Save), where `buttonRow` would stack them;
+  above 600 dp it defers to `buttonRow`, because stretching two buttons across a 1200 px card is the
+  bar-shaped button that rule exists to prevent. On a phone the Selected rows put the path on its
+  own line above its two buttons, since side by side it was ellipsized to `./Pictures.../pd_1.jpg`
+  for two different pictures in different folders.
+- **The migration off document URIs is deliberately unable to lose a selection.** It matches each
+  old address to a media id by the path its document id encodes, which for the external-storage
+  provider is exactly MediaStore's relative path plus display name, with the display name alone as
+  the fallback for genuinely opaque providers. That difference is not academic: the phone held two
+  files called `pd_1.jpg` in different folders, which a name cannot tell apart and a path can. It
+  waits for the read permission, and it only counts itself finished once every address matched, so
+  a later run picks up what an earlier one could not. **What it cannot match is kept, not removed**:
+  the first version deleted it, and on the phone that emptied a playlist of five files that were on
+  disk the whole time and simply not indexed yet, because they arrived over adb. "The index has not
+  caught up" and "the picture is gone" are not the same thing. A kept item still opens on its own
+  persisted grant, and one sentence names it. Measured on the phone: all five repointed, none lost.
+- **The web admin's screensaver is a page of its own (`/screensaver`), and its picture browser
+  never reloads the page.** It was a `<details>` inside the settings grid, so a two-pane browser and
+  a playlist table were unfolding inside a 300 px column of a multi-column page. Everything below
+  the mode now lives on that page: the timings and the picture options side by side, then the
+  playlists, the folder browser and the upload at the full width. **A folder is a link**, not a
+  form button, with a real `/screensaver?at=<path>` address, so a folder can be reloaded, bookmarked
+  or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
+  folder. That is also what fixed a stale-address 404: a folder used to be a POST to
+  `/api/pictures/folder/browse`, whose URL then sat in the address bar and answered nothing on a
+  reload. `admin_pictures.js` intercepts those links and every form inside the browser, and the
+  server answers each change twice over, as a sentence and a flag for `?fragment=1` and as the whole
+  page for a browser with no scripting, so nothing navigates and nothing scrolls. Form bodies are
+  URL-encoded, deliberately: a `FormData` body is sent as multipart and this server parses multipart
+  for the upload alone, so posting a tick that way arrived with no fields at all. The upload's answer
+  is a banner directly under the Upload button, green for a success and red only for a failure (it
+  was red for both, so "1 picture stored." read as an error), with a cross and a five-second timer.
+  The stats poll runs on this page too, for the chip and for the fields it keeps current, so its
+  readout element is optional: writing to the missing `#stats` threw on every tick and took the rest
+  of the poll down with it.
+- **`screensaver.playlist` switches the playlist by name**, and a Home Assistant select carries the
+  panel's own names. By name because that is what a person and a card know, and an unknown name is
+  refused with the names that do exist. The select's "no playlist" option is the word `None`,
+  because a select cannot hold an empty option, so the panel treats that word as none unless a
+  playlist is actually called that; without it, clearing the playlist from a card was refused
+  (found over MQTT, 2026-09-10). Uploads still need no permission at all and appear as their own
+  folder in the browser.
+- **Captions and uploads.** A caption is keyed by the picture's own address, at most 200
+  characters, and there is no file-name fallback any more: reading the name as a fallback is what
+  crossed captions between same-named pictures in different folders (a second folder's `pd_2.jpg`
+  shown on the glass under the first folder's "The Great Wave off Kanagawa, Hokusai", measured
+  2026-09-10). `migrateCaptionKeys` moved the old name keys onto the addresses they were written
+  for and then dropped every bare name; `captions_key_version` is 2, so a panel that already ran
+  the first pass gets the second sweep too. The caption is also the friendly name the playlist page
+  edits, not a second field. Only uploaded picture files may be deleted; a picture chosen from the
+  panel's own storage is only removed from the playlist. Multipart parsing rejects the whole
+  truncated request and preserves boundary-prefix bytes inside images. Authentication and
+  cross-site checks precede body allocation. Only exact POST `/api/pictures` gets 24 MiB/120 s; one
+  process-wide upload permit prevents multiplying that allocation by worker count. Other requests
+  retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
 - **Credited display.** Decode uses a power-of-two sample with at most 2,097,152 ARGB pixels
   (8 MiB) per bitmap, independent of image shape. Generation and frame/source checks discard stale
   work, including work invalidated by sleep. Wake resumes an interrupted initial decode even for
@@ -651,24 +731,29 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   Attribution is not evidence of permission to redistribute Bing photographs: its unofficial
   endpoint remains an opt-in product/legal risk, not a licence supplied by Muralis.
 - **Settings stay shared.** The existing dispatcher validates every screensaver setting on all
-  three surfaces. All fifteen screensaver discovery entities are announced (read back off the
-  broker 2026-09-10: 35 components in the device document, fifteen of them the screensaver's), and
+  three surfaces. Every screensaver setting is a discovery entity (read back off the broker
+  2026-09-10: 36 components on the device-owner Lenovo, sixteen of them the screensaver's, the
+  newest being the playlist select), and
   the four boolean switches use a template that renders `None`, which Home Assistant reads as
   unknown, for a missing field, a null, a non-boolean and a `screensaver` block that is not a
-  mapping; nine such payloads were rendered through Jinja to check it. **Actual Home Assistant
-  consumption is still unverified**, because no instance consumed the document in this round; the
-  structure and the templates are what has been checked. **A mode changed under a showing
+  mapping; nine such payloads were rendered through Jinja to check it. **Verified against a real instance 2026-09-10**: a throwaway Home
+  Assistant in podman consumed the discovery document and built 35 entities per panel, fifteen of
+  them the screensaver's, 22 entity round trips through Home Assistant services all matched the
+  panel, and the four boolean switches read `unknown` for each of the four bad payload shapes. **A mode changed under a showing
   screensaver ends it** and the next one comes after the idle time in the new mode, which is
   deliberate and documented at `tickScreensaver`; a same-mode change (a dim floor, a transition,
   a playlist revision) is re-applied in place **with the clock towards display off left where it
   was**, measured on the Lenovo: a 40 s off timer still fired at 40 s across an in-place change at
   10 s. The same-boot screensaver start timestamp survives an activity rebuild too, measured the
-  same way across `kiosk.restart`. **A local decode failure is remembered until the process
-  restarts and nothing clears it on a later success**, so a panel whose storage came back keeps
-  saying a selected picture cannot be read: found 2026-09-10, cleared only by the reboot, and the
-  in-memory `problems` map is why. The secondary WebView handles renderer death and leaves the
-  saver, which is code-reviewed but **not demonstrated**: killing another app's isolated renderer
-  needs root, and root is disabled by a system setting on the test ROM. Renderer memory cannot be
+  same way across `kiosk.restart`. **A local decode failure used to be remembered until the
+  process restarted**, so a panel whose storage came back kept saying a selected picture cannot be
+  read through three clean cycles and a rebuild, cleared only by a reboot, because the record was an
+  in-memory `problems` map with no counterpart on success. Fixed 2026-09-10: a successful local
+  decode clears it, which is the only event that actually answers the question the sentence asks. The secondary WebView handles renderer death and leaves the
+  saver, **demonstrated on the Lenovo 2026-09-10** once rooted debugging was enabled (killing
+  another app's isolated renderer needs root): `Renderer process crash detected` was followed by
+  `Screensaver off (screensaver renderer ended)`, `renderer_deaths=1`, HTTPS still answering 200,
+  MQTT still accepting commands, a new renderer spawned and the dashboard back. Renderer memory cannot be
   inferred from the app's own heap and is reported as its own process: on the Lenovo the app sat
   at 162 to 187 MB and the renderer at 95 to 126 MB across dashboard, second WebView, one picture,
   repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
@@ -680,21 +765,27 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   from one address no longer cost anything, the admin page still loads in half a second; twelve or
   twenty do refuse the next connection, immediately rather than after a ten-second hang, and
   capacity is back inside 2.6 s without anyone closing them. Capacity refusals are logged, one
-  line per 30 s. Failed TLS wrappers and queued sockets close on shutdown. **The plain-HTTP
-  redirect is still broken for a real browser** (2026-09-10): the 301 arrives with its headers and
-  `Content-Length: 50` but the 50-byte body never does, and the connection ends in a reset, so
-  Chrome renders an empty document and Firefox hangs. curl prints the headers it got and looks
-  fine, which is how this survived the morning's diagnosis. `handleConnection` now assigns
-  `channel = tls` *before* the handshake, so the `finally` block closes the TLS wrapper over the
-  same file descriptor after `redirectToHttps` has written to the raw socket; before this change
-  `channel` was still the raw socket on that path. HTTPS itself is unaffected: Chrome renders the
-  whole 47 KB admin page over `https://`.
+  line per 30 s. Failed TLS wrappers and queued sockets close on shutdown. **The plain-HTTP redirect
+  was broken for a real browser and is fixed** (2026-09-10): the 301 arrived with its headers and
+  `Content-Length: 50`, the body never did, and the connection ended in a reset, so Chrome rendered
+  an empty document and Firefox hung. curl printed the headers it got and looked fine, which is how
+  it survived a first diagnosis. Three causes, all now closed. `handleConnection` had begun
+  assigning `channel = tls` *before* the handshake, so the `finally` block closed the TLS wrapper
+  over the same file descriptor the raw-socket 301 had just been written to; the channel is now the
+  TLS socket only after a successful handshake, with a separate `tlsToRelease` so a failed wrapper
+  is still freed. The header and the body left in two writes and now leave in one. And every
+  connection ends with a **lingering close**, FIN, then drain the client's unread bytes to a 500 ms
+  deadline, then close, which is what Apache's `ap_lingering_close` and nginx's `lingering_close`
+  do and what any early refusal needs anyway: a 401 answered before a 24 MiB upload is read leaves
+  unread bytes by design. Measured afterwards: 186 bytes, the full declared body, a clean FIN.
 - **Fleet is not implemented by a local playlist.** Section 10b of the fleet design still owns
   content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
   never cross-panel IDs. Keep uploads alongside grants so removed or cloud storage is not required
   for a self-contained panel. No claim of fleet compatibility, and none of unattended readiness:
-  the open items are in `../review-screensaver-keyguard-2026-09-10.md`, and the two that are
-  defects rather than gaps are the plain-HTTP redirect above and the legacy caption keys.
+  the open items are in `../review-screensaver-keyguard-2026-09-10.md`. The three that were defects
+  rather than gaps, the plain-HTTP redirect, the legacy caption keys and the uncleared decode
+  failure, were all fixed and measured on 2026-09-10; what remains there are gaps, and a soak is
+  still the largest of them.
 
 ## Platform constraints that shape the code
 

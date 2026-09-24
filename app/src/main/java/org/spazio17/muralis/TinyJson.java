@@ -68,6 +68,107 @@ final class TinyJson {
         return value instanceof String ? (String) value : fallback;
     }
 
+    /** The number at {@code key} as a long, or {@code fallback} when absent or not a number. */
+    static long number(Map<String, Object> object, String key, long fallback) {
+        Object value = object.get(key);
+        return value instanceof Double ? (long) (double) (Double) value : fallback;
+    }
+
+    /** The boolean at {@code key}, or {@code fallback} when absent or not a boolean. */
+    static boolean flag(Map<String, Object> object, String key, boolean fallback) {
+        Object value = object.get(key);
+        return value instanceof Boolean ? (Boolean) value : fallback;
+    }
+
+    /**
+     * The other direction, for the documents this app writes itself rather than reads from a
+     * service: maps, lists, strings, numbers, booleans and null, and nothing else.
+     *
+     * <p>Here rather than in the classes that persist, so a stored document and a parsed one agree
+     * about escaping by construction, and so the writing stays as free of Android as the reading.
+     * {@code org.json} would do this on a device and is absent on the host, which is the same
+     * reason the reader exists.
+     */
+    static String write(Object value) {
+        StringBuilder out = new StringBuilder();
+        writeValue(out, value, 0);
+        return out.toString();
+    }
+
+    private static void writeValue(StringBuilder out, Object value, int depth) {
+        if (depth > MAX_DEPTH) {
+            throw new IllegalArgumentException("JSON: too deep to write");
+        }
+        if (value == null) {
+            out.append("null");
+        } else if (value instanceof Map) {
+            out.append('{');
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+                if (!first) {
+                    out.append(',');
+                }
+                first = false;
+                writeString(out, String.valueOf(entry.getKey()));
+                out.append(':');
+                writeValue(out, entry.getValue(), depth + 1);
+            }
+            out.append('}');
+        } else if (value instanceof List) {
+            out.append('[');
+            boolean first = true;
+            for (Object item : (List<?>) value) {
+                if (!first) {
+                    out.append(',');
+                }
+                first = false;
+                writeValue(out, item, depth + 1);
+            }
+            out.append(']');
+        } else if (value instanceof Boolean) {
+            out.append(((Boolean) value) ? "true" : "false");
+        } else if (value instanceof Number) {
+            double number = ((Number) value).doubleValue();
+            if (Double.isNaN(number) || Double.isInfinite(number)) {
+                throw new IllegalArgumentException("JSON: " + number + " is not a number");
+            }
+            // Whole numbers are written whole: a timestamp read back as 1.789044409703E12 is
+            // still the same instant, but it is unreadable in a file somebody may have to look at.
+            if (number == Math.floor(number) && Math.abs(number) < 1e15) {
+                out.append((long) number);
+            } else {
+                out.append(number);
+            }
+        } else {
+            writeString(out, value.toString());
+        }
+    }
+
+    private static void writeString(StringBuilder out, String text) {
+        out.append('"');
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '"': out.append("\\\""); break;
+                case '\\': out.append("\\\\"); break;
+                case '\n': out.append("\\n"); break;
+                case '\r': out.append("\\r"); break;
+                case '\t': out.append("\\t"); break;
+                case '\b': out.append("\\b"); break;
+                case '\f': out.append("\\f"); break;
+                default:
+                    // Control characters are not legal raw in a JSON string, and U+2028/9 break
+                    // a JavaScript parser that reads the answer as a script rather than as JSON.
+                    if (c < 0x20 || c == 0x2028 || c == 0x2029) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+            }
+        }
+        out.append('"');
+    }
+
     private Object value() {
         skipSpace();
         if (++values > 50_000) throw error("too many values");

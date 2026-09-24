@@ -145,6 +145,7 @@ public final class KioskCommandDispatcherTest {
                 "kiosk.self_destruct", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(unknown.status.equals("unsupported"), "unknown command should be unsupported");
 
+        screensaverPlaylistIsChosenByName();
         System.out.println("KioskCommandDispatcherTest passed");
     }
 
@@ -569,6 +570,33 @@ public final class KioskCommandDispatcherTest {
                 "an install that cannot come back must say so: " + noPicker.detail);
     }
 
+    /**
+     * The playlist is chosen by name, and an empty name means none, which is a real state because a
+     * playlist can be deleted while it is in use.
+     */
+    private static void screensaverPlaylistIsChosenByName() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Holidays"), executor)
+                .status.equals("accepted"), "a playlist name must be accepted");
+        require("Holidays".equals(executor.lastPlaylist), "the name must reach the executor");
+        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
+                .status.equals("accepted"), "an empty name means none and must be accepted");
+        require("".equals(executor.lastPlaylist), "the empty name must reach the executor");
+        // No value at all is a caller mistake rather than a request for none.
+        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "a playlist command with no value must be rejected");
+        // The executor's own refusal is what the caller is told, so a wrong name names the right ones.
+        executor.playlistProblem = "no playlist called Nope; this panel has Holidays";
+        KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
+                "screensaver.playlist",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Nope"), executor);
+        require(refused.status.equals("rejected") && refused.detail.contains("has Holidays"),
+                "an unknown playlist must be refused with the names that exist: " + refused.detail);
+    }
+
     private static final class RecordingExecutor implements KioskCommandDispatcher.Executor {
         final List<String> calls = new ArrayList<>();
         int lastBrightness = -1;
@@ -694,6 +722,19 @@ public final class KioskCommandDispatcherTest {
                 return folderProblem;
             }
             lastFolderDocument = documentId;
+            return null;
+        }
+
+        String playlistProblem;
+        String lastPlaylist;
+
+        @Override
+        public String setScreensaverPlaylist(String name) {
+            calls.add("setScreensaverPlaylist:" + name);
+            if (playlistProblem != null) {
+                return playlistProblem;
+            }
+            lastPlaylist = name;
             return null;
         }
 

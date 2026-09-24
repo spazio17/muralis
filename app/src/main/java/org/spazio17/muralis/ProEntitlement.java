@@ -58,6 +58,25 @@ final class ProEntitlement {
     }
 
     /**
+     * What to tell the operator when a debug build has taken the decision out of Play's hands, or
+     * null when no override is compiled in.
+     *
+     * <p>Exists because the About card reports Play's own answer, and on a panel with no Google
+     * account that answer is a refusal even while the paid cards are open. Showing "Google Play
+     * refused" beside an unlocked MQTT box is the same invisible divergence the honest-status work
+     * removed once already (2026-09-10, the API 26 tablet after its reset). {@code BuildConfig.DEBUG}
+     * is a compile-time constant, so this string is not in a release build at all.
+     */
+    static String overrideDetail() {
+        if (!BuildConfig.DEBUG || BuildConfig.PRO_OVERRIDE.isEmpty()) {
+            return null;
+        }
+        return "on".equals(BuildConfig.PRO_OVERRIDE)
+                ? "Forced on by this test build. Google Play was not asked."
+                : "Forced off by this test build. Google Play was not asked.";
+    }
+
+    /**
      * Whether the paid surfaces may run on this panel.
      *
      * <p>Cheap after the first call. Safe from any thread.

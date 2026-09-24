@@ -154,6 +154,9 @@ final class KioskCommandDispatcher {
          */
         String setScreensaverFolder(String documentId);
 
+        /** Makes the named playlist the one in use, or none when the name is empty. */
+        String setScreensaverPlaylist(String name);
+
         /**
          * Opens the system folder picker on the panel, for an operator who is standing at it or
          * on the phone with somebody who is. Returns why not, or null.
@@ -312,6 +315,18 @@ final class KioskCommandDispatcher {
                     return rejected("value must be off, dim, film, url or pictures");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.MODE, args.value);
+                return accepted();
+            case "screensaver.playlist":
+                // By name, not by id: a name is what a person and a Home Assistant card know, and
+                // an id is an implementation detail nobody types. An empty value means "none",
+                // which is a real state since a playlist can be deleted while it is in use.
+                if (args.value == null) {
+                    return rejected("value must be a playlist name, or empty for none");
+                }
+                String refusal = executor.setScreensaverPlaylist(args.value);
+                if (refusal != null) {
+                    return rejected(refusal);
+                }
                 return accepted();
             case "screensaver.source":
                 if (!PictureSources.isSource(args.value)) {

@@ -2,7 +2,12 @@
 // after somebody has changed something at the tablet, rather than showing whatever was current
 // when it was loaded.
 (function(){
+// The readout itself is optional. The settings page has one; the screensaver page has this
+// poll without it, because the poll is also what keeps every field on that page current when
+// somebody changes a setting at the panel. Writing to a missing element threw on every tick
+// and took the chip and the field-following down with it (caught in the browser, 2026-09-10).
 var target=document.getElementById('stats');
+function show(text){if(target){target.textContent=text;}}
 function mb(kb){return kb==null?'--':Math.round(kb/1024)+'M';}
 function num(v,d){return v==null?'--':v.toFixed(d||0);}
 function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}
@@ -80,7 +85,7 @@ if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off
 // The slider follows the mode, since a level set while the sensor is in charge is
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
-target.textContent=lines.join('\n');
+show(lines.join('\n'));
 var battery=document.getElementById('chip-battery');
 if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;
 battery.textContent=mains?'mains':(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');
@@ -122,12 +127,13 @@ cpu.parentNode.title='processor load';}}
 // interval used to overlap the next one, and two connections in flight where one was
 // expected is what PER_HOST_CONNECTIONS counts.
 var fails=0,shown=false,stopped=false;
-function stop(text){stopped=true;target.textContent=text;}
+function stop(text){stopped=true;show(text);}
 // A refused poll is a normal event here, not an outage: the per-host connection cap
 // exists to refuse them. Blanking a wall panel's whole readout for one, chip included,
 // threw away good numbers to report a hiccup. The figures stay, with a line saying how
 // stale they are.
-function note(text){var el=document.getElementById('stats-stale');
+function note(text){if(!target){return;}
+var el=document.getElementById('stats-stale');
 if(!el){el=document.createElement('p');el.id='stats-stale';el.className='hint';
 target.parentNode.insertBefore(el,target.nextSibling);}
 el.textContent=text;}
@@ -137,7 +143,7 @@ function again(){if(stopped){return;}
 setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
 function ok(){fails=0;shown=true;clearNote();again();}
 function bad(text){fails++;
-if(shown){note(text+'; showing the last reading');}else{target.textContent=text;}
+if(shown){note(text+'; showing the last reading');}else{show(text);}
 again();}
 function poll(){fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){
@@ -149,7 +155,7 @@ return r.json();})
 // A bug in render() is not the panel being unreachable, and reporting it as one sent
 // somebody to check the network cable. The data arrived; say so, and log the reason.
 try{render(data);}catch(e){shown=false;fails=0;clearNote();
-target.textContent='stats received but could not be displayed: '+e.message;
+show('stats received but could not be displayed: '+e.message);
 if(window.console){console.error('Muralis: stats render failed',e);}
 again();return;}
 ok();})

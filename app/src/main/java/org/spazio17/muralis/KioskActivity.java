@@ -59,6 +59,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class KioskActivity extends Activity {
@@ -105,6 +106,8 @@ public final class KioskActivity extends Activity {
      * a change made over MQTT or from the web admin is reflected here. Matches the web admin's own
      * poll.
      */
+    /** The picture read permission, asked for only on an install that is not the device owner. */
+    private static final int REQUEST_PICTURE_READ = 21;
     private static final long LIVE_SETTING_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
     private static final int ADMIN_ESCAPE_ZONE_DP = 96;
@@ -2284,7 +2287,7 @@ public final class KioskActivity extends Activity {
         // the card too and were the same boxes twice).
         LinearLayout screensaverCard = card(theme, "Screensaver");
         ScreensaverControls screensaverControls =
-                addScreensaverControls(screensaverCard, theme, false);
+                addScreensaverControls(screensaverCard, screensaverCard, theme, false);
         Button screensaverMore = secondaryButton(theme, "More screensaver settings");
         screensaverMore.setOnClickListener(view -> showScreensaverSettings());
         screensaverCard.addView(buttonRow(screensaverMore), matchWrap());
@@ -2444,8 +2447,11 @@ public final class KioskActivity extends Activity {
                         showConfiguration(KioskConfig.load(KioskActivity.this)));
                 return;
             }
-            proState.setText(proDetail);
-            buyPro.setVisibility(buyable ? View.VISIBLE : View.GONE);
+            // A compiled-in override is the honest answer on this panel; Play's own detail is
+            // not, because it was never consulted.
+            String override = ProEntitlement.overrideDetail();
+            proState.setText(override != null ? override : proDetail);
+            buyPro.setVisibility(buyable && override == null ? View.VISIBLE : View.GONE);
         });
         proCardBuilt[0] = true;
 
@@ -2625,11 +2631,27 @@ public final class KioskActivity extends Activity {
                 + "page back. Times are in seconds; 0 switches that step off.");
         page.addView(explain, matchWrap());
 
-        LinearLayout controlsCard = card(theme, null);
-        ScreensaverControls controls = addScreensaverControls(controlsCard, theme, true);
-        LinearLayout.LayoutParams cardParams = matchWrap();
-        cardParams.topMargin = dp(16);
-        page.addView(controlsCard, cardParams);
+        // Two concerns, two panels, and the width comes right as a side effect: cardGrid lays
+        // them into two columns from 720 dp, which is what every sibling settings page already
+        // does and what this page did not, so the screensaver panel alone spanned the whole
+        // screen in landscape (the brief's A1 and A2, Juri's field notes).
+        LinearLayout modeCard = card(theme, "Screensaver mode");
+        LinearLayout optionsCard = card(theme, null);
+        // The heading is added here rather than by card(), because it has to be repainted when the
+        // mode changes: the whole point of the second panel is that it says which mode its options
+        // belong to, so a person is never reading settings without knowing what they apply to.
+        TextView optionsTitle = new TextView(this);
+        optionsTitle.setTextColor(theme.text);
+        optionsTitle.setTextSize(18);
+        optionsCard.addView(optionsTitle);
+        ScreensaverControls controls =
+                addScreensaverControls(modeCard, optionsCard, theme, true);
+        controls.optionsTitle = optionsTitle;
+        controls.paintOptionsTitle(KioskConfig.screensaverOf(this).mode);
+        LinearLayout.LayoutParams gridParams = matchWrap();
+        gridParams.topMargin = dp(16);
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(modeCard, optionsCard)),
+                gridParams);
 
         Button back = primaryButton(theme, "Back to configuration");
         back.setOnClickListener(view -> showConfiguration(KioskConfig.load(this)));
@@ -2691,9 +2713,11 @@ public final class KioskActivity extends Activity {
         LinearLayout picturesGroup;
         RadioGroup sourceInput;
         TextView sourceState;
-        Button folderButton;
-        Button forgetFolderButton;
         Button refreshButton;
+        /** The "Create playlist" button and the playlist rows under it. */
+        LinearLayout playlistsGroup;
+        /** The options panel's heading, which names the mode its fields belong to. */
+        TextView optionsTitle;
         LinearLayout sourceButtons;
         EditText pictureSecondsInput;
         RadioGroup transitionInput;
@@ -2746,16 +2770,36 @@ public final class KioskActivity extends Activity {
          * The source decides the rest of the group: playlist access belongs to the local source,
          * fetching to online sources, whose credit switch remains forced on.
          */
+        /** "Dimmed page options", and so on: the mode named where its settings are. */
+        void paintOptionsTitle(String mode) {
+            if (optionsTitle == null) {
+                return;
+            }
+            String name = ScreensaverPolicy.OFF.equals(mode) ? "No screensaver"
+                    : ScreensaverPolicy.DIM.equals(mode) ? "Dimmed page"
+                    : ScreensaverPolicy.FILM.equals(mode) ? "Black film"
+                    : ScreensaverPolicy.URL.equals(mode) ? "Web page"
+                    : ScreensaverPolicy.PICTURES.equals(mode) ? "Pictures" : "Screensaver";
+            optionsTitle.setText(ScreensaverPolicy.OFF.equals(mode)
+                    ? "No screensaver: the times still apply once you pick one"
+                    : name + " options");
+        }
+
         void applySource(String source) {
             if (picturesGroup == null) {
                 return;
             }
             boolean local = PictureSources.LOCAL.equals(source);
-            folderButton.setText("Choose pictures");
-            folderButton.setVisibility(local ? View.VISIBLE : View.GONE);
-            forgetFolderButton.setVisibility(local ? View.VISIBLE : View.GONE);
+            // The playlists belong to the local source; fetching belongs to the online ones.
+            // Nothing here opens a system picker on either device any more (2026-09-10).
+            if (playlistsGroup != null) {
+                playlistsGroup.setVisibility(local ? View.VISIBLE : View.GONE);
+            }
+            // The row itself, not only the button in it: an empty row still spends its own 16 dp
+            // margin, and that margin plus the playlists' own is the gap Juri measured between
+            // the source sentence and Create playlist (2026-09-10, B1).
             refreshButton.setVisibility(local ? View.GONE : View.VISIBLE);
-            sourceButtons.setVisibility(View.VISIBLE);
+            sourceButtons.setVisibility(local ? View.GONE : View.VISIBLE);
             creditBox.setEnabled(local);
             creditBox.setAlpha(local ? 1f : 0.45f);
             if (!local) {
@@ -2837,8 +2881,8 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    private ScreensaverControls addScreensaverControls(LinearLayout parent, KioskTheme theme,
-            boolean full) {
+    private ScreensaverControls addScreensaverControls(LinearLayout parent,
+            LinearLayout options, KioskTheme theme, boolean full) {
         ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
         TextView summary = new TextView(this);
         summary.setTextSize(14);
@@ -2864,46 +2908,46 @@ public final class KioskActivity extends Activity {
         TextView onWakeNote = null;
         if (full) {
             idleInput = secondsInput(theme, settings.idleSeconds);
-            addField(parent, theme, "Idle before the screensaver (seconds, 0 = off)", idleInput);
+            addField(options, theme, "Idle before the screensaver (seconds, 0 = off)", idleInput);
             offInput = secondsInput(theme, settings.offSeconds);
-            addField(parent, theme, "Screensaver before display off (seconds, 0 = never)",
+            addField(options, theme, "Screensaver before display off (seconds, 0 = never)",
                     offInput);
             urlInput = themedInput(theme, settings.url, false);
             urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
             urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                     | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            urlCaption = addField(parent, theme, "Web page to show", urlInput);
+            urlCaption = addField(options, theme, "Web page to show", urlInput);
             dimInput = themedInput(theme, String.valueOf(settings.dimPercent), false);
             dimInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-            dimCaption = addField(parent, theme, "Brightness while dimmed (percent)", dimInput);
+            dimCaption = addField(options, theme, "Brightness while dimmed (percent)", dimInput);
 
             TextView onWakeLabel = fieldCaption(theme, "After a wake from display off");
             LinearLayout.LayoutParams onWakeLabelParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             onWakeLabelParams.topMargin = dp(14);
-            parent.addView(onWakeLabel, onWakeLabelParams);
+            options.addView(onWakeLabel, onWakeLabelParams);
             onWakeInput = new RadioGroup(this);
             radioChoice(theme, onWakeInput, "Show the screensaver first, a touch opens the page",
                     ScreensaverPolicy.WAKE_SCREENSAVER);
             radioChoice(theme, onWakeInput, "Show the page at once",
                     ScreensaverPolicy.WAKE_DASHBOARD);
             checkRadioIfChanged(onWakeInput, settings.onWake);
-            parent.addView(onWakeInput, matchWrapClose());
+            options.addView(onWakeInput, matchWrapClose());
             onWakeNote = new TextView(this);
             onWakeNote.setTextColor(theme.subtext);
             onWakeNote.setTextSize(12);
             onWakeNote.setText("The black film has nothing to glance at: a wake shows the page.");
-            parent.addView(onWakeNote, matchWrapClose());
+            options.addView(onWakeNote, matchWrapClose());
         }
         LinearLayout picturesGroup = full ? new LinearLayout(this) : null;
         if (full) {
             picturesGroup.setOrientation(LinearLayout.VERTICAL);
-            parent.addView(picturesGroup, matchWrapClose());
+            options.addView(picturesGroup, matchWrapClose());
         }
 
         LinearLayout.LayoutParams summaryParams = matchWrapClose();
         summaryParams.topMargin = dp(12);
-        parent.addView(summary, summaryParams);
+        options.addView(summary, summaryParams);
 
         ScreensaverControls controls = new ScreensaverControls(theme, modeInput, idleInput,
                 offInput, urlInput, dimInput, onWakeInput, summary);
@@ -2924,6 +2968,7 @@ public final class KioskActivity extends Activity {
             KioskConfig.edit(this).screensaverMode((String) checked.getTag()).apply();
             KioskService.publishTelemetrySoon(this);
             controls.applyMode((String) checked.getTag());
+            controls.paintOptionsTitle((String) checked.getTag());
             controls.paintSummary();
         });
         if (full) {
@@ -3035,13 +3080,6 @@ public final class KioskActivity extends Activity {
         group.addView(sourceState, stateParams);
         controls.sourceState = sourceState;
 
-        Button folder = secondaryButton(theme, "Choose pictures");
-        folder.setOnClickListener(view -> showPictureBrowser("", 0));
-        controls.folderButton = folder;
-        Button forget = secondaryButton(theme, "Grant access to another folder");
-        forget.setOnClickListener(view -> gateBehindPin("To grant access to a pictures folder",
-                false, this::chooseScreensaverFolder));
-        controls.forgetFolderButton = forget;
         Button refresh = secondaryButton(theme, "Fetch the pictures again");
         refresh.setOnClickListener(view -> {
             String source = KioskConfig.screensaverOf(this).source;
@@ -3049,9 +3087,21 @@ public final class KioskActivity extends Activity {
             PictureLibrary.get(this).refresh(source, () -> controls.paintSourceState(source));
         });
         controls.refreshButton = refresh;
-        LinearLayout sourceButtons = buttonRow(folder, forget, refresh);
+        LinearLayout sourceButtons = buttonRow(refresh);
         controls.sourceButtons = sourceButtons;
         group.addView(sourceButtons, matchWrap());
+
+        // The playlists, under the button that makes one, which is how Juri asked for it on
+        // 2026-09-10: "The button 'Choose pictures' must be renamed to 'Create playlist' and if
+        // playlists exist then list them under the same button with a 'Use' button on the right
+        // side of it to mark it active. Other buttons are 'Edit' and 'Delete'."
+        LinearLayout playlists = new LinearLayout(this);
+        playlists.setOrientation(LinearLayout.VERTICAL);
+        // Close spacing: the playlists answer the sentence directly above them, so they belong to
+        // it rather than being the next control down the card.
+        group.addView(playlists, matchWrapClose());
+        controls.playlistsGroup = playlists;
+        addPlaylistRows(playlists, theme);
 
         EditText pictureSeconds = themedInput(theme, String.valueOf(settings.pictureSeconds), false);
         pictureSeconds.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -3167,65 +3217,368 @@ public final class KioskActivity extends Activity {
      * and the picker is another app, exactly as the brightness grant screen is handled: releasing
      * is what makes the hand-over legal, and no allowlist entry is needed or wanted.
      */
-    private void chooseScreensaverFolder() {
-        if (!configurationVisible || wizardVisible) return;
-        releaseForOtherApp();
-        // Only a deliberate local grant opens Android. On an owner panel the timeout also
-        // recovers an abandoned picker; an ordinary install relies on the operator returning.
-        mainHandler.removeCallbacks(returnFromFolderPicker);
-        if (KioskService.isDeviceOwner(this)) {
-            mainHandler.postDelayed(returnFromFolderPicker, FOLDER_PICKER_PATIENCE_MS);
+    /**
+     * The "Create playlist" button and one row per playlist: its name, what it holds, and Use,
+     * Edit and Delete.
+     *
+     * <p>Rebuilt in place rather than being a screen of its own, because Juri asked for the
+     * playlists to sit under the button that creates them, and because a panel with one playlist
+     * should not make somebody walk through a list page to reach it.
+     */
+    private void addPlaylistRows(LinearLayout group, KioskTheme theme) {
+        group.removeAllViews();
+        PictureLibrary library = PictureLibrary.get(this);
+        if (!library.browsesOwnStorage()) {
+            // An ordinary install before anybody has answered the dialog. Not an error, and not a
+            // reason to hide the feature: the permission is the whole of what is missing.
+            TextView why = new TextView(this);
+            why.setTextColor(theme.subtext);
+            why.setTextSize(12);
+            why.setText("Muralis needs permission to read this panel's pictures before it can "
+                    + "show you any folders.");
+            group.addView(why, matchWrapClose());
+            Button allow = secondaryButton(theme, "Allow Muralis to read pictures");
+            allow.setOnClickListener(view -> requestPicturePermission());
+            group.addView(buttonRow(allow), matchWrap());
+            return;
         }
-        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        Button create = secondaryButton(theme, "Create playlist");
+        create.setOnClickListener(view -> showPlaylistPage(new PlaylistDraft()));
+        group.addView(buttonRow(create), matchWrapClose());
+
+        PlaylistDocument document = library.playlists().load();
+        List<PlaylistDocument.Playlist> all = document.all();
+        if (all.isEmpty()) {
+            TextView none = new TextView(this);
+            none.setTextColor(theme.subtext);
+            none.setTextSize(12);
+            none.setText("No playlists yet. Create one and pick the pictures it shows.");
+            group.addView(none, matchWrapClose());
+            return;
+        }
+        for (int index = 0; index < all.size(); index++) {
+            PlaylistDocument.Playlist playlist = all.get(index);
+            group.addView(playlistRow(theme, playlist, index), matchWrap());
+        }
+    }
+
+    /**
+     * One playlist as a row: name and count on the left, the actions on the right.
+     *
+     * <p>The active playlist shows "In use" where the others show a Use button, in the same
+     * column, so the three action columns stay aligned whichever row is active and so the state is
+     * a word rather than only a colour.
+     */
+    private LinearLayout playlistRow(KioskTheme theme, PlaylistDocument.Playlist playlist,
+            int index) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        // Alternating rows, from the theme rather than a literal, so both themes keep their
+        // contrast; the separator is the same plate one shade in.
+        if (index % 2 == 1) {
+            row.setBackground(theme.panel(theme.mantle, dp(8)));
+        }
+        int pad = dp(8);
+        row.setPadding(pad, pad, pad, pad);
+
+        LinearLayout names = new LinearLayout(this);
+        names.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(this);
+        name.setText(playlist.name);
+        name.setTextColor(theme.text);
+        name.setTextSize(15);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        names.addView(name);
+        TextView detail = new TextView(this);
+        detail.setTextColor(theme.subtext);
+        detail.setTextSize(12);
+        detail.setText(playlist.items.size() + (playlist.items.size() == 1
+                ? " picture" : " pictures"));
+        names.addView(detail);
+        row.addView(names, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // One width for the first column whichever of the two things is in it, so the Edit and
+        // Delete columns line up down the list rather than shifting on the active row.
+        int firstColumn = dp(62);
+        if (playlist.active) {
+            TextView inUse = new TextView(this);
+            inUse.setText("In use");
+            inUse.setTextColor(theme.ok);
+            inUse.setTextSize(13);
+            inUse.setGravity(Gravity.CENTER);
+            inUse.setMinWidth(firstColumn);
+            row.addView(inUse);
+        } else {
+            Button use = rowButton(theme, "Use");
+            use.setMinWidth(firstColumn);
+            use.setMinimumWidth(firstColumn);
+            use.setOnClickListener(view -> changePlaylists(document -> {
+                document.activate(playlist.id);
+                return null;
+            }));
+            row.addView(use);
+        }
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        gap.leftMargin = dp(6);
+        Button edit = rowButton(theme, "Edit");
+        edit.setOnClickListener(view -> {
+            PlaylistDraft draft = new PlaylistDraft();
+            draft.id = playlist.id;
+            draft.name = playlist.name;
+            draft.items.addAll(playlist.items);
+            showPlaylistPage(draft);
+        });
+        row.addView(edit, gap);
+        Button delete = rowButton(theme, "Delete");
+        delete.setOnClickListener(view -> confirmDeletePlaylist(playlist));
+        row.addView(delete, gap);
+        return row;
+    }
+
+    /**
+     * A yes-or-no question as one of this app's own screens.
+     *
+     * <p>Not an {@code AlertDialog}, and that is the point: on the API 26 tablet a system dialog
+     * came up in Android's light theme over a dark panel <em>and took the immersive mode with it</em>,
+     * so a navigation bar appeared on a locked kiosk (measured 2026-09-10). Every other question
+     * this app asks is a screen it draws itself, and this is now no exception.
+     */
+    private void showConfirm(String title, String message, String confirmLabel,
+            Runnable onConfirm, Runnable onCancel) {
+        KioskTheme theme = currentTheme();
+        enterImmersiveMode();
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, title, ""), matchWrap());
+        LinearLayout box = card(theme, null);
+        TextView text = new TextView(this);
+        text.setTextColor(theme.text);
+        text.setTextSize(15);
+        text.setText(message);
+        box.addView(text, matchWrapClose());
+        page.addView(box, matchWrap());
+        Button keep = secondaryButton(theme, "Cancel");
+        keep.setOnClickListener(view -> onCancel.run());
+        Button go = primaryButton(theme, confirmLabel);
+        go.setOnClickListener(view -> onConfirm.run());
+        page.addView(buttonRow(keep, go), matchWrap());
+        setContentView(scrollPage(theme, page));
+        currentScreen = () -> showConfirm(title, message, confirmLabel, onConfirm, onCancel);
+    }
+
+    /**
+     * Asks before deleting, and names the playlist while asking.
+     *
+     * <p>Deleting the one in use leaves nothing in use, which the Pictures sentence then says out
+     * loud ("No playlist is in use."), because a screensaver that goes black without explanation is
+     * the worse failure.
+     */
+    private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist) {
+        showConfirm("Delete " + playlist.name + "?",
+                playlist.active
+                        ? "It is the playlist in use, so the screensaver will have none until you "
+                                + "choose another. The pictures themselves are not deleted."
+                        : "The pictures themselves are not deleted.",
+                "Delete it",
+                () -> {
+                    showScreensaverSettings();
+                    changePlaylists(document -> {
+                        document.delete(playlist.id);
+                        return null;
+                    });
+                },
+                this::showScreensaverSettings);
+    }
+
+    /** One edit of the stored playlists, off the main thread, with the screen redrawn after it. */
+    private void changePlaylists(java.util.function.Function<PlaylistDocument, String> change) {
+        PictureLibrary library = PictureLibrary.get(this);
+        library.run(() -> {
+            PlaylistDocument document = library.playlists().load();
+            String refusal = change.apply(document);
+            if (refusal == null) {
+                refusal = library.playlists().store(document);
+            }
+            library.forgetLocalCount();
+            final String said = refusal;
+            library.onMain(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                if (said != null) {
+                    Toast.makeText(this, PictureLibrary.capitalise(said), Toast.LENGTH_LONG).show();
+                }
+                KioskService.publishTelemetrySoon(this);
+                if (currentScreen != null) {
+                    redrawInPlace(currentScreen);
+                }
+            });
+        });
+    }
+
+    /**
+     * Asks Android for the picture permission, which is the one thing an ordinary install cannot
+     * be given silently.
+     *
+     * <p>A device owner never reaches this: {@code KioskService.grantOwnRuntimePermissions} has
+     * already granted it with no dialog, which is what makes the same browser usable on a screen
+     * nobody is standing at.
+     */
+    private void requestPicturePermission() {
         try {
-            startActivityForResult(pick, REQUEST_PICTURES_FOLDER);
-        } catch (ActivityNotFoundException none) {
-            mainHandler.removeCallbacks(returnFromFolderPicker);
-            applyKioskPolicy();
-            // A stripped ROM with no documents provider. Uploads through the web admin still work.
-            Toast.makeText(this, "This device has no folder picker. Upload pictures in the web "
-                    + "admin instead.", Toast.LENGTH_LONG).show();
-            Log.w(TAG, "No ACTION_OPEN_DOCUMENT_TREE handler on this device", none);
+            requestPermissions(new String[] {PictureBrowser.permission()}, REQUEST_PICTURE_READ);
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Cannot ask for the picture permission", refused);
+            Toast.makeText(this, "This device would not show the permission request.",
+                    Toast.LENGTH_LONG).show();
         }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_PICTURES_FOLDER) {
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] granted) {
+        super.onRequestPermissionsResult(requestCode, permissions, granted);
+        if (requestCode != REQUEST_PICTURE_READ) {
             return;
         }
-        mainHandler.removeCallbacks(returnFromFolderPicker);
-        if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-            PictureLibrary library = PictureLibrary.get(this);
-            library.run(() -> {
-                String refusal = library.rememberFolder(data.getData());
-                library.onMain(() -> {
-                    if (isFinishing() || isDestroyed() || !configurationVisible || !inFront) return;
-                    Toast.makeText(this, refusal == null ? "Folder access saved. Choose pictures now."
-                            : refusal, Toast.LENGTH_LONG).show();
-                    showPictureBrowser("", 0);
-                });
-            });
-        }
+        PictureLibrary library = PictureLibrary.get(this);
+        library.browser().refresh();
+        library.forgetLocalCount();
+        boolean allowed = granted.length > 0
+                && granted[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        Toast.makeText(this, allowed
+                ? "Muralis can read this panel's pictures now."
+                : "Without that permission Muralis can only show pictures uploaded to it.",
+                Toast.LENGTH_LONG).show();
         if (currentScreen != null && configurationVisible) {
-            // The sentence, the count and the buttons all depend on the answer.
             redrawInPlace(currentScreen);
         }
     }
 
-    private void showPictureBrowser(String location, int offset) {
-        showPictureBrowser(location, offset, 0);
+    /**
+     * A playlist being created or edited, held here so a rotation redraws it rather than losing it.
+     *
+     * <p>Nothing is written until Save, which is what makes Cancel mean something and what keeps a
+     * half-picked playlist from ever reaching the screensaver.
+     */
+    private static final class PlaylistDraft {
+        /** Null for a new playlist. */
+        String id;
+        String name = "";
+        final List<String> items = new ArrayList<>();
+        /**
+         * The folder open in the right pane, or null when none has been tapped yet.
+         *
+         * <p>Null rather than "", because "" is a real folder (the top of the volume) and the two
+         * were the same value at first: the top row read as open while the right pane said to pick
+         * a folder, which is two screens disagreeing (2026-09-10).
+         */
+        String folder;
+        int offset;
+        boolean edited;
+    }
+
+    private PlaylistDraft playlistDraft;
+
+    /**
+     * A card whose heading and contents can both be replaced after it has been built.
+     *
+     * <p>{@link #card} paints its heading and forgets it, which is right for a card that never
+     * changes and wrong for a pane that has to say which folder it is showing.
+     */
+    private final class Pane {
+        final LinearLayout card;
+        final TextView heading;
+        final LinearLayout body;
+
+        Pane(KioskTheme theme, String title) {
+            card = card(theme, null);
+            heading = new TextView(KioskActivity.this);
+            heading.setTextColor(theme.text);
+            heading.setTextSize(18);
+            heading.setText(title);
+            card.addView(heading);
+            body = new LinearLayout(KioskActivity.this);
+            body.setOrientation(LinearLayout.VERTICAL);
+            card.addView(body, matchWrapClose());
+        }
+
+        void title(String title) {
+            heading.setText(title);
+        }
+
+        void clear() {
+            body.removeAllViews();
+        }
     }
 
     /**
-     * The playlist browser. {@code depth} counts how far below a granted folder this listing sits
-     * and is carried rather than derived, because a document id is opaque; see
-     * {@link PicturePlaylist#MAX_DEPTH}.
+     * The Picture playlist page's own views, so a tap can repaint one pane instead of the screen.
+     *
+     * <p><b>Why this class exists.</b> The first version answered every tap by calling
+     * {@link #showPlaylistPage} again, which threw the whole page away and built it back. It was
+     * correct and it was unusable: opening a folder, ticking a picture or removing one all jumped
+     * the reader back to the top of the page, so picking twenty pictures meant scrolling down
+     * twenty times (Juri, 2026-09-10, A1, A2 and A4 of his report). Nothing about a tick changes
+     * the folder list, and nothing about opening a folder changes what is already picked, so each
+     * of those taps now repaints only the pane it actually changed and the page never moves.
+     *
+     * <p>The tree is held here as well as drawn, because moving the "open" mark from one folder to
+     * another must not cost a second query: the left pane is repainted from memory and only the
+     * right pane goes back to the index.
      */
-    private void showPictureBrowser(String location, int offset, int depth) {
+    private final class PlaylistPage {
+        final PlaylistDraft draft;
+        final KioskTheme theme;
+        final Pane folders;
+        final Pane pictures;
+        final Pane selected;
+        /** The tick box on screen for each picture, so Remove can untick without a repaint. */
+        final java.util.Map<String, CheckBox> boxes = new java.util.LinkedHashMap<>();
+        /** True while this class sets a box itself, so the box's listener ignores that change. */
+        boolean syncing;
+        List<PictureBrowser.Folder> tree = new ArrayList<>();
+        int uploadCount;
+        String treeProblem;
+
+        PlaylistPage(PlaylistDraft draft, KioskTheme theme) {
+            this.draft = draft;
+            this.theme = theme;
+            folders = new Pane(theme, "Folders");
+            pictures = new Pane(theme, picturesTitle(draft));
+            selected = new Pane(theme, selectedTitle(draft));
+        }
+
+        /**
+         * Whether a background read that is finishing now belongs to a page nobody is looking at:
+         * either this page has been left, or a newer one has replaced it.
+         */
+        boolean gone() {
+            return playlistPage != this || !folders.body.isAttachedToWindow();
+        }
+    }
+
+    private PlaylistPage playlistPage;
+
+    /**
+     * The Picture playlist page: folders on the left, that folder's pictures on the right, and
+     * everything picked so far underneath.
+     *
+     * <p>Built from Juri's sketch of 2026-09-10 (`folders-pictures-selection.jpg`): tapping a
+     * folder row opens its contents beside it rather than replacing the screen, so moving between
+     * folders never costs the sense of where you are, and the ticked pictures are listed below
+     * both panes with the folder prepended so two files with one name read apart.
+     *
+     * <p>One page for both creating and editing, because he said Edit opens the same page with
+     * that playlist loaded. That also means there is no wizard state to lose halfway.
+     *
+     * <p>This method builds the page. It is called on arrival and on a rotation, and by nothing
+     * else: every tap inside the page goes through {@link PlaylistPage} instead.
+     */
+    private void showPlaylistPage(PlaylistDraft draft) {
+        playlistDraft = draft;
         stopScreensaver("choosing pictures");
         destroyWebView();
         configurationVisible = true;
@@ -3234,92 +3587,548 @@ public final class KioskActivity extends Activity {
         publishOperatorScreenState();
         setDashboardFullscreen(true);
         applyKioskPolicy();
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         enterImmersiveMode();
         KioskTheme theme = currentTheme();
-        LinearLayout page = pageColumn(theme);
-        page.addView(pageHeading(theme, "Picture playlist", "Open a folder and select individual pictures"),
-                matchWrap());
-        Button back = secondaryButton(theme, "Back to screensaver");
-        back.setOnClickListener(v -> showScreensaverSettings());
-        Button top = secondaryButton(theme, "Saved folders");
-        top.setOnClickListener(v -> showPictureBrowser("", 0));
-        page.addView(buttonRow(back, top), matchWrap());
-        TextView status = new TextView(this);
-        status.setTextColor(theme.subtext);
-        status.setText("Reading pictures...");
-        page.addView(status, matchWrap());
-        LinearLayout rows = new LinearLayout(this);
-        rows.setOrientation(LinearLayout.VERTICAL);
-        page.addView(rows, matchWrap());
-        setContentView(scrollPage(theme, page));
-        currentScreen = () -> showPictureBrowser(location, offset, depth);
         PictureLibrary library = PictureLibrary.get(this);
-        long renderedRevision = library.revision();
-        Runnable sync = new Runnable() {
-            @Override public void run() {
-                if (!rows.isAttachedToWindow()) return;
-                if (library.revision() != renderedRevision) {
-                    redrawInPlace(() -> showPictureBrowser(location, offset, depth));
-                } else mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, "Picture playlist",
+                draft.id == null ? "Name it, then pick its pictures"
+                        : "Rename it, or change which pictures it shows"), matchWrap());
+
+        EditText name = themedInput(theme, draft.name, false);
+        name.setHint("Playlist name");
+        TextView nameProblem = new TextView(this);
+        nameProblem.setTextColor(theme.bad);
+        nameProblem.setTextSize(12);
+        nameProblem.setVisibility(View.GONE);
+        LinearLayout nameCard = card(theme, null);
+        nameCard.addView(fieldCaption(theme, "Name"), matchWrapClose());
+        nameCard.addView(name, matchWrapClose());
+        nameCard.addView(nameProblem, matchWrapClose());
+        page.addView(nameCard, matchWrap());
+        name.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable typed) {
+                draft.name = typed.toString();
+                draft.edited = true;
+                // Inline while they type rather than on save, per the brief: a clash is worth
+                // knowing about before the picking is done, not after.
+                String problem = library.playlists().load().nameProblem(draft.name, draft.id);
+                boolean blank = draft.name.trim().isEmpty();
+                nameProblem.setText(problem == null || blank ? "" : PictureLibrary.capitalise(problem));
+                nameProblem.setVisibility(problem == null || blank ? View.GONE : View.VISIBLE);
             }
-        };
-        mainHandler.postDelayed(sync, LIVE_SETTING_SYNC_INTERVAL_MS);
+        });
+
+        PlaylistPage screen = new PlaylistPage(draft, theme);
+        playlistPage = screen;
+        // Side by side where there is room, one under the other on a phone: the same rule and the
+        // same 720 dp boundary as every other pair of cards in this app.
+        page.addView(cardGrid(theme,
+                java.util.Arrays.<View>asList(screen.folders.card, screen.pictures.card)),
+                matchWrap());
+        page.addView(screen.selected.card, matchWrap());
+
+        Button cancel = secondaryButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> leavePlaylistPage(draft));
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> savePlaylist(draft));
+        // Paired rather than stacked: two short labels fit across a phone's card, and stacking
+        // them read as two separate decisions instead of one either-or (Juri, 2026-09-10, B4).
+        page.addView(pairedButtonRow(cancel, save), matchWrap());
+
+        setContentView(scrollPage(theme, page));
+        currentScreen = () -> showPlaylistPage(draft);
+
+        screen.folders.body.addView(
+                paneNote(theme, "Reading this panel's pictures...", false), matchWrapClose());
+        loadFolderPane(screen);
+        loadPicturePane(screen);
+        paintSelectedPane(screen);
+    }
+
+    /** The right pane's heading: which folder it is showing, or that none has been tapped. */
+    private String picturesTitle(PlaylistDraft draft) {
+        return draft.folder == null ? "Pictures"
+                : PictureBrowser.UPLOADS.equals(draft.folder) ? "Uploaded to Muralis"
+                : draft.folder.isEmpty() ? "Internal storage" : trimSlash(draft.folder);
+    }
+
+    private String selectedTitle(PlaylistDraft draft) {
+        return "Selected: " + draft.items.size();
+    }
+
+    /** "Pictures/holidays/" reads as "Pictures/holidays" in a heading. */
+    private static String trimSlash(String path) {
+        return path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
+    }
+
+    /** One line of explanation inside a pane, in the pane's own quiet size. */
+    private TextView paneNote(KioskTheme theme, String text, boolean bad) {
+        TextView note = new TextView(this);
+        note.setTextColor(bad ? theme.bad : theme.subtext);
+        note.setTextSize(12);
+        note.setText(text);
+        return note;
+    }
+
+    /** Reads this panel's folder tree on the worker, then draws the left pane from it. */
+    private void loadFolderPane(PlaylistPage screen) {
+        PictureLibrary library = PictureLibrary.get(this);
         library.run(() -> {
-            PicturePlaylist.Page listing = library.browse(location, offset, depth);
+            List<PictureBrowser.Folder> tree = library.browser().folders();
+            // On the worker with the tree, not on the main thread while painting: this reads the
+            // uploads directory, and a pane must not do storage work while it is being drawn.
+            int uploads = library.uploads(0).available;
+            String problem = library.browser().problem();
             library.onMain(() -> {
-                if (!rows.isAttachedToWindow()) return;
-                status.setText(listing.problem != null ? listing.problem
-                        : listing.entries.isEmpty() ? "No supported pictures or folders here."
-                        : "Selected pictures from every saved folder share one playlist.");
-                for (PicturePlaylist.Entry entry : listing.entries) {
-                    if (entry.folder) {
-                        Button open = secondaryButton(theme, entry.name);
-                        int into = entry.uri.startsWith("content:")
-                                ? Math.min(PicturePlaylist.MAX_DEPTH, depth + 1) : 0;
-                        open.setOnClickListener(v -> showPictureBrowser(entry.uri, 0, into));
-                        rows.addView(buttonRow(open), matchWrap());
-                        if (location.isEmpty() && entry.uri.startsWith("content:")) {
-                            Button forget = secondaryButton(theme, "Forget access to this folder");
-                            forget.setOnClickListener(v -> library.run(() -> {
-                                android.net.Uri uri = android.net.Uri.parse(entry.uri);
-                                String refusal = library.forgetFolder(android.provider.DocumentsContract.buildTreeDocumentUri(
-                                        uri.getAuthority(), android.provider.DocumentsContract.getTreeDocumentId(uri))
-                                        .toString());
-                                library.onMain(() -> {
-                                    if (!rows.isAttachedToWindow()) return;
-                                    if (refusal != null) Toast.makeText(this, refusal, Toast.LENGTH_LONG).show();
-                                    showPictureBrowser("", 0);
-                                });
-                            }));
-                            rows.addView(buttonRow(forget), matchWrap());
+                if (screen.gone()) {
+                    return;
+                }
+                screen.tree = tree;
+                screen.uploadCount = uploads;
+                screen.treeProblem = problem;
+                paintFolderPane(screen);
+            });
+        });
+    }
+
+    /**
+     * The left pane: every folder that holds pictures, indented by depth, with the open one marked.
+     *
+     * <p>Indented rather than one level at a time, because the whole tree is already known from
+     * one query and hiding it would only add taps. There is no depth limit: a cap was built on the
+     * morning of 2026-09-10 and removed the same day, since a folder five levels down is ordinary
+     * and MediaStore hands back its path either way.
+     *
+     * <p>Drawn from what {@link PlaylistPage} is holding, so moving the open mark from one row to
+     * another costs no query at all.
+     */
+    private void paintFolderPane(PlaylistPage screen) {
+        screen.folders.clear();
+        screen.folders.body.addView(folderRow(screen, "Uploaded to Muralis",
+                PictureBrowser.UPLOADS, 0, screen.uploadCount), matchWrapClose());
+        if (screen.tree.isEmpty()) {
+            screen.folders.body.addView(paneNote(screen.theme,
+                    screen.treeProblem != null ? screen.treeProblem
+                            : "No pictures on this panel yet.",
+                    screen.treeProblem != null), matchWrapClose());
+            return;
+        }
+        for (PictureBrowser.Folder folder : screen.tree) {
+            screen.folders.body.addView(folderRow(screen, folder.name, folder.path, folder.depth,
+                    folder.total), matchWrapClose());
+        }
+    }
+
+    private LinearLayout folderRow(PlaylistPage screen, String label, String path, int depth,
+            int count) {
+        KioskTheme theme = screen.theme;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        boolean open = path.equals(screen.draft.folder);
+        if (open) {
+            row.setBackground(theme.panel(theme.mantle, dp(8)));
+        }
+        int pad = dp(6);
+        row.setPadding(pad + dp(14) * Math.min(depth, 6), pad, pad, pad);
+        TextView text = new TextView(this);
+        text.setText(label + "  (" + count + ")");
+        text.setTextColor(open ? theme.accent : theme.text);
+        text.setTextSize(14);
+        text.setSingleLine(true);
+        text.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        row.addView(text, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // The whole row is the target, not a button inside it: the sketch says "user taps this row".
+        row.setOnClickListener(view -> openFolder(screen, path));
+        return row;
+    }
+
+    /**
+     * Opens a folder in the right pane.
+     *
+     * <p>Two panes are repainted and the rest of the page is left exactly as it stands: the left
+     * one because the open mark moved, the right one because its contents did. Nothing that has
+     * been picked changes, so the Selected pane is not touched and the page does not move.
+     */
+    private void openFolder(PlaylistPage screen, String path) {
+        if (path.equals(screen.draft.folder)) {
+            return;
+        }
+        screen.draft.folder = path;
+        screen.draft.offset = 0;
+        paintFolderPane(screen);
+        loadPicturePane(screen);
+    }
+
+    /**
+     * Reads the open folder on the worker and draws the right pane from it.
+     *
+     * <p>The answer is dropped when a second folder was tapped while this one was being read, so
+     * a slow volume cannot paint a folder over the one somebody has since asked for.
+     */
+    private void loadPicturePane(PlaylistPage screen) {
+        PlaylistDraft draft = screen.draft;
+        screen.pictures.title(picturesTitle(draft));
+        screen.pictures.clear();
+        screen.boxes.clear();
+        if (draft.folder == null) {
+            screen.pictures.body.addView(paneNote(screen.theme, "Pick a folder on the left.", false),
+                    matchWrapClose());
+            return;
+        }
+        screen.pictures.body.addView(paneNote(screen.theme, "Reading...", false), matchWrapClose());
+        final String folder = draft.folder;
+        final int offset = draft.offset;
+        PictureLibrary library = PictureLibrary.get(this);
+        library.run(() -> {
+            PictureBrowser.Page listing = PictureBrowser.UPLOADS.equals(folder)
+                    ? library.uploads(offset) : library.browser().pictures(folder, offset);
+            library.onMain(() -> {
+                if (screen.gone() || !folder.equals(draft.folder) || offset != draft.offset) {
+                    return;
+                }
+                screen.pictures.clear();
+                paintPicturePane(screen, listing);
+            });
+        });
+    }
+
+    /** The right pane: the open folder's pictures, ticked or not, a page at a time. */
+    private void paintPicturePane(PlaylistPage screen, PictureBrowser.Page listing) {
+        KioskTheme theme = screen.theme;
+        PlaylistDraft draft = screen.draft;
+        if (listing.problem != null) {
+            screen.pictures.body.addView(paneNote(theme, listing.problem, true), matchWrapClose());
+            return;
+        }
+        if (listing.entries.isEmpty()) {
+            screen.pictures.body.addView(
+                    paneNote(theme, "No pictures directly in this folder.", false),
+                    matchWrapClose());
+            return;
+        }
+        for (PictureBrowser.Entry entry : listing.entries) {
+            CheckBox box = themedCheckBox(theme, entry.name, draft.items.contains(entry.uri));
+            box.setOnCheckedChangeListener((button, checked) -> {
+                // The box already shows its own new state, and the folder list is unaffected, so
+                // a tick repaints one pane: the list of what has been picked.
+                if (screen.syncing) {
+                    return;
+                }
+                if (checked) {
+                    if (!draft.items.contains(entry.uri)) {
+                        draft.items.add(entry.uri);
+                    }
+                } else {
+                    draft.items.remove(entry.uri);
+                }
+                draft.edited = true;
+                paintSelectedPane(screen);
+            });
+            screen.boxes.put(entry.uri, box);
+            screen.pictures.body.addView(box, matchWrapClose());
+        }
+        Button all = secondaryButton(theme, "Select all");
+        all.setOnClickListener(view -> selectWholeFolder(screen, true));
+        Button none = secondaryButton(theme, "Select none");
+        none.setOnClickListener(view -> selectWholeFolder(screen, false));
+        // Side by side at any width: two short labels, one either-or (Juri, 2026-09-10, B3).
+        screen.pictures.body.addView(pairedButtonRow(all, none), matchWrap());
+        if (listing.available > listing.entries.size()) {
+            screen.pictures.body.addView(paneNote(theme, (draft.offset + 1) + " to "
+                    + (draft.offset + listing.entries.size()) + " of " + listing.available, false),
+                    matchWrapClose());
+        }
+        List<Button> paging = new ArrayList<>();
+        if (draft.offset > 0) {
+            Button previous = secondaryButton(theme, "Previous");
+            previous.setOnClickListener(view -> {
+                draft.offset = Math.max(0, draft.offset - PictureBrowser.PAGE_SIZE);
+                loadPicturePane(screen);
+            });
+            paging.add(previous);
+        }
+        if (listing.more) {
+            Button next = secondaryButton(theme, "Next");
+            next.setOnClickListener(view -> {
+                draft.offset += PictureBrowser.PAGE_SIZE;
+                loadPicturePane(screen);
+            });
+            paging.add(next);
+        }
+        if (!paging.isEmpty()) {
+            screen.pictures.body.addView(
+                    pairedButtonRow(paging.toArray(new Button[0])), matchWrap());
+        }
+    }
+
+    /** Puts a picture's box in a given state without its own listener answering the change. */
+    private void tickBox(PlaylistPage screen, String uri, boolean on) {
+        CheckBox box = screen.boxes.get(uri);
+        if (box == null || box.isChecked() == on) {
+            return;
+        }
+        boolean wasSyncing = screen.syncing;
+        screen.syncing = true;
+        try {
+            box.setChecked(on);
+        } finally {
+            screen.syncing = wasSyncing;
+        }
+    }
+
+    /** Ticks or unticks every picture in the open folder, not only the page on screen. */
+    private void selectWholeFolder(PlaylistPage screen, boolean select) {
+        PlaylistDraft draft = screen.draft;
+        PictureLibrary library = PictureLibrary.get(this);
+        library.run(() -> {
+            List<PictureBrowser.Entry> every = PictureBrowser.UPLOADS.equals(draft.folder)
+                    ? everyUpload(library) : library.browser().everyPicture(draft.folder);
+            library.onMain(() -> {
+                if (screen.gone()) {
+                    return;
+                }
+                for (PictureBrowser.Entry entry : every) {
+                    if (select) {
+                        if (!draft.items.contains(entry.uri)) {
+                            draft.items.add(entry.uri);
                         }
                     } else {
-                        CheckBox selected = themedCheckBox(theme, entry.name, entry.selected);
-                        selected.setOnCheckedChangeListener((button, checked) -> {
-                            selected.setEnabled(false);
-                            library.run(() -> {
-                                String refusal = library.selectPicture(entry.uri, checked);
-                                library.onMain(() -> {
-                                    if (!rows.isAttachedToWindow()) return;
-                                    if (refusal != null) Toast.makeText(this, refusal, Toast.LENGTH_LONG).show();
-                                    redrawInPlace(() -> showPictureBrowser(location, offset, depth));
-                                });
-                            });
-                        });
-                        rows.addView(selected, matchWrap());
+                        draft.items.remove(entry.uri);
                     }
+                    tickBox(screen, entry.uri, select);
                 }
-                if (offset > 0) {
-                    Button previous = secondaryButton(theme, "Previous page");
-                    previous.setOnClickListener(v -> showPictureBrowser(location,
-                            Math.max(0, offset - PicturePlaylist.PAGE_SIZE), depth));
-                    rows.addView(buttonRow(previous), matchWrap());
+                draft.edited = true;
+                if (draft.items.size() > PlaylistDocument.MAX_PICTURES) {
+                    Toast.makeText(this, "A playlist holds at most "
+                            + PlaylistDocument.MAX_PICTURES + " pictures.",
+                            Toast.LENGTH_LONG).show();
                 }
-                if (listing.more) {
-                    Button next = secondaryButton(theme, "Next page");
-                    next.setOnClickListener(v -> showPictureBrowser(location, offset + PicturePlaylist.PAGE_SIZE, depth));
-                    rows.addView(buttonRow(next), matchWrap());
+                paintSelectedPane(screen);
+            });
+        });
+    }
+
+    private List<PictureBrowser.Entry> everyUpload(PictureLibrary library) {
+        List<PictureBrowser.Entry> all = new ArrayList<>();
+        int offset = 0;
+        while (true) {
+            PictureBrowser.Page page = library.uploads(offset);
+            all.addAll(page.entries);
+            if (!page.more || page.entries.isEmpty()) {
+                return all;
+            }
+            offset += page.entries.size();
+        }
+    }
+
+    /**
+     * Everything picked so far, with the folder prepended and a button to give a picture the name
+     * the screensaver credits it by.
+     *
+     * <p>The path is prepended because this list is the one place two pictures with the same name
+     * from two folders sit next to each other, and one folder cannot hold both, so the folder is
+     * what tells them apart (Juri, 2026-09-10: a bare "test.jpg" twice named neither).
+     */
+    private void paintSelectedPane(PlaylistPage screen) {
+        KioskTheme theme = screen.theme;
+        PlaylistDraft draft = screen.draft;
+        screen.selected.title(selectedTitle(draft));
+        screen.selected.clear();
+        if (draft.items.isEmpty()) {
+            screen.selected.body.addView(
+                    paneNote(theme, "Nothing picked yet. Tick pictures on the right.", false),
+                    matchWrapClose());
+            return;
+        }
+        PictureLibrary library = PictureLibrary.get(this);
+        java.util.Map<String, String> captions = library.captions();
+        for (String uri : new ArrayList<>(draft.items)) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            int pad = dp(6);
+            row.setPadding(pad, pad, pad, pad);
+            LinearLayout labels = new LinearLayout(this);
+            labels.setOrientation(LinearLayout.VERTICAL);
+            TextView path = new TextView(this);
+            path.setText(library.displayPath(uri));
+            path.setTextColor(theme.text);
+            path.setTextSize(13);
+            path.setSingleLine(true);
+            path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            labels.addView(path);
+            String caption = captions.get(uri);
+            if (caption != null && !caption.isEmpty()) {
+                TextView shown = new TextView(this);
+                shown.setText("Credited as \"" + caption + "\"");
+                shown.setTextColor(theme.subtext);
+                shown.setTextSize(11);
+                labels.addView(shown);
+            }
+            Button rename = rowButton(theme, "Name");
+            rename.setOnClickListener(view -> showCaptionPrompt(uri, draft));
+            Button drop = rowButton(theme, "Remove");
+            drop.setOnClickListener(view -> {
+                draft.items.remove(uri);
+                draft.edited = true;
+                // The box for it, if that folder happens to be open, so the two panes never
+                // disagree about what is picked.
+                tickBox(screen, uri, false);
+                paintSelectedPane(screen);
+            });
+            LinearLayout actions = new LinearLayout(this);
+            actions.setOrientation(LinearLayout.HORIZONTAL);
+            actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            actions.addView(rename);
+            LinearLayout.LayoutParams dropParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            dropParams.leftMargin = dp(6);
+            actions.addView(drop, dropParams);
+            // Beside the path where there is room, under it on a phone. Two buttons and a path do
+            // not fit across a 393 dp card: side by side, every row read "./Pictures.../pd_1.jpg"
+            // and two different pictures were shown the same line (Juri, 2026-09-10, B5). Under it
+            // the path has the whole width and the folder that tells them apart is legible.
+            if (wideEnoughForARow()) {
+                row.addView(labels, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                row.addView(actions);
+            } else {
+                row.setOrientation(LinearLayout.VERTICAL);
+                row.addView(labels, matchWrapClose());
+                LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                actionParams.topMargin = dp(4);
+                row.addView(actions, actionParams);
+            }
+            screen.selected.body.addView(row, matchWrapClose());
+        }
+    }
+
+    /**
+     * The friendly name one picture is credited by on the glass.
+     *
+     * <p>This is the existing per-picture caption and not a second field, so a picture that was
+     * already captioned keeps what it had. Stored at once rather than with the draft, because a
+     * caption belongs to the file and not to the playlist that happens to hold it.
+     */
+    private void showCaptionPrompt(String uri, PlaylistDraft draft) {
+        KioskTheme theme = currentTheme();
+        PictureLibrary library = PictureLibrary.get(this);
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, "Picture name",
+                "What the screensaver credits this picture as"), matchWrap());
+        LinearLayout box = card(theme, null);
+        TextView which = new TextView(this);
+        which.setTextColor(theme.subtext);
+        which.setTextSize(13);
+        which.setText(library.displayPath(uri));
+        box.addView(which, matchWrapClose());
+        EditText input = themedInput(theme, library.caption(uri), false);
+        input.setHint("Leave empty to use the file name");
+        box.addView(input, matchWrapClose());
+        page.addView(box, matchWrap());
+        Button back = secondaryButton(theme, "Cancel");
+        back.setOnClickListener(view -> showPlaylistPage(draft));
+        Button keep = primaryButton(theme, "Save the name");
+        keep.setOnClickListener(view -> {
+            String typed = input.getText().toString();
+            hideKeyboard(input);
+            library.run(() -> {
+                String refusal = library.setCaption(uri, typed);
+                library.onMain(() -> {
+                    if (refusal != null) {
+                        Toast.makeText(this, PictureLibrary.capitalise(refusal),
+                                Toast.LENGTH_LONG).show();
+                    }
+                    showPlaylistPage(draft);
+                });
+            });
+        });
+        page.addView(buttonRow(back, keep), matchWrap());
+        setContentView(scrollPage(theme, page));
+        currentScreen = () -> showCaptionPrompt(uri, draft);
+        input.requestFocus();
+    }
+
+    /** Leaving with unsaved changes asks first; leaving an untouched page just goes back. */
+    private void leavePlaylistPage(PlaylistDraft draft) {
+        if (!draft.edited) {
+            playlistDraft = null;
+            showScreensaverSettings();
+            return;
+        }
+        showConfirm("Discard this playlist?",
+                draft.id == null
+                        ? "It has not been saved, so nothing will be kept."
+                        : "The changes you made will not be kept.",
+                "Discard",
+                () -> {
+                    playlistDraft = null;
+                    showScreensaverSettings();
+                },
+                () -> showPlaylistPage(draft));
+    }
+
+    /**
+     * Writes the draft.
+     *
+     * <p>Refused, with the reason on the screen, until the name is a name nothing else uses and at
+     * least one picture is ticked. A new playlist becomes the one in use when nothing else is,
+     * because somebody who has just picked pictures means to see them.
+     */
+    private void savePlaylist(PlaylistDraft draft) {
+        PictureLibrary library = PictureLibrary.get(this);
+        if (draft.items.isEmpty()) {
+            Toast.makeText(this, "Tick at least one picture first.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        library.run(() -> {
+            PlaylistDocument document = library.playlists().load();
+            String refusal = document.nameProblem(draft.name, draft.id);
+            String id = draft.id;
+            long now = System.currentTimeMillis();
+            if (refusal == null && id == null) {
+                id = library.playlists().newId();
+                refusal = document.create(id, draft.name, now);
+            } else if (refusal == null) {
+                refusal = document.rename(id, draft.name, now);
+            }
+            if (refusal == null) {
+                PlaylistDocument.Playlist playlist = document.byId(id);
+                List<String> gone = new ArrayList<>(playlist.items);
+                gone.removeAll(draft.items);
+                document.remove(id, gone, now);
+                refusal = document.add(id, draft.items, now);
+                if (refusal == null) {
+                    refusal = document.reorder(id, draft.items, now);
                 }
+                if (document.active() == null) {
+                    document.activate(id);
+                }
+            }
+            if (refusal == null) {
+                refusal = library.playlists().store(document);
+            }
+            library.forgetLocalCount();
+            final String said = refusal;
+            library.onMain(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                if (said != null) {
+                    Toast.makeText(this, PictureLibrary.capitalise(said), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                playlistDraft = null;
+                KioskService.publishTelemetrySoon(this);
+                Toast.makeText(this, "Playlist saved.", Toast.LENGTH_SHORT).show();
+                showScreensaverSettings();
             });
         });
     }
@@ -3635,14 +4444,14 @@ public final class KioskActivity extends Activity {
 
         Button save = primaryButton(theme, "Save this combination");
         save.setOnClickListener(view -> saveRecordedSequence());
-        panel.addView(buttonRow(save), matchWrap());
+        panel.addView(centeredButtonRow(save), matchWrap());
 
         Button clear = secondaryButton(theme, "Start over");
         clear.setOnClickListener(view -> {
             recordedZones.clear();
             updateRecorderReadout();
         });
-        panel.addView(buttonRow(clear), matchWrap());
+        panel.addView(centeredButtonRow(clear), matchWrap());
 
         Button cancel = secondaryButton(theme, recordingForWizard ? "Back" : "Cancel");
         cancel.setOnClickListener(view -> {
@@ -3653,7 +4462,7 @@ public final class KioskActivity extends Activity {
                 showEscapeSequences(KioskConfig.load(this));
             }
         });
-        panel.addView(buttonRow(cancel), matchWrap());
+        panel.addView(centeredButtonRow(cancel), matchWrap());
 
         // 460dp was a fixed width, and a phone in portrait is 360dp or less, so the panel and
         // every button in it ran off both edges with no way to reach Save. Capped instead: as wide
@@ -4674,8 +5483,12 @@ public final class KioskActivity extends Activity {
         sub.setTextColor(theme.subtext);
         sub.setTextSize(15);
         titles.addView(sub);
-        heading.addView(titles, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        // A gap the title cannot be laid out into: on a phone "Picture playlist" filled its column
+        // exactly and ran straight into "75% charging" with no space between them (2026-09-10).
+        titleParams.rightMargin = dp(12);
+        heading.addView(titles, titleParams);
 
         heading.addView(buildStatusChip(theme), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -5669,7 +6482,9 @@ public final class KioskActivity extends Activity {
                 stopScreensaver("asked for");
                 break;
             case "screensaver.pick_folder":
-                showPictureBrowser("", 0);
+                // Opens the playlist page rather than any system picker: there is no picker on
+                // this path any more, on either device.
+                showPlaylistPage(new PlaylistDraft());
                 break;
             case "display.orientation":
                 // The method reads the setting KioskService has already stored, so there is one
@@ -7104,6 +7919,95 @@ public final class KioskActivity extends Activity {
             row.addView(buttons[i], params);
         }
         return row;
+    }
+
+    /**
+     * The same row, centred, for a narrow centred card rather than a full-width page.
+     *
+     * <p>Only the tap recorder uses it. Its panel is a 460 dp card floating in the middle of the
+     * screen and every other line in it, the step, the title, the hint and the readout, is
+     * centred, so a button hugging the card's left edge reads as a misalignment rather than as
+     * the house style (Juri, 2026-09-10). On a full-width settings page the left edge is exactly
+     * right, which is why this is a second method and not a change to {@link #buttonRow}.
+     *
+     * <p>Horizontal only, deliberately: vertical centring is what pushed every button below its
+     * row and cut off its bottom edge, see the comment in {@link #buttonRow}.
+     */
+    private LinearLayout centeredButtonRow(Button... buttons) {
+        LinearLayout row = buttonRow(buttons);
+        row.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+        return row;
+    }
+
+    /**
+     * Two or three buttons that stay side by side at any width, sharing the row equally.
+     *
+     * <p>{@link #buttonRow} stacks below 600 dp, which is right for a pair of long labels on a
+     * phone and wrong for a pair of short ones: "Select all" over "Select none" and "Cancel" over
+     * "Save" read as separate decisions rather than as one either-or, and cost two rows of a card
+     * that has none to spare (Juri, 2026-09-10, B3 and B4). These labels fit across a phone's card
+     * with room left, so they are laid out as a pair.
+     *
+     * <p>Weighted rather than sized to the label, so the pair is symmetrical: an either-or whose
+     * halves are different widths reads as one option being the expected one.
+     */
+    private LinearLayout pairedButtonRow(Button... buttons) {
+        // Where a row is wide the ordinary sizing is already right, and stretching two buttons
+        // across a 1200 px card would turn each of them into a bar, which is the thing buttonRow
+        // exists to avoid. A single button is not a pair either: "Next" on its own would be
+        // stretched the whole width by the weights below. This method is only about what a phone
+        // does with two or three buttons that belong together.
+        if (buttons.length < 2 || getResources().getConfiguration().screenWidthDp >= 600) {
+            return buttonRow(buttons);
+        }
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        // Both off, for the reason buttonRow gives: a centred child's margin lands in the row's
+        // own offset and cuts the bottom edge off every button in it.
+        row.setBaselineAligned(false);
+        row.setGravity(Gravity.START | Gravity.TOP);
+        for (int i = 0; i < buttons.length; i++) {
+            // A weighted child is given its share whatever its minimum says, and a 160 dp minimum
+            // on a 393 dp phone would make the pair wider than the card it sits in.
+            buttons[i].setMinWidth(0);
+            buttons[i].setMinimumWidth(0);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            if (i > 0) {
+                params.leftMargin = dp(12);
+            }
+            params.topMargin = dp(10);
+            row.addView(buttons[i], params);
+        }
+        return row;
+    }
+
+    /**
+     * A compact action button for a list row: Use, Edit, Delete, Name, Remove.
+     *
+     * <p>Every other button in this app is sized for a wall panel touched from standing distance,
+     * and at that size three of them fill a playlist row and crowd out the name they belong to
+     * (Juri, 2026-09-10, A3 and B2). A row's actions are read after its name and only once the eye
+     * has stopped there, so this is the one place where the smaller button is the honest one.
+     *
+     * <p>Every minimum is cleared, not only the width: a platform Button carries a 48 dp minimum
+     * height that padding alone cannot get under, and that height is most of what made these read
+     * as slabs.
+     */
+    /** Whether a card is wide enough to put a label and its buttons on one line. */
+    private boolean wideEnoughForARow() {
+        return getResources().getConfiguration().screenWidthDp >= 600;
+    }
+
+    private Button rowButton(KioskTheme theme, String label) {
+        Button button = secondaryButton(theme, label);
+        button.setTextSize(13);
+        button.setPadding(dp(12), dp(6), dp(12), dp(6));
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        return button;
     }
 
     private LinearLayout.LayoutParams matchWrap() {

@@ -656,6 +656,21 @@ final class MqttController implements MqttCallbackExtended {
                     "screensaver.mode",
                     screensaverModes,
                     "{{ value_json.screensaver.mode }}"));
+            // The playlists by name, so a card can switch a panel's pictures without knowing an
+            // id. "None" is a real option because a playlist can be deleted while it is in use,
+            // and an entity that cannot express the state it is in reads as broken.
+            org.json.JSONArray playlistNames = new org.json.JSONArray();
+            playlistNames.put(PLAYLIST_NONE);
+            PlaylistDocument playlists = PictureLibrary.get(appContext).playlists().load();
+            for (PlaylistDocument.Playlist playlist : playlists.all()) {
+                playlistNames.put(playlist.name);
+            }
+            components.put("screensaver_playlist", select(
+                    "Screensaver playlist",
+                    "screensaver.playlist",
+                    playlistNames,
+                    "{{ value_json.screensaver.playlist if value_json.screensaver is mapping "
+                            + "and value_json.screensaver.playlist else '" + PLAYLIST_NONE + "' }}"));
             components.put("screensaver", toggle(
                     "Screensaver",
                     "{\"command\":\"screensaver.start\"}",
@@ -1060,6 +1075,15 @@ final class MqttController implements MqttCallbackExtended {
         select.put("value_template", valueTemplate);
         return select;
     }
+
+    /**
+     * What the playlist select shows and sends when no playlist is in use.
+     *
+     * <p>A select cannot hold an empty option, and Home Assistant renders a state that is not one
+     * of the options as unknown, so the absence of a playlist needs a word of its own. The command
+     * side treats it as "none" because {@code setScreensaverPlaylist} trims it to nothing.
+     */
+    static final String PLAYLIST_NONE = "None";
 
     /** A press. Stateless, so it needs no template and reads nothing. */
     private JSONObject button(String name, String command) throws JSONException {

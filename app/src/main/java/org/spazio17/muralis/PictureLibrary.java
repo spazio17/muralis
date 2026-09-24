@@ -104,13 +104,15 @@ final class PictureLibrary {
     /** The folder's last count and when it was taken: /api/stats polls the sentence every 5 s. */
     private volatile int localCount = -1;
     private volatile long localCountAtMs;
-    private final PicturePlaylist playlist;
+    private final PictureBrowser browser;
+    private final PicturePlaylists playlists;
     private final java.util.concurrent.atomic.AtomicLong revision = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicBoolean counting = new java.util.concurrent.atomic.AtomicBoolean();
 
     private PictureLibrary(Context context) {
         app = context.getApplicationContext();
-        playlist = new PicturePlaylist(app);
+        browser = new PictureBrowser(app);
+        playlists = new PicturePlaylists(app);
         run(this::ensurePlaylist);
     }
 
@@ -266,8 +268,16 @@ final class PictureLibrary {
         if (PictureSources.LOCAL.equals(source)) {
             int count = localCount();
             String issue = problem(source);
-            return (count < 0 ? "Reading the playlist" : count + " selected pictures")
-                    + " from uploads and " + playlist.roots().size() + " saved folders."
+            PlaylistDocument.Playlist active = playlists.load().active();
+            if (active == null) {
+                // Not an error and not an empty playlist: no playlist has been chosen, which is
+                // the state a fresh panel and a panel whose active playlist was just deleted are
+                // both in, and which the screensaver must be able to say rather than going black.
+                return "No playlist is in use." + (issue == null ? "" : " " + issue);
+            }
+            return (count < 0 ? "Reading the playlist"
+                    : count + (count == 1 ? " picture" : " pictures"))
+                    + " from " + active.name + "."
                     + (issue == null ? "" : " " + issue);
         }
         return onlineState(source);
@@ -316,7 +326,7 @@ final class PictureLibrary {
         return cached;
     }
 
-    private void forgetLocalCount() {
+    void forgetLocalCount() {
         localCount = -1;
         revision.incrementAndGet();
     }
@@ -325,8 +335,25 @@ final class PictureLibrary {
 
     /** A source's last problem, or null; the status document carries it beside the sentence. */
     String problem(String source) {
-        return PictureSources.LOCAL.equals(source) && playlist.problem() != null
-                ? playlist.problem() : problems.get(source);
+        if (PictureSources.LOCAL.equals(source)) {
+            String stored = playlists.problem();
+            if (stored != null) {
+                return stored;
+            }
+            String migration = playlists.migrationNote();
+            if (migration != null) {
+                return migration;
+            }
+            String dropped = deletedNote();
+            if (dropped != null) {
+                return dropped;
+            }
+            String browsing = browser.problem();
+            if (browsing != null) {
+                return browsing;
+            }
+        }
+        return problems.get(source);
     }
 
     // ------------------------------------------------------------------ online sources
@@ -606,15 +633,22 @@ final class PictureLibrary {
         if (!PictureSources.LOCAL.equals(source)) {
             return new FileInputStream(cacheFile(source, picture.url));
         }
-        if (isStored(picture.url)) {
+        if (isUpload(picture.url)) {
             return new FileInputStream(Uri.parse(picture.url).getPath());
         }
-        if (!playlist.contains(Uri.parse(picture.url))) throw new IOException("folder access unavailable");
-        InputStream in = app.getContentResolver().openInputStream(Uri.parse(picture.url));
-        if (in == null) {
+        // The permission is checked again here rather than trusted from the playlist: a stored
+        // selection outlives the grant that made it, so a panel that lost it must fail honestly
+        // instead of reading on. Only for the panel's own pictures, though: a document URI from
+        // the retired folder-picker path still opens on its own persisted grant, and a panel
+        // between the two migration steps has to keep showing what it was already showing.
+        if (PictureBrowser.isMedia(picture.url) && !browser.canReadStorage()) {
+            throw new IOException("this panel may not read its own pictures");
+        }
+        InputStream own = app.getContentResolver().openInputStream(Uri.parse(picture.url));
+        if (own == null) {
             throw new IOException("no stream for " + picture.url);
         }
-        return in;
+        return own;
     }
 
     // ------------------------------------------------------------------ the pictures at home
@@ -628,90 +662,32 @@ final class PictureLibrary {
         return new File(app.getFilesDir(), "pictures");
     }
 
-    /**
-     * The folder a person chose with the system's folder picker, or null when none is chosen.
-     *
-     * <p>This replaced the pictures permission on 2026-09-09. A persisted grant from
-     * {@code ACTION_OPEN_DOCUMENT_TREE} reads exactly the folder the operator pointed at, on
-     * every Android from 8 to 16 with one code path, including an SD card and including files
-     * copied in later over USB; it survives reboots, needs no manifest permission at all, and
-     * so needs no declaration in Play's photo and video permissions policy. The permission it
-     * replaced could read every picture on the device, which was more access than this feature
-     * ever wanted.
-     */
-    Uri chosenFolder() {
-        String stored = KioskConfig.screensaverFolderUri(app);
-        if (stored.isEmpty()) {
-            return null;
-        }
-        Uri uri = Uri.parse(stored);
-        for (UriPermission held : app.getContentResolver().getPersistedUriPermissions()) {
-            if (held.getUri().equals(uri) && held.isReadPermission()) {
-                return uri;
-            }
-        }
-        // The grant is gone: the folder was deleted, the card removed, or the app's data cleared.
-        return null;
-    }
-
-    /** Whether at least one folder has been saved, independent of its present availability. */
+    /** Whether pictures can be reached at all: whether this panel may read its own. */
     boolean folderReachable() {
-        return !playlist.roots().isEmpty();
-    }
-
-    /** Whether Android has lost at least one saved folder grant. */
-    boolean folderLost() {
-        return playlist.hasLostGrant();
+        return browser.canReadStorage();
     }
 
     /**
-     * The folder the pictures are read from: the granted tree's root, or a folder inside it that
-     * somebody chose, which the web admin can do from a distance because the grant already
-     * covers the whole subtree.
-     */
-    Uri readingFolder() {
-        Uri tree = chosenFolder();
-        if (tree == null) {
-            return null;
-        }
-        String document = KioskConfig.screensaverFolderDocument(app);
-        return DocumentsContract.buildDocumentUriUsingTree(tree,
-                document.isEmpty() ? DocumentsContract.getTreeDocumentId(tree) : document);
-    }
-
-    /**
-     * Reads the pictures from a folder inside the granted tree, or from its root when the id is
-     * empty. Refuses an id the grant does not cover, which is what keeps this endpoint from
-     * being a way to read the rest of the device.
+     * Whether this panel browses its own storage.
      *
-     * @return a reason, or null once it is stored
+     * <p>Always true once the read permission is granted, which is now the only path on every
+     * device (2026-09-10). Kept as a question rather than removed because the screens still have
+     * to say something useful while the permission is missing, which on an ordinary install is
+     * every moment before somebody answers the dialog.
      */
-    String setReadingFolder(String documentId) {
-        return "Select individual pictures in the playlist browser; folder-wide selection was retired.";
+    boolean browsesOwnStorage() {
+        return browser.canReadStorage();
     }
 
-    /**
-     * The folder the pictures are read from, in words a person recognises.
-     *
-     * <p>The path the document id encodes, when it has one, because "Pictures/Wall" says more
-     * than the display name "Wall", and because the display name of a volume's own root is "0"
-     * on the storage provider, which says nothing at all (seen on the Lenovo 2026-09-09). A
-     * provider with opaque ids, a cloud one for instance, has no path, and its display name is
-     * then the best there is.
-     */
-    String folderName() {
-        return playlist.roots().size() + " saved folders";
+    /** The browser the screens and the web admin share. */
+    PictureBrowser browser() {
+        return browser;
     }
 
-    /** Remembers the folder the picker returned, and keeps the grant across reboots. */
-    String rememberFolder(Uri treeUri) {
-        ensurePlaylist();
-        String refusal = playlist.addFolder(treeUri);
-        forgetLocalCount();
-        KioskService.publishTelemetrySoon(app);
-        return refusal;
+    /** The playlists the screens and the web admin share. */
+    PicturePlaylists playlists() {
+        return playlists;
     }
-
 
     /**
      * Every selected local picture, from uploads and all saved folder grants. A supplied caption
@@ -720,29 +696,108 @@ final class PictureLibrary {
     List<Picture> listLocal() {
         ensurePlaylist();
         List<Picture> pictures = new ArrayList<>();
+        PlaylistDocument.Playlist active = playlists.load().active();
+        if (active == null) {
+            return pictures;
+        }
         Map<String, String> captions = captions();
-        for (Picture picture : playlist.pictures()) {
-            pictures.add(localPicture(picture.url, picture.credit, captions));
+        List<String> gone = new ArrayList<>();
+        // The playlist's own order, which is the point of storing a list rather than a set.
+        for (String uri : active.items) {
+            String name = localName(uri);
+            if (name == null) {
+                gone.add(uri);
+                continue;
+            }
+            pictures.add(localPicture(uri, name, captions));
+        }
+        if (!gone.isEmpty()) {
+            dropDeleted(active.id, gone);
         }
         return pictures;
+    }
+
+    /**
+     * Takes pictures that no longer exist out of the playlist that holds them.
+     *
+     * <p>Juri's rule of 2026-09-10, both halves of it: "Deleted image are removed from the
+     * playlist. Images removed from the playlist are not physically deleted." This is the first
+     * half, and the caution it needs is in {@link #localName}: a picture is only called gone when
+     * this panel can read its own pictures and the store has no row for it, so an unmounted card or
+     * a revoked permission cannot be mistaken for a deletion and quietly edit somebody's playlist.
+     *
+     * <p>The count is remembered for one sentence on the screens, because a playlist that shrinks
+     * silently is indistinguishable from a bug.
+     */
+    private void dropDeleted(String playlistId, List<String> gone) {
+        PlaylistDocument document = playlists.load();
+        if (document.byId(playlistId) == null) {
+            return;
+        }
+        document.remove(playlistId, gone, System.currentTimeMillis());
+        if (playlists.store(document) == null) {
+            deleted = gone.size();
+            Log.i(TAG, "Removed " + gone.size() + " deleted picture(s) from the playlist");
+            forgetLocalCount();
+        }
+    }
+
+    /** How many pictures were dropped because their files are gone, for one sentence. */
+    private volatile int deleted;
+
+    /** The sentence about pictures that were dropped, or null. Said once, then forgotten. */
+    String deletedNote() {
+        int count = deleted;
+        if (count == 0) {
+            return null;
+        }
+        deleted = 0;
+        return count == 1
+                ? "One picture was removed from the playlist because its file is gone."
+                : count + " pictures were removed from the playlist because their files are gone.";
+    }
+
+    /**
+     * The file name of a picture in a playlist, asked of the store that owns it.
+     *
+     * <p>A playlist holds addresses and not names, deliberately: a name copied in at selection
+     * time is a second source of truth that goes stale the moment a file is renamed. The cost is
+     * this lookup, which the caption map and the browser both need anyway.
+     */
+    String localName(String uri) {
+        if (isUpload(uri)) {
+            String path = Uri.parse(uri).getPath();
+            int slash = path == null ? -1 : path.lastIndexOf('/');
+            if (path == null) {
+                return "picture";
+            }
+            String name = slash < 0 ? path : path.substring(slash + 1);
+            return new File(path).isFile() ? name : null;
+        }
+        if (!PictureBrowser.isMedia(uri)) {
+            // A document URI from the retired picker path, still opening on its own grant. Nothing
+            // here can tell whether it is gone, so it is never called gone.
+            String stored = prefs().getString("name:" + uri, "");
+            return stored.isEmpty() ? "picture" : stored;
+        }
+        // Only a panel that can read its own pictures may conclude that one is missing: without
+        // the permission every answer is null, which would read as "every picture was deleted".
+        String name = browser.mediaName(uri);
+        return name == null && !browser.canReadStorage() ? "picture" : name;
     }
 
     private synchronized void ensurePlaylist() {
         android.os.UserManager user = app.getSystemService(android.os.UserManager.class);
         if (user != null && !user.isUserUnlocked()) return;
-        if (!playlist.migrated()) {
-            try {
-                playlist.migrate(legacyPictures());
-                problems.remove(PictureSources.LOCAL,
-                        "The old folder is unavailable; playlist migration will retry.");
-            }
-            catch (RuntimeException unavailable) {
-                problems.put(PictureSources.LOCAL, "The old folder is unavailable; playlist migration will retry.");
-            }
+        try {
+            playlists.migrate(browser, storedUploads());
+        } catch (RuntimeException unavailable) {
+            // Retried at the next call. A migration that cannot read the panel's pictures yet is
+            // the ordinary state of an install whose permission dialog nobody has answered.
+            Log.w(TAG, "Playlists not migrated yet", unavailable);
+            return;
         }
-        if (playlist.migrated()) {
-            migrateCaptionKeys();
-        }
+        migrateCaptionKeys();
     }
 
     /**
@@ -775,14 +830,16 @@ final class PictureLibrary {
             }
             Map<String, String> moved = new java.util.LinkedHashMap<>(captions);
             java.util.Set<String> consumed = new java.util.HashSet<>();
-            for (Picture picture : playlist.pictures()) {
-                String name = picture.credit;
-                String caption = captions.get(name);
-                if (caption == null || caption.isEmpty() || moved.containsKey(picture.url)) {
-                    continue;
+            for (PlaylistDocument.Playlist list : playlists.load().all()) {
+                for (String uri : list.items) {
+                    String name = localName(uri);
+                    String caption = captions.get(name);
+                    if (caption == null || caption.isEmpty() || moved.containsKey(uri)) {
+                        continue;
+                    }
+                    moved.put(uri, caption);
+                    consumed.add(name);
                 }
-                moved.put(picture.url, caption);
-                consumed.add(name);
             }
             // Every remaining bare name goes too, not only the ones just consumed: with the
             // fallback gone nothing can read a name key again, so leaving one behind is data that
@@ -809,7 +866,14 @@ final class PictureLibrary {
         return KioskConfig.storageContext(app).getSharedPreferences("picture_playlist", 0);
     }
 
-    private List<Picture> legacyPictures() {
+    /**
+     * Every picture in the panel's own upload store.
+     *
+     * <p>Uploads join a playlist without any permission, so the first migration adds them: a panel
+     * whose only pictures arrived through the web admin would otherwise migrate to no playlist and
+     * look as though its uploads had been lost.
+     */
+    private List<Picture> storedUploads() {
         List<Picture> pictures = new ArrayList<>();
         Map<String, String> captions = captions();
         File[] stored = storeDir().listFiles();
@@ -820,32 +884,6 @@ final class PictureLibrary {
                     pictures.add(localPicture(Uri.fromFile(file).toString(), file.getName(),
                             captions));
                 }
-            }
-        }
-        Uri tree = chosenFolder();
-        Uri folder = readingFolder();
-        if (tree != null && folder != null) {
-            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree,
-                    DocumentsContract.getDocumentId(folder));
-            try (Cursor cursor = app.getContentResolver().query(children, new String[] {
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null)) {
-                if (cursor == null) throw new IllegalStateException("Storage did not answer");
-                while (cursor.moveToNext()) {
-                    String mime = cursor.getString(2);
-                    if (mime == null || !mime.startsWith("image/")) {
-                        continue;
-                    }
-                    String name = cursor.getString(1);
-                    Uri document = DocumentsContract.buildDocumentUriUsingTree(tree,
-                            cursor.getString(0));
-                    pictures.add(localPicture(document.toString(),
-                            name == null ? "picture" : name, captions));
-                }
-            } catch (RuntimeException unreadable) {
-                Log.w(TAG, "Cannot read the chosen folder", unreadable);
-                throw unreadable;
             }
         }
         java.util.Collections.sort(pictures, (left, right) -> left.credit.compareToIgnoreCase(
@@ -875,8 +913,29 @@ final class PictureLibrary {
     }
 
     /** Whether this picture is one of Muralis's own, which is what may be removed from here. */
+    /** A {@code file:} address, which is either one of our uploads or a file on shared storage. */
     static boolean isStored(String url) {
         return url != null && url.startsWith("file:");
+    }
+
+    /**
+     * Whether a {@code file:} address is one of Muralis's own uploads, and so ours to delete.
+     *
+     * <p>The distinction arrived with the folder browser on 2026-09-10. Until then every
+     * {@code file:} address was an upload, because the only other kind of local picture came
+     * through a document provider; now a device owner browses shared storage directly, and those
+     * files are the person's, exactly like a picture reached through a grant: they can leave a
+     * playlist but they are never deleted from here.
+     */
+    boolean isUpload(String url) {
+        if (!isStored(url)) {
+            return false;
+        }
+        String path = Uri.parse(url).getPath();
+        if (path == null) {
+            return false;
+        }
+        return storeDir().equals(new File(path).getParentFile());
     }
 
     /**
@@ -916,7 +975,7 @@ final class PictureLibrary {
                 throw new IOException("cannot store the picture");
             }
             ensurePlaylist();
-            String selection = playlist.select(Uri.fromFile(target).toString(), target.getName(), true);
+            String selection = selectPicture(Uri.fromFile(target).toString(), true);
             forgetLocalCount();
             return selection == null ? null : "stored, but not selected: " + selection;
         } catch (IOException | RuntimeException failed) {
@@ -933,7 +992,7 @@ final class PictureLibrary {
      * the person's own file and is never deleted here.
      */
     synchronized String deleteLocal(String url) {
-        if (!isStored(url)) {
+        if (!isUpload(url)) {
             return "this picture is in your own folder; remove it there";
         }
         String path = Uri.parse(url).getPath();
@@ -951,7 +1010,7 @@ final class PictureLibrary {
         if (!file.delete()) {
             return "the picture could not be removed";
         }
-        playlist.select(url, file.getName(), false);
+        removeEverywhere(url);
         forgetLocalCount();
         return null;
     }
@@ -1038,46 +1097,46 @@ final class PictureLibrary {
         return null;
     }
 
-    PicturePlaylist.Page browse(String location, int offset) {
-        return browse(location, offset, 0);
-    }
-
-    PicturePlaylist.Page browse(String location, int offset, int depth) {
-        ensurePlaylist();
-        if (PicturePlaylist.SELECTED.equals(location)) {
-            PicturePlaylist.Page page = new PicturePlaylist.Page();
-            List<Picture> selected = listLocal();
-            int end = Math.min(selected.size(), offset + PicturePlaylist.PAGE_SIZE);
-            for (int index = Math.max(0, offset); index < end; index++) {
-                Picture picture = selected.get(index);
-                // The folder is prepended as a path, because this list is the one place two
-                // pictures with the same name from two folders sit next to each other, and one
-                // folder cannot hold both, so the folder is what tells them apart: a bare
-                // "pd_1.jpg" twice named neither (seen on the panel 2026-09-10). Inside a folder
-                // the name alone is right, and that is what browse() shows there.
-                page.entries.add(new PicturePlaylist.Entry(picture.url,
-                        displayPath(picture.url, picture.credit), false, true));
-            }
-            page.more = end < selected.size();
+    /**
+     * The panel's own upload store as a page, for the browser's Uploads folder.
+     *
+     * <p>Uploads are not in MediaStore: they live inside the app's private files, which is what
+     * makes them need no permission, and which is also why they cannot be listed by the same
+     * query as everything else.
+     */
+    PictureBrowser.Page uploads(int offset) {
+        PictureBrowser.Page page = new PictureBrowser.Page();
+        File[] files = storeDir().listFiles();
+        if (files == null) {
             return page;
         }
-        if (!PicturePlaylist.UPLOADS.equals(location)) {
-            return playlist.browse(location, offset, depth);
-        }
-        PicturePlaylist.Page page = new PicturePlaylist.Page();
-        File[] files = storeDir().listFiles();
-        if (files == null) return page;
         java.util.Arrays.sort(files);
-        int seen = 0;
+        List<PictureBrowser.Entry> found = new ArrayList<>();
         for (File file : files) {
             if (!file.isFile() || file.getName().endsWith(".part")
-                    || PictureSources.imageMime(header(file)) == null) continue;
-            if (seen++ < Math.max(0, offset)) continue;
-            if (page.entries.size() == PicturePlaylist.PAGE_SIZE) { page.more = true; break; }
-            String uri = Uri.fromFile(file).toString();
-            page.entries.add(new PicturePlaylist.Entry(uri, file.getName(), false, playlist.selected(uri)));
+                    || PictureSources.imageMime(header(file)) == null) {
+                continue;
+            }
+            found.add(new PictureBrowser.Entry(Uri.fromFile(file).toString(), file.getName()));
         }
+        page.available = found.size();
+        int start = Math.max(0, Math.min(offset, found.size()));
+        int end = Math.min(found.size(), start + PictureBrowser.PAGE_SIZE);
+        page.entries.addAll(found.subList(start, end));
+        page.more = end < found.size();
         return page;
+    }
+
+    /** Takes one picture out of every playlist it appears in. */
+    synchronized String removeEverywhere(String url) {
+        PlaylistDocument document = playlists.load();
+        for (PlaylistDocument.Playlist list : document.all()) {
+            document.remove(list.id, java.util.Collections.singletonList(url),
+                    System.currentTimeMillis());
+        }
+        String refusal = playlists.store(document);
+        forgetLocalCount();
+        return refusal;
     }
 
     /**
@@ -1089,63 +1148,115 @@ final class PictureLibrary {
      * upload says {@code ./uploads/} instead, since its real path is inside the app and means
      * nothing to a person.
      */
-    private String displayPath(String url, String name) {
-        if (isStored(url)) {
+    String displayPath(String url, String name) {
+        if (isUpload(url)) {
             return "./uploads/" + name;
         }
-        try {
-            String id = DocumentsContract.getDocumentId(Uri.parse(url));
-            String path = id.contains(":") ? id.substring(id.indexOf(':') + 1) : id;
-            int lastSlash = path.lastIndexOf('/');
-            if (lastSlash <= 0) {
-                return name;
-            }
-            String parent = path.substring(0, lastSlash);
-            int folderStart = parent.lastIndexOf('/');
-            return "./" + (folderStart < 0 ? parent : parent.substring(folderStart + 1))
-                    + "/" + name;
-        } catch (RuntimeException opaque) {
-            return name;
-        }
+        String folder = browser.mediaFolder(url);
+        return folder.isEmpty() ? name : "./" + folder + name;
     }
 
+    /**
+     * The same label, for a picture named by a playlist rather than by a listing.
+     *
+     * <p>A picture whose file is gone says so rather than showing an empty row: the playlist page
+     * lists what is in the playlist, and something that cannot be found is exactly what somebody
+     * looking at that page needs to see in order to take it out.
+     */
+    String displayPath(String url) {
+        String name = localName(url);
+        return name == null ? lastSegmentOf(url) + " (not found)" : displayPath(url, name);
+    }
+
+    /** The tail of an address, for labelling something that can no longer be asked its name. */
+    private static String lastSegmentOf(String url) {
+        String text = url == null ? "" : url;
+        int slash = text.lastIndexOf('/');
+        return slash < 0 || slash == text.length() - 1 ? text : text.substring(slash + 1);
+    }
+
+    /**
+     * Ticks or unticks one picture in the playlist that is playing.
+     *
+     * <p>The active playlist, because this is the remote and web-admin path and there is no
+     * screen open to say which playlist is meant. A panel with no playlist yet gets one, named
+     * "Pictures", rather than refusing: somebody uploading a picture through the web admin on a
+     * fresh panel means it to appear, and an upload that vanished into no playlist was the older
+     * behaviour and read as a bug. The panel's own screens edit a named playlist by name and do
+     * not come through here.
+     */
     synchronized String selectPicture(String url, boolean selected) {
         ensurePlaylist();
-        if (url == null || url.isEmpty()) return "No picture selected.";
-        String name = "picture";
+        if (url == null || url.isEmpty()) {
+            return "No picture selected.";
+        }
         if (selected) {
-            Uri uri = Uri.parse(url);
-            if (isStored(url)) {
-                File file = new File(uri.getPath() == null ? "" : uri.getPath());
-                if (!storeDir().equals(file.getParentFile()) || !file.isFile()
-                        || file.getName().endsWith(".part")
-                        || PictureSources.imageMime(header(file)) == null) return "Not a stored picture.";
-                name = file.getName();
+            if (isUpload(url)) {
+                File file = new File(Uri.parse(url).getPath() == null
+                        ? "" : Uri.parse(url).getPath());
+                if (!file.isFile() || file.getName().endsWith(".part")
+                        || PictureSources.imageMime(header(file)) == null) {
+                    return "Not a stored picture.";
+                }
+            } else if (PictureBrowser.isMedia(url)) {
+                // Asked of MediaStore rather than taken from the request: the browser is reachable
+                // from the web admin, so an address only proves somebody typed one.
+                if (!browser.canReadStorage()) {
+                    return "This panel may not read its own pictures.";
+                }
+                if (browser.mediaName(url) == null) {
+                    return "Not a supported picture.";
+                }
             } else {
-                if (!playlist.contains(uri)) return "This picture is outside the saved folders.";
-                try (Cursor cursor = app.getContentResolver().query(uri, new String[] {
-                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                        DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null)) {
-                    if (cursor == null || !cursor.moveToFirst()) return "Picture unavailable.";
-                    String mime = cursor.getString(1);
-                    if (!("image/jpeg".equals(mime) || "image/png".equals(mime)
-                            || "image/webp".equals(mime))) return "Not a supported picture.";
-                    name = cursor.getString(0);
-                    if (name == null || name.isEmpty()) name = "picture";
-                } catch (RuntimeException unavailable) { return "Picture unavailable."; }
+                return "That is not a picture this panel can read.";
             }
         }
-        String refusal = playlist.select(url, name, selected);
+        PlaylistDocument document = playlists.load();
+        PlaylistDocument.Playlist active = document.active();
+        if (active == null) {
+            if (!selected) {
+                return null;
+            }
+            String id = playlists.newId();
+            String refusal = document.create(id, uniqueName(document, "Pictures"),
+                    System.currentTimeMillis());
+            if (refusal != null) {
+                return capitalise(refusal);
+            }
+            document.activate(id);
+            active = document.byId(id);
+        }
+        String refusal = selected
+                ? document.add(active.id, java.util.Collections.singletonList(url),
+                        System.currentTimeMillis())
+                : document.remove(active.id, java.util.Collections.singletonList(url),
+                        System.currentTimeMillis());
+        if (refusal != null) {
+            return capitalise(refusal);
+        }
+        String stored = playlists.store(document);
         forgetLocalCount();
         KioskService.publishTelemetrySoon(app);
-        return refusal;
+        return stored;
     }
 
-    String forgetFolder(String root) {
-        ensurePlaylist();
-        String refusal = playlist.forget(root);
-        forgetLocalCount();
-        KioskService.publishTelemetrySoon(app);
-        return refusal;
+    /** "Pictures", or "Pictures 2" when that name is taken, so a create can never fail on it. */
+    static String uniqueName(PlaylistDocument document, String wanted) {
+        if (document.byName(wanted) == null) {
+            return wanted;
+        }
+        for (int suffix = 2; suffix < 1000; suffix++) {
+            String candidate = wanted + " " + suffix;
+            if (document.byName(candidate) == null) {
+                return candidate;
+            }
+        }
+        return wanted + " " + System.currentTimeMillis();
+    }
+
+    /** The store answers in lower case because a screen puts its reason mid-sentence. */
+    static String capitalise(String reason) {
+        return reason == null || reason.isEmpty() ? reason
+                : Character.toUpperCase(reason.charAt(0)) + reason.substring(1) + ".";
     }
 }

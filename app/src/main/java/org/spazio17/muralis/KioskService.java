@@ -536,14 +536,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
-        // Nothing for the Pictures screensaver: its folder is reached through the picker's
-        // persisted grant, which is not a runtime permission and cannot be granted from here
-        // (2026-09-09).
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             // POST_NOTIFICATIONS does not exist before API 33; on the API 26 MediaPad the
             // notification simply posts.
             grantOwnPermission(policy, admin, android.Manifest.permission.POST_NOTIFICATIONS);
         }
+        // The pictures screensaver's folder browser (2026-09-10). Silent, which is the whole
+        // reason it is acceptable on a panel with nobody in front of it, and the reason the
+        // browser can stay inside Muralis instead of handing the screen to Android's picker.
+        // An ordinary install is never asked for this and keeps using the picker's grant, so the
+        // grant state here is also what PictureLibrary reads to decide which browser to offer.
+        grantOwnPermission(policy, admin,
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+                        ? android.Manifest.permission.READ_MEDIA_IMAGES
+                        : android.Manifest.permission.READ_EXTERNAL_STORAGE);
     }
 
     /** Fail soft: KioskActivity still asks the user the ordinary way, and the service runs either way. */
@@ -1048,11 +1054,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
             String sourceProblem = library.problem(settings.source);
             saver.put("source_problem",
                     sourceProblem == null ? org.json.JSONObject.NULL : sourceProblem);
-            saver.put("folder_chosen", library.folderReachable());
-            saver.put("folder_lost", library.folderLost());
-            if (includeAdminDetail) {
-                saver.put("folder", library.folderName());
-            }
+            // What replaced the folder-grant fields when the SAF path went (2026-09-10): whether
+            // this panel may read its own pictures at all, and which playlist is playing.
+            saver.put("pictures_readable", library.browsesOwnStorage());
+            PlaylistDocument playlists = library.playlists().load();
+            PlaylistDocument.Playlist inUse = playlists.active();
+            saver.put("playlist", inUse == null ? org.json.JSONObject.NULL : inUse.name);
+            saver.put("playlists", playlists.size());
             org.json.JSONObject picture = new org.json.JSONObject();
             picture.put("title", KioskRuntimeState.screensaverPictureTitle());
             picture.put("credit", KioskRuntimeState.screensaverPictureCredit());
@@ -1828,9 +1836,55 @@ public final class KioskService extends Service implements KioskCommandDispatche
         sendUiCommand("screensaver.stop", -1, null);
     }
 
+    /**
+     * Makes the named playlist the one in use, or none when the name is empty.
+     *
+     * <p>By name because that is what the caller has: Home Assistant's select carries the names it
+     * was told about, and an id means nothing to anyone. An unknown name is refused with the names
+     * that do exist, so a fleet operator who mistypes one is told what to type instead.
+     */
+    @Override
+    public String setScreensaverPlaylist(String name) {
+        PictureLibrary library = PictureLibrary.get(this);
+        PlaylistDocument document = library.playlists().load();
+        String wanted = name == null ? "" : name.trim();
+        String refusal;
+        PlaylistDocument.Playlist named = wanted.isEmpty() ? null : document.byName(wanted);
+        // The Home Assistant select's own "no playlist" option is the word None, because a select
+        // cannot hold an empty option, so the word has to mean what the entity says it means or
+        // clearing the playlist from a card is refused (measured over MQTT 2026-09-10). A playlist
+        // actually called "None" still wins, which is why the lookup comes first.
+        if (named == null && MqttController.PLAYLIST_NONE.equalsIgnoreCase(wanted)) {
+            wanted = "";
+        }
+        if (wanted.isEmpty()) {
+            refusal = document.activate(null);
+        } else {
+            PlaylistDocument.Playlist playlist = named;
+            if (playlist == null) {
+                StringBuilder known = new StringBuilder();
+                for (PlaylistDocument.Playlist other : document.all()) {
+                    known.append(known.length() == 0 ? "" : ", ").append(other.name);
+                }
+                return known.length() == 0
+                        ? "there are no playlists on this panel yet"
+                        : "no playlist called " + wanted + "; this panel has " + known;
+            }
+            refusal = document.activate(playlist.id);
+        }
+        if (refusal == null) {
+            refusal = library.playlists().store(document);
+        }
+        library.forgetLocalCount();
+        publishTelemetrySoon(this);
+        return refusal;
+    }
+
     @Override
     public String setScreensaverFolder(String documentId) {
-        return PictureLibrary.get(this).setReadingFolder(documentId);
+        // Retired with folder-wide selection, and answered rather than removed so a caller that
+        // still sends it is told why instead of getting "unsupported".
+        return "Pictures are chosen individually in a playlist; folder-wide selection was retired.";
     }
 
     /**
