@@ -50,8 +50,31 @@ import java.util.TreeMap;
  * last of those impossible rather than merely fixed.
  */
 final class PictureBrowser {
-    /** Rows in one page of pictures, so a folder of thousands opens on the first hundred. */
-    static final int PAGE_SIZE = 100;
+    /**
+     * The page sizes Content offers, smallest first: a folder of thousands opens on the first ten
+     * and the reader asks for more (Juri, 2026-09-19: with many pictures in one folder the panel
+     * got very long). Both surfaces offer the same four.
+     */
+    static final int[] PAGE_SIZES = {10, 25, 50, 100};
+    static final int DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
+
+    /** One of the offered sizes, from a typed or stored value; anything else is the default. */
+    static int pageSize(String value) {
+        try {
+            return pageSize(Integer.parseInt(value == null ? "" : value.trim()));
+        } catch (NumberFormatException notANumber) {
+            return DEFAULT_PAGE_SIZE;
+        }
+    }
+
+    static int pageSize(int value) {
+        for (int size : PAGE_SIZES) {
+            if (size == value) {
+                return size;
+            }
+        }
+        return DEFAULT_PAGE_SIZE;
+    }
     /** The prefix a browse location carries when it names a folder of this panel's own pictures. */
     static final String MEDIA = "media:";
     /** The panel's own upload store, which needs no permission at all. */
@@ -280,7 +303,7 @@ final class PictureBrowser {
      * way one page is built and the cursor is closed, so a folder of tens of thousands costs a
      * cursor walk and never a copy of the library.
      */
-    Page pictures(String relativePath, int offset) {
+    Page pictures(String relativePath, int offset, int size) {
         Page page = new Page();
         if (!canReadStorage()) {
             page.problem = "This panel may not read its own pictures yet.";
@@ -325,7 +348,7 @@ final class PictureBrowser {
         Collections.sort(found, (a, b) -> a.name.compareToIgnoreCase(b.name));
         page.available = found.size();
         int start = Math.max(0, Math.min(offset, found.size()));
-        int end = Math.min(found.size(), start + PAGE_SIZE);
+        int end = Math.min(found.size(), start + size);
         page.entries.addAll(found.subList(start, end));
         page.more = end < found.size();
         browseProblem = null;
@@ -337,7 +360,7 @@ final class PictureBrowser {
         List<Entry> all = new ArrayList<>();
         int offset = 0;
         while (true) {
-            Page page = pictures(relativePath, offset);
+            Page page = pictures(relativePath, offset, PAGE_SIZES[PAGE_SIZES.length - 1]);
             all.addAll(page.entries);
             if (!page.more || page.entries.isEmpty()) {
                 return all;

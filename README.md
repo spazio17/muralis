@@ -30,5 +30,4 @@ Pre-release. Runs on real hardware; release signing is in place, and it is not p
 
 All rights reserved for now, see [`LICENSE`](LICENSE); a placeholder pending a final licensing
 decision, not an open-source license. Built on [Eclipse Paho](https://www.eclipse.org/paho/) MQTT
-(`org.eclipse.paho.client.mqttv3`, EPL/EDL) and the [Catppuccin](https://catppuccin.com/) palette,
-both credited on the app's own About screen.
+(`org.eclipse.paho.client.mqttv3`, EPL/EDL), credited on the app's own About screen.

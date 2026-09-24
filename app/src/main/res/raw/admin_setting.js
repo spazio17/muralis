@@ -14,7 +14,9 @@
 (function(){
 function apply(el){
 var value=el.type==='checkbox'?(el.checked?'1':'0'):el.value;
-el.dataset.pending='1';
+// A radio belongs to a group, and the poll follows the group, so the flag goes on the group.
+var pendingOn=el.type==='radio'&&el.closest?(el.closest('.radios')||el):el;
+pendingOn.dataset.pending='1';
 // "behaviour" is the section name POST /api/setting has always accepted. It
 // outlived the box it was named after and is kept as the wire name rather than
 // renamed, so a page cached in a browser keeps working against a newer tablet.
@@ -29,26 +31,48 @@ el.classList.toggle('check-bad',rejected);
 el.title=rejected?detail:'';
 if(window.console){console.log('Muralis: '+el.dataset.setting+': '+text);}})
 .catch(function(){if(window.console){console.warn('Muralis: '+el.dataset.setting+': no response. The device may be rebooting or off the network');}})
-.then(function(){setTimeout(function(){delete el.dataset.pending;},1500);});}
+.then(function(){setTimeout(function(){delete pendingOn.dataset.pending;},1500);});}
 Array.prototype.forEach.call(document.querySelectorAll('[data-setting]'),function(el){el.addEventListener('change',function(){apply(el);});});
-// The screensaver box shows only the fields its mode uses, the same rule as the tablet's page:
-// the address for the web page, the floor for the dimmed page; the wake choice is greyed out for
-// the film, which has nothing to glance at. Also called by the stats poll when the mode follows
-// a change made elsewhere, hence the window property.
-function screensaverFields(){var mode=document.getElementById('screensaver-mode');
-if(!mode){return;}
-var url=document.getElementById('screensaver-url-field'),dim=document.getElementById('screensaver-dim-field'),wake=document.getElementById('screensaver-on-wake');
+// The screensaver page shows only the fields its mode uses, the same rule as the tablet's page:
+// the address for the web page, the floor for the dimmed page, and for the film no wake choice at
+// all, since it has nothing to look at on waking. Also called by the stats poll when the mode
+// follows a change made elsewhere, hence the window property.
+// The mode is five radios since 2026-09-11, the same control the panel shows, so this reads the
+// checked one rather than a select's value. Kept behind two helpers so the rest of the function
+// does not care which control it is.
+// Radios on the screensaver page and a menu on the settings card, so both shapes are read here.
+function modeValue(){var el=document.getElementById('screensaver-mode');
+if(!el){return null;}
+if(el.classList.contains('radios')){var checked=el.querySelector('input[type=radio]:checked');
+return checked?checked.value:null;}
+return el.value;}
+function modeLabel(){var el=document.getElementById('screensaver-mode');
+if(!el){return '';}
+if(el.classList.contains('radios')){var checked=el.querySelector('input[type=radio]:checked');
+return checked&&checked.parentNode?checked.parentNode.textContent.trim():'';}
+return el.selectedIndex>=0?el.options[el.selectedIndex].textContent:'';}
+function screensaverFields(){var mode=modeValue();
+if(mode===null){return;}
+var url=document.getElementById('screensaver-url-field'),dim=document.getElementById('screensaver-dim-field'),wake=document.getElementById('screensaver-wake-field');
 var pictures=document.getElementById('screensaver-pictures'),source=document.getElementById('screensaver-source');
 // The library box holds the playlists, the browser and the upload. It is a box of its own since
 // 2026-09-10, and it belongs to the mode AND the source: there is nothing to browse when the
 // pictures come from Bing.
 var library=document.getElementById('screensaver-library'),online=document.getElementById('screensaver-online'),credit=document.getElementById('screensaver-credit');
-if(url){url.classList.toggle('gone',mode.value!=='url');}
-if(dim){dim.classList.toggle('gone',mode.value!=='dim');}
-if(pictures){pictures.classList.toggle('gone',mode.value!=='pictures');}
-if(wake){var applies=mode.value==='url'||mode.value==='dim'||mode.value==='pictures';wake.disabled=!applies;wake.title=applies?'':'The black film has nothing to glance at: a wake shows the page.';}
+// The second panel is named after the mode it belongs to and is not there at all for Off: a
+// screensaver that is off has no settings (Juri, 2026-09-11). The name comes from the chooser's
+// own option text, so the two surfaces cannot drift apart over a word.
+var options=document.getElementById('screensaver-options'),
+    optionsTitle=document.getElementById('screensaver-options-title');
+if(options){options.classList.toggle('gone',mode==='off');}
+if(optionsTitle){optionsTitle.textContent=modeLabel()+' options';}
+if(url){url.classList.toggle('gone',mode!=='url');}
+if(dim){dim.classList.toggle('gone',mode!=='dim');}
+if(pictures){pictures.classList.toggle('gone',mode!=='pictures');}
+// Gone, not greyed out: a control that can never be enabled is clutter.
+if(wake){wake.classList.toggle('gone',!(mode==='url'||mode==='dim'||mode==='pictures'));}
 if(source){var isLocal=source.value==='local';
-if(library){library.classList.toggle('gone',!isLocal||mode.value!=='pictures');}
+if(library){library.classList.toggle('gone',!isLocal||mode!=='pictures');}
 if(online){online.classList.toggle('gone',isLocal);}
 if(credit){credit.disabled=!isLocal;if(!isLocal){credit.checked=true;}credit.title=isLocal?'':'The online sources require their credit line.';}}}
 window.muralisScreensaverFields=screensaverFields;

@@ -16,7 +16,7 @@ import android.view.View;
  * has no resource-backed theme to hang vector assets on.
  *
  * <p>Deliberately monochrome in the style of a Pixel status bar: one tint for the whole set (the
- * theme's text colour, so near-white on Mocha and near-black on Latte) with the inactive part of a
+ * theme's text colour, so near-white on the dark palette and near-black on the light) with the inactive part of a
  * gauge drawn as a ghost of the same colour. Level is carried by shape, not by hue, so the icons
  * read as one family. The single exception is a battery below {@link #LOW_BATTERY_PERCENT} on
  * mains-free power, which turns red. That is what a Pixel does too, and it is the one status

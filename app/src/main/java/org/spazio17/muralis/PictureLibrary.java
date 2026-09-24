@@ -1104,14 +1104,29 @@ final class PictureLibrary {
      * makes them need no permission, and which is also why they cannot be listed by the same
      * query as everything else.
      */
-    PictureBrowser.Page uploads(int offset) {
+    PictureBrowser.Page uploads(int offset, int size) {
         PictureBrowser.Page page = new PictureBrowser.Page();
+        List<PictureBrowser.Entry> found = uploadEntries();
+        page.available = found.size();
+        int start = Math.max(0, Math.min(offset, found.size()));
+        int end = Math.min(found.size(), start + size);
+        page.entries.addAll(found.subList(start, end));
+        page.more = end < found.size();
+        return page;
+    }
+
+    /** How many pictures the upload store holds, the number beside its row in Folders. */
+    int uploadCount() {
+        return uploadEntries().size();
+    }
+
+    private List<PictureBrowser.Entry> uploadEntries() {
+        List<PictureBrowser.Entry> found = new ArrayList<>();
         File[] files = storeDir().listFiles();
         if (files == null) {
-            return page;
+            return found;
         }
         java.util.Arrays.sort(files);
-        List<PictureBrowser.Entry> found = new ArrayList<>();
         for (File file : files) {
             if (!file.isFile() || file.getName().endsWith(".part")
                     || PictureSources.imageMime(header(file)) == null) {
@@ -1119,12 +1134,7 @@ final class PictureLibrary {
             }
             found.add(new PictureBrowser.Entry(Uri.fromFile(file).toString(), file.getName()));
         }
-        page.available = found.size();
-        int start = Math.max(0, Math.min(offset, found.size()));
-        int end = Math.min(found.size(), start + PictureBrowser.PAGE_SIZE);
-        page.entries.addAll(found.subList(start, end));
-        page.more = end < found.size();
-        return page;
+        return found;
     }
 
     /** Takes one picture out of every playlist it appears in. */
@@ -1186,6 +1196,17 @@ final class PictureLibrary {
      * not come through here.
      */
     synchronized String selectPicture(String url, boolean selected) {
+        return selectPicture(null, url, selected);
+    }
+
+    /**
+     * The same, for one named playlist rather than the one that is playing.
+     *
+     * <p>The web admin's playlist page edits the playlist you opened, which may not be the one on
+     * the glass; a null id keeps the old meaning, "whichever is in use", which is what the
+     * screensaver page and the commands want.
+     */
+    synchronized String selectPicture(String playlistId, String url, boolean selected) {
         ensurePlaylist();
         if (url == null || url.isEmpty()) {
             return "No picture selected.";
@@ -1212,7 +1233,11 @@ final class PictureLibrary {
             }
         }
         PlaylistDocument document = playlists.load();
-        PlaylistDocument.Playlist active = document.active();
+        PlaylistDocument.Playlist active = playlistId == null
+                ? document.active() : document.byId(playlistId);
+        if (active == null && playlistId != null) {
+            return "That playlist is gone.";
+        }
         if (active == null) {
             if (!selected) {
                 return null;

@@ -632,13 +632,27 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   index rather than a walk. Verified on the API 26 tablet: that exact path is reachable and its
   pictures selectable. The folder index is cached for 30 s and dropped by `refresh()`, so going
   back into a folder is instant, which is the thing the gallery apps this was modelled on get wrong.
-- **The Picture playlist page is one page for creating and editing**, built from the sketch: folders
-  on the left, the tapped folder's pictures on the right, and everything picked underneath with its
-  folder path prepended so two files called `test.jpg` read apart. A button per selected row sets
-  the friendly name the screensaver credits it by, which is the existing caption and not a second
-  field. Nothing is written until Save, which is what makes Cancel mean something. The Screensaver
-  page carries "Create playlist" with the playlists listed under it, each row offering Use, Edit and
-  Delete, the active one saying "In use" in the same column so the action columns stay aligned.
+- **The playlist page is one page for creating and editing**, built from the sketch: Folders on the
+  left, Content on the right (the tapped folder, named on its first line), and In this playlist
+  under Folders, with its folder path prepended so two files called `test.jpg` read apart; where
+  two lanes fit, Folders and In this playlist share the left lane and Content has the right one
+  (2026-09-19). Content shows ten pictures at a time, with Show 10 25 50 100 under the list
+  (`PictureBrowser.PAGE_SIZES`, the same four on the web page); a new size starts the folder over.
+  Each held row carries the box that names the picture for its credit, with Save beside it and
+  Remove in the main colour, the web page's row copied (2026-09-19) in place of a Name button that
+  opened a page; the name is the existing caption, stored at once because it belongs to the file,
+  and only a refusal is said. The pencil sits against the title's last letter, a 14 dp glyph with
+  no pill, the title capped in width so a long name cannot push it off the row. **The playlist's name is the page's title, with a pencil beside it that turns
+  the title into a box** (2026-09-19, the way a pull request's title is edited); the Name card went
+  with it, a new playlist opens with the box already showing, and the box's Save only settles the
+  draft's name. The count beside a folder is the pictures directly in it, not everything below it,
+  which read as a miscount. Nothing is written until Save, which is what makes Cancel mean
+  something. The Screensaver
+  page lists the playlists as the web page does, name, count, Use or "In use", Edit and Delete, with
+  the "New playlist name" box and Create playlist under the list (2026-09-19, the web panel copied;
+  the button used to sit above the list and open the draft page); Create makes an empty playlist at
+  once and Edit is where its pictures are picked. The active row says "In use" in the same column so
+  the action columns stay aligned.
   Deleting the playlist in use leaves none in use and the sentence says so, rather than a black
   panel. Every question this feature asks is a screen the app draws itself: an `AlertDialog` came up
   in Android's light theme over a dark panel **and took the immersive mode with it**, so a
@@ -671,25 +685,162 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   disk the whole time and simply not indexed yet, because they arrived over adb. "The index has not
   caught up" and "the picture is gone" are not the same thing. A kept item still opens on its own
   persisted grant, and one sentence names it. Measured on the phone: all five repointed, none lost.
-- **The web admin's screensaver is a page of its own (`/screensaver`), and its picture browser
-  never reloads the page.** It was a `<details>` inside the settings grid, so a two-pane browser and
-  a playlist table were unfolding inside a 300 px column of a multi-column page. Everything below
-  the mode now lives on that page: the timings and the picture options side by side, then the
-  playlists, the folder browser and the upload at the full width. **A folder is a link**, not a
-  form button, with a real `/screensaver?at=<path>` address, so a folder can be reloaded, bookmarked
-  or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
+- **The web admin's screensaver is a page of its own (`/screensaver`), a playlist is a page of its
+  own under it (`/playlist?id=`), and neither reloads while it is used.** The screensaver page was
+  a `<details>` inside the settings grid, so a two-pane browser and a playlist table were unfolding
+  inside a 300 px column of a multi-column page. That page now holds the mode, the options named
+  after it, and the list of playlists: name, count, Use or "In use", a green Edit and a red Delete,
+  and nothing else. **Edit opens the playlist's own page**, arranged as the panel's own since
+  2026-09-19: the name is the title, renamed through the pencil beside it (a `<details>`, so it
+  opens, closes and posts with no scripting, and the script only keeps the answer on the page);
+  Folders, with the upload at its foot because that is where a picture arrives, and Content side by
+  side; In this playlist under Folders in the left column, Content with the right column to itself,
+  placed by hand like the screensaver page's panels (In this playlist is the panel's own pane, with
+  the folder prepended, the box that names a picture for its credit with a plain Save, and Remove).
+  Content shows ten pictures at a time and offers Show 10 25 50 100 under the list where there is
+  more than ten to show; the choice rides in the address as `n=` and in every fragment request, and
+  a new size starts the folder over. Every one of them is scoped to
+  that playlist rather
+  than to whichever one happens to be playing (Juri, 2026-09-12: the two surfaces should be arranged
+  alike and the panel's shape is the better one). The rename box that used to own a column of the
+  table went with it: nobody renames a playlist often enough to spend a column on it. Unlike the
+  panel the page applies as it goes rather than collecting a draft behind a Save, because every
+  other control in this admin already works that way and a draft would need the whole selection
+  carried in the browser. The three panels are placed by hand rather than left to flow: the options
+  panel is much the tallest, so in document order the playlist list landed in a row that began below
+  it and left a hand's width of nothing under the mode chooser. **A folder is a link**, not a
+  form button, with a real `/playlist?id=<id>&at=<path>` address, so a folder can be reloaded,
+  bookmarked or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
   folder. That is also what fixed a stale-address 404: a folder used to be a POST to
   `/api/pictures/folder/browse`, whose URL then sat in the address bar and answered nothing on a
-  reload. `admin_pictures.js` intercepts those links and every form inside the browser, and the
+  reload. `admin_pictures.js` intercepts those links and every POST form on the page, not only the
+  ones inside the browser: the name box and the held-pictures list sit outside it and would
+  otherwise navigate to `/api/...` and leave that address in the bar. It re-reads three fragments
+  after every change, Folders (`/api/pictures/folders`), Content (`/api/pictures/content`) and what
+  the playlist holds, because a tick changes the row and the list, an upload changes a count, and a
+  page whose panels disagree is a page nobody trusts. An upload carries its playlist in the
+  form's action instead, since a multipart body is not parsed for anything but the file. The
   server answers each change twice over, as a sentence and a flag for `?fragment=1` and as the whole
   page for a browser with no scripting, so nothing navigates and nothing scrolls. Form bodies are
   URL-encoded, deliberately: a `FormData` body is sent as multipart and this server parses multipart
   for the upload alone, so posting a tick that way arrived with no fields at all. The upload's answer
-  is a banner directly under the Upload button, green for a success and red only for a failure (it
-  was red for both, so "1 picture stored." read as an error), with a cross and a five-second timer.
+  is a banner directly under the Upload button, red for a refusal, with a cross and a five-second
+  timer; **a success says nothing on this page** (Juri, 2026-09-19: "Playlist updated." on every
+  added picture was noise), the panels re-read after it are the answer, and "Uploading..." shows
+  while a file is on its way.
   The stats poll runs on this page too, for the chip and for the fields it keeps current, so its
   readout element is optional: writing to the missing `#stats` threw on every tick and took the rest
-  of the poll down with it.
+  of the poll down with it. **Use, Delete and Create playlist are silent since 2026-09-19:**
+  `admin_playlists.js` posts them as fragments from the screensaver page and re-reads the table
+  (`GET /api/playlists/table`) in place, so the "In use" mark moving, a row going or a row appearing
+  is the whole answer; only a refusal is said, red, in the banner under the table. Before that, Use
+  came back as the whole page with "Playlist in use." on top and `/api/playlists/activate` in the
+  address bar, which said nothing the mark did not (Juri: tap the playlist you want and simply
+  switch). Without scripting the forms still post for real and the page comes back with its
+  sentence, or with none for Use; an empty sentence in a fragment answer hides the banner instead
+  of showing the raw JSON, on both pages.
+- **Wording both surfaces share, trimmed 2026-09-11**: "One picture per screensaver" (not "..., the
+  next one next time"), "Show the title and credit line" (not "... (always on for the online
+  sources)"), "Preview" rather than "Show it now", and every way back is "← Back" with the arrow.
+  Upload's row reads Browse, the chosen file, then Upload against the right edge.
+- **The palette is the app's own, and the accents are chosen for contrast, not for a name.** It
+  began near a well-known palette and diverged accent by accent ("intensified at the user's
+  request"); on 2026-09-19 Juri judged it similar but not that palette any more, and its credit
+  went from the About screen, the README, the site's imprint and every comment, the flavour names
+  with it (`KioskTheme.darkPalette()` and `lightPalette()`). On 2026-09-12 the light theme's
+  accents were darkened, because the earlier values did not clear WCAG's 4.5:1 for text on this
+  app's card colour: measured, subtext 3.73, blue 3.71, red 4.10, green 2.58, yellow 2.28. The app's stats
+  readout was worse still, 1.02 to 2.13 on the light card, because the service bakes its colours
+  into the markup and has no screen; it recolours itself for a light surface now, and is unchanged
+  over the dashboard, where it sits on a black plate. Hue and saturation are kept exactly in every
+  case; only lightness moved, by the smallest amount that clears the minimum, and the dark theme
+  needed nothing. **Both surfaces are audited by measurement rather than by eye**: every pair
+  either one actually draws is listed and checked, and the only remaining miss is the 1 px row
+  separator, which is decorative. Juri's rule, 2026-09-12: "we must make the themes look good",
+  and no palette's name is a constraint.
+- **Three weights, none of them hollow (chosen 2026-09-12 after five treatments were compared on
+  the live pages).** Filled is the action of the thing it sits in and every action inside a list
+  row; outlined is a command that acts now and stores nothing; **tonal** is navigation. Tonal
+  rather than a text button because the same language is mirrored on the panel's touch UI, where
+  there is no hover, and a control with no body until you point at it is one nobody finds; Material
+  is the precedent ("tonal is useful where a lower-priority button requires slightly more emphasis
+  than an outline would give"). **A tonal label is `--ink-alt`, never the hue**: the
+  hue on a tint of itself cannot reach 4.5:1 at any strength. Measured at 18% into the card: 4.74
+  dark and 5.62 light, borders clearing 3:1 in both. There is one tonal hue, the blue; a purple one
+  was built the same day and deleted unused rather than left in the stylesheet. The panel carries
+  the same tier (`KioskActivity.tonalButton`, `KioskTheme.inkAlt`), so the two surfaces are one
+  design rather than two that resemble each other. **A navigation button that carries a role class
+  is that role first**: Edit is a GET form and green, and only an unclassed button in a GET form is
+  tonal, which is what the `:not([class])` in that rule is for. Counted across the whole admin
+  the same day, exactly **two rows** mixed a filled button with a hollow one, Save + Open once and
+  Browse + Upload; a hollow button beside a filled sibling is what reads as abandoned, so both
+  gained a body. The unit for counting filled buttons is the **card**, following Atlassian's
+  per-section and Polaris's per-card rule rather than Material's, Carbon's and Primer's
+  one-per-page, which is a deliberate relaxation.
+  **The panel's buttons carry the web's measurements since 2026-09-19** (Juri: the same colours and
+  style everywhere in the app, the screensaver pages in particular): padding .5rem .9rem, a 10 px
+  radius, a 1 px border, a 2 px hard edge and .9rem text become 8 by 14 dp, 10 dp, 1 dp, 2 dp and
+  14 sp (`KioskActivity.webShaped`), a row button .25rem .6rem at .8rem, the tonal edge the hue at
+  45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
+  cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
+  160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
+- **A button's colour says what it does, on both surfaces.** Juri's rule, 2026-09-11: the main
+  colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
+  playlist" as the mark that something is enabled); a plain outline is a visible action that saves
+  nothing (Open once, Reboot, Reload, Display on and off, Preview, Back); **red deletes
+  something** (Delete a picture, Delete a playlist, and the confirm screen's own button); **green
+  adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
+  where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better").
+  Taking a picture out of a playlist is the main colour and never red, on both surfaces: red here
+  deletes a file or a playlist and this deletes neither. `button.danger` and `button.add` in
+  `admin.css`, `dangerButton` and `addButton` in `KioskActivity`, both built on the same shape and
+  lift as the main button so a row of mixed buttons still reads as one family. The rule is applied
+  across the pictures and screensaver surfaces; everything else it names already followed it.
+  Buttons on the web page also take the page's own font, not the browser's button font, which is
+  what left the Browse label three pixels taller than the Upload button beside it.
+- **The screensaver page is three panels, on both surfaces, named after what is chosen.**
+  Juri's structure, 2026-09-11: **"Screensaver mode"** holds the mode chooser and nothing else;
+  the second panel is named after the mode (`Dimmed page options`, `Black film option` singular,
+  `Web page options`, `Pictures options`) and holds everything that mode uses, in the order idle,
+  display-off, the mode's own field, the wake choice, then the sentence it all adds up to, then
+  Show it now; and **"Playlist"** appears only for the Pictures mode with this panel as the source.
+  **Off has no second panel at all**, his decision and his words: "it is Off so there is no
+  settings for it in any case". The times keep applying the moment a mode is picked. On the web
+  the legend is rewritten from the chooser's own option text (`admin_setting.js`), so a mode
+  changed without a reload renames its panel and the two surfaces cannot drift over a word. The
+  mode is **five radios on both surfaces** (2026-09-11): it is the only chooser on the page whose
+  value changes what else is on the page, so it is worth seeing at once. The settings page's own
+  Screensaver card keeps a menu, because it is one card among a dozen and every other chooser
+  there is a menu; `admin_setting.js` and `admin_stats.js` read and follow both shapes. Web radios
+  are drawn rather than given `accent-color`: Chrome derives an unchecked radio's ring from it and
+  against this purple on a dark scheme the ring came out khaki. **A mode with no wake choice shows
+  none**, rather than a disabled one with a note explaining it: the black film has nothing to look
+  at on waking, and a control that can never be enabled is clutter. This
+  also fixed a real bug he found: with any mode but Pictures the second web panel was still headed
+  "Pictures" and was **empty**, because it held the picture fields alone while the web page's
+  address and the dimmed brightness sat in the first panel.
+- **The web browser has the panel's "nothing opened yet" state.** It used to open the top of the
+  volume on arrival, so it had no way to say "pick a folder"; the top of the volume is a folder
+  like any other and is now reached by tapping it. Absent and empty are different answers for the
+  `at` parameter, which is why `browseTarget` returns null rather than "" when it is missing.
+- **The screensaver page does not use the settings page's multicol.** `.saver` is an explicit grid
+  of `auto-fill` columns with a 30 rem floor and a 72 rem cap, so the page is two equal columns at
+  any desktop size and one on a phone, and the Playlist panel spans the pair rather than the
+  window. Multicol balances by height, and with two boxes in four columns it put one at the far
+  left and one at the far right with a hand's width of nothing between them, and moved the right
+  one every time a scrollbar changed the width by a pixel (Juri, 2026-09-11, with a screenshot).
+  The playlist table is sized to its content rather than stretched, for the same reason: at full
+  width the Rename cell took every spare pixel and pushed Delete to the far edge of the card.
+- **Two things the screensaver page deliberately does not have.** There is no "Back to the page"
+  button beside "Show it now": it ends a showing screensaver, which is what Display on already does
+  to a lit panel, and on a dark panel it ends one without lighting the panel, which nobody presses a
+  button for; the tablet's own page never had it (Juri asked what distinguished them, 2026-09-11).
+  The `screensaver.stop` command is unchanged for MQTT and the API. And a page below the settings
+  page carries its heading alone, with no subtitle and no status chip: the panel's id, its address
+  and its load belong where somebody is configuring the panel, not on a page about one feature of
+  it. The way back is a "Back" button at the top and at the bottom, the same on the privacy and
+  terms pages, because a page you have to scroll to read is one you would have to scroll back up to
+  leave.
 - **`screensaver.playlist` switches the playlist by name**, and a Home Assistant select carries the
   panel's own names. By name because that is what a person and a card know, and an unknown name is
   refused with the names that do exist. The select's "no playlist" option is the word `None`,
