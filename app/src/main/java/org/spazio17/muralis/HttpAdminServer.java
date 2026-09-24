@@ -1285,8 +1285,10 @@ final class HttpAdminServer {
         paths.put("folder", "<path d=\"M3 7h6l2 2h10v10H3z\"/>");
         paths.put("storage", "<rect x=\"3\" y=\"6\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 10h18\"/>");
-        paths.put("dash", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"14\" rx=\"2\"/>"
-                + "<path d=\"M8 21h8M3 9h18\"/>");
+        // A dashboard: four tiles, two tall and two short, Material's own arrangement. The
+        // monitor on a stand it replaces drew hardware, which no wall panel has (Juri,
+        // 2026-09-24).
+        paths.put("dash", "<path d=\"M4 4h6v7H4zM14 4h6v4h-6zM4 15h6v5H4zM14 12h6v8h-6z\"/>");
         // A hub: four things joined to one in the middle, which is what a broker is. The
         // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them (Juri,
         // 2026-09-23).
@@ -2884,18 +2886,24 @@ final class HttpAdminServer {
     /**
      * How "Display off" darkens the panel, as a menu posted the moment it changes, with the
      * sentence the tablet's Display card shows under it, kept current by the stats poll. The real
-     * screen-off is offered only to a device owner, the same gate the tablet applies.
+     * screen-off is offered only to a device owner, the same gate the tablet applies, and an
+     * ordinary install gets the tablet's one greyed choice rather than a menu of Automatic and
+     * Black film that meant the same thing (Juri, 2026-09-24): a disabled menu, which the poll
+     * leaves alone and the settings script never posts.
      */
     private String displayOffControl() {
         String current = KioskConfig.displayOffMethodOf(context);
+        boolean deviceOwner = KioskService.isDeviceOwner(context);
         StringBuilder options = new StringBuilder();
-        options.append(selectOption(DisplayOffPolicy.AUTO, "Automatic", current));
-        if (KioskService.isDeviceOwner(context)) {
+        if (deviceOwner) {
+            options.append(selectOption(DisplayOffPolicy.AUTO, "Automatic", current));
             options.append(selectOption(DisplayOffPolicy.SLEEP, "Turn the screen off", current));
+            options.append(selectOption(DisplayOffPolicy.FILM, "Black film", current));
+        } else {
+            options.append(selectOption(DisplayOffPolicy.FILM, "Black film", DisplayOffPolicy.FILM));
         }
-        options.append(selectOption(DisplayOffPolicy.FILM, "Black film", current));
-        return selectField("display-off-method", null, "Display off", "display_off_method",
-                options.toString(), null)
+        return selectField("display-off-method", null, "Display off",
+                deviceOwner ? "display_off_method" : null, options.toString(), null, !deviceOwner)
                 + "<p class=\"hint" + (KioskService.displayOffWarning(context) ? " bad" : "")
                 + "\" id=\"display-off-note\">"
                 + escapeHtml(KioskService.describeDisplayOff(context)) + "</p>";
@@ -3085,9 +3093,16 @@ final class HttpAdminServer {
      */
     private static String selectField(String id, String name, String label, String dataSetting,
             String options, String support) {
+        return selectField(id, name, label, dataSetting, options, support, false);
+    }
+
+    /** The same menu, {@code disabled} where the panel offers the one choice it shows. */
+    private static String selectField(String id, String name, String label, String dataSetting,
+            String options, String support, boolean disabled) {
         return "<div class=\"field\"><select id=\"" + id + "\""
                 + (name == null ? "" : " name=\"" + name + "\"")
-                + (dataSetting == null ? "" : " data-setting=\"" + dataSetting + "\"") + ">"
+                + (dataSetting == null ? "" : " data-setting=\"" + dataSetting + "\"")
+                + (disabled ? " disabled" : "") + ">"
                 + options + "</select><label for=\"" + id + "\">" + escapeHtml(label) + "</label>"
                 + (support == null ? "" : "<p class=\"support\">" + escapeHtml(support) + "</p>")
                 + "</div>";

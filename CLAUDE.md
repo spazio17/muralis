@@ -28,6 +28,20 @@ Java class names (`KioskActivity`, `KioskService`, `KioskCommandDispatcher`, ...
 old `Kiosk` prefix on purpose, a deliberate scope decision, not an oversight: they're not
 product-facing, and renaming them touches every file for a purely cosmetic gain.
 
+## Design language: Material 3, on both surfaces
+
+Decided 2026-09-23 and standing for everything added or changed from now on: **the panel's
+screens and the web admin are one Material 3 design** (Google's Material Design 3,
+m3.material.io), drawn once and applied to both. Anything new, a card, a field, a button, a
+dialog, a list, a page, follows Material 3's components and measurements, in the app's own
+palette (`KioskTheme`, `admin.css`), and looks the same on the panel and in the browser except
+where the surface itself differs (touch targets, a browser's own controls). Before adding a
+control, check the inventory in `../media/drafts/material3/INVENTORY.md` and the rules in the
+"Both surfaces are Material 3" bullet below; a redesign is checked against that inventory, never
+against a screenshot of one surface. Material 3 is the reference, not a look to imitate: no
+"Google clone", no Material branding, and no platform widget used unstyled because it happened to
+be there.
+
 ## Core architecture
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
@@ -516,7 +530,9 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   radio visibly moves to Black film and the shared sentence (`KioskService.describeDisplayOff`)
   turns red on every surface, saying Android stopped Muralis and that it is not a Muralis error;
   changing the method from any surface clears the record, which is how an operator asks for
-  another try. A tap on a darkened panel wakes it on every screen (`filmOn` in
+  another try. An ordinary install shows the one choice it has, Black film, ticked and greyed on
+  both surfaces, with the sentence saying what would unlock the rest (2026-09-24: Automatic
+  resolved to the film there, so the two options were one thing under two names). A tap on a darkened panel wakes it on every screen (`filmOn` in
   `dispatchTouchEvent`), not only where the black view exists. Under sleep
   nothing is drawn: the dark state is the screen being off, `display.source` reports
   `display_off` from `isInteractive()`, and the power button or a remote wake ends it. The

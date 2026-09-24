@@ -38,7 +38,7 @@ if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto
 // These controls have no Save button, so nothing else would ever correct them after
 // somebody changed the same setting on the tablet or from a second browser.
 function follow(id,value){var el=document.getElementById(id);
-if(!el||el.dataset.pending||value==null){return;}
+if(!el||el.disabled||el.dataset.pending||value==null){return;}
 // A radio group is a div holding the radios, since the screensaver mode stopped being a menu
 // on 2026-09-11. Following it means ticking the one whose value matches, and the group carries
 // the pending flag for all of them so a poll landing on a fresh click cannot undo it.

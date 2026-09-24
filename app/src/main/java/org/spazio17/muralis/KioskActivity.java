@@ -970,8 +970,10 @@ public final class KioskActivity extends Activity {
      * after the local toggle. Both together on purpose, the button's label is state exactly like
      * the line under it, and only the line syncing made a toggle from Home Assistant flip the
      * text while the button kept offering the wrong direction. Green with the address while
-     * listening; grey "disabled" while the operator has the surface off; a warning only when it
-     * should be up and is not.
+     * listening; grey "disabled" while the operator has the surface off; a warning when it
+     * should be up and is not, and when it is up but nothing can reach it: a panel with Wi-Fi
+     * off keeps its server listening and has no address to print, and the line used to fill
+     * the gap with a made-up host name (Juri, 2026-09-24).
      */
     private void refreshWebAdminControls(Button toggle, TextView httpState,
             TextView fingerprintView, KioskTheme theme) {
@@ -988,11 +990,16 @@ public final class KioskActivity extends Activity {
         }
         if (KioskRuntimeState.httpAdminListening()) {
             SystemStats.RuntimeFacts httpFacts = KioskRuntimeState.lastFacts();
-            String address = httpFacts == null || httpFacts.ipAddress.isEmpty()
-                    ? "this-tablet" : httpFacts.ipAddress;
-            httpState.setTextColor(theme.ok);
-            httpState.setText("Listening at " + KioskRuntimeState.httpAdminScheme() + address + ":"
-                    + KioskRuntimeState.httpAdminPort());
+            String address = httpFacts == null ? "" : httpFacts.ipAddress;
+            if (address.isEmpty()) {
+                httpState.setTextColor(theme.warn);
+                httpState.setText("Web admin is on, port " + KioskRuntimeState.httpAdminPort()
+                        + ", but this device has no network connection");
+            } else {
+                httpState.setTextColor(theme.ok);
+                httpState.setText("Listening at " + KioskRuntimeState.httpAdminScheme() + address
+                        + ":" + KioskRuntimeState.httpAdminPort());
+            }
         } else if (!enabled) {
             httpState.setTextColor(theme.subtext);
             httpState.setText("Web admin disabled");
@@ -1353,7 +1360,7 @@ public final class KioskActivity extends Activity {
         // A panel, centred and near the top, rather than a page: one question does not need
         // a screen's width, and on a wall panel the eye goes to the middle first (2026-09-09).
         LinearLayout panel = card(theme, "Enter the PIN");
-        TextView why = new TextView(this);
+        TextView why = new FlushText(this);
         why.setText(purpose);
         why.setTextColor(theme.subtext);
         why.setTextSize(14);
@@ -1362,7 +1369,7 @@ public final class KioskActivity extends Activity {
         input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         input.setHint(EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH + " digits");
         panel.addView(input, matchWrap());
-        TextView verdict = new TextView(this);
+        TextView verdict = new FlushText(this);
         verdict.setTextColor(theme.bad);
         verdict.setTextSize(14);
         verdict.setVisibility(View.GONE);
@@ -1848,7 +1855,7 @@ public final class KioskActivity extends Activity {
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
-            TextView engine = new TextView(this);
+            TextView engine = new FlushText(this);
             engine.setTextColor(theme.subtext);
             engine.setTextSize(13);
             engine.setText("Rendering engine: " + webViewProvider);
@@ -1877,7 +1884,7 @@ public final class KioskActivity extends Activity {
         // over the dashboard: the toast was unreadable in the second before the dashboard took
         // the screen, which is exactly where a misconfiguration must NOT be reported (decided
         // 2026-08-24). Checked when the screen opens and whenever the host or port box is left.
-        TextView mqttState = new TextView(this);
+        TextView mqttState = new FlushText(this);
         mqttState.setTextSize(13);
         mqttState.setTextColor(theme.subtext);
         LinearLayout.LayoutParams mqttStateParams = new LinearLayout.LayoutParams(
@@ -1986,17 +1993,17 @@ public final class KioskActivity extends Activity {
         // Whether the surface actually holds a socket, and at which address. It fails closed by
         // design, so without this the difference between "listening" and "silently off because the
         // password is too short" was one line in logcat, invisible from the panel itself.
-        TextView httpState = new TextView(this);
+        TextView httpState = new FlushText(this);
         httpState.setTextSize(13);
         // The sentence the web page carries above the same block, so the two surfaces explain the
         // certificate the same way, and the fingerprint itself in a code block under it.
-        TextView certificateNote = new TextView(this);
+        TextView certificateNote = new FlushText(this);
         certificateNote.setTextColor(theme.subtext);
         certificateNote.setTextSize(12);
         certificateNote.setText("Served over HTTPS with a certificate this panel made itself, so "
                 + "your browser warned once. Its SHA-256 fingerprint, to compare with the one the "
                 + "browser shows for that page:");
-        TextView fingerprintView = new TextView(this);
+        TextView fingerprintView = new FlushText(this);
         fingerprintView.setTypeface(Typeface.MONOSPACE);
         fingerprintView.setTextSize(12);
         fingerprintView.setTextColor(theme.subtext);
@@ -2060,7 +2067,7 @@ public final class KioskActivity extends Activity {
         // The slider, and the label that reads back what the panel is actually at. Declared before
         // the checkbox because the checkbox enables and disables it.
         final SeekBar brightnessInput = new SeekBar(this);
-        final TextView brightnessValue = new TextView(this);
+        final TextView brightnessValue = new FlushText(this);
         // Caption first, then the sensor checkbox, then the slider: every cluster in this card
         // leads with its heading, so nothing reads as a control floating on its own.
         TextView brightnessCaption = fieldCaption(theme, "Brightness");
@@ -2078,7 +2085,7 @@ public final class KioskActivity extends Activity {
         // nothing here, unlike the Global and Secure namespaces: Settings.System has no
         // device-owner setter, so this is a grant somebody makes once by hand.
         if (!KioskService.canWriteSystemSettings(this)) {
-            TextView needsGrant = new TextView(this);
+            TextView needsGrant = new FlushText(this);
             needsGrant.setTextColor(theme.bad);
             needsGrant.setTextSize(13);
             needsGrant.setText("Needs the \"Modify system settings\" permission.");
@@ -2126,7 +2133,7 @@ public final class KioskActivity extends Activity {
         } else {
             // No sensor, so no control: a toggle that cannot work is worse than no toggle.
             autoBrightnessInput = null;
-            TextView noSensor = new TextView(this);
+            TextView noSensor = new FlushText(this);
             noSensor.setTextColor(theme.subtext);
             noSensor.setTextSize(13);
             noSensor.setText("This tablet has no ambient light sensor, so brightness is manual "
@@ -2184,7 +2191,7 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         displayCard.addView(brightnessRow, matchWrapClose());
 
-        TextView brightnessNote = new TextView(this);
+        TextView brightnessNote = new FlushText(this);
         brightnessNote.setTextColor(theme.subtext);
         brightnessNote.setTextSize(12);
         displayCard.addView(brightnessNote, matchWrapClose());
@@ -2224,6 +2231,9 @@ public final class KioskActivity extends Activity {
         // tablet right now. The real screen-off is offered only to a device owner, the same gate
         // as auto-rotate behind the accelerometer: an option that cannot work is worse than an
         // absent one, and the line below says why the film is what an ordinary install gets.
+        // An ordinary install gets no choice at all: Automatic resolved to the film there, so
+        // the two options were one thing under two names (Juri, 2026-09-24). It shows the film,
+        // ticked and greyed, and the line under it says what would unlock the rest.
         TextView displayOffLabel = fieldCaption(theme, "Display off");
         LinearLayout.LayoutParams displayOffLabelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -2231,15 +2241,21 @@ public final class KioskActivity extends Activity {
         displayCard.addView(displayOffLabel, displayOffLabelParams);
 
         RadioGroup displayOffInput = new RadioGroup(this);
-        radioChoice(theme, displayOffInput, "Automatic", DisplayOffPolicy.AUTO);
         if (KioskService.isDeviceOwner(this)) {
+            radioChoice(theme, displayOffInput, "Automatic", DisplayOffPolicy.AUTO);
             radioChoice(theme, displayOffInput, "Turn the screen off", DisplayOffPolicy.SLEEP);
+            radioChoice(theme, displayOffInput, "Black film", DisplayOffPolicy.FILM);
+            checkRadioIfChanged(displayOffInput, config.displayOffMethod);
+        } else {
+            RadioButton film = radioChoice(theme, displayOffInput, "Black film",
+                    DisplayOffPolicy.FILM);
+            displayOffInput.check(film.getId());
+            film.setEnabled(false);
+            film.setTextColor(theme.subtext);
         }
-        radioChoice(theme, displayOffInput, "Black film", DisplayOffPolicy.FILM);
-        checkRadioIfChanged(displayOffInput, config.displayOffMethod);
         displayCard.addView(displayOffInput, matchWrapClose());
 
-        TextView displayOffNote = new TextView(this);
+        TextView displayOffNote = new FlushText(this);
         displayOffNote.setTextSize(12);
         paintDisplayOffNote(displayOffNote, theme);
         displayCard.addView(displayOffNote, matchWrapClose());
@@ -2272,7 +2288,7 @@ public final class KioskActivity extends Activity {
         screensaverCard.addView(buttonRow(screensaverMore), matchWrap());
 
         LinearLayout statsCard = sectionBody(theme);
-        TextView statsReadout = new TextView(this);
+        TextView statsReadout = new FlushText(this);
         statsReadout.setTypeface(Typeface.MONOSPACE);
         statsReadout.setTextSize(13);
         statsReadout.setTextColor(theme.text);
@@ -2369,7 +2385,7 @@ public final class KioskActivity extends Activity {
         }
 
         LinearLayout escapeCard = sectionBody(theme);
-        TextView escapeSummary = new TextView(this);
+        TextView escapeSummary = new FlushText(this);
         escapeSummary.setTextColor(theme.subtext);
         escapeSummary.setTextSize(14);
         escapeSummary.setText("Settings: "
@@ -2389,7 +2405,7 @@ public final class KioskActivity extends Activity {
         // here only appears while Play says the product is buyable, so a bought panel shows one
         // quiet status line.
         LinearLayout aboutCard = sectionBody(theme);
-        TextView buildLine = new TextView(this);
+        TextView buildLine = new FlushText(this);
         buildLine.setTextColor(theme.subtext);
         buildLine.setTextSize(13);
         buildLine.setText(appVersionSummary());
@@ -2399,7 +2415,7 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         proCaptionParams.topMargin = dp(14);
         aboutCard.addView(proCaption, proCaptionParams);
-        TextView proState = new TextView(this);
+        TextView proState = new FlushText(this);
         proState.setTextColor(theme.subtext);
         proState.setTextSize(14);
         proState.setText("Checking Google Play…");
@@ -2689,7 +2705,7 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
         iconParams.rightMargin = dp(20);
         row.addView(icon, iconParams);
-        TextView label = new TextView(this);
+        TextView label = new FlushText(this);
         label.setText("Open dashboard");
         label.setTextColor(theme.onAccent());
         label.setTextSize(16);
@@ -2716,14 +2732,14 @@ public final class KioskActivity extends Activity {
         row.addView(icon, iconParams);
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
-        TextView title = new TextView(this);
+        TextView title = new FlushText(this);
         title.setText(section.title);
         title.setTextColor(theme.text);
         title.setTextSize(16);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texts.addView(title);
-        TextView summary = new TextView(this);
+        TextView summary = new FlushText(this);
         summary.setText(section.summary);
         summary.setTextColor(theme.subtext);
         summary.setTextSize(14);
@@ -2950,7 +2966,7 @@ public final class KioskActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(48));
-        TextView text = new TextView(this);
+        TextView text = new FlushText(this);
         text.setText(label);
         text.setTextColor(theme.accent);
         text.setTextSize(16);
@@ -3004,9 +3020,15 @@ public final class KioskActivity extends Activity {
         return host.isEmpty() ? "No dashboard yet" : host;
     }
 
+    /**
+     * The scheme only while the server is up: before it is bound (a panel waits for its network
+     * first) the scheme is unknown, and the row read "HTTP" beside a card saying HTTPS (phone,
+     * 2026-09-24). The web page's own row always knows, since it is served by that socket.
+     */
     private String webAdminSummary(KioskConfig config) {
-        return "Port " + config.httpPort + " · "
-                + (KioskRuntimeState.httpAdminScheme().startsWith("https") ? "HTTPS" : "HTTP")
+        return "Port " + config.httpPort
+                + (!KioskRuntimeState.httpAdminListening() ? ""
+                        : KioskRuntimeState.httpAdminSecure() ? " · HTTPS" : " · HTTP")
                 + (config.webAdminEnabled ? "" : " · off");
     }
 
@@ -3085,7 +3107,7 @@ public final class KioskActivity extends Activity {
         // The heading is added here rather than by card(), because it has to be repainted when the
         // mode changes: the whole point of the second panel is that it says which mode its options
         // belong to, so a person is never reading settings without knowing what they apply to.
-        TextView optionsTitle = new TextView(this);
+        TextView optionsTitle = new FlushText(this);
         optionsTitle.setTextColor(theme.text);
         optionsTitle.setTextSize(18);
         optionsCard.addView(optionsTitle);
@@ -3363,7 +3385,7 @@ public final class KioskActivity extends Activity {
     private ScreensaverControls addScreensaverControls(LinearLayout parent, LinearLayout options,
             LinearLayout playlists, KioskTheme theme, boolean full) {
         ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
-        TextView summary = new TextView(this);
+        TextView summary = new FlushText(this);
         summary.setTextSize(14);
 
         RadioGroup modeInput = new RadioGroup(this);
@@ -3546,7 +3568,7 @@ public final class KioskActivity extends Activity {
         group.addView(sourceInput, matchWrapClose());
         controls.sourceInput = sourceInput;
 
-        TextView sourceState = new TextView(this);
+        TextView sourceState = new FlushText(this);
         sourceState.setTextColor(theme.subtext);
         sourceState.setTextSize(12);
         LinearLayout.LayoutParams stateParams = matchWrapClose();
@@ -3612,7 +3634,7 @@ public final class KioskActivity extends Activity {
         checkRadioIfChanged(fitInput, settings.pictureFit);
         group.addView(fitInput, matchWrapClose());
         controls.fitInput = fitInput;
-        TextView fitNote = new TextView(this);
+        TextView fitNote = new FlushText(this);
         fitNote.setText("Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
                 + "it out of shape, Actual size does not scale it.");
         fitNote.setTextColor(theme.subtext);
@@ -3738,7 +3760,7 @@ public final class KioskActivity extends Activity {
         if (!library.browsesOwnStorage()) {
             // An ordinary install before anybody has answered the dialog. Not an error, and not a
             // reason to hide the feature: the permission is the whole of what is missing.
-            TextView why = new TextView(this);
+            TextView why = new FlushText(this);
             why.setTextColor(theme.subtext);
             why.setTextSize(12);
             why.setText("Muralis needs permission to read this panel's pictures before it can "
@@ -3752,7 +3774,7 @@ public final class KioskActivity extends Activity {
         PlaylistDocument document = library.playlists().load();
         List<PlaylistDocument.Playlist> all = document.all();
         if (all.isEmpty()) {
-            TextView none = new TextView(this);
+            TextView none = new FlushText(this);
             none.setTextColor(theme.subtext);
             none.setTextSize(12);
             none.setText("No playlists yet. Name one below, then open it and pick its pictures.");
@@ -3782,7 +3804,7 @@ public final class KioskActivity extends Activity {
         addField(fieldColumn, theme, "New playlist name", newName);
         maker.addView(fieldColumn, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView problem = new TextView(this);
+        TextView problem = new FlushText(this);
         problem.setTextColor(theme.bad);
         problem.setTextSize(12);
         problem.setVisibility(View.GONE);
@@ -3841,14 +3863,14 @@ public final class KioskActivity extends Activity {
 
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
-        TextView name = new TextView(this);
+        TextView name = new FlushText(this);
         name.setText(playlist.name);
         name.setTextColor(theme.text);
         name.setTextSize(16);
         name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texts.addView(name);
-        TextView count = new TextView(this);
+        TextView count = new FlushText(this);
         int pictures = playlist.items.size();
         String countText = pictures + (pictures == 1 ? " picture" : " pictures");
         if (playlist.active) {
@@ -3897,7 +3919,7 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, title, ""), matchWrap());
         LinearLayout box = card(theme, null);
-        TextView text = new TextView(this);
+        TextView text = new FlushText(this);
         text.setTextColor(theme.text);
         text.setTextSize(15);
         text.setText(message);
@@ -4252,7 +4274,7 @@ public final class KioskActivity extends Activity {
         Button keep = primaryButton(theme, "Save");
         Button drop = textButton(theme, "Cancel");
         addBesideBox(boxRow, keep, drop);
-        TextView problem = new TextView(this);
+        TextView problem = new FlushText(this);
         problem.setTextColor(theme.bad);
         problem.setTextSize(12);
         problem.setVisibility(View.GONE);
@@ -4305,7 +4327,7 @@ public final class KioskActivity extends Activity {
 
     /** The open folder's name, first line of Content, the same line the web page carries. */
     private void paintWhere(PlaylistPage screen) {
-        TextView where = new TextView(this);
+        TextView where = new FlushText(this);
         where.setText(openFolderName(screen.draft));
         where.setTextColor(screen.theme.subtext);
         where.setTextSize(14);
@@ -4321,7 +4343,7 @@ public final class KioskActivity extends Activity {
 
     /** One line of explanation inside a pane, in the pane's own quiet size. */
     private TextView paneNote(KioskTheme theme, String text, boolean bad) {
-        TextView note = new TextView(this);
+        TextView note = new FlushText(this);
         note.setTextColor(bad ? theme.bad : theme.subtext);
         note.setTextSize(12);
         note.setText(text);
@@ -4496,7 +4518,7 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams glyphParams = new LinearLayout.LayoutParams(dp(24), dp(24));
         glyphParams.rightMargin = dp(12);
         row.addView(glyph, glyphParams);
-        TextView text = new TextView(this);
+        TextView text = new FlushText(this);
         text.setText(label);
         text.setTextColor(open ? theme.onSecondaryContainer : theme.text);
         text.setTypeface(open ? MEDIUM : Typeface.DEFAULT);
@@ -4507,7 +4529,7 @@ public final class KioskActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         // The count as a badge, as the web page sets it: the pictures directly in the folder,
         // not everything below it, which read as a miscount (Juri, 2026-09-19).
-        TextView number = new TextView(this);
+        TextView number = new FlushText(this);
         number.setText(String.valueOf(count));
         number.setTextSize(11);
         number.setTypeface(MEDIUM);
@@ -4691,7 +4713,7 @@ public final class KioskActivity extends Activity {
         }
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
-        TextView name = new TextView(this);
+        TextView name = new FlushText(this);
         name.setText(entry.name);
         name.setTextColor(theme.text);
         name.setTextSize(16);
@@ -4823,7 +4845,7 @@ public final class KioskActivity extends Activity {
         }
         pic.setOnClickListener(v -> box.toggle());
         column.addView(pic, new LinearLayout.LayoutParams(tile, height));
-        TextView name = new TextView(this);
+        TextView name = new FlushText(this);
         name.setText(entry.name);
         name.setTextColor(theme.text);
         name.setTextSize(12);
@@ -5121,7 +5143,7 @@ public final class KioskActivity extends Activity {
 
             LinearLayout column = new LinearLayout(this);
             column.setOrientation(LinearLayout.VERTICAL);
-            TextView path = new TextView(this);
+            TextView path = new FlushText(this);
             String shown = screen.paths.get(uri);
             if (shown == null) {
                 unnamed.add(uri);
@@ -5155,7 +5177,7 @@ public final class KioskActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             creditParams.topMargin = dp(8);
             field.addView(credit, creditParams);
-            TextView label = new TextView(this);
+            TextView label = new FlushText(this);
             label.setText("Name for the credit");
             label.setTextColor(theme.subtext);
             label.setTextSize(12);
@@ -5354,7 +5376,7 @@ public final class KioskActivity extends Activity {
                 "Tap combinations that unlock the kiosk",
                 () -> showConfiguration(KioskConfig.load(this))), matchWrap());
 
-        TextView explain = new TextView(this);
+        TextView explain = new FlushText(this);
         explain.setTextColor(theme.subtext);
         explain.setTextSize(14);
         explain.setText("A combination is a series of taps in the corners of the screen. Record "
@@ -5376,7 +5398,7 @@ public final class KioskActivity extends Activity {
     private LinearLayout pinCard(KioskTheme theme) {
         boolean set = KioskConfig.escapePinSet(this);
         LinearLayout item = card(theme, "PIN after a combination");
-        TextView current = new TextView(this);
+        TextView current = new FlushText(this);
         current.setTextColor(set ? theme.accentAlt : theme.subtext);
         current.setTextSize(14);
         current.setText(set
@@ -5429,7 +5451,7 @@ public final class KioskActivity extends Activity {
     private LinearLayout sequenceCard(KioskTheme theme, String title, String sequence,
             boolean forLauncher) {
         LinearLayout item = card(theme, title);
-        TextView current = new TextView(this);
+        TextView current = new FlushText(this);
         current.setTextColor(theme.accentAlt);
         current.setTextSize(16);
         current.setText(EscapeSequence.describe(EscapeSequence.parse(sequence)));
@@ -5490,27 +5512,27 @@ public final class KioskActivity extends Activity {
         // for; the two combinations are a list because they used to sit mid-sentence after a
         // colon, and the secrecy note is last because it is the only part she could not have
         // discovered by poking.
-        TextView lead = new TextView(this);
+        TextView lead = new FlushText(this);
         lead.setTextColor(theme.text);
         lead.setTextSize(15);
         lead.setText("Muralis covers the whole screen. Tapping the corners in your own order is "
                 + "how you get back out.");
         page.addView(lead, matchWrap());
 
-        TextView listCaption = new TextView(this);
+        TextView listCaption = new FlushText(this);
         listCaption.setTextColor(theme.subtext);
         listCaption.setTextSize(14);
         listCaption.setText("Record two combinations now:");
         page.addView(listCaption, matchWrap());
 
-        TextView list = new TextView(this);
+        TextView list = new FlushText(this);
         list.setTextColor(theme.text);
         list.setTextSize(15);
         list.setLineSpacing(dp(6), 1f);
         list.setText("1.   opens Muralis settings\n2.   leaves Muralis for the home screen");
         page.addView(list, matchWrapClose());
 
-        TextView note = new TextView(this);
+        TextView note = new FlushText(this);
         note.setTextColor(theme.subtext);
         note.setTextSize(13);
         note.setText("You can change them later in settings. Keep them to yourself, anyone who "
@@ -5589,7 +5611,7 @@ public final class KioskActivity extends Activity {
         panel.setPadding(pad, pad, pad, pad);
 
         if (recordingForWizard) {
-            TextView step = new TextView(this);
+            TextView step = new FlushText(this);
             step.setText(forLauncher ? "Step 2 of 2" : "Step 1 of 2");
             step.setTextColor(theme.accentAlt);
             step.setTextSize(13);
@@ -5597,14 +5619,14 @@ public final class KioskActivity extends Activity {
             panel.addView(step, matchWrap());
         }
 
-        TextView title = new TextView(this);
+        TextView title = new FlushText(this);
         title.setText(forLauncher ? "Leave Muralis for the home screen" : "Open Muralis settings");
         title.setTextColor(theme.text);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
         panel.addView(title, matchWrap());
 
-        TextView hint = new TextView(this);
+        TextView hint = new FlushText(this);
         hint.setText("Tap the highlighted corners in the order you want. Between "
                 + EscapeSequence.MIN_LENGTH + " and " + EscapeSequence.MAX_LENGTH
                 + " taps, and do not stop for more than "
@@ -5614,7 +5636,7 @@ public final class KioskActivity extends Activity {
         hint.setGravity(Gravity.CENTER);
         panel.addView(hint, matchWrap());
 
-        recorderReadout = new TextView(this);
+        recorderReadout = new FlushText(this);
         recorderReadout.setTextColor(theme.ok);
         recorderReadout.setTextSize(18);
         recorderReadout.setGravity(Gravity.CENTER);
@@ -5670,7 +5692,7 @@ public final class KioskActivity extends Activity {
 
     private void addCornerTarget(FrameLayout root, KioskTheme theme, int gravity, int size,
             String label) {
-        TextView target = new TextView(this);
+        TextView target = new FlushText(this);
         target.setText(label);
         target.setTextColor(theme.onAccent());
         target.setTextSize(12);
@@ -6211,7 +6233,7 @@ public final class KioskActivity extends Activity {
                         + "set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`, which "
                         + "requires that no accounts are signed in on the device.");
 
-        TextView notice = new TextView(this);
+        TextView notice = new FlushText(this);
         notice.setText(getString(R.string.provisioning_warning));
         notice.setTextSize(15f);
         notice.setTextColor(theme.warn);
@@ -6447,7 +6469,7 @@ public final class KioskActivity extends Activity {
         // from the same text this screen renders). Plain text rather than a tappable link on
         // purpose: under lock task there is no browser to hand it to, so this is an address to
         // read on another machine, not something to open here.
-        TextView published = new TextView(this);
+        TextView published = new FlushText(this);
         published.setText(getString(R.string.legal_also_published, getString(
                 bodyRes == R.raw.privacy
                         ? R.string.legal_privacy_url : R.string.legal_terms_url)) + ".");
@@ -6480,7 +6502,7 @@ public final class KioskActivity extends Activity {
             if (content.isEmpty()) {
                 continue;
             }
-            TextView view = new TextView(this);
+            TextView view = new FlushText(this);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             if (isDocumentHeading(content)) {
@@ -6556,14 +6578,14 @@ public final class KioskActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
 
-        TextView labelView = new TextView(this);
+        TextView labelView = new FlushText(this);
         labelView.setText(label);
         labelView.setTextSize(14);
         labelView.setTextColor(theme.subtext);
         row.addView(labelView, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 4f));
 
-        TextView valueView = new TextView(this);
+        TextView valueView = new FlushText(this);
         valueView.setText(value);
         valueView.setTextSize(14);
         valueView.setTextColor(theme.text);
@@ -6669,7 +6691,7 @@ public final class KioskActivity extends Activity {
 
     /** The page title, Material's headline: the text colour, not the accent, since 2026-09-23. */
     private TextView titleText(KioskTheme theme, String title) {
-        TextView main = new TextView(this);
+        TextView main = new FlushText(this);
         main.setText(title);
         main.setTextColor(theme.text);
         main.setTextSize(24);
@@ -6732,7 +6754,7 @@ public final class KioskActivity extends Activity {
             titles.addView(titleRow);
         }
         if (subtitle != null && !subtitle.isEmpty()) {
-            TextView sub = new TextView(this);
+            TextView sub = new FlushText(this);
             sub.setText(subtitle);
             sub.setTextColor(theme.subtext);
             sub.setTextSize(12);
@@ -6921,7 +6943,7 @@ public final class KioskActivity extends Activity {
     }
 
     private TextView chipValue(KioskTheme theme, String text, int textSize) {
-        TextView view = new TextView(this);
+        TextView view = new FlushText(this);
         view.setText(text);
         view.setTextSize(textSize);
         view.setTextColor(textSize >= 18 ? theme.text : theme.subtext);
@@ -6950,7 +6972,7 @@ public final class KioskActivity extends Activity {
 
     /** A card's name: Material's title-medium, 16 sp in the medium weight. */
     private TextView cardTitle(KioskTheme theme, String title) {
-        TextView heading = new TextView(this);
+        TextView heading = new FlushText(this);
         heading.setText(title);
         heading.setTextColor(theme.text);
         heading.setTextSize(16);
@@ -6966,7 +6988,7 @@ public final class KioskActivity extends Activity {
      * than heading, so it stays at the plain weight.
      */
     private TextView fieldCaption(KioskTheme theme, String label) {
-        TextView caption = new TextView(this);
+        TextView caption = new FlushText(this);
         int aside = label.indexOf(" (");
         if (aside >= 0) {
             SpannableString styled = new SpannableString(label);
@@ -6999,7 +7021,7 @@ public final class KioskActivity extends Activity {
         // Room above the box for the half of the label that stands over the border.
         inputParams.topMargin = dp(8);
         frame.addView(input, inputParams);
-        TextView caption = new TextView(this);
+        TextView caption = new FlushText(this);
         caption.setText(label);
         caption.setTextColor(theme.subtext);
         caption.setTextSize(12);
@@ -7027,7 +7049,7 @@ public final class KioskActivity extends Activity {
     private TextView addField(LinearLayout parent, KioskTheme theme, String label,
             EditText input, String support) {
         TextView caption = addField(parent, theme, label, input);
-        TextView note = new TextView(this);
+        TextView note = new FlushText(this);
         note.setText(support);
         note.setTextColor(theme.subtext);
         note.setTextSize(12);
@@ -7142,8 +7164,9 @@ public final class KioskActivity extends Activity {
     /** The accent for a checked box or radio, the quiet colour for an empty one. */
     private static ColorStateList selectionTint(KioskTheme theme) {
         return new ColorStateList(new int[][] {
+                new int[] {-android.R.attr.state_enabled},
                 new int[] {android.R.attr.state_checked}, new int[0]},
-                new int[] {theme.accent, theme.subtext});
+                new int[] {theme.subtext, theme.accent, theme.subtext});
     }
 
     /**
@@ -7430,7 +7453,7 @@ public final class KioskActivity extends Activity {
         android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
         int textWidth = metrics.widthPixels - 2 * pad;
         java.util.List<View> lines = new java.util.ArrayList<>();
-        TextView title = new TextView(this);
+        TextView title = new FlushText(this);
         title.setText("No dashboard yet.");
         title.setTextColor(theme.text);
         title.setTextSize(30);
@@ -7438,7 +7461,7 @@ public final class KioskActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         title.setLayoutParams(matchWrap());
         lines.add(title);
-        TextView body = new TextView(this);
+        TextView body = new FlushText(this);
         body.setText("Open the Muralis settings and enter one. The panel does the rest.");
         body.setTextColor(theme.subtext);
         body.setTextSize(18);
@@ -7449,13 +7472,16 @@ public final class KioskActivity extends Activity {
         body.setLayoutParams(bodyParams);
         lines.add(body);
         if (KioskRuntimeState.httpAdminListening()) {
+            // The address only when there is one: a panel without a network has nothing another
+            // device could open, and the line says that instead of inventing a host name.
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
-            String address = facts == null || facts.ipAddress.isEmpty()
-                    ? "this-tablet" : facts.ipAddress;
-            TextView admin = new TextView(this);
-            admin.setText("Or from another device: " + KioskRuntimeState.httpAdminScheme() + address
-                    + ":" + KioskRuntimeState.httpAdminPort());
-            admin.setTextColor(theme.subtext);
+            String address = facts == null ? "" : facts.ipAddress;
+            TextView admin = new FlushText(this);
+            admin.setText(address.isEmpty()
+                    ? "The web admin is on, but this device has no network connection."
+                    : "Or from another device: " + KioskRuntimeState.httpAdminScheme() + address
+                            + ":" + KioskRuntimeState.httpAdminPort());
+            admin.setTextColor(address.isEmpty() ? theme.warn : theme.subtext);
             admin.setTextSize(16);
             admin.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams adminParams = new LinearLayout.LayoutParams(
@@ -7700,7 +7726,7 @@ public final class KioskActivity extends Activity {
      * for and nothing else, and it is gone the moment the load starts.
      */
     private void addNetworkWaitLabel(FrameLayout dashboard) {
-        networkWaitLabel = new TextView(this);
+        networkWaitLabel = new FlushText(this);
         networkWaitLabel.setText("Waiting for the network");
         networkWaitLabel.setTextColor(KioskTheme.darkPalette().subtext);
         networkWaitLabel.setTextSize(18);
@@ -7727,7 +7753,7 @@ public final class KioskActivity extends Activity {
      * keep working.
      */
     private void addStatsOverlay(FrameLayout dashboard) {
-        statsOverlay = new TextView(this);
+        statsOverlay = new FlushText(this);
         statsOverlay.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         // Sized to be read from across a room, which is the whole point of an on-glass readout;
         // the colours carry the meaning, so it does not have to be studied.
@@ -7851,7 +7877,7 @@ public final class KioskActivity extends Activity {
             // field backgrounds and the card title, without a second palette to maintain.
             child.setAlpha(0.45f);
         }
-        TextView needs = new TextView(this);
+        TextView needs = new FlushText(this);
         needs.setTextColor(theme.subtext);
         needs.setTextSize(14);
         needs.setText("Needs Muralis Pro.");
@@ -8601,6 +8627,61 @@ public final class KioskActivity extends Activity {
      * unless they say otherwise: these are somebody's photographs and somebody's licensed work,
      * so nothing is cropped or pulled out of shape by default.
      */
+    /**
+     * A label that stands on its ink. A TextView lays its first glyph out from the glyph's origin,
+     * and the visible letter starts a side bearing to the right of that, a distance that grows
+     * with the type size and differs from letter to letter: on the settings screen "Muralis" at
+     * 24 sp began 1 dp to the right of "kiosk-..." at 12 sp under it, and a section's title and
+     * its summary line missed each other by 2 px (measured on the phone, 2026-09-24). Every left
+     * edge on a page is meant to be one line, so a left-aligned label here takes its first glyph's
+     * bearing off its left padding and the ink lands on the edge. Centred and end-aligned text,
+     * and a label read right to left, are left to the platform.
+     */
+    private static final class FlushText extends TextView {
+        private final Rect ink = new Rect();
+        private String bearingGlyph;
+        private float bearingSize;
+        private Typeface bearingFace;
+        private int bearing;
+
+        FlushText(Context context) {
+            super(context);
+        }
+
+        @Override
+        public int getCompoundPaddingLeft() {
+            return super.getCompoundPaddingLeft() - bearing();
+        }
+
+        private int bearing() {
+            // Reached from TextView's own constructor, before this class's fields exist.
+            if (ink == null) {
+                return 0;
+            }
+            CharSequence text = getText();
+            if (text == null || text.length() == 0 || getLayoutDirection() == LAYOUT_DIRECTION_RTL) {
+                return 0;
+            }
+            int horizontal = getGravity() & Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK;
+            if (horizontal != Gravity.START && horizontal != Gravity.LEFT
+                    && horizontal != Gravity.NO_GRAVITY) {
+                return 0;
+            }
+            String glyph = text.subSequence(0, Character.charCount(
+                    Character.codePointAt(text, 0))).toString();
+            float size = getTextSize();
+            Typeface face = getTypeface();
+            if (!glyph.equals(bearingGlyph) || size != bearingSize || face != bearingFace) {
+                getPaint().getTextBounds(glyph, 0, glyph.length(), ink);
+                bearing = ink.left;
+                bearingGlyph = glyph;
+                bearingSize = size;
+                bearingFace = face;
+            }
+            return bearing;
+        }
+    }
+
     private final class PictureFrame extends FrameLayout {
         private final ImageView[] views = new ImageView[2];
         private int front;
@@ -8790,7 +8871,7 @@ public final class KioskActivity extends Activity {
      * the dashboard having opened, and the test was thought to have done nothing).
      */
     private void addScreensaverPreviewCaption(FrameLayout root) {
-        TextView caption = new TextView(this);
+        TextView caption = new FlushText(this);
         caption.setTextColor(Color.WHITE);
         caption.setTextSize(15);
         caption.setGravity(Gravity.CENTER);

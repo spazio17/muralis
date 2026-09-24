@@ -79,6 +79,7 @@ button.tonal,label.filebutton{background:var(--secondary-container);border-color
 button.tonal:hover,label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
 button.text{border-color:transparent;padding:0 12px}
 button:disabled{opacity:.38;cursor:default}
+.field select:disabled,.field select:disabled+label{opacity:.38;cursor:default}
 button svg,.btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-left:-8px}
 button.text svg{margin:0 -4px 0 0}
 .ib{width:40px;height:40px;padding:0;margin:0;border:0;border-radius:50%;background:transparent;color:var(--subtext);display:inline-flex;align-items:center;justify-content:center;flex:none;cursor:pointer;text-decoration:none}
