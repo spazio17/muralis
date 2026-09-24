@@ -244,6 +244,27 @@ final class KioskRuntimeState {
         dashboardAlive = alive;
     }
 
+    private static volatile boolean screensaverActive;
+    private static volatile boolean wizardOnScreen;
+
+    /** The first-start wizard is up: nothing may draw over it, so the service refuses instead. */
+    static void publishWizardOnScreen(boolean onScreen) {
+        wizardOnScreen = onScreen;
+    }
+
+    static boolean wizardOnScreen() {
+        return wizardOnScreen;
+    }
+
+    /** Whether the screensaver is on the glass right now; set by the activity, read by the stats. */
+    static void publishScreensaver(boolean active) {
+        screensaverActive = active;
+    }
+
+    static boolean screensaverActive() {
+        return screensaverActive;
+    }
+
     static boolean dashboardAlive() {
         return dashboardAlive;
     }

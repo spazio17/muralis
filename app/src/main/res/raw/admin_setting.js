@@ -23,8 +23,26 @@ fetch('/api/setting',{method:'POST',credentials:'same-origin',headers:{'Content-
 .then(function(r){return r.text();})
 // Console, not the page: a wall-panel operator has no use for a running log of saves,
 // and a rejection still has to be diagnosable.
-.then(function(text){if(window.console){console.log('Muralis: '+el.dataset.setting+': '+text);}})
+.then(function(text){var rejected=false,detail=text;
+try{var parsed=JSON.parse(text);rejected=parsed.status==='rejected';detail=parsed.detail||text;}catch(ignored){}
+el.classList.toggle('check-bad',rejected);
+el.title=rejected?detail:'';
+if(window.console){console.log('Muralis: '+el.dataset.setting+': '+text);}})
 .catch(function(){if(window.console){console.warn('Muralis: '+el.dataset.setting+': no response. The device may be rebooting or off the network');}})
 .then(function(){setTimeout(function(){delete el.dataset.pending;},1500);});}
 Array.prototype.forEach.call(document.querySelectorAll('[data-setting]'),function(el){el.addEventListener('change',function(){apply(el);});});
+// The screensaver box shows only the fields its mode uses, the same rule as the tablet's page:
+// the address for the web page, the floor for the dimmed page; the wake choice is greyed out for
+// the film, which has nothing to glance at. Also called by the stats poll when the mode follows
+// a change made elsewhere, hence the window property.
+function screensaverFields(){var mode=document.getElementById('screensaver-mode');
+if(!mode){return;}
+var url=document.getElementById('screensaver-url-field'),dim=document.getElementById('screensaver-dim-field'),wake=document.getElementById('screensaver-on-wake');
+if(url){url.classList.toggle('gone',mode.value!=='url');}
+if(dim){dim.classList.toggle('gone',mode.value!=='dim');}
+if(wake){var applies=mode.value==='url'||mode.value==='dim';wake.disabled=!applies;wake.title=applies?'':'The black film has nothing to glance at: a wake shows the page.';}}
+window.muralisScreensaverFields=screensaverFields;
+var saverMode=document.getElementById('screensaver-mode');
+if(saverMode){saverMode.addEventListener('change',screensaverFields);}
+screensaverFields();
 })();

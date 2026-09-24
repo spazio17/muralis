@@ -129,6 +129,18 @@ final class KioskCommandDispatcher {
         void setWebAdminEnabled(boolean enabled);
 
         /**
+         * Shows the screensaver now, whatever the idle time. Returns why it cannot, or null: the
+         * mode is off, or the web-page mode has no address; the shape of {@link #setBrightness}.
+         */
+        String screensaverStart();
+
+        /** Back to the page, and the idle time starts again. */
+        void screensaverStop();
+
+        /** Stores the mode; the value has been checked against ScreensaverPolicy already. */
+        void setScreensaverMode(String value);
+
+        /**
          * Publishes the telemetry document now.
          *
          * @return null when the publish was handed to a live MQTT session, otherwise a short
@@ -240,6 +252,22 @@ final class KioskCommandDispatcher {
                     return rejected("enabled must be true or false");
                 }
                 executor.setWebAdminEnabled(args.enabled);
+                return accepted();
+            case "screensaver.start": {
+                String problem = executor.screensaverStart();
+                if (problem != null) {
+                    return rejected(problem);
+                }
+                return accepted();
+            }
+            case "screensaver.stop":
+                executor.screensaverStop();
+                return accepted();
+            case "screensaver.mode":
+                if (!ScreensaverPolicy.isMode(args.value)) {
+                    return rejected("value must be off, dim, film or url");
+                }
+                executor.setScreensaverMode(args.value);
                 return accepted();
             case "telemetry.publish": {
                 // The executor answers for itself: with no broker configured, or a session that is

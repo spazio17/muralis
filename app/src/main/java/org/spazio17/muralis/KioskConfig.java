@@ -24,6 +24,12 @@ final class KioskConfig {
     private static final String STATS_OVERLAY = "stats_overlay";
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
+    private static final String SCREENSAVER_MODE = "screensaver_mode";
+    private static final String SCREENSAVER_IDLE_SECONDS = "screensaver_idle_s";
+    private static final String SCREENSAVER_OFF_SECONDS = "screensaver_off_s";
+    private static final String SCREENSAVER_URL = "screensaver_url";
+    private static final String SCREENSAVER_DIM_PERCENT = "screensaver_dim_percent";
+    private static final String SCREENSAVER_ON_WAKE = "screensaver_on_wake";
     /**
      * Retired 2026-08-29, when the two-way portrait switch became the three-way orientation
      * setting. Read only by the migration in {@link #orientationOf} and removed by the first
@@ -32,6 +38,7 @@ final class KioskConfig {
     private static final String PORTRAIT = "portrait";
     private static final String KIOSK_STOPPED = "kiosk_stopped";
     private static final String VISUAL_OFF_BOOT_COUNT = "visual_off_boot_count";
+    private static final String SCREENSAVER_BOOT_COUNT = "screensaver_boot_count";
     private static final String LAST_DASHBOARD_RELAUNCH_AT = "last_dashboard_relaunch_at";
     private static final String WEB_ADMIN_ENABLED = "web_admin_enabled";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
@@ -89,6 +96,10 @@ final class KioskConfig {
      * for the whole rule and for how a sleep that ended badly turns this into the film.
      */
     String displayOffMethod = DisplayOffPolicy.AUTO;
+    ScreensaverPolicy.Settings screensaver = new ScreensaverPolicy.Settings(
+            ScreensaverPolicy.OFF, ScreensaverPolicy.DEFAULT_IDLE_SECONDS,
+            ScreensaverPolicy.DEFAULT_OFF_SECONDS, "", ScreensaverPolicy.DEFAULT_DIM_PERCENT,
+            ScreensaverPolicy.WAKE_SCREENSAVER);
     /**
      * Whether the web admin is allowed to serve at all, independent of the password: turning the
      * surface off must not cost the operator their stored password, and turning it back on must
@@ -140,6 +151,7 @@ final class KioskConfig {
         config.statsOverlay = statsOverlayEnabled(context);
         config.orientation = orientationOf(context);
         config.displayOffMethod = displayOffMethodOf(context);
+        config.screensaver = screensaverOf(context);
         config.settingsSequence = preferences.getString(SETTINGS_SEQUENCE, "");
         config.launcherSequence = preferences.getString(LAUNCHER_SEQUENCE, "");
         return config;
@@ -249,6 +261,36 @@ final class KioskConfig {
             return this;
         }
 
+        Editor screensaverMode(String value) {
+            plain.putString(SCREENSAVER_MODE, value);
+            return this;
+        }
+
+        Editor screensaverIdleSeconds(int value) {
+            plain.putInt(SCREENSAVER_IDLE_SECONDS, value);
+            return this;
+        }
+
+        Editor screensaverOffSeconds(int value) {
+            plain.putInt(SCREENSAVER_OFF_SECONDS, value);
+            return this;
+        }
+
+        Editor screensaverUrl(String value) {
+            plain.putString(SCREENSAVER_URL, value.trim());
+            return this;
+        }
+
+        Editor screensaverDimPercent(int value) {
+            plain.putInt(SCREENSAVER_DIM_PERCENT, value);
+            return this;
+        }
+
+        Editor screensaverOnWake(String value) {
+            plain.putString(SCREENSAVER_ON_WAKE, value);
+            return this;
+        }
+
         Editor kioskStopped(boolean value) {
             plain.putBoolean(KIOSK_STOPPED, value);
             return this;
@@ -305,6 +347,33 @@ final class KioskConfig {
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(DISPLAY_OFF_METHOD, DisplayOffPolicy.AUTO);
         return DisplayOffPolicy.isMethod(stored) ? stored : DisplayOffPolicy.AUTO;
+    }
+
+    /**
+     * The screensaver's settings alone, without the secrets a full load decrypts: the activity's
+     * clock reads them every second, and a stored value this build does not know reads as the
+     * default rather than being refused, the same rule as {@link #displayOffMethodOf}.
+     */
+    static ScreensaverPolicy.Settings screensaverOf(Context context) {
+        SharedPreferences preferences = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String mode = preferences.getString(SCREENSAVER_MODE, ScreensaverPolicy.OFF);
+        String onWake = preferences.getString(SCREENSAVER_ON_WAKE,
+                ScreensaverPolicy.WAKE_SCREENSAVER);
+        return new ScreensaverPolicy.Settings(
+                ScreensaverPolicy.isMode(mode) ? mode : ScreensaverPolicy.OFF,
+                clamp(preferences.getInt(SCREENSAVER_IDLE_SECONDS,
+                        ScreensaverPolicy.DEFAULT_IDLE_SECONDS), 0, ScreensaverPolicy.MAX_SECONDS),
+                clamp(preferences.getInt(SCREENSAVER_OFF_SECONDS,
+                        ScreensaverPolicy.DEFAULT_OFF_SECONDS), 0, ScreensaverPolicy.MAX_SECONDS),
+                preferences.getString(SCREENSAVER_URL, ""),
+                clamp(preferences.getInt(SCREENSAVER_DIM_PERCENT,
+                        ScreensaverPolicy.DEFAULT_DIM_PERCENT), 1, 100),
+                ScreensaverPolicy.isOnWake(onWake) ? onWake : ScreensaverPolicy.WAKE_SCREENSAVER);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     /**
@@ -386,6 +455,25 @@ final class KioskConfig {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putLong(LAST_DASHBOARD_RELAUNCH_AT, atMs)
                 .commit();
+    }
+
+    /**
+     * The boot in which the screensaver was put on the glass, or -1: the same shape as the
+     * visual-off record and for the same reason, so the nightly restart and the WebView rebuilds
+     * bring the screensaver back rather than lighting the page for the idle time at four in
+     * the morning. Ends with the screensaver (a touch, a command, the settings screen) or with
+     * the display going dark, never with a rebuild.
+     */
+    static void recordScreensaverBootCount(Context context, int bootCount) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putInt(SCREENSAVER_BOOT_COUNT, bootCount)
+                .commit();
+    }
+
+    static int screensaverBootCount(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(SCREENSAVER_BOOT_COUNT, -1);
     }
 
     static void recordVisualOffBootCount(Context context, int bootCount) {

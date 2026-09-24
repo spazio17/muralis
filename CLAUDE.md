@@ -33,7 +33,7 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
   `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
-  `webadmin.enabled`, `system.reboot`, `telemetry.publish`)
+  `webadmin.enabled`, `screensaver.start/stop/mode`, `system.reboot`, `telemetry.publish`)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
@@ -538,6 +538,39 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   false and the same deadline starts the launcher at +1.21 s with no lock screen over it; with a
   device PIN set there, no dismissal was requested and the launcher started 9 ms after lock task
   ended. Lock task was re-applied on the way back in every run, on both panels.
+  it, and the policy does not need it, it only reads the answer.
+- **The screensaver is a quieter page after a chosen idle time, and then Display off after a
+  second one (built 2026-09-09, from the design note of that day).** Three modes in this step,
+  `dim` (the page at a brightness floor), `film` (the black view Display off uses) and `url` (a
+  second web page over the dashboard, which stays loaded underneath so a touch brings it back at
+  once); `off` is the shipped value, because a panel that started darkening by itself after an
+  update would read as broken. `ScreensaverPolicy` (pure, host-tested) holds the vocabulary, the
+  ranges and the clock: `next()` says START after `idle_s` without a touch and DISPLAY_OFF after
+  `off_s` of screensaver, and either time at 0 switches that step off. `KioskActivity` runs a
+  one-second clock and owns the state (`screensaverStage`, `screensaverShowing`, the layer under
+  the black view), asks the service for the display off (`KioskService.displayOff`, so sleep or
+  film is decided by `DisplayOffPolicy` exactly as for the button), and consumes the first touch
+  on a showing screensaver while still counting it for the escape combinations. What a wake from
+  display off shows is the user's choice (`screensaver_on_wake`, for `url` and `dim`; the film
+  has nothing to glance at, so the control is greyed out there with the reason, and both pages
+  show only the fields the chosen mode uses):
+  `onDisplayWoke` is idempotent because a wake from sleep reaches it twice, from `onResume` and
+  from the `display.wake` broadcast. The web-page mode with no address is stored anyway and
+  refused at start time with the reason, so the mode and the address can be typed in either
+  order; the one sentence every surface shows (`ScreensaverPolicy.describe`) turns red meanwhile.
+  Settings go through the instant path (`screensaver_mode/_idle_s/_off_s/_url/_dim_percent/
+  _on_wake` in the web admin's behaviour section, applied on change and refused in red on the
+  field itself; the tablet's card carries the mode and the sentence, its page every field,
+  applied on blur or Done with a toast for a refusal, and "Show it now", whose preview a touch
+  ends by returning to that page rather than to the dashboard); the commands are
+  `screensaver.start` (refused, not accepted, when it cannot show: mode off, no address, kiosk
+  stopped), `screensaver.stop` and `screensaver.mode`. The status document carries a
+  `screensaver` block (`active`, `mode`, the times, `summary`, `problem`; `url` admin-only), and
+  `display.source` reads `screensaver` while the dim floor or the film is the screensaver's, so a
+  lit dimmed page is never reported as display off. Home Assistant gets a select for the mode and
+  one switch that is both state and control; no separate start/stop buttons, they would be the
+  switch twice over. Pictures (a local folder, then Bing and Wikimedia Commons with credit lines)
+  are the next steps of the same design; the camera and microphone are not part of it.
 
 ## Platform constraints that shape the code
 

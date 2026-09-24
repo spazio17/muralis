@@ -67,7 +67,8 @@ host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
-            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin; do
+            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
+            ScreensaverPolicy; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -86,6 +87,7 @@ mkdir -p "${test_dir}/dispatcher" "${test_dir}/stats"
 javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/KioskCommandDispatcher.java" \
     "${pure_java_dir}/DisplayOffPolicy.java" \
+    "${pure_java_dir}/ScreensaverPolicy.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
 
@@ -148,6 +150,13 @@ javac -d "${test_dir}/pin" \
     "${pure_java_dir}/EscapePin.java" \
     "${host_test_dir}/EscapePinTest.java"
 java -cp "${test_dir}/pin" org.spazio17.muralis.EscapePinTest
+
+# The screensaver's clock and vocabulary: idle times, the hand-over to display off, the wake choice.
+mkdir -p "${test_dir}/screensaver"
+javac -d "${test_dir}/screensaver" \
+    "${pure_java_dir}/ScreensaverPolicy.java" \
+    "${host_test_dir}/ScreensaverPolicyTest.java"
+java -cp "${test_dir}/screensaver" org.spazio17.muralis.ScreensaverPolicyTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \

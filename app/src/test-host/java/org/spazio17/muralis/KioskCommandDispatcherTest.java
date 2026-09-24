@@ -25,6 +25,7 @@ public final class KioskCommandDispatcherTest {
         testOneOffUrlAndHome();
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
+        testScreensaverCommands();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
                 "display.brightness", new KioskCommandDispatcher.CommandArgs(150, null), executor);
@@ -427,6 +428,42 @@ public final class KioskCommandDispatcherTest {
         require(applied.status.equals("accepted"), "an applied brightness was not accepted");
     }
 
+    /**
+     * The screensaver's three commands. Start tells the truth the way brightness does: a panel
+     * whose mode is off, or whose web-page mode has no address, refuses with the reason rather
+     * than accepting a screensaver that shows nothing. The mode is a closed vocabulary.
+     */
+    private static void testScreensaverCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("screensaver.start",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
+                "start with a runnable screensaver must be accepted");
+        require(executor.calls.contains("screensaverStart"), "start did not reach the executor");
+        executor.screensaverProblem = "the screensaver mode is off";
+        KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
+                "screensaver.start", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(refused.status.equals("rejected") && refused.detail.contains("mode is off"),
+                "a screensaver that cannot run must say so: " + refused.detail);
+        require(KioskCommandDispatcher.dispatch("screensaver.stop",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
+                "stop is always accepted");
+        require(executor.calls.contains("screensaverStop"), "stop did not reach the executor");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "mode without a value must be rejected");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "pictures"), executor)
+                .status.equals("rejected"), "an unknown mode must be rejected");
+        require(executor.lastScreensaverMode == null, "executor ran despite a bad mode");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "url"), executor)
+                .status.equals("accepted"), "url is a mode");
+        require("url".equals(executor.lastScreensaverMode), "mode not forwarded");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "off"), executor)
+                .status.equals("accepted"), "off is a mode too: it is how the screensaver is switched off");
+    }
+
     private static final class RecordingExecutor implements KioskCommandDispatcher.Executor {
         final List<String> calls = new ArrayList<>();
         int lastBrightness = -1;
@@ -524,6 +561,27 @@ public final class KioskCommandDispatcherTest {
         }
 
         Boolean lastWebAdminEnabled = null;
+
+        /** Non-null stands in for a panel whose screensaver cannot run right now. */
+        String screensaverProblem;
+        String lastScreensaverMode;
+
+        @Override
+        public String screensaverStart() {
+            calls.add("screensaverStart");
+            return screensaverProblem;
+        }
+
+        @Override
+        public void screensaverStop() {
+            calls.add("screensaverStop");
+        }
+
+        @Override
+        public void setScreensaverMode(String value) {
+            calls.add("setScreensaverMode:" + value);
+            lastScreensaverMode = value;
+        }
 
         @Override
         public void setWebAdminEnabled(boolean enabled) {

@@ -844,7 +844,10 @@ final class HttpAdminServer {
                 // are touched, so presence would read every post as "the others were just
                 // cleared". The value carries the meaning instead, and an absent key is simply not
                 // being set. No stale-form guard either: the posted value is what the operator
-                // just touched, not what the page remembered.
+                // just touched, not what the page remembered. One key per request, and each key
+                // applies on its own, in this order: a hand-built request carrying several keys
+                // gets the earlier ones applied and the first refusal reported. The screensaver
+                // keys are the exception, checked as a set before any of them is stored.
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
@@ -861,7 +864,7 @@ final class HttpAdminServer {
                     }
                     DarkWatch.setMethod(context, method);
                 }
-                return null;
+                return saveScreensaverSettings(form);
             default:
                 Log.i(TAG, "Ignoring a settings post with no known section");
                 return null;
@@ -1164,6 +1167,8 @@ final class HttpAdminServer {
                 .append(displayOffControl())
                 .append("</fieldset>")
 
+                .append(screensaverBox())
+
                 // The switch sits under the readout it governs, so "what is this?" and "show
                 // it on the glass too" are one glance apart. No form and no Save button: it stands
                 // alone and applies itself, the way the brightness controls already did.
@@ -1331,6 +1336,9 @@ final class HttpAdminServer {
         if ("display_off".equals(source)) {
             return "display off";
         }
+        if ("screensaver".equals(source)) {
+            return "screensaver";
+        }
         return autoMode ? "automatic" : "manual";
     }
 
@@ -1355,6 +1363,131 @@ final class HttpAdminServer {
         // block label is what Port, Broker host and every other field here already use.
         return "<label>Orientation<select id=\"orientation\">"
                 + options + "</select></label>";
+    }
+
+    /**
+     * The screensaver's fields, one per stored setting, each posted the moment it changes through
+     * the same instant path as the display-off method, plus the sentence the tablet shows and the
+     * two quick actions. The vocabulary and the ranges are {@link ScreensaverPolicy}'s; nothing
+     * here decides anything.
+     */
+    /** Why the wake choice is greyed out for the film; the same words admin_setting.js uses. */
+    static final String WAKE_CHOICE_FILM_NOTE =
+            "The black film has nothing to glance at: a wake shows the page.";
+
+    private String screensaverBox() {
+        ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
+        boolean problem = saver.enabled()
+                && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
+        StringBuilder modes = new StringBuilder();
+        modes.append(selectOption(ScreensaverPolicy.OFF, "Off", saver.mode));
+        modes.append(selectOption(ScreensaverPolicy.DIM, "Dimmed page", saver.mode));
+        modes.append(selectOption(ScreensaverPolicy.FILM, "Black film", saver.mode));
+        modes.append(selectOption(ScreensaverPolicy.URL, "Web page", saver.mode));
+        String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
+                "Screensaver first, a touch opens the page", saver.onWake)
+                + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "The page at once", saver.onWake);
+        return "<fieldset><legend>Screensaver</legend>"
+                + "<label>Mode<select id=\"screensaver-mode\" data-setting=\"screensaver_mode\">"
+                + modes + "</select></label>"
+                + "<label>Idle before the screensaver (seconds, 0 = off)"
+                + "<input type=\"number\" id=\"screensaver-idle\" data-setting=\"screensaver_idle_s\""
+                + " min=\"0\" max=\"" + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\" value=\""
+                + saver.idleSeconds + "\"></label>"
+                + "<label>Screensaver before display off (seconds, 0 = never)"
+                + "<input type=\"number\" id=\"screensaver-off\" data-setting=\"screensaver_off_s\""
+                + " min=\"0\" max=\"" + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\" value=\""
+                + saver.offSeconds + "\"></label>"
+                + "<label id=\"screensaver-url-field\""
+                + (ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"")
+                + ">Web page to show"
+                + "<input type=\"text\" id=\"screensaver-url\" data-setting=\"screensaver_url\""
+                + " inputmode=\"url\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\""
+                + " placeholder=\"" + KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL + "\" value=\""
+                + escapeHtml(saver.url) + "\"></label>"
+                + "<label id=\"screensaver-dim-field\""
+                + (ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"")
+                + ">Brightness while dimmed (percent)"
+                + "<input type=\"number\" id=\"screensaver-dim\" data-setting=\"screensaver_dim_percent\""
+                + " min=\"1\" max=\"100\" step=\"1\" value=\"" + saver.dimPercent + "\"></label>"
+                + "<label>After a wake from display off"
+                + "<select id=\"screensaver-on-wake\" data-setting=\"screensaver_on_wake\""
+                + (ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " disabled title=\""
+                        + WAKE_CHOICE_FILM_NOTE + "\"")
+                + ">" + onWake + "</select></label>"
+                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
+                + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
+                + "</p>"
+                + "<div class=\"actions\">"
+                + quickAction("screensaver.start", "Show it now")
+                + quickAction("screensaver.stop", "Back to the page")
+                + "</div></fieldset>";
+    }
+
+    /**
+     * The screensaver's instant settings. Each field is checked by the same rule the tablet
+     * applies and refused with the reason, never clamped: a value that cannot be stored is not
+     * stored, and the page's field turns red with the sentence.
+     */
+    private String saveScreensaverSettings(Map<String, String> form) {
+        KioskConfig.Editor editor = KioskConfig.edit(context);
+        boolean changed = false;
+        if (form.containsKey("screensaver_mode")) {
+            String mode = form.get("screensaver_mode");
+            if (!ScreensaverPolicy.isMode(mode)) {
+                return "Not saved: the screensaver mode must be off, dim, film or url.";
+            }
+            editor.screensaverMode(mode);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_idle_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("screensaver_idle_s"));
+            if (seconds == null) {
+                return "Not saved: the idle time " + ScreensaverPolicy.SECONDS_RULE + ".";
+            }
+            editor.screensaverIdleSeconds(seconds);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_off_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("screensaver_off_s"));
+            if (seconds == null) {
+                return "Not saved: the time before display off "
+                        + ScreensaverPolicy.SECONDS_RULE + ".";
+            }
+            editor.screensaverOffSeconds(seconds);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_url")) {
+            String url = form.get("screensaver_url").trim();
+            if (!url.isEmpty()) {
+                String problem = KioskCommandDispatcher.validateDashboardUrl(url);
+                if (problem != null) {
+                    return "Not saved: " + problem + ".";
+                }
+            }
+            editor.screensaverUrl(url);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_dim_percent")) {
+            Integer percent = ScreensaverPolicy.parseDimPercent(form.get("screensaver_dim_percent"));
+            if (percent == null) {
+                return "Not saved: the dimmed brightness " + ScreensaverPolicy.DIM_RULE + ".";
+            }
+            editor.screensaverDimPercent(percent);
+            changed = true;
+        }
+        if (form.containsKey("screensaver_on_wake")) {
+            String onWake = form.get("screensaver_on_wake");
+            if (!ScreensaverPolicy.isOnWake(onWake)) {
+                return "Not saved: the wake choice must be screensaver or dashboard.";
+            }
+            editor.screensaverOnWake(onWake);
+            changed = true;
+        }
+        if (changed) {
+            editor.apply();
+        }
+        return null;
     }
 
     private static String selectOption(String value, String label, String current) {

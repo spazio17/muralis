@@ -21,6 +21,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.text.Html;
@@ -190,6 +191,41 @@ public final class KioskActivity extends Activity {
      * in KioskConfig, and the two are written together.
      */
     private boolean filmOn;
+    // The screensaver (2026-09-09): the clock, where the panel is in ScreensaverPolicy's diagram,
+    // when the current stage began, the layer the web-page mode draws in (under the black view,
+    // so Display off still covers it), and which mode is on the glass, null for none.
+    private static final long SCREENSAVER_TICK_MS = 1_000L;
+    private ScreensaverPolicy.Stage screensaverStage = ScreensaverPolicy.Stage.DASHBOARD;
+    private long screensaverSinceMs = android.os.SystemClock.uptimeMillis();
+    private FrameLayout screensaverLayer;
+    private WebView screensaverWebView;
+    private String screensaverShowing;
+    /** The address or the dim floor the showing mode was built with, so a change re-applies. */
+    private String screensaverShowingDetail = "";
+    /** Display off resolved to a real sleep; cleared by the wake, whichever way it arrives. */
+    private boolean asleep;
+    /**
+     * The showing screensaver is the settings page's "Show it now": the touch that ends it goes
+     * back to that page, not to the dashboard (Juri, 2026-09-09: a test must not leave the test
+     * page). Ends with the screensaver; a remote stop or the display going dark drops it.
+     */
+    private boolean screensaverPreview;
+    /** The strip that names a preview; without it the dimmed page is just the page, darker. */
+    private TextView screensaverPreviewCaption;
+    /**
+     * When the last wake was judged. A wake from sleep reaches this activity twice, from
+     * onResume and from the display.wake broadcast, in either order; the second arrival within
+     * this window is the same wake and must not undo what the first decided.
+     */
+    private long lastWakeDecisionMs = -WAKE_GRACE_MS;
+    private static final long WAKE_GRACE_MS = 3_000L;
+    private final Runnable screensaverClock = new Runnable() {
+        @Override
+        public void run() {
+            tickScreensaver();
+            mainHandler.postDelayed(this, SCREENSAVER_TICK_MS);
+        }
+    };
     private TextView statsOverlay;
     /**
      * The System stats card's readout on the configuration screen. Distinct from
@@ -597,6 +633,7 @@ public final class KioskActivity extends Activity {
         // First, before anything here can fail: the service's supervisor relaunches the dashboard
         // when no instance exists, and must not do so over one that is halfway through onCreate.
         KioskRuntimeState.publishDashboardAlive(true);
+        mainHandler.postDelayed(screensaverClock, SCREENSAVER_TICK_MS);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // A wall kiosk has nothing to protect behind a swipe-to-unlock screen, and after a reboot
         // the dashboard would otherwise sit invisible behind the keyguard until somebody walked up
@@ -762,6 +799,15 @@ public final class KioskActivity extends Activity {
             stopWatchingWriteSettings();
             redrawInPlace(currentScreen);
         }
+        PowerManager power = getSystemService(PowerManager.class);
+        if (asleep && (power == null || power.isInteractive())) {
+            // The screen came back by the power button or a remote wake; the display.wake
+            // broadcast may follow, and both paths end in the same decision, once.
+            asleep = false;
+            onDisplayWoke();
+        } else if (!asleep && screensaverStage == ScreensaverPolicy.Stage.DASHBOARD) {
+            screensaverSinceMs = android.os.SystemClock.uptimeMillis();
+        }
     }
 
     @Override
@@ -846,6 +892,7 @@ public final class KioskActivity extends Activity {
     private void publishOperatorScreenState() {
         KioskRuntimeState.publishOperatorOnScreen(
                 configurationVisible || recorderVisible || wizardVisible);
+        KioskRuntimeState.publishWizardOnScreen(wizardVisible);
         // Rides along here because this is already the choke point every screen transition
         // passes through: the app's own screens are dark and want light icons, the dashboard
         // wants whatever probePageLuminance last measured.
@@ -1079,6 +1126,24 @@ public final class KioskActivity extends Activity {
                 // The corner targets are plain labels with no click listener, so letting the event
                 // through costs nothing.
                 return super.dispatchTouchEvent(event);
+            }
+            // A touch proves the screen is on: a sleep that never darkened, or a wake this
+            // activity was not told about, must not leave the screensaver's clock blocked.
+            asleep = false;
+            if (screensaverStage == ScreensaverPolicy.Stage.DASHBOARD) {
+                screensaverSinceMs = event.getEventTime();
+            }
+            // The screensaver: the first touch brings the page back and never reaches it, and a
+            // corner tap still counts for the escape combinations, which work from every screen.
+            if (screensaverShowing != null) {
+                boolean preview = screensaverPreview;
+                stopScreensaver("touch");
+                if (preview) {
+                    showScreensaverSettings();
+                } else if (zone != null) {
+                    handleEscapeTap(zone, event.getEventTime());
+                }
+                return true;
             }
             // A tap on a darkened panel means "wake", on every screen. The black view that used to
             // be the only thing answering a tap exists on the dashboard and the parking page; the
@@ -1688,6 +1753,9 @@ public final class KioskActivity extends Activity {
         setDashboardFullscreen(true);
         recorderVisible = false;
         wizardVisible = false;
+        // The operator asked for the settings, not the screensaver; the record goes too, so the
+        // dashboard they open afterwards is the page and not the screensaver coming back.
+        stopScreensaver("settings opened");
         destroyWebView();
         kioskStopped = false;
         configurationVisible = true;
@@ -2176,6 +2244,17 @@ public final class KioskActivity extends Activity {
         // formatter, with the switch that puts them on the dashboard directly under them. A switch
         // labelled "show system stats" sitting three cards away from the stats it shows was a
         // question the operator had to answer by toggling it and looking somewhere else.
+        // The screensaver card: the mode and the one sentence that says what is set; every
+        // field, the two times, the page address, the dim floor, the wake choice and "Show it
+        // now", is on its own page, reached by the button (Juri, 2026-09-09: the times were on
+        // the card too and were the same boxes twice).
+        LinearLayout screensaverCard = card(theme, "Screensaver");
+        ScreensaverControls screensaverControls =
+                addScreensaverControls(screensaverCard, theme, false);
+        Button screensaverMore = secondaryButton(theme, "More screensaver settings");
+        screensaverMore.setOnClickListener(view -> showScreensaverSettings());
+        screensaverCard.addView(buttonRow(screensaverMore), matchWrap());
+
         LinearLayout statsCard = card(theme, "System stats");
         TextView statsReadout = new TextView(this);
         statsReadout.setTypeface(Typeface.MONOSPACE);
@@ -2243,6 +2322,7 @@ public final class KioskActivity extends Activity {
                     // The sentence changes on its own when a sleep ends badly, so it follows too,
                     // and the method radio with it, since a bad sleep switches the stored method.
                     paintDisplayOffNote(displayOffNote, theme);
+                    screensaverControls.sync();
                 } finally {
                     syncingLiveControls = false;
                 }
@@ -2351,8 +2431,8 @@ public final class KioskActivity extends Activity {
         }
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
-                dashboardCard, mqttCard, httpCard, displayCard, statsCard, escapeCard,
-                aboutCard)),
+                dashboardCard, mqttCard, httpCard, displayCard, screensaverCard, statsCard,
+                escapeCard, aboutCard)),
                 matchWrap());
 
         Button open = primaryButton(theme, "Open dashboard");
@@ -2479,6 +2559,356 @@ public final class KioskActivity extends Activity {
             pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
             showConfiguration(pending);
         };
+    }
+
+    /**
+     * The screensaver's own page: every field, "Show it now", and the way back. The card on the
+     * configuration screen carries the mode alone; this page has the times and the rest.
+     */
+    private void showScreensaverSettings() {
+        // Reached from the configuration screen, where no page is up, and from the touch that
+        // ends a "Show it now", where the dashboard is: the same prelude as showConfiguration,
+        // so the page never sits over a live WebView and its clocks.
+        destroyWebView();
+        setDashboardFullscreen(true);
+        configurationVisible = true;
+        recorderVisible = false;
+        wizardVisible = false;
+        publishOperatorScreenState();
+        applyKioskPolicy();
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        enterImmersiveMode();
+        KioskTheme theme = currentTheme();
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, "Screensaver",
+                "What the panel shows when nobody touches it"), matchWrap());
+
+        TextView explain = new TextView(this);
+        explain.setTextColor(theme.subtext);
+        explain.setTextSize(14);
+        explain.setText("After the idle time the page gives way to the screensaver, and after the "
+                + "second time the display goes off the way Display off does. A touch brings the "
+                + "page back. Times are in seconds; 0 switches that step off.");
+        page.addView(explain, matchWrap());
+
+        LinearLayout controlsCard = card(theme, null);
+        ScreensaverControls controls = addScreensaverControls(controlsCard, theme, true);
+        LinearLayout.LayoutParams cardParams = matchWrap();
+        cardParams.topMargin = dp(16);
+        page.addView(controlsCard, cardParams);
+
+        Button back = primaryButton(theme, "Back to configuration");
+        back.setOnClickListener(view -> showConfiguration(KioskConfig.load(this)));
+        Button showNow = secondaryButton(theme, "Show it now");
+        showNow.setOnClickListener(view -> {
+            ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+            String problem = !settings.enabled() ? "the screensaver mode is off"
+                    : KioskConfig.kioskStopped(this) ? "the kiosk is stopped"
+                    : ScreensaverPolicy.modeProblem(settings.mode, settings.url);
+            if (problem != null) {
+                Toast.makeText(this, "Not shown: " + problem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            showDashboard(KioskConfig.load(this).dashboardUrl);
+            if (startScreensaver(settings, "show it now")) {
+                screensaverPreview = true;
+                showScreensaverPreviewCaption(settings);
+            } else {
+                Toast.makeText(this, "Not shown: the display is off.", Toast.LENGTH_LONG).show();
+            }
+        });
+        page.addView(buttonRow(back, showNow), matchWrap());
+
+        setContentView(scrollPage(theme, page));
+        currentScreen = this::showScreensaverSettings;
+
+        Runnable sync = new Runnable() {
+            @Override
+            public void run() {
+                if (!configurationVisible || !controls.summary.isAttachedToWindow()) {
+                    return;
+                }
+                controls.sync();
+                mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
+            }
+        };
+        mainHandler.postDelayed(sync, LIVE_SETTING_SYNC_INTERVAL_MS);
+    }
+
+    /**
+     * The screensaver's controls, on the card and on the page, all of them applied the moment
+     * they are touched like the Display card's, and followed from storage so a change made in
+     * the web admin or over MQTT appears here. A text box is not overwritten while it has the
+     * focus, so nothing is typed over.
+     */
+    private final class ScreensaverControls {
+        final KioskTheme theme;
+        final RadioGroup modeInput;
+        final EditText idleInput;
+        final EditText offInput;
+        final EditText urlInput;
+        final EditText dimInput;
+        final RadioGroup onWakeInput;
+        final TextView summary;
+        TextView urlCaption;
+        TextView dimCaption;
+        TextView onWakeNote;
+
+        ScreensaverControls(KioskTheme theme, RadioGroup modeInput, EditText idleInput,
+                EditText offInput, EditText urlInput, EditText dimInput, RadioGroup onWakeInput,
+                TextView summary) {
+            this.theme = theme;
+            this.modeInput = modeInput;
+            this.idleInput = idleInput;
+            this.offInput = offInput;
+            this.urlInput = urlInput;
+            this.dimInput = dimInput;
+            this.onWakeInput = onWakeInput;
+            this.summary = summary;
+        }
+
+        /**
+         * Only the fields the chosen mode uses are on the page (Juri, 2026-09-09): the address
+         * for the web page, the floor for the dimmed page; the two times and the wake choice
+         * for every mode, the wake choice greyed out for the film, which has nothing to glance
+         * at, with the reason under it.
+         */
+        void applyMode(String mode) {
+            if (urlInput == null) {
+                return;
+            }
+            int url = ScreensaverPolicy.URL.equals(mode) ? View.VISIBLE : View.GONE;
+            urlCaption.setVisibility(url);
+            urlInput.setVisibility(url);
+            int dim = ScreensaverPolicy.DIM.equals(mode) ? View.VISIBLE : View.GONE;
+            dimCaption.setVisibility(dim);
+            dimInput.setVisibility(dim);
+            boolean applies = ScreensaverPolicy.wakeChoiceApplies(mode);
+            for (int index = 0; index < onWakeInput.getChildCount(); index++) {
+                View radio = onWakeInput.getChildAt(index);
+                radio.setEnabled(applies);
+                radio.setAlpha(applies ? 1f : 0.45f);
+            }
+            onWakeNote.setVisibility(ScreensaverPolicy.FILM.equals(mode) ? View.VISIBLE : View.GONE);
+        }
+
+        void sync() {
+            ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(KioskActivity.this);
+            boolean wasSyncing = syncingLiveControls;
+            syncingLiveControls = true;
+            try {
+                checkRadioIfChanged(modeInput, settings.mode);
+                followIfIdle(idleInput, String.valueOf(settings.idleSeconds));
+                followIfIdle(offInput, String.valueOf(settings.offSeconds));
+                followIfIdle(urlInput, settings.url);
+                followIfIdle(dimInput, String.valueOf(settings.dimPercent));
+                if (onWakeInput != null) {
+                    checkRadioIfChanged(onWakeInput, settings.onWake);
+                }
+                applyMode(settings.mode);
+            } finally {
+                syncingLiveControls = wasSyncing;
+            }
+            paintSummary();
+        }
+
+        void paintSummary() {
+            ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(KioskActivity.this);
+            summary.setText(ScreensaverPolicy.describe(settings,
+                    KioskRuntimeState.screensaverActive()));
+            boolean problem = settings.enabled()
+                    && ScreensaverPolicy.modeProblem(settings.mode, settings.url) != null;
+            summary.setTextColor(problem ? theme.bad : theme.subtext);
+        }
+
+        private void followIfIdle(EditText input, String value) {
+            if (input == null || input.hasFocus()) {
+                return;
+            }
+            if (!value.equals(input.getText().toString())) {
+                input.setText(value);
+            }
+        }
+    }
+
+    private ScreensaverControls addScreensaverControls(LinearLayout parent, KioskTheme theme,
+            boolean full) {
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        TextView summary = new TextView(this);
+        summary.setTextSize(14);
+
+        RadioGroup modeInput = new RadioGroup(this);
+        radioChoice(theme, modeInput, "Off", ScreensaverPolicy.OFF);
+        radioChoice(theme, modeInput, "Dimmed page", ScreensaverPolicy.DIM);
+        radioChoice(theme, modeInput, "Black film", ScreensaverPolicy.FILM);
+        radioChoice(theme, modeInput, "Web page", ScreensaverPolicy.URL);
+        checkRadioIfChanged(modeInput, settings.mode);
+        LinearLayout.LayoutParams modeParams = matchWrapClose();
+        modeParams.topMargin = dp(6);
+        parent.addView(modeInput, modeParams);
+
+        EditText idleInput = null;
+        EditText offInput = null;
+        EditText urlInput = null;
+        EditText dimInput = null;
+        RadioGroup onWakeInput = null;
+        TextView urlCaption = null;
+        TextView dimCaption = null;
+        TextView onWakeNote = null;
+        if (full) {
+            idleInput = secondsInput(theme, settings.idleSeconds);
+            addField(parent, theme, "Idle before the screensaver (seconds, 0 = off)", idleInput);
+            offInput = secondsInput(theme, settings.offSeconds);
+            addField(parent, theme, "Screensaver before display off (seconds, 0 = never)",
+                    offInput);
+            urlInput = themedInput(theme, settings.url, false);
+            urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
+            urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                    | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            urlCaption = addField(parent, theme, "Web page to show", urlInput);
+            dimInput = themedInput(theme, String.valueOf(settings.dimPercent), false);
+            dimInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+            dimCaption = addField(parent, theme, "Brightness while dimmed (percent)", dimInput);
+
+            TextView onWakeLabel = fieldCaption(theme, "After a wake from display off");
+            LinearLayout.LayoutParams onWakeLabelParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            onWakeLabelParams.topMargin = dp(14);
+            parent.addView(onWakeLabel, onWakeLabelParams);
+            onWakeInput = new RadioGroup(this);
+            radioChoice(theme, onWakeInput, "Show the screensaver first, a touch opens the page",
+                    ScreensaverPolicy.WAKE_SCREENSAVER);
+            radioChoice(theme, onWakeInput, "Show the page at once",
+                    ScreensaverPolicy.WAKE_DASHBOARD);
+            checkRadioIfChanged(onWakeInput, settings.onWake);
+            parent.addView(onWakeInput, matchWrapClose());
+            onWakeNote = new TextView(this);
+            onWakeNote.setTextColor(theme.subtext);
+            onWakeNote.setTextSize(12);
+            onWakeNote.setText("The black film has nothing to glance at: a wake shows the page.");
+            parent.addView(onWakeNote, matchWrapClose());
+        }
+
+        LinearLayout.LayoutParams summaryParams = matchWrapClose();
+        summaryParams.topMargin = dp(12);
+        parent.addView(summary, summaryParams);
+
+        ScreensaverControls controls = new ScreensaverControls(theme, modeInput, idleInput,
+                offInput, urlInput, dimInput, onWakeInput, summary);
+        controls.urlCaption = urlCaption;
+        controls.dimCaption = dimCaption;
+        controls.onWakeNote = onWakeNote;
+        controls.applyMode(settings.mode);
+        controls.paintSummary();
+
+        modeInput.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            KioskConfig.edit(this).screensaverMode((String) checked.getTag()).apply();
+            KioskService.publishTelemetrySoon(this);
+            controls.applyMode((String) checked.getTag());
+            controls.paintSummary();
+        });
+        if (full) {
+            EditText idle = idleInput;
+            onApply(idle, () -> {
+                Integer seconds = ScreensaverPolicy.parseSeconds(idle.getText().toString());
+                if (seconds == null) {
+                    Toast.makeText(this, "Not saved: the idle time "
+                            + ScreensaverPolicy.SECONDS_RULE + ".", Toast.LENGTH_LONG).show();
+                    idle.setText(String.valueOf(KioskConfig.screensaverOf(this).idleSeconds));
+                    return;
+                }
+                if (seconds != KioskConfig.screensaverOf(this).idleSeconds) {
+                    KioskConfig.edit(this).screensaverIdleSeconds(seconds).apply();
+                    KioskService.publishTelemetrySoon(this);
+                }
+                controls.paintSummary();
+            });
+            EditText off = offInput;
+            onApply(off, () -> {
+                Integer seconds = ScreensaverPolicy.parseSeconds(off.getText().toString());
+                if (seconds == null) {
+                    Toast.makeText(this, "Not saved: the time before display off "
+                            + ScreensaverPolicy.SECONDS_RULE + ".", Toast.LENGTH_LONG).show();
+                    off.setText(String.valueOf(KioskConfig.screensaverOf(this).offSeconds));
+                    return;
+                }
+                if (seconds != KioskConfig.screensaverOf(this).offSeconds) {
+                    KioskConfig.edit(this).screensaverOffSeconds(seconds).apply();
+                    KioskService.publishTelemetrySoon(this);
+                }
+                controls.paintSummary();
+            });
+            EditText url = urlInput;
+            onApply(url, () -> {
+                String typed = url.getText().toString().trim();
+                String value = typed.isEmpty() ? "" : normalizeUrl(typed);
+                if (!value.isEmpty()) {
+                    String problem = KioskCommandDispatcher.validateDashboardUrl(value);
+                    if (problem != null) {
+                        Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG)
+                                .show();
+                        url.setText(KioskConfig.screensaverOf(this).url);
+                        return;
+                    }
+                }
+                if (!value.equals(KioskConfig.screensaverOf(this).url)) {
+                    KioskConfig.edit(this).screensaverUrl(value).apply();
+                    KioskService.publishTelemetrySoon(this);
+                    url.setText(value);
+                }
+                controls.paintSummary();
+            });
+            EditText dim = dimInput;
+            onApply(dim, () -> {
+                Integer percent = ScreensaverPolicy.parseDimPercent(dim.getText().toString());
+                if (percent == null) {
+                    Toast.makeText(this, "Not saved: the dimmed brightness "
+                            + ScreensaverPolicy.DIM_RULE + ".", Toast.LENGTH_LONG).show();
+                    dim.setText(String.valueOf(KioskConfig.screensaverOf(this).dimPercent));
+                    return;
+                }
+                if (percent != KioskConfig.screensaverOf(this).dimPercent) {
+                    KioskConfig.edit(this).screensaverDimPercent(percent).apply();
+                    KioskService.publishTelemetrySoon(this);
+                }
+            });
+            onWakeInput.setOnCheckedChangeListener((group, checkedId) -> {
+                View checked = group.findViewById(checkedId);
+                if (checked == null || syncingLiveControls) {
+                    return;
+                }
+                KioskConfig.edit(this).screensaverOnWake((String) checked.getTag()).apply();
+                KioskService.publishTelemetrySoon(this);
+            });
+        }
+        return controls;
+    }
+
+    private EditText secondsInput(KioskTheme theme, int seconds) {
+        EditText input = themedInput(theme, String.valueOf(seconds), false);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        return input;
+    }
+
+    /**
+     * Runs the apply when the box loses the focus, which is also what the keyboard's Done does
+     * ({@link #hideKeyboard} clears the focus), so the two ways a person says "that is the
+     * value" run it exactly once.
+     */
+    private void onApply(EditText input, Runnable apply) {
+        input.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                apply.run();
+            }
+        });
+        input.setOnEditorActionListener((view, actionId, event) -> {
+            hideKeyboard(view);
+            return true;
+        });
     }
 
     /**
@@ -3993,7 +4423,8 @@ public final class KioskActivity extends Activity {
         return caption;
     }
 
-    private void addField(LinearLayout parent, KioskTheme theme, String label, EditText input) {
+    private TextView addField(LinearLayout parent, KioskTheme theme, String label,
+            EditText input) {
         TextView caption = fieldCaption(theme, label);
         LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -4003,6 +4434,7 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         inputParams.topMargin = dp(4);
         parent.addView(input, inputParams);
+        return caption;
     }
 
     private EditText themedInput(KioskTheme theme, String value, boolean secret) {
@@ -4225,6 +4657,7 @@ public final class KioskActivity extends Activity {
         root.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        addScreensaverLayer(root);
         // The same blackout the dashboard carries, for the same two commands, so a panel with no
         // dashboard can still be blanked and woken like one.
         blackout = new View(this);
@@ -4238,6 +4671,7 @@ public final class KioskActivity extends Activity {
         });
         root.addView(blackout, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addScreensaverPreviewCaption(root);
         setContentView(root);
         applyKioskPolicy();
         kioskStopped = KioskConfig.kioskStopped(this);
@@ -4252,6 +4686,7 @@ public final class KioskActivity extends Activity {
         } else {
             setWindowBrightness(-1);
         }
+        restoreScreensaverAfterRebuild();
     }
 
     private void showDashboard(String url) {
@@ -4319,6 +4754,7 @@ public final class KioskActivity extends Activity {
         // Assistant bug, and not fixable from the page.
         trackKeyboardInset(dashboard,
                 inset -> dashboard.setPadding(0, 0, 0, inset));
+        addScreensaverLayer(dashboard);
         blackout = new View(this);
         blackout.setBackgroundColor(Color.BLACK);
         blackout.setVisibility(View.GONE);
@@ -4330,6 +4766,7 @@ public final class KioskActivity extends Activity {
         });
         dashboard.addView(blackout, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addScreensaverPreviewCaption(dashboard);
         addStatsOverlay(dashboard);
         addNetworkWaitLabel(dashboard);
         setContentView(dashboard);
@@ -4360,6 +4797,7 @@ public final class KioskActivity extends Activity {
             // A fresh dashboard starts with the window at the system setting.
             setWindowBrightness(-1);
         }
+        restoreScreensaverAfterRebuild();
         resetLoadTracking();
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
@@ -4617,6 +5055,11 @@ public final class KioskActivity extends Activity {
             webView.destroy();
             webView = null;
         }
+        hideScreensaverSurface();
+        screensaverLayer = null;
+        screensaverPreviewCaption = null;
+        screensaverStage = ScreensaverPolicy.Stage.DASHBOARD;
+        screensaverSinceMs = android.os.SystemClock.uptimeMillis();
         blackout = null;
     }
 
@@ -4637,6 +5080,7 @@ public final class KioskActivity extends Activity {
                 // deliberate stop and lit the panel back up.
                 KioskConfig.edit(this).kioskStopped(false).apply();
                 liftVisualOff();
+                stopScreensaver("kiosk started");
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -4649,6 +5093,7 @@ public final class KioskActivity extends Activity {
                 kioskStopped = false;
                 KioskConfig.edit(this).kioskStopped(false).apply();
                 liftVisualOff();
+                stopScreensaver("page shown");
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -4681,6 +5126,7 @@ public final class KioskActivity extends Activity {
                 kioskStopped = false;
                 KioskConfig.edit(this).kioskStopped(false).apply();
                 liftVisualOff();
+                stopScreensaver("page shown");
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
@@ -4698,6 +5144,7 @@ public final class KioskActivity extends Activity {
                 // A stop supersedes a visual-off: the blackout now belongs to the stop, and the
                 // eventual kiosk.start must come back at system brightness, not at 1%.
                 liftVisualOff();
+                stopScreensaver("kiosk stopped");
                 resetLoadTracking();
                 if (webView != null) {
                     webView.stopLoading();
@@ -4716,26 +5163,72 @@ public final class KioskActivity extends Activity {
                 showDashboard(KioskConfig.load(this).dashboardUrl);
                 break;
             case "display.visual_off":
+                screensaverStage = ScreensaverPolicy.Stage.DARK;
+                screensaverPreview = false;
                 if (DisplayOffPolicy.SLEEP.equals(displayOffMethod)) {
                     // The service put the screen to sleep. Nothing is drawn: the dark state is
                     // the screen being off, and the power button or a remote wake ends it. A film
                     // drawn here as well would greet the power button with black and a second
-                    // tap, which is not what a person pressing it meant.
+                    // tap, which is not what a person pressing it meant. A showing screensaver
+                    // stays as it is too, so nothing flashes on the way down; the wake decides
+                    // what comes back (onDisplayWoke). Not "active" meanwhile: dark is dark.
+                    asleep = true;
+                    KioskRuntimeState.publishScreensaver(false);
+                    KioskConfig.recordScreensaverBootCount(this, -1);
+                    if (screensaverWebView != null) {
+                        // Asleep, the page has no viewer: its scripts, media and network stop
+                        // until a wake keeps it (onResume in startScreensaver) or drops it.
+                        screensaverWebView.onPause();
+                    }
                     break;
                 }
+                // filmOn first: hideScreensaverSurface leaves the brightness alone under the film,
+                // so the dim floor is not written back to the system level and then to 1%.
+                filmOn = true;
+                hideScreensaverSurface();
+                KioskConfig.recordScreensaverBootCount(this, -1);
                 if (blackout != null) {
                     blackout.setVisibility(View.VISIBLE);
                 }
                 setWindowBrightness(1);
-                filmOn = true;
                 // Keyed to this boot: survives the nightly restart, never a reboot.
                 KioskConfig.recordVisualOffBootCount(this, currentBootCount());
                 break;
-            case "display.wake":
+            case "display.wake": {
+                // Judged before the flags are cleared: a wake from a dark panel applies the user's
+                // on-wake choice; "Display on" or the presence blueprint reaching a lit panel that
+                // is showing its screensaver brings the page back, as a touch would. A broadcast
+                // that follows an onResume already judged as the wake is the same wake.
+                boolean wasDark = asleep || filmOn
+                        || screensaverStage == ScreensaverPolicy.Stage.DARK
+                        || android.os.SystemClock.uptimeMillis() - lastWakeDecisionMs
+                                < WAKE_GRACE_MS;
+                asleep = false;
                 if (blackout != null && !kioskStopped) {
                     blackout.setVisibility(View.GONE);
                 }
                 liftVisualOff();
+                if (wasDark) {
+                    onDisplayWoke();
+                } else {
+                    stopScreensaver("display on");
+                }
+                break;
+            }
+            case "screensaver.start":
+                if (wizardVisible) {
+                    break;
+                }
+                if (configurationVisible || recorderVisible) {
+                    // Asked for while somebody is in the settings, from the web admin's "Show it
+                    // now" or a remote command: the page comes up first and the screensaver over
+                    // it, so the request is never accepted and then quietly ignored.
+                    showDashboard(KioskConfig.load(this).dashboardUrl);
+                }
+                startScreensaver(KioskConfig.screensaverOf(this), "asked for");
+                break;
+            case "screensaver.stop":
+                stopScreensaver("asked for");
                 break;
             case "display.orientation":
                 // The method reads the setting KioskService has already stored, so there is one
@@ -4788,6 +5281,277 @@ public final class KioskActivity extends Activity {
         // A wake by tap goes through no dispatcher, so Home Assistant would otherwise learn of it
         // at the next minute tick; a duplicate from the command paths is coalesced.
         KioskService.publishTelemetrySoon(this);
+    }
+
+    /**
+     * The screensaver's clock, once a second: {@link ScreensaverPolicy} decides, this method only
+     * supplies the facts and does what it says. Blocked while an operator is on a settings screen,
+     * while the kiosk is stopped, while the panel is already dark, while the activity is not in
+     * front, and when no page root exists to draw in. A mode changed under a showing screensaver
+     * ends it: the next one comes after the idle time, in the new mode.
+     */
+    private void tickScreensaver() {
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        if (screensaverShowing != null && !screensaverShowing.equals(settings.mode)) {
+            if (screensaverStage == ScreensaverPolicy.Stage.DARK) {
+                // Changed while the panel is dark: the surface goes, the stage stays dark, and
+                // the wake decides as it would have (measured 2026-09-09: a stop here made a
+                // sleeping panel count as "dashboard" until the wake put it right).
+                hideScreensaverSurface();
+            } else {
+                stopScreensaver("mode changed");
+            }
+        } else if (screensaverShowing != null
+                && screensaverStage == ScreensaverPolicy.Stage.SCREENSAVER
+                && !screensaverDetailOf(settings).equals(screensaverShowingDetail)) {
+            // Same mode, new address or new dim floor: re-applied in place, with the clock
+            // towards display off left where it was.
+            long since = screensaverSinceMs;
+            hideScreensaverSurface();
+            startScreensaver(settings, "settings changed");
+            screensaverSinceMs = since;
+        }
+        boolean blocked = configurationVisible || recorderVisible || wizardVisible || kioskStopped
+                || filmOn || asleep || !inFront || screensaverLayer == null;
+        long now = android.os.SystemClock.uptimeMillis();
+        switch (ScreensaverPolicy.next(settings, screensaverStage, blocked, screensaverSinceMs,
+                now)) {
+            case START:
+                startScreensaver(settings, "idle for "
+                        + ScreensaverPolicy.describeDuration(settings.idleSeconds));
+                break;
+            case DISPLAY_OFF:
+                // Set here, before the service answers with display.visual_off, so the next tick
+                // does not ask twice; the answer sets it again and settles sleep or film.
+                screensaverStage = ScreensaverPolicy.Stage.DARK;
+                Log.i(TAG, "Screensaver showing for "
+                        + ScreensaverPolicy.describeDuration(settings.offSeconds)
+                        + ", asking for display off");
+                KioskService.displayOff(this);
+                break;
+            case NONE:
+            default:
+                break;
+        }
+    }
+
+    /**
+     * Puts the screensaver on the glass in the stored mode, or restarts its clock when that mode
+     * is already showing, which is what a wake into "screensaver first" needs: the page that
+     * survived the sleep stays rather than reloading.
+     *
+     * @return false when nothing can be shown: mode off, the web-page mode without an address,
+     *         a stopped kiosk, or no page root on screen
+     */
+    private boolean startScreensaver(ScreensaverPolicy.Settings settings, String reason) {
+        if (!ScreensaverPolicy.runnable(settings) || screensaverLayer == null || kioskStopped
+                || filmOn || asleep) {
+            // Nothing goes over a dark panel: the dim floor would lift the film's brightness and
+            // the page would draw under the black view while reporting itself active.
+            return false;
+        }
+        if (settings.mode.equals(screensaverShowing) && screensaverWebView != null) {
+            screensaverWebView.onResume();
+        }
+        if (!settings.mode.equals(screensaverShowing)) {
+            hideScreensaverSurface();
+            switch (settings.mode) {
+                case ScreensaverPolicy.DIM:
+                    setWindowBrightness(settings.dimPercent);
+                    break;
+                case ScreensaverPolicy.FILM:
+                    if (blackout != null) {
+                        blackout.setVisibility(View.VISIBLE);
+                    }
+                    setWindowBrightness(1);
+                    break;
+                case ScreensaverPolicy.URL:
+                    showScreensaverPage(settings.url);
+                    break;
+                default:
+                    return false;
+            }
+            screensaverShowing = settings.mode;
+            screensaverShowingDetail = screensaverDetailOf(settings);
+            KioskConfig.recordScreensaverBootCount(this, currentBootCount());
+            Log.i(TAG, "Screensaver on: " + settings.mode + " (" + reason + ")");
+        }
+        screensaverStage = ScreensaverPolicy.Stage.SCREENSAVER;
+        screensaverSinceMs = android.os.SystemClock.uptimeMillis();
+        KioskRuntimeState.publishScreensaver(true);
+        KioskService.publishTelemetrySoon(this);
+        return true;
+    }
+
+    /** What, besides the mode, the showing surface was built from. */
+    private static String screensaverDetailOf(ScreensaverPolicy.Settings settings) {
+        switch (settings.mode) {
+            case ScreensaverPolicy.URL:
+                return settings.url;
+            case ScreensaverPolicy.DIM:
+                return String.valueOf(settings.dimPercent);
+            default:
+                return "";
+        }
+    }
+
+    /**
+     * After a WebView rebuild in the same boot (the nightly clean, the pressure rebuild, a
+     * kiosk restart), the screensaver that was on the glass comes back at once, like the film
+     * does, instead of the page lighting up for the idle time. A process restart in the same
+     * boot is covered by the same record; a reboot is not, by the rule every dark state follows.
+     */
+    private void restoreScreensaverAfterRebuild() {
+        int recorded = KioskConfig.screensaverBootCount(this);
+        if (recorded >= 0 && recorded == currentBootCount() && !filmOn && !kioskStopped) {
+            startScreensaver(KioskConfig.screensaverOf(this), "restored after a rebuild");
+        }
+    }
+
+    /** Back to the page, and the idle time starts again. Idempotent. */
+    private void stopScreensaver(String reason) {
+        boolean shown = screensaverShowing != null;
+        screensaverPreview = false;
+        hideScreensaverSurface();
+        KioskConfig.recordScreensaverBootCount(this, -1);
+        screensaverStage = ScreensaverPolicy.Stage.DASHBOARD;
+        screensaverSinceMs = android.os.SystemClock.uptimeMillis();
+        if (shown) {
+            Log.i(TAG, "Screensaver off (" + reason + ")");
+            KioskService.publishTelemetrySoon(this);
+        }
+    }
+
+    /**
+     * Takes the screensaver off the glass without deciding what comes next: the callers that
+     * darken the panel keep the film's brightness and black view, the others get the page back.
+     */
+    private void hideScreensaverSurface() {
+        String mode = screensaverShowing;
+        screensaverShowing = null;
+        KioskRuntimeState.publishScreensaver(false);
+        if (screensaverPreviewCaption != null) {
+            screensaverPreviewCaption.setVisibility(View.GONE);
+        }
+        if (mode == null) {
+            return;
+        }
+        if (screensaverWebView != null) {
+            screensaverWebView.stopLoading();
+            if (screensaverLayer != null) {
+                screensaverLayer.removeAllViews();
+            }
+            screensaverWebView.destroy();
+            screensaverWebView = null;
+        }
+        if (screensaverLayer != null) {
+            screensaverLayer.setVisibility(View.GONE);
+        }
+        if (ScreensaverPolicy.FILM.equals(mode) && blackout != null && !kioskStopped && !filmOn) {
+            blackout.setVisibility(View.GONE);
+        }
+        if (!ScreensaverPolicy.URL.equals(mode) && !filmOn) {
+            setWindowBrightness(-1);
+        }
+    }
+
+    /**
+     * The display is lit again, by a touch on the film, a remote wake, the presence blueprint or
+     * the power button: the user's on-wake choice decides between the screensaver and the page.
+     * Idempotent, because a wake from sleep reaches here twice, from onResume and from the
+     * display.wake broadcast, in either order.
+     */
+    private void onDisplayWoke() {
+        lastWakeDecisionMs = android.os.SystemClock.uptimeMillis();
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        if (ScreensaverPolicy.screensaverFirst(settings) && startScreensaver(settings, "wake")) {
+            return;
+        }
+        stopScreensaver("wake");
+    }
+
+    /**
+     * The web-page screensaver's own WebView, made when the mode starts and destroyed when it
+     * ends: the dashboard stays loaded underneath, so a touch brings it back at once, and the
+     * second renderer costs memory only while it is on the glass. Same web-scheme rule as the
+     * dashboard: a page that hands control to another app is an exit from the kiosk.
+     */
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private void showScreensaverPage(String url) {
+        screensaverWebView = new WebView(this);
+        screensaverWebView.setBackgroundColor(Color.BLACK);
+        WebSettings settings = screensaverWebView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        screensaverWebView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String scheme = request.getUrl() != null ? request.getUrl().getScheme() : null;
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    return false;
+                }
+                Log.w(TAG, "Blocked screensaver navigation to a non-web scheme: " + scheme);
+                return true;
+            }
+        });
+        screensaverLayer.addView(screensaverWebView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        screensaverLayer.setVisibility(View.VISIBLE);
+        screensaverWebView.loadUrl(url);
+    }
+
+    /** Under the black view, over the page: Display off covers the screensaver like anything else. */
+    private void addScreensaverLayer(FrameLayout root) {
+        screensaverLayer = new FrameLayout(this);
+        screensaverLayer.setBackgroundColor(Color.BLACK);
+        screensaverLayer.setVisibility(View.GONE);
+        root.addView(screensaverLayer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    /**
+     * Over everything, the black view included, so it reads on the film too. Only a "Show it
+     * now" shows it: the real screensaver has nothing to explain, a preview has to say that the
+     * darker dashboard on the glass is the preview (2026-09-09: the dimmed page was taken for
+     * the dashboard having opened, and the test was thought to have done nothing).
+     */
+    private void addScreensaverPreviewCaption(FrameLayout root) {
+        TextView caption = new TextView(this);
+        caption.setTextColor(Color.WHITE);
+        caption.setTextSize(15);
+        caption.setGravity(Gravity.CENTER);
+        int padX = dp(18);
+        int padY = dp(10);
+        caption.setPadding(padX, padY, padX, padY);
+        android.graphics.drawable.GradientDrawable pill =
+                new android.graphics.drawable.GradientDrawable();
+        pill.setColor(0xCC1E1E2E);
+        pill.setCornerRadius(dp(14));
+        caption.setBackground(pill);
+        caption.setVisibility(View.GONE);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        params.bottomMargin = dp(28);
+        params.leftMargin = dp(24);
+        params.rightMargin = dp(24);
+        root.addView(caption, params);
+        screensaverPreviewCaption = caption;
+    }
+
+    private void showScreensaverPreviewCaption(ScreensaverPolicy.Settings settings) {
+        if (screensaverPreviewCaption == null) {
+            return;
+        }
+        String what = ScreensaverPolicy.modeName(settings.mode);
+        if (ScreensaverPolicy.DIM.equals(settings.mode)) {
+            what += " at " + settings.dimPercent + " %";
+        }
+        screensaverPreviewCaption.setText("Screensaver preview: " + what
+                + ". Tap anywhere to go back to the settings.");
+        screensaverPreviewCaption.setVisibility(View.VISIBLE);
     }
 
     /**

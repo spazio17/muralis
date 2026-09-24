@@ -38,6 +38,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             "org.spazio17.muralis.action.RELOAD_CONFIGURATION";
     private static final String ACTION_PUBLISH_TELEMETRY_SOON =
             "org.spazio17.muralis.action.PUBLISH_TELEMETRY_SOON";
+    private static final String ACTION_DISPLAY_OFF =
+            "org.spazio17.muralis.action.DISPLAY_OFF";
     private static final String CHANNEL_ID = "kiosk_runtime";
     private static final int NOTIFICATION_ID = 505;
     private static final long REMOTE_POWER_DELAY_MS = 2_000L;
@@ -239,6 +241,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 .setAction(ACTION_PUBLISH_TELEMETRY_SOON));
     }
 
+    /**
+     * The screensaver's second timer ran out: darken the panel exactly as "Display off" would,
+     * sleep or film by {@link DisplayOffPolicy}. The activity asks the service because the
+     * dark record, {@code lockNow} and the method choice all live here.
+     */
+    static void displayOff(Context context) {
+        context.startForegroundService(new Intent(context, KioskService.class)
+                .setAction(ACTION_DISPLAY_OFF));
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -305,6 +317,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             restartControllers();
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
+            publishStateSoon();
+        } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
+            displayVisualOff();
+            // Not a dispatched command, so nothing else republishes: without this the Screensaver
+            // switch and display.source stay stale in Home Assistant for up to a minute.
             publishStateSoon();
         }
         return START_STICKY;
@@ -973,6 +990,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // whether the surface is allowed to exist; the port and addresses stay admin-only.
             applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
+            stats.put("screensaver", screensaverSnapshot(includeAdminDetail));
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
@@ -985,6 +1003,35 @@ public final class KioskService extends Service implements KioskCommandDispatche
             throw new IllegalStateException(impossible);
         }
         return stats;
+    }
+
+    /**
+     * The screensaver as set and as showing. The page address is admin-only like the dashboard
+     * URL's neighbours: it can name an internal host. The sentence is the one every surface
+     * prints, so the web admin's box and the tablet's card cannot describe the rule differently.
+     */
+    private org.json.JSONObject screensaverSnapshot(boolean includeAdminDetail) {
+        org.json.JSONObject saver = new org.json.JSONObject();
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        boolean active = KioskRuntimeState.screensaverActive();
+        String problem = settings.enabled()
+                ? ScreensaverPolicy.modeProblem(settings.mode, settings.url) : null;
+        try {
+            saver.put("active", active);
+            saver.put("mode", settings.mode);
+            saver.put("idle_s", settings.idleSeconds);
+            saver.put("off_s", settings.offSeconds);
+            saver.put("dim_percent", settings.dimPercent);
+            saver.put("on_wake", settings.onWake);
+            if (includeAdminDetail) {
+                saver.put("url", settings.url);
+            }
+            saver.put("problem", problem == null ? org.json.JSONObject.NULL : problem);
+            saver.put("summary", ScreensaverPolicy.describe(settings, active));
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return saver;
     }
 
     /**
@@ -1042,12 +1089,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
             boolean screenOn = power == null || power.isInteractive();
             String source;
             double percent;
-            if (override >= 0) {
-                source = "display_off";
-                percent = override;
-            } else if (!screenOn) {
+            if (!screenOn) {
+                // Judged before the override: a screen that is off has no brightness, whatever
+                // override the screensaver's dim floor left behind on the way down.
                 source = "display_off";
                 percent = -1;
+            } else if (override >= 0) {
+                // The screensaver's dim floor and its film are window overrides too; naming them
+                // "display off" would report a lit, dimmed page as dark.
+                source = KioskRuntimeState.screensaverActive() ? "screensaver" : "display_off";
+                percent = override;
             } else {
                 source = auto ? "auto" : "manual";
                 percent = raw < 0 ? -1 : Math.min(100.0, 100.0 * raw / scale);
@@ -1703,6 +1754,52 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // stops the server through the same fingerprint path a save takes; note a caller on the
         // web admin itself hears "accepted" and then loses the surface it asked to lose.
         reloadConfiguration(this);
+        publishTelemetrySoon(this);
+    }
+
+    /**
+     * @return why the screensaver cannot show, or null once the activity has been told to show
+     *         it; the accepted-no-op shape is refused here the way {@link #publishTelemetry} does
+     */
+    @Override
+    public String screensaverStart() {
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        if (!settings.enabled()) {
+            return "the screensaver mode is off";
+        }
+        String problem = ScreensaverPolicy.modeProblem(settings.mode, settings.url);
+        if (problem != null) {
+            return problem;
+        }
+        // The rest is where the activity would have to drop the request on the floor: each is
+        // answered here instead, so no caller hears "accepted" for a screensaver nobody sees.
+        if (KioskConfig.kioskStopped(this)) {
+            return "the kiosk is stopped";
+        }
+        if (!KioskRuntimeState.dashboardAlive()) {
+            return "Muralis is not on screen";
+        }
+        if (KioskRuntimeState.wizardOnScreen()) {
+            return "the first-start wizard is on screen";
+        }
+        PowerManager power = getSystemService(PowerManager.class);
+        boolean screenOn = power == null || power.isInteractive();
+        int visualOffBoot = KioskConfig.visualOffBootCount(this);
+        if (!screenOn || (visualOffBoot >= 0 && visualOffBoot == bootCount(this))) {
+            return "the display is off; Display on first";
+        }
+        sendUiCommand("screensaver.start", -1, null);
+        return null;
+    }
+
+    @Override
+    public void screensaverStop() {
+        sendUiCommand("screensaver.stop", -1, null);
+    }
+
+    @Override
+    public void setScreensaverMode(String value) {
+        KioskConfig.edit(this).screensaverMode(value).apply();
         publishTelemetrySoon(this);
     }
 

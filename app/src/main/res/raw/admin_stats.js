@@ -34,7 +34,9 @@ if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto
 // somebody changed the same setting on the tablet or from a second browser.
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.dataset.pending||value==null){return;}
-if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){el.value=value;}}
+var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
+if(typing){return;}
+if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('orientation',cfg.orientation);
@@ -43,6 +45,16 @@ follow('display-off-method',cfg.display_off_method);
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
 if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;dn.classList.toggle('bad',!!disp.off_method_warning);}
+var ss=data.screensaver||{};
+follow('screensaver-mode',ss.mode);
+if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
+follow('screensaver-idle',ss.idle_s);
+follow('screensaver-off',ss.off_s);
+follow('screensaver-url',ss.url);
+follow('screensaver-dim',ss.dim_percent);
+follow('screensaver-on-wake',ss.on_wake);
+var sn=document.getElementById('screensaver-note');
+if(sn&&ss.summary!=null){sn.textContent=ss.summary;sn.classList.toggle('bad',ss.problem!=null);}
 // The slider follows the real backlight, except while the operator is actually dragging it.
 var sl=document.getElementById('brightness');
 if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){
@@ -53,7 +65,7 @@ if(lbl){lbl.textContent=disp.brightness_percent+'%';}}
 // device, not something the operator is mid-way through editing, and it is exactly the
 // thing that was previously stuck reading "automatic" after auto was switched off.
 var md=document.getElementById('brightness-mode');
-if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':(disp.auto?'automatic':'manual'))+')';}
+if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':disp.source==='screensaver'?'screensaver':(disp.auto?'automatic':'manual'))+')';}
 // The slider follows the mode, since a level set while the sensor is in charge is
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}

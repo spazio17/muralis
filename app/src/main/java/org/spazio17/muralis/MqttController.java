@@ -634,6 +634,25 @@ final class MqttController implements MqttCallbackExtended {
             // The switch reflects the operator's flag, not whether a socket is bound: with no
             // admin password stored, "on" is an honest description of intent while the bind
             // stays refused, and the runtime state carries the difference.
+            // The screensaver (2026-09-09): the mode as a select, and one switch that is both its
+            // state and its control, start on ON and stop on OFF. No separate start/stop buttons:
+            // they would be the switch twice over, and every entity is a row in somebody's device
+            // page. The idle times are settings, set from the web admin or the tablet.
+            org.json.JSONArray screensaverModes = new org.json.JSONArray();
+            screensaverModes.put(ScreensaverPolicy.OFF);
+            screensaverModes.put(ScreensaverPolicy.DIM);
+            screensaverModes.put(ScreensaverPolicy.FILM);
+            screensaverModes.put(ScreensaverPolicy.URL);
+            components.put("screensaver_mode", select(
+                    "Screensaver mode",
+                    "screensaver.mode",
+                    screensaverModes,
+                    "{{ value_json.screensaver.mode }}"));
+            components.put("screensaver", toggle(
+                    "Screensaver",
+                    "{\"command\":\"screensaver.start\"}",
+                    "{\"command\":\"screensaver.stop\"}",
+                    "{{ 'ON' if value_json.screensaver.active else 'OFF' }}"));
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",

@@ -45,6 +45,7 @@ button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;border:1px solid 
 /* now, the tooltip says why. Border only, no glow or fill, as decided 2026-08-24: the verdict is */
 /* an annotation, not an alarm. Cleared rather than guessed when the check itself cannot run. */
 input.check-ok{border-color:var(--ok)}
-input.check-bad{border-color:var(--bad)}
+input.check-bad,select.check-bad{border-color:var(--bad)}
+.gone{display:none!important}
 /* A certificate fingerprint is 95 characters with no space to break at. */
 .hint code{word-break:break-all}
