@@ -66,8 +66,14 @@ fi
 # The version identity comes from git (see the comment in app/build.gradle), but the container
 # has no git, so both values are computed here on the host and passed in. Absent when this is not
 # a git checkout, and that is fine: the build falls back to a value that is obviously no release.
+# MURALIS_VERSION_NAME set in this shell wins, which is what app/build.gradle has always said
+# the variable does; this script used to compute over it, so the documented override did nothing.
+# The store captures need it: a version that reads "0.5.0-28-gc4df31e-dirty" on a listing image
+# is a build identity nobody outside this repo can parse (2026-09-23).
 version_args=()
-if version_name=$(git -C "${project_dir}" describe --tags --always --dirty 2>/dev/null); then
+if [[ -n ${MURALIS_VERSION_NAME:-} ]]; then
+    version_args+=(--env "MURALIS_VERSION_NAME=${MURALIS_VERSION_NAME#v}")
+elif version_name=$(git -C "${project_dir}" describe --tags --always --dirty 2>/dev/null); then
     version_args+=(--env "MURALIS_VERSION_NAME=${version_name#v}")
 fi
 if version_code=$(git -C "${project_dir}" rev-list --count HEAD 2>/dev/null); then

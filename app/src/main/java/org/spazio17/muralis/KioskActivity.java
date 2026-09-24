@@ -1926,8 +1926,13 @@ public final class KioskActivity extends Activity {
                 SettingProbe.Verdict verdict = SettingProbe.mqttHost(host, brokerPort);
                 mainHandler.post(() -> {
                     Integer current = precheckGeneration.get(brokerInput);
-                    if (!brokerInput.isAttachedToWindow() || current == null
-                            || current != generation) {
+                    // The page, not the box: from 840 dp only the open section's body is in the
+                    // view tree, so this check, which runs when the screen is built, came back to
+                    // a detached box and dropped its own answer. The line under the broker host
+                    // then read "Checking ..." for as long as the screen stayed up, on every
+                    // tablet in landscape (found while taking the store screenshots, 2026-09-23).
+                    // Same rule as the live-settings poll below, and for the same reason.
+                    if (!page.isAttachedToWindow() || current == null || current != generation) {
                         return;
                     }
                     outlineField(brokerInput, theme, verdict.ok ? theme.ok : theme.bad, 2);
