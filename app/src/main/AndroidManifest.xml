@@ -36,6 +36,33 @@
     <!-- Runtime permission from API 33 for the notification KioskService must
          post to stay alive. Ask for it at runtime; a denial must not be fatal. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      The pictures screensaver's own folder browser, decided 2026-09-10.
+
+      This reverses the decision of 2026-09-09 to hold no storage permission at all and reach a
+      folder only through the system picker's persisted grant. The reason is the kiosk promise, not
+      convenience: handing the screen to Android's file picker takes a locked panel outside Muralis
+      for as long as somebody is choosing, with no tap combination performed, and the maintainer's
+      instruction is that on a device-owner panel the choosing happens inside Muralis. Browsing the
+      filesystem from inside the app needs a read permission; there is no third way.
+
+      What makes it acceptable on a wall panel rather than a phone: a device owner grants this to
+      itself silently (KioskService.grantOwnRuntimePermissions), so no dialog ever appears on a
+      screen nobody is standing at, and an ordinary install is never asked either, because there
+      the browser keeps using the system picker's grant. The permission is read-only and is used
+      for one thing, listing and decoding the pictures a person picked.
+
+      Play consequence, on the release checklist rather than here: READ_MEDIA_IMAGES is a
+      declared-use-case permission under the photo and video policy, so the listing needs that
+      declaration before submission.
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Android 14's "Select photos and videos" answer to the dialog above. Declared so a partial
+         grant is a grant that lasts: without it the system hands READ_MEDIA_IMAGES over for the
+         session only and asks again at the next start (vendor docs, 2026-09-19). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or

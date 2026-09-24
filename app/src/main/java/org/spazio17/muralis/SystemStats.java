@@ -392,13 +392,35 @@ final class SystemStats {
         return html.toString();
     }
 
-    // Catppuccin Mocha, accents intensified, same palette as KioskTheme and the web admin page,
+    // The app's dark palette, the same values as KioskTheme and the web admin page,
     // so the overlay reads as part of the product rather than a debug readout bolted on.
     private static final String OK = "#8EE88A";
     private static final String WARN = "#FFDF8F";
     private static final String BAD = "#FF6F91";
     private static final String VALUE = "#CDD6F4";
     private static final String LABEL = "#9399B2";
+    /**
+     * The same five for a light card.
+     *
+     * <p>This block is built once by the service and drawn in two places: over the dashboard,
+     * where it always sits on a black translucent plate and the colours above are right, and on
+     * the configuration screen's System stats card, where in the light theme they were being drawn
+     * on a pale surface. Measured 2026-09-12: 1.09, 2.13, 1.13, 1.02 and 2.00 against that card,
+     * against a 4.5:1 minimum, which is the worst contrast anywhere in the app. Same hues, same
+     * meanings, lightness moved so each one clears it.
+     */
+    private static final String[][] LIGHT = {
+        {OK, "#227212"}, {WARN, "#905600"}, {BAD, "#c60e36"},
+        {VALUE, "#4c4f69"}, {LABEL, "#606276"},
+    };
+
+    /** The overlay's markup with the light card's colours, for the one screen that needs them. */
+    static String forLightSurface(String html) {
+        for (String[] pair : LIGHT) {
+            html = html.replace(pair[0], pair[1]);
+        }
+        return html;
+    }
 
     private static void row(StringBuilder html, String label, String value) {
         if (html.length() > 0) {

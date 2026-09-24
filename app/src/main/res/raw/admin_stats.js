@@ -2,7 +2,12 @@
 // after somebody has changed something at the tablet, rather than showing whatever was current
 // when it was loaded.
 (function(){
+// The readout itself is optional. The settings page has one; the screensaver page has this
+// poll without it, because the poll is also what keeps every field on that page current when
+// somebody changes a setting at the panel. Writing to a missing element threw on every tick
+// and took the chip and the field-following down with it (caught in the browser, 2026-09-10).
 var target=document.getElementById('stats');
+function show(text){if(target){target.textContent=text;}}
 function mb(kb){return kb==null?'--':Math.round(kb/1024)+'M';}
 function num(v,d){return v==null?'--':v.toFixed(d||0);}
 function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}
@@ -34,7 +39,18 @@ if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto
 // somebody changed the same setting on the tablet or from a second browser.
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.dataset.pending||value==null){return;}
-if(el.type==='checkbox'){el.checked=value;}else if(el.value!==value){el.value=value;}}
+// A radio group is a div holding the radios, since the screensaver mode stopped being a menu
+// on 2026-09-11. Following it means ticking the one whose value matches, and the group carries
+// the pending flag for all of them so a poll landing on a fresh click cannot undo it.
+if(el.classList.contains('radios')){
+var radios=el.getElementsByTagName('input'),i;
+for(i=0;i<radios.length;i++){
+if(radios[i].value===String(value)&&!radios[i].checked){radios[i].checked=true;
+if(window.muralisScreensaverFields){window.muralisScreensaverFields();}}}
+return;}
+var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
+if(typing){return;}
+if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('orientation',cfg.orientation);
@@ -43,9 +59,32 @@ follow('display-off-method',cfg.display_off_method);
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
 if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;dn.classList.toggle('bad',!!disp.off_method_warning);}
-// The slider follows the real backlight, except while the operator is actually dragging it.
+var ss=data.screensaver||{};
+follow('screensaver-mode',ss.mode);
+if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
+follow('screensaver-idle',ss.idle_s);
+follow('screensaver-off',ss.off_s);
+follow('screensaver-url',ss.url);
+follow('screensaver-dim',ss.dim_percent);
+follow('screensaver-on-wake',ss.on_wake);
+follow('screensaver-source',ss.source);
+follow('screensaver-picture-s',ss.picture_s);
+follow('screensaver-transition',ss.transition);
+follow('screensaver-shuffle',ss.shuffle);
+follow('screensaver-one',ss.one_per_cycle);
+if(ss.source==='local'){follow('screensaver-credit',ss.credit);}
+follow('screensaver-corner',ss.credit_corner);
+if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
+var sn=document.getElementById('screensaver-note');
+if(sn&&ss.summary!=null){sn.textContent=ss.summary;sn.classList.toggle('bad',ss.problem!=null);}
+var so=document.getElementById('screensaver-source-note');
+if(so&&ss.source_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
+so.textContent=ss.source_state+pic;so.classList.toggle('bad',ss.source_problem!=null);}
+// The slider follows the real backlight, except while the operator is actually dragging it,
+// and except while the panel is dark: it reports zero then, below this slider's 1% floor, and
+// the mode label below says "display off" for it.
 var sl=document.getElementById('brightness');
-if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null){
+if(sl&&!sl.dataset.pending&&disp.brightness_percent!=null&&disp.source!=='display_off'){
 sl.value=disp.brightness_percent;
 var lbl=document.getElementById('brightness-value');
 if(lbl){lbl.textContent=disp.brightness_percent+'%';}}
@@ -53,11 +92,11 @@ if(lbl){lbl.textContent=disp.brightness_percent+'%';}}
 // device, not something the operator is mid-way through editing, and it is exactly the
 // thing that was previously stuck reading "automatic" after auto was switched off.
 var md=document.getElementById('brightness-mode');
-if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':(disp.auto?'automatic':'manual'))+')';}
+if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':disp.source==='screensaver'?'screensaver':(disp.auto?'automatic':'manual'))+')';}
 // The slider follows the mode, since a level set while the sensor is in charge is
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
-target.textContent=lines.join('\n');
+show(lines.join('\n'));
 var battery=document.getElementById('chip-battery');
 if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;
 battery.textContent=mains?'mains':(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');
@@ -99,12 +138,13 @@ cpu.parentNode.title='processor load';}}
 // interval used to overlap the next one, and two connections in flight where one was
 // expected is what PER_HOST_CONNECTIONS counts.
 var fails=0,shown=false,stopped=false;
-function stop(text){stopped=true;target.textContent=text;}
+function stop(text){stopped=true;show(text);}
 // A refused poll is a normal event here, not an outage: the per-host connection cap
 // exists to refuse them. Blanking a wall panel's whole readout for one, chip included,
 // threw away good numbers to report a hiccup. The figures stay, with a line saying how
 // stale they are.
-function note(text){var el=document.getElementById('stats-stale');
+function note(text){if(!target){return;}
+var el=document.getElementById('stats-stale');
 if(!el){el=document.createElement('p');el.id='stats-stale';el.className='hint';
 target.parentNode.insertBefore(el,target.nextSibling);}
 el.textContent=text;}
@@ -114,7 +154,7 @@ function again(){if(stopped){return;}
 setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
 function ok(){fails=0;shown=true;clearNote();again();}
 function bad(text){fails++;
-if(shown){note(text+'; showing the last reading');}else{target.textContent=text;}
+if(shown){note(text+'; showing the last reading');}else{show(text);}
 again();}
 function poll(){fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){
@@ -126,7 +166,7 @@ return r.json();})
 // A bug in render() is not the panel being unreachable, and reporting it as one sent
 // somebody to check the network cable. The data arrived; say so, and log the reason.
 try{render(data);}catch(e){shown=false;fails=0;clearNote();
-target.textContent='stats received but could not be displayed: '+e.message;
+show('stats received but could not be displayed: '+e.message);
 if(window.console){console.error('Muralis: stats render failed',e);}
 again();return;}
 ok();})

@@ -1,14 +1,14 @@
 /*
-Catppuccin, Mocha and Latte, matching KioskTheme on the tablet. Sections flow into as many
+The app's own palette, dark and light, matching KioskTheme on the tablet. Sections flow into as many
 columns as the window allows rather than one tall stack, which on a landscape tablet or a
 desktop browser turned every text field into a full-width slab.
 */
-:root{color-scheme:light dark;--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#6c6f85;--accent:#8226ef;--accent-alt:#1e66f5;--ok:#2fa019;--warn:#d68000;--bad:#d20f39;--radius:14px}@media (prefers-color-scheme:dark){:root{--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91}}html[data-theme=light]{color-scheme:light;--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#6c6f85;--accent:#8226ef;--accent-alt:#1e66f5;--ok:#2fa019;--warn:#d68000;--bad:#d20f39}html[data-theme=dark]{color-scheme:dark;--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91}*{box-sizing:border-box}body{margin:0;padding:1.5rem 1.25rem 4rem;background:var(--base);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.5}main{max-width:1400px;margin:0 auto}header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;margin-bottom:1.25rem}h1{font-size:1.8rem;margin:0;color:var(--accent);font-weight:650}.sub{color:var(--subtext);font-size:.9rem;margin:.1rem 0 0}
+:root{color-scheme:light dark;--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#606276;--accent:#8226ef;--accent-alt:#0a55eb;--ok:#227212;--warn:#905600;--bad:#c60e36;--ink-alt:#083e9e;--radius:14px}@media (prefers-color-scheme:dark){:root{--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91;--ink-alt:#9bb9ff}}html[data-theme=light]{color-scheme:light;--base:#eff1f5;--mantle:#e6e9ef;--surface:#dce0e8;--surface-alt:#ccd0da;--border:#bcc0cc;--text:#4c4f69;--subtext:#606276;--accent:#8226ef;--accent-alt:#0a55eb;--ok:#227212;--warn:#905600;--bad:#c60e36;--ink-alt:#083e9e}html[data-theme=dark]{color-scheme:dark;--base:#1e1e2e;--mantle:#181825;--surface:#313244;--surface-alt:#45475a;--border:#585b70;--text:#cdd6f4;--subtext:#a6adc8;--accent:#c08cff;--accent-alt:#7aa2ff;--ok:#8ee88a;--warn:#ffdf8f;--bad:#ff6f91;--ink-alt:#9bb9ff}*{box-sizing:border-box}body{margin:0;padding:1.5rem 1.25rem 4rem;background:var(--base);color:var(--text);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.5}main{width:60%;min-width:min(100%,22rem);max-width:1100px;margin:0 auto}header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between;margin-bottom:1.25rem}h1{font-size:1.8rem;margin:0;color:var(--accent);font-weight:650}.sub{color:var(--subtext);font-size:.9rem;margin:.1rem 0 0}
 /* The chip: one glyph per row so no bare percentage has to be guessed at. Monochrome in */
 /* the style of a Pixel status bar, matching StatusIcon on the tablet glyph for glyph. */
 .chip{display:flex;flex-direction:column;align-items:flex-end;gap:.15rem;line-height:1.3;font-size:.85rem;color:var(--subtext)}.chip .row{display:flex;align-items:center;gap:.45rem}.chip .row.pair{gap:1.1rem}.ico{width:17px;height:17px;flex:none;color:var(--text)}
 /* Badges above the sections, the way Home Assistant floats them over a view. */
-.badges{display:flex;justify-content:center;margin:0 0 1.25rem}.notice{margin:0 0 1.25rem;padding:.7rem .9rem;border-radius:10px;border-left:4px solid var(--bad);background:var(--mantle);color:var(--text);font-size:.9rem}label.slider{display:block;margin-top:.8rem;color:var(--text);font-size:.9rem}label.slider .readout{display:block;margin-top:.15rem;color:var(--subtext);font-size:.85rem;font-variant-numeric:tabular-nums}
+.topbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin:0 0 1.25rem}.topbar .themepick{margin-left:auto}.topbar form{margin:0}.topbar button{margin-top:0}.notice{margin:0 0 1.25rem;padding:.7rem .9rem;border-radius:10px;border-left:4px solid var(--bad);background:var(--mantle);color:var(--text);font-size:.9rem}label.slider{display:block;margin-top:.8rem;color:var(--text);font-size:.9rem}label.slider .readout{display:block;margin-top:.15rem;color:var(--subtext);font-size:.85rem;font-variant-numeric:tabular-nums}
 /* min-width:0 as well as width:100%: a range input carries an intrinsic minimum width */
 /* that width alone does not override, and that minimum is half of what pushed the */
 /* Display box off the screen. */
@@ -40,11 +40,163 @@ fieldset{border:1px solid var(--accent);background:var(--surface);margin:0;min-w
 /* A slight 3D lift: a coloured "bottom edge" plus a soft shadow, both gone on */
 /* :active and the button nudged down a pixel, so pressing one reads as pressing */
 /* something solid rather than just a colour change. */
-button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;border:1px solid var(--accent-alt);background:transparent;color:var(--accent-alt);font-size:.9rem;cursor:pointer;box-shadow:0 2px 0 0 var(--accent-alt),0 2px 4px rgba(0,0,0,.18);transition:transform .08s ease,box-shadow .08s ease}button:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}button:active{transform:translateY(2px);box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}button.primary{background:var(--accent);border-color:var(--accent);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}.actions{display:flex;flex-wrap:wrap;gap:.4rem}.actions form{display:inline}#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;white-space:pre-wrap;background:var(--mantle);border-radius:10px;padding:.7rem;overflow-x:auto;color:var(--subtext);margin:.6rem 0 0}dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem .8rem;margin:.6rem 0 0;font-size:.85rem}dt{color:var(--subtext)}dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}a{color:var(--accent-alt)}
+button{margin-top:.6rem;padding:.5rem .9rem;border-radius:10px;border:1px solid var(--accent-alt);background:transparent;color:var(--accent-alt);font-family:inherit;font-size:.9rem;line-height:normal;cursor:pointer;box-shadow:0 2px 0 0 var(--accent-alt),0 2px 4px rgba(0,0,0,.18);transition:transform .08s ease,box-shadow .08s ease}button:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}button:active{transform:translateY(2px);box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}button.primary{background:var(--accent);border-color:var(--accent);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}button.primary:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}
+/* The colours are a system, not decoration (Juri, 2026-09-11): the main colour is a press that */
+/* applies a setting permanently, the plain outline is a visible action that saves nothing, red */
+/* deletes something and green adds something. Same three shapes as button.primary, so a row of */
+/* mixed buttons still reads as one family. */
+button.danger{background:var(--bad);border-color:var(--bad);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--bad) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}
+button.danger:hover{background:color-mix(in srgb,var(--bad) 88%,black 12%)}
+button.danger:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}
+button.add{background:var(--ok);border-color:var(--ok);color:var(--base);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--ok) 70%,black 20%),0 2px 4px rgba(0,0,0,.22)}
+button.add:hover{background:color-mix(in srgb,var(--ok) 88%,black 12%)}
+button.add:active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.2)}
+/* The tonal tier, chosen 2026-09-12 after comparing five treatments on the live pages. Three */
+/* weights, none of them hollow and none of them transparent: filled for the action of the thing */
+/* it sits in and for every action in a list row, outlined for a command that acts now and stores */
+/* nothing, tonal for navigation. Tonal rather than a text button because the same language is */
+/* mirrored on the panel's touch UI, where there is no hover, and a control that has no body */
+/* until you point at it is a control nobody finds. */
+/* The label is --ink-*, not the hue: the hue on a tint of itself cannot reach 4.5:1 at any */
+/* strength. Measured at 18%: 4.74 and 4.76 on the dark card, 4.87 and 5.47 on the light one, */
+/* with the full-strength border clearing the 3:1 non-text target in both. */
+/* Navigation: the same tonal weight in the secondary hue. A form with method=get goes somewhere
+   and changes nothing, which is exactly the set this tier is for. */
+form[method=get] button:not([class]){background:color-mix(in srgb,var(--accent-alt) 18%,var(--surface));border-color:var(--accent-alt);color:var(--ink-alt);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent-alt) 45%,var(--surface)),0 2px 4px rgba(0,0,0,.18)}
+form[method=get] button:not([class]):hover{background:color-mix(in srgb,var(--accent-alt) 28%,var(--surface))}
+form[method=get] button:not([class]):active{box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}
+/* The two rows that mixed a filled button with a hollow one, counted across the whole admin on
+   2026-09-12: Save + Open once, and Browse + Upload. A hollow button beside a filled sibling is
+   what read as abandoned, so both gain a body at the weight their row already carries. */
+#open-once{background:color-mix(in srgb,var(--accent-alt) 18%,var(--surface));border-color:var(--accent-alt);color:var(--ink-alt);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent-alt) 45%,var(--surface)),0 2px 4px rgba(0,0,0,.18)}
+#open-once:hover{background:color-mix(in srgb,var(--accent-alt) 28%,var(--surface))}
+.actions{display:flex;flex-wrap:wrap;gap:.4rem}.actions form{display:inline}#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;white-space:pre-wrap;background:var(--mantle);border-radius:10px;padding:.7rem;overflow-x:auto;color:var(--subtext);margin:.6rem 0 0}dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem .8rem;margin:.6rem 0 0;font-size:.85rem}dt{color:var(--subtext)}dd{margin:0;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}a{color:var(--accent-alt)}
 /* The pre-check verdicts (admin_check.js): the border says whether the value would work right */
 /* now, the tooltip says why. Border only, no glow or fill, as decided 2026-08-24: the verdict is */
 /* an annotation, not an alarm. Cleared rather than guessed when the check itself cannot run. */
 input.check-ok{border-color:var(--ok)}
-input.check-bad{border-color:var(--bad)}
+input.check-bad,select.check-bad{border-color:var(--bad)}
+.gone{display:none!important}
+details{margin-top:.7rem}details>summary{cursor:pointer;color:var(--accent-alt);font-size:.85rem;padding:.2rem 0;list-style:revert}details>summary:hover{color:var(--accent)}
+/* The mode as radios, matching the panel's own page. One per line, with the text beside the */
+/* dot rather than under it, and a comfortable target without the platform's dead band. */
+.radios{margin-top:.4rem}
+label.radio{display:flex;align-items:center;gap:.5rem;margin:0;padding:.3rem 0;color:var(--text);font-size:.9rem;cursor:pointer}
+label.radio input[type=radio]{appearance:none;-webkit-appearance:none;flex:none;width:16px;height:16px;margin:0;border:2px solid var(--border);border-radius:50%;background:transparent;cursor:pointer}
+label.radio input[type=radio]:hover{border-color:var(--accent-alt)}
+label.radio input[type=radio]:checked{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 3px var(--surface)}
+label.radio input[type=radio]:focus-visible{outline:2px solid var(--accent-alt);outline-offset:2px}
+/* The screensaver page's own layout, which is NOT the settings page's multicol. Multicol */
+/* balances by height, and with two boxes and four columns it put one in the first column and */
+/* one in the last, leaving a hand's width of nothing between them and making the right box jump */
+/* every time a scrollbar changed the width by a pixel (Juri, 2026-09-11, C18). A grid places */
+/* them adjacent and keeps them there. The whole page is narrower too: at 1400px everything was */
+/* simply too wide. */
+.saver{display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start}
+.saver.modes{grid-template-rows:min-content 1fr}
+#screensaver-mode-box{grid-column:1;grid-row:1}
+#screensaver-options{grid-column:2;grid-row:1/span 2}
+#screensaver-library{grid-column:1;grid-row:2}
+/* The playlist page the same way: Folders and In this playlist share the left column, Content */
+/* has the right one to itself and may grow. Left to flow, In this playlist landed in a row that */
+/* began under Content's foot (Juri, 2026-09-19). */
+.saver.playlist{grid-template-rows:min-content 1fr}
+#playlist-folders{grid-column:1;grid-row:1}
+#playlist-content{grid-column:2;grid-row:1/span 2}
+#playlist-held{grid-column:1;grid-row:2}
+@media (max-width:68rem){.saver{grid-template-columns:1fr}
+.saver.modes,.saver.playlist{grid-template-rows:auto}
+#screensaver-mode-box,#screensaver-options,#screensaver-library,#playlist-folders,#playlist-content,#playlist-held{grid-column:auto;grid-row:auto}}
+.saver>fieldset{min-width:0;margin:0}
+/* The playlist's name is the page's title and the pencil beside it opens the rename in place, */
+/* the way a pull request's title is edited. A <details>, so it works with no scripting; the */
+/* title hides while the box is open so the row does not say the name twice. */
+header>.titlerow{flex:1 1 auto}
+.titlerow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;min-width:0}
+.titlerow h1{overflow-wrap:anywhere;min-width:0}
+details.rename{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;flex:0 1 auto;min-width:0}
+details.rename[open]{flex:1 1 20rem}
+details.rename summary{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:2.2rem;height:2.2rem;border-radius:999px;color:var(--subtext);cursor:pointer}
+details.rename summary::-webkit-details-marker{display:none}
+details.rename summary:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent);color:var(--accent-alt)}
+details.rename form{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0;flex:1 1 16rem;min-width:0}
+details.rename input[type=text]{flex:1 1 10rem;width:auto;margin-top:0;font-size:1.1rem;font-weight:600}
+details.rename button{margin-top:0}
+details.rename .hint{flex:1 1 100%;margin:0}
+.titlerow:has(details[open]) h1{display:none}
+.actions.back{margin:0 0 1rem}
+.actions.back+*{margin-top:0}
+main>.actions.back:last-child{margin:1rem 0 0}
+/* The open folder's name, first line of Content. */
+.where{margin:0 0 .3rem;font-size:.9rem;color:var(--subtext);font-weight:600}
+/* Folders are places, not actions, so they are links. Forty buttons in a column read as forty */
+/* decisions (Juri, 2026-09-10, C7). */
+ul.folders{list-style:none;margin:.2rem 0 0;padding:0;font-size:.85rem}
+ul.folders li{border-bottom:1px solid var(--border)}
+a.folder{display:flex;align-items:center;gap:.4rem;padding:.35rem .3rem;color:var(--text);text-decoration:none;border-radius:8px}
+a.folder:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}
+a.folder.open{background:var(--mantle);color:var(--accent);font-weight:600}
+a.folder .count{margin-left:auto;color:var(--subtext);font-variant-numeric:tabular-nums;font-size:.78rem}
+a.pager{display:inline-block;margin-top:.6rem;margin-right:.5rem;color:var(--accent-alt)}
+/* Show 10 25 50 100 under Content, the one in force filled the way the theme picker marks its choice. */
+.sizes{display:flex;align-items:center;flex-wrap:wrap;gap:.25rem;margin:.6rem 0 0;font-size:.8rem;color:var(--subtext)}
+.sizes a{padding:.15rem .55rem;border-radius:999px;color:var(--accent-alt);text-decoration:none;font-variant-numeric:tabular-nums}
+.sizes a:hover{background:color-mix(in srgb,var(--accent-alt) 12%,transparent)}
+.sizes a.on{background:var(--accent);color:var(--base);font-weight:600}
+/* One row per picture: the name, the credit box, then the actions hard against the right edge. */
+/* A grid rather than flex-wrap, so the three columns line up down the whole list instead of */
+/* each row wrapping where its own name happens to end (Juri, 2026-09-10, C8). */
+ul.pictures{list-style:none;margin:.2rem 0 0;padding:0;font-size:.85rem}
+ul.pictures li{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;padding:.35rem 0;border-bottom:1px solid var(--border)}
+ul.pictures li .name{flex:1 1 8rem;overflow-wrap:anywhere;min-width:0}
+ul.pictures li form{display:flex;align-items:center;gap:.35rem;margin:0;min-width:0}
+ul.pictures li form.caption{flex:3 1 14rem}
+ul.pictures li form.caption input{flex:1 1 6rem}
+ul.pictures li .acts{display:flex;gap:.4rem;justify-content:flex-end;white-space:nowrap;margin-left:auto}
+ul.pictures.picked li .name{flex:1 1 100%}
+ul.pictures li input[type=text]{margin-top:0;min-width:0}
+ul.pictures button{margin-top:0;padding:.25rem .6rem;font-size:.8rem;white-space:nowrap}
+
+/* Browse and Upload on one row and in one family. The file input is off screen rather than */
+/* hidden, so it keeps its focus ring and stays reachable from the keyboard; the word Browse is */
+/* its label, which is the whole of what opens the file dialog. */
+.uploadrow{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.4rem}
+input.offscreen{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+label.filebutton{display:inline-block;margin:0;line-height:normal;padding:.5rem .9rem;border-radius:10px;border:1px solid var(--accent-alt);font-size:.9rem;cursor:pointer;transition:transform .08s ease,box-shadow .08s ease}
+label.filebutton:active{transform:translateY(2px);box-shadow:0 0 0 0 transparent,0 1px 2px rgba(0,0,0,.15)}
+label.filebutton{background:color-mix(in srgb,var(--accent-alt) 18%,var(--surface));border-color:var(--accent-alt);color:var(--ink-alt);font-weight:600;box-shadow:0 2px 0 0 color-mix(in srgb,var(--accent-alt) 45%,var(--surface)),0 2px 4px rgba(0,0,0,.18)}
+label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 28%,var(--surface))}
+input.offscreen:focus-visible+label.filebutton{outline:2px solid var(--accent-alt);outline-offset:2px}
+.uploadrow .chosen{flex:0 1 auto;min-width:0;max-width:22rem;color:var(--subtext);font-size:.85rem;overflow-wrap:anywhere}
+.uploadrow button{margin-top:0;margin-left:auto}
+/* The playlists. This table had no styling of its own at all until 2026-09-10, so every cell */
+/* ran into the next at both widths it was tried at. The wrapper scrolls sideways rather than */
+/* letting a long name push the page wider than the window. */
+.tablewrap{overflow-x:auto;margin-top:.4rem}
+/* Sized to its content, not stretched: at full width the Rename cell took every spare pixel and */
+/* pushed Delete to the far edge of the card (Juri, 2026-09-11, C18). The wrapper scrolls where */
+/* the content is wider than the card, which on a phone it is. */
+table.playlists{width:100%;border-collapse:collapse;font-size:.85rem}
+table.playlists th,table.playlists td{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--border);vertical-align:middle}
+table.playlists thead th{color:var(--subtext);font-weight:600;font-size:.78rem;white-space:nowrap}
+table.playlists tbody th{font-weight:600;overflow-wrap:anywhere;min-width:7rem;width:100%}
+table.playlists td{width:1%;white-space:nowrap}
+table.playlists .acts{display:flex;gap:.4rem;align-items:center;justify-content:flex-end}
+table.playlists td.count{font-variant-numeric:tabular-nums;text-align:right}
+table.playlists td form{display:flex;gap:.35rem;align-items:center;margin:0}
+table.playlists td input[type=text]{margin-top:0;min-width:6rem;max-width:16rem}
+table.playlists button{margin-top:0;padding:.25rem .6rem;font-size:.8rem;white-space:nowrap}
+table.playlists .inuse{color:var(--ok);font-weight:600;white-space:nowrap}
+form.newplaylist{display:flex;gap:.4rem;align-items:center;margin-top:.6rem;flex-wrap:wrap}
+form.newplaylist input[type=text]{flex:1 1 12rem;margin-top:0;min-width:0}
+form.newplaylist button{margin-top:0}
+/* The upload's answer, directly under the button that produced it. Green for a success and red */
+/* only for a failure: it used to be red either way, so "1 picture stored." read as an error */
+/* (Juri, 2026-09-10, C4). It closes itself after five seconds and by its own cross. */
+.banner{display:flex;align-items:center;gap:.6rem;margin:.6rem 0 0;padding:.55rem .8rem;border-radius:10px;border-left:4px solid var(--ok);background:var(--mantle);color:var(--text);font-size:.85rem}
+.banner span{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.banner.bad{border-left-color:var(--bad)}
+.banner .dismiss{flex:none;margin:0;padding:0 .4rem;border:0;background:transparent;box-shadow:none;color:var(--subtext);font-size:1.1rem;line-height:1}
+.banner .dismiss:hover{background:transparent;color:var(--text)}
 /* A certificate fingerprint is 95 characters with no space to break at. */
 .hint code{word-break:break-all}

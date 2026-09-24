@@ -38,6 +38,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             "org.spazio17.muralis.action.RELOAD_CONFIGURATION";
     private static final String ACTION_PUBLISH_TELEMETRY_SOON =
             "org.spazio17.muralis.action.PUBLISH_TELEMETRY_SOON";
+    private static final String ACTION_DISPLAY_OFF =
+            "org.spazio17.muralis.action.DISPLAY_OFF";
     private static final String CHANNEL_ID = "kiosk_runtime";
     private static final int NOTIFICATION_ID = 505;
     private static final long REMOTE_POWER_DELAY_MS = 2_000L;
@@ -239,6 +241,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 .setAction(ACTION_PUBLISH_TELEMETRY_SOON));
     }
 
+    /**
+     * The screensaver's second timer ran out: darken the panel exactly as "Display off" would,
+     * sleep or film by {@link DisplayOffPolicy}. The activity asks the service because the
+     * dark record, {@code lockNow} and the method choice all live here.
+     */
+    static void displayOff(Context context) {
+        context.startForegroundService(new Intent(context, KioskService.class)
+                .setAction(ACTION_DISPLAY_OFF));
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -305,6 +317,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             restartControllers();
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
+            publishStateSoon();
+        } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
+            displayVisualOff();
+            // Not a dispatched command, so nothing else republishes: without this the Screensaver
+            // switch and display.source stay stale in Home Assistant for up to a minute.
             publishStateSoon();
         }
         return START_STICKY;
@@ -519,21 +536,32 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-            // POST_NOTIFICATIONS is the only runtime permission this app declares, and it does not
-            // exist before API 33; on the API 26 MediaPad the notification simply posts.
-            return;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            // POST_NOTIFICATIONS does not exist before API 33; on the API 26 MediaPad the
+            // notification simply posts.
+            grantOwnPermission(policy, admin, android.Manifest.permission.POST_NOTIFICATIONS);
         }
+        // The pictures screensaver's folder browser (2026-09-10). Silent, which is the whole
+        // reason it is acceptable on a panel with nobody in front of it, and the reason the
+        // browser can stay inside Muralis instead of handing the screen to Android's picker.
+        // An ordinary install is never asked for this and keeps using the picker's grant, so the
+        // grant state here is also what PictureLibrary reads to decide which browser to offer.
+        grantOwnPermission(policy, admin,
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+                        ? android.Manifest.permission.READ_MEDIA_IMAGES
+                        : android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
+    /** Fail soft: KioskActivity still asks the user the ordinary way, and the service runs either way. */
+    private void grantOwnPermission(DevicePolicyManager policy,
+            android.content.ComponentName admin, String permission) {
         try {
-            boolean granted = policy.setPermissionGrantState(admin, getPackageName(),
-                    android.Manifest.permission.POST_NOTIFICATIONS,
+            boolean granted = policy.setPermissionGrantState(admin, getPackageName(), permission,
                     DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED);
-            Log.i(TAG, "POST_NOTIFICATIONS auto-grant as device owner: "
+            Log.i(TAG, permission + " auto-grant as device owner: "
                     + (granted ? "applied" : "refused"));
         } catch (SecurityException | IllegalArgumentException refused) {
-            // Fail soft: KioskActivity still asks the user the ordinary way, and the foreground
-            // service runs either way.
-            Log.w(TAG, "Could not auto-grant POST_NOTIFICATIONS", refused);
+            Log.w(TAG, "Could not auto-grant " + permission, refused);
         }
     }
 
@@ -973,6 +1001,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // whether the surface is allowed to exist; the port and addresses stay admin-only.
             applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
+            stats.put("screensaver", screensaverSnapshot(includeAdminDetail));
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
@@ -985,6 +1014,63 @@ public final class KioskService extends Service implements KioskCommandDispatche
             throw new IllegalStateException(impossible);
         }
         return stats;
+    }
+
+    /**
+     * The screensaver as set and as showing. The page address is in the shared block, for the
+     * reason at the field: the Home Assistant text entity reads it. The sentence is the one every surface
+     * prints, so the web admin's box and the tablet's card cannot describe the rule differently.
+     */
+    private org.json.JSONObject screensaverSnapshot(boolean includeAdminDetail) {
+        org.json.JSONObject saver = new org.json.JSONObject();
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        boolean active = KioskRuntimeState.screensaverActive();
+        String problem = settings.enabled()
+                ? ScreensaverPolicy.modeProblem(settings.mode, settings.url) : null;
+        try {
+            saver.put("active", active);
+            saver.put("mode", settings.mode);
+            saver.put("idle_s", settings.idleSeconds);
+            saver.put("off_s", settings.offSeconds);
+            saver.put("dim_percent", settings.dimPercent);
+            saver.put("on_wake", settings.onWake);
+            // The page address is in the shared block, not behind includeAdminDetail: the Home
+            // Assistant text entity reads it, and a redacted field is an undefined template,
+            // which Jinja renders as empty and snaps back on every edit, the trap the web-admin
+            // switch fell into in 2026-08. It is an address on the operator's own network, the
+            // same class of value as the dashboard URL, which is shared for the same reason.
+            saver.put("url", settings.url);
+            saver.put("source", settings.source);
+            saver.put("picture_s", settings.pictureSeconds);
+            saver.put("transition", settings.transition);
+            saver.put("shuffle", settings.shuffle);
+            saver.put("one_per_cycle", settings.onePerCycle);
+            saver.put("credit", settings.credit);
+            saver.put("credit_corner", settings.creditCorner);
+            // The source's own sentence and the picture on the glass, so the web admin and a
+            // Home Assistant card can say "Pictures from Bing, 7 pictures" and name what is up.
+            PictureLibrary library = PictureLibrary.get(this);
+            saver.put("source_state", library.state(settings.source));
+            String sourceProblem = library.problem(settings.source);
+            saver.put("source_problem",
+                    sourceProblem == null ? org.json.JSONObject.NULL : sourceProblem);
+            // What replaced the folder-grant fields when the SAF path went (2026-09-10): whether
+            // this panel may read its own pictures at all, and which playlist is playing.
+            saver.put("pictures_readable", library.browsesOwnStorage());
+            PlaylistDocument playlists = library.playlists().load();
+            PlaylistDocument.Playlist inUse = playlists.active();
+            saver.put("playlist", inUse == null ? org.json.JSONObject.NULL : inUse.name);
+            saver.put("playlists", playlists.size());
+            org.json.JSONObject picture = new org.json.JSONObject();
+            picture.put("title", KioskRuntimeState.screensaverPictureTitle());
+            picture.put("credit", KioskRuntimeState.screensaverPictureCredit());
+            saver.put("picture", picture);
+            saver.put("problem", problem == null ? org.json.JSONObject.NULL : problem);
+            saver.put("summary", ScreensaverPolicy.describe(settings, active));
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return saver;
     }
 
     /**
@@ -1042,12 +1128,21 @@ public final class KioskService extends Service implements KioskCommandDispatche
             boolean screenOn = power == null || power.isInteractive();
             String source;
             double percent;
-            if (override >= 0) {
+            if (!screenOn) {
+                // Judged before the override: a dark screen reads as zero, whatever override the
+                // screensaver's dim floor left behind on the way down. Zero rather than null
+                // (Juri, 2026-09-23): a Home Assistant number showing "unknown" for a panel that
+                // is simply off looked like a fault, and a slider at zero is what a dark screen is.
                 source = "display_off";
-                percent = override;
-            } else if (!screenOn) {
-                source = "display_off";
-                percent = -1;
+                percent = 0;
+            } else if (override >= 0) {
+                // The screensaver's dim floor and its film are window overrides too; naming them
+                // "display off" would report a lit, dimmed page as dark. The film itself is the
+                // other dark state and reads zero like a sleeping screen, not the 1% its window
+                // override happens to be.
+                boolean saver = KioskRuntimeState.screensaverActive();
+                source = saver ? "screensaver" : "display_off";
+                percent = saver ? override : 0;
             } else {
                 source = auto ? "auto" : "manual";
                 percent = raw < 0 ? -1 : Math.min(100.0, 100.0 * raw / scale);
@@ -1063,6 +1158,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             display.put("auto", auto);
             display.put("has_light_sensor", hasLightSensor(this));
             display.put("source", source);
+            // Null only when the system setting itself could not be read; a dark panel is zero.
             display.put("brightness_percent",
                     percent < 0 ? org.json.JSONObject.NULL : Math.round(percent));
             display.put("system_raw", raw < 0 ? org.json.JSONObject.NULL : raw);
@@ -1703,6 +1799,144 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // stops the server through the same fingerprint path a save takes; note a caller on the
         // web admin itself hears "accepted" and then loses the surface it asked to lose.
         reloadConfiguration(this);
+        publishTelemetrySoon(this);
+    }
+
+    /**
+     * @return why the screensaver cannot show, or null once the activity has been told to show
+     *         it; the accepted-no-op shape is refused here the way {@link #publishTelemetry} does
+     */
+    @Override
+    public String screensaverStart() {
+        ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
+        if (!settings.enabled()) {
+            return "the screensaver mode is off";
+        }
+        String problem = ScreensaverPolicy.modeProblem(settings.mode, settings.url);
+        if (problem != null) {
+            return problem;
+        }
+        // The rest is where the activity would have to drop the request on the floor: each is
+        // answered here instead, so no caller hears "accepted" for a screensaver nobody sees.
+        if (KioskConfig.kioskStopped(this)) {
+            return "the kiosk is stopped";
+        }
+        if (!KioskRuntimeState.dashboardAlive() || !KioskRuntimeState.activityInFront()) {
+            return "Muralis is not on screen";
+        }
+        if (KioskRuntimeState.wizardOnScreen()) {
+            return "the first-start wizard is on screen";
+        }
+        // Somebody is in the settings or picking pictures: the activity answers a start by
+        // showing the dashboard, which would throw their half-made draft away (review of
+        // 2026-09-19).
+        if (KioskRuntimeState.operatorOnScreen()) {
+            return "Muralis settings are open on the panel";
+        }
+        PowerManager power = getSystemService(PowerManager.class);
+        boolean screenOn = power == null || power.isInteractive();
+        int visualOffBoot = KioskConfig.visualOffBootCount(this);
+        if (!screenOn || (visualOffBoot >= 0 && visualOffBoot == bootCount(this))) {
+            return "the display is off; Display on first";
+        }
+        sendUiCommand("screensaver.start", -1, null);
+        return null;
+    }
+
+    @Override
+    public void screensaverStop() {
+        sendUiCommand("screensaver.stop", -1, null);
+    }
+
+    /**
+     * Makes the named playlist the one in use, or none when the name is empty.
+     *
+     * <p>By name because that is what the caller has: Home Assistant's select carries the names it
+     * was told about, and an id means nothing to anyone. An unknown name is refused with the names
+     * that do exist, so a fleet operator who mistypes one is told what to type instead.
+     */
+    @Override
+    public String setScreensaverPlaylist(String name) {
+        PictureLibrary library = PictureLibrary.get(this);
+        String asked = name == null ? "" : name.trim();
+        // Under the library's lock with the web admin's and the panel's edits, so a tick in the
+        // browser cannot store a copy that undoes this switch (review of 2026-09-19).
+        String refusal = library.editPlaylists(document -> {
+            String wanted = asked;
+            PlaylistDocument.Playlist named = wanted.isEmpty() ? null : document.byName(wanted);
+            // The Home Assistant select's own "no playlist" option is the word None, because a
+            // select cannot hold an empty option, so the word has to mean what the entity says
+            // it means or clearing the playlist from a card is refused (measured over MQTT
+            // 2026-09-10). A playlist actually called "None" still wins, which is why the lookup
+            // comes first.
+            if (named == null && MqttController.PLAYLIST_NONE.equalsIgnoreCase(wanted)) {
+                wanted = "";
+            }
+            if (wanted.isEmpty()) {
+                return document.activate(null);
+            }
+            if (named == null) {
+                StringBuilder known = new StringBuilder();
+                for (PlaylistDocument.Playlist other : document.all()) {
+                    known.append(known.length() == 0 ? "" : ", ").append(other.name);
+                }
+                return known.length() == 0
+                        ? "there are no playlists on this panel yet"
+                        : "no playlist called " + wanted + "; this panel has " + known;
+            }
+            return document.activate(named.id);
+        });
+        publishTelemetrySoon(this);
+        return refusal;
+    }
+
+    @Override
+    public void setScreensaverSetting(KioskCommandDispatcher.ScreensaverSetting setting,
+            String value) {
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        switch (setting) {
+            case MODE:
+                editor.screensaverMode(value);
+                break;
+            case SOURCE:
+                editor.screensaverSource(value);
+                break;
+            case IDLE_SECONDS:
+                editor.screensaverIdleSeconds(Integer.parseInt(value));
+                break;
+            case OFF_SECONDS:
+                editor.screensaverOffSeconds(Integer.parseInt(value));
+                break;
+            case PICTURE_SECONDS:
+                editor.screensaverPictureSeconds(Integer.parseInt(value));
+                break;
+            case DIM_PERCENT:
+                editor.screensaverDimPercent(Integer.parseInt(value));
+                break;
+            case URL:
+                editor.screensaverUrl(value);
+                break;
+            case TRANSITION:
+                editor.screensaverTransition(value);
+                break;
+            case CREDIT_CORNER:
+                editor.screensaverCreditCorner(value);
+                break;
+            case ON_WAKE:
+                editor.screensaverOnWake(value);
+                break;
+            case SHUFFLE:
+                editor.screensaverShuffle(Boolean.parseBoolean(value));
+                break;
+            case ONE_PER_CYCLE:
+                editor.screensaverOnePerCycle(Boolean.parseBoolean(value));
+                break;
+            case CREDIT:
+            default:
+                editor.screensaverCredit(Boolean.parseBoolean(value));
+                break;
+        }
+        editor.apply();
         publishTelemetrySoon(this);
     }
 

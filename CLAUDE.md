@@ -33,7 +33,11 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
   switch (`kiosk.start/stop/reload/restart/set_url`,
   `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
-  `webadmin.enabled`, `system.reboot`, `telemetry.publish`)
+  `webadmin.enabled`, `screensaver.start/stop/mode/playlist/source/idle_seconds/off_seconds/
+  picture_seconds/dim_percent/url/on_wake/transition/credit_corner/shuffle/one_per_cycle/credit`,
+  `system.reboot`, `telemetry.publish`;
+  the web admin alone adds `/api/pictures`, `/api/pictures/delete`, `/api/pictures/refresh` and the
+  `/api/playlists` family for the picture playlists, which are not commands)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
@@ -522,22 +526,450 @@ product-facing, and renaming them touches every file for a purely cosmetic gain.
   externally disabled, and `KeyguardViewMediator` records "reshow when re-enabled" before it ever
   checks that the device owner disabled the lock screen; `stopLockTask()` re-enables it, so the
   launcher hand-over came up behind a lock screen. It cannot be dismissed while hidden (the request
-  errors), so `openSystemLauncher` drops the pin first, lifts any brightness override, and
-  `dismissKeyguardForLauncher` retries `requestDismissKeyguard` on a 100 ms clock until the reshown
-  keyguard accepts it. **Only for a device owner whose keyguard is not secure**, where the lock
-  screen is disabled and the dismissal is therefore silent: a real credential stays Android's to
-  ask for, and an ordinary install never asks. Measured on both panels 2026-09-10: with a device
-  PIN set, no dismissal was requested at all and Android's lock screen took the screen. A callback
-  is not a deadline, so an independent 1.2 s timer hands the screen over even where a vendor never
-  answers (on the Lenovo the request went at +0 ms, a retry at +113 ms and the launcher started at
-  +1,206 ms, so the deadline is what completed it), and `onResume` does not re-apply the kiosk
-  policy while a hand-over is pending, which would otherwise re-pin the screen mid-retry. Each
-  hand-over carries a generation, so a repeated escape and a late callback cannot start the
-  launcher twice. Measured on the Huawei BAH2-W19 (API 26, EMUI 8) 2026-09-19, after a `lockNow`
-  sleep and after a power-button sleep: EMUI leaves nothing to reshow, `isKeyguardLocked` stays
-  false and the same deadline starts the launcher at +1.21 s with no lock screen over it; with a
-  device PIN set there, no dismissal was requested and the launcher started 9 ms after lock task
-  ended. Lock task was re-applied on the way back in every run, on both panels.
+  errors), so `openSystemLauncher` drops the pin first, clears the screensaver and any brightness
+  override, and `dismissKeyguardForLauncher` retries `requestDismissKeyguard` on a 100 ms clock
+  until the reshown keyguard accepts it (one retry on the Lenovo). **Only for a device owner whose
+  keyguard is not secure**, where the lock screen is disabled and the dismissal is therefore
+  silent: a real credential stays Android's to ask for, and an ordinary install never asks. A
+  callback is not a deadline, so an independent 1.2 s timer hands the screen over even where a
+  vendor never answers, and `onResume` does not re-apply the kiosk policy while the hand-over is
+  pending, which would otherwise re-pin the screen mid-retry. Each hand-over carries a generation,
+  so a repeated escape and a late callback cannot start the launcher twice. Measured on the Lenovo
+  2026-09-10, sleeping with `lockNow` and then escaping: the first dismissal request at +0 ms, a
+  retry at +113 ms, the launcher started at +1,206 ms, so the deadline is what completed the
+  hand-over rather than any callback; the launcher was usable with no keyguard over it, brightness
+  came back to the system value, returning to Muralis re-pinned the screen, and two escapes in a
+  row started the launcher exactly once. With a real credential set on the same panel **no
+  dismissal was requested at all** and Android's lock screen took the screen, which is the point.
+  The cost of the deadline is that an escape from an awake panel also waits out the 1.2 s, because
+  the poll waits for a keyguard that never appears; that was true of the first version of this fix
+  too, and it is a second of patience against a bricked hand-over.
+  Measured on the Huawei BAH2-W19 (API 26, EMUI 8) 2026-09-19, after a `lockNow` sleep and after a
+  power-button sleep: EMUI leaves nothing to reshow, `isKeyguardLocked` stays false and the same
+  deadline starts the launcher at +1.21 s with no lock screen over it; with a device PIN set there,
+  no dismissal was requested and the launcher started 9 ms after lock task ended. Lock task was
+  re-applied on the way back in every run, on both panels.
+- **The screensaver is a quieter page after a chosen idle time, and then Display off after a
+  second one (built 2026-09-09, from the design note of that day).** Three modes in this step,
+  `dim` (the page at a brightness floor), `film` (the black view Display off uses) and `url` (a
+  second web page over the dashboard, which stays loaded underneath so a touch brings it back at
+  once); `off` is the shipped value, because a panel that started darkening by itself after an
+  update would read as broken. `ScreensaverPolicy` (pure, host-tested) holds the vocabulary, the
+  ranges and the clock: `next()` says START after `idle_s` without a touch and DISPLAY_OFF after
+  `off_s` of screensaver, and either time at 0 switches that step off. `KioskActivity` runs a
+  one-second clock and owns the state (`screensaverStage`, `screensaverShowing`, the layer under
+  the black view), asks the service for the display off (`KioskService.displayOff`, so sleep or
+  film is decided by `DisplayOffPolicy` exactly as for the button), and consumes the first touch
+  on a showing screensaver while still counting it for the escape combinations. What a wake from
+  display off shows is the user's choice (`screensaver_on_wake`, for `url` and `dim`; the film
+  has nothing to glance at, so the control is greyed out there with the reason, and both pages
+  show only the fields the chosen mode uses):
+  `onDisplayWoke` is idempotent because a wake from sleep reaches it twice, from `onResume` and
+  from the `display.wake` broadcast. The web-page mode with no address is stored anyway and
+  refused at start time with the reason, so the mode and the address can be typed in either
+  order; the one sentence every surface shows (`ScreensaverPolicy.describe`) turns red meanwhile.
+  Settings go through the instant path (`screensaver_mode/_idle_s/_off_s/_url/_dim_percent/
+  _on_wake` in the web admin's behaviour section, applied on change and refused in red on the
+  field itself; the tablet's card carries the mode and the sentence, its page every field,
+  applied on blur or Done with a toast for a refusal, and "Show it now", whose preview a touch
+  ends by returning to that page rather than to the dashboard); the commands are
+  `screensaver.start` (refused, not accepted, when it cannot show: mode off, no address, kiosk
+  stopped), `screensaver.stop` and `screensaver.mode`. The status document carries a
+  `screensaver` block (`active`, `mode`, the times, `summary`, `problem`, and `url`, shared rather
+  than admin-only because the Home Assistant text entity reads it), and
+  `display.source` reads `screensaver` while the dim floor or the film is the screensaver's, so a
+  lit dimmed page is never reported as display off. Home Assistant gets a select for the mode and
+  one switch that is both state and control; no separate start/stop buttons, they would be the
+  switch twice over. The camera and microphone are not part of it.
+- **Pictures: local playlists, Bing and Wikimedia Commons.** `PictureSources` and `TinyJson` stay
+  pure and host-tested. JSON has nesting and value limits and rejects malformed numbers and raw
+  control characters. **A third party chooses the addresses this panel connects to, so those
+  addresses are confined rather than trusted**: HTTPS only, one of four exact approved hosts
+  (`www.bing.com`, `commons.wikimedia.org`, `upload.wikimedia.org`, `thumb.wikimedia.org`), no
+  userinfo, no non-standard port, no fragment, and the check is repeated on every redirect hop,
+  which is why redirects are followed by hand and capped at three. Bing's `urlbase` must start
+  `/th?id=`, so a hostile answer cannot rewrite the authority through path concatenation. That is
+  destination confinement, not proof of safe bytes: a compromised approved service can still send
+  a decoder input, a wrong credit or an objectionable picture. A separate download worker keeps
+  network waits out of the disk and decode queue, so a slow fetch cannot stall the slideshow that
+  is already cached. Seven entries per source are cached with a manifest, fresh for 20 hours,
+  checked at every screensaver start and hourly; a failed fetch keeps the last usable cache and
+  says so in the source's sentence, measured on the Lenovo 2026-09-10 with the radio off and the
+  manifest artificially aged: the cache survived the failed refresh untouched.
+- **Named playlists, one browser, and no folder grants (reworked 2026-09-10).** Juri's rules, from
+  the specification in `../spec-screensaver-picture-mode.md` and his sketch
+  `../folders-pictures-selection.jpg`: several named playlists exist, exactly one plays, a playlist
+  holds individually chosen pictures from any number of folders, a deleted picture leaves the
+  playlist, and a picture removed from a playlist is **not** deleted from disk. His words on the
+  browser settle the shape: "Tablet and phone behaves identically when creating playlist and
+  selecting photos. Even if the phone has the possibility to exit muralis and use the android's file
+  browser, it is still Muralis that must handle the folder and image selections, reason why the
+  build is one only and it must integrate on both devices the in-muralis picture browser."
+  **`PlaylistDocument`** (pure, host-tested) holds the whole set and the rules: unique case-folded
+  names, at most one active, an ordered item list, a duplicate add is a no-op, 32 playlists and
+  1,000 pictures each. **`PicturePlaylists`** is only its storage: one JSON document at
+  `files/playlists.json` replaced by an atomic rename, which is what makes "zero or one active" and
+  "a reorder is one transaction" true by construction without a database. Items are a **list**
+  because the selection this replaced was a `StringSet` and therefore had no order a slideshow
+  could honour; `reorder` takes the whole new order and answers "the playlist changed while it was
+  being reordered" rather than half-applying a stale one. Malformed JSON **throws** and the file is
+  left on disk, because reading it as empty would discard somebody's playlists after one
+  interrupted write.
+- **One browser on every device, reading MediaStore.** `PictureBrowser` replaced
+  `PicturePlaylist`, and the whole SAF path is deleted with it: `ACTION_OPEN_DOCUMENT_TREE`,
+  `takePersistableUriPermission`, granted roots, `MAX_FOLDERS`, the picker's two-minute patience
+  timer, "a saved folder has lost access", and a picture that could be held twice under two
+  different addresses. What differs between devices is only how the read permission arrives: a
+  device owner grants it to itself silently in `KioskService.grantOwnRuntimePermissions`, an
+  ordinary install is asked once by the system dialog from the Screensaver page, which is the one
+  thing Android will not let an app do for itself. **Why MediaStore and not directories:**
+  `File.listFiles()` on `/storage/emulated/0` was written first and does not work, because at
+  Play's `targetSdk` floor scoped storage grants shared media *through MediaStore* and not through
+  the filesystem, so it returns null (measured on the Lenovo). The alternative that does give paths
+  is `MANAGE_EXTERNAL_STORAGE`, which Play treats as very restricted. So a folder is MediaStore's
+  `RELATIVE_PATH` and a picture is a `content://media/...` id. **There is no depth limit.** A
+  `maxdepth` of 3 was built on the morning of 2026-09-10 and deleted the same day: Juri agreed with
+  the specification against his own earlier instruction, because `Pictures/2026/Italy/Rome/Vatican`
+  is depth five and ordinary, and there is nothing for a cap to save when the folders come from an
+  index rather than a walk. Verified on the API 26 tablet: that exact path is reachable and its
+  pictures selectable. The folder index is cached for 30 s and dropped by `refresh()`, so going
+  back into a folder is instant, which is the thing the gallery apps this was modelled on get wrong.
+- **The playlist page is one page for creating and editing**, built from the sketch: Folders on the
+  left, Content on the right (the tapped folder, named on its first line), and In this playlist
+  under Folders, with its folder path prepended so two files called `test.jpg` read apart; where
+  two lanes fit, Folders and In this playlist share the left lane and Content has the right one
+  (2026-09-19). Content shows ten pictures at a time, with Show 10 25 50 100 under the list
+  (`PictureBrowser.PAGE_SIZES`, the same four on the web page); a new size starts the folder over.
+  Each held row carries the box that names the picture for its credit, with Save beside it and
+  Remove in the main colour, the web page's row copied (2026-09-19) in place of a Name button that
+  opened a page; the name is the existing caption, stored at once because it belongs to the file,
+  and only a refusal is said. The pencil sits against the title's last letter, a 14 dp glyph with
+  no pill, the title capped in width so a long name cannot push it off the row. **The playlist's name is the page's title, with a pencil beside it that turns
+  the title into a box** (2026-09-19, the way a pull request's title is edited); the Name card went
+  with it, a new playlist opens with the box already showing, and the box's Save only settles the
+  draft's name. The count beside a folder is the pictures directly in it, not everything below it,
+  which read as a miscount. Nothing is written until Save, which is what makes Cancel mean
+  something. The Screensaver
+  page lists the playlists as the web page does, name, count, Use or "In use", Edit and Delete, with
+  the "New playlist name" box and Create playlist under the list (2026-09-19, the web panel copied;
+  the button used to sit above the list and open the draft page); Create makes an empty playlist at
+  once and Edit is where its pictures are picked. The active row says "In use" in the same column so
+  the action columns stay aligned.
+  Deleting the playlist in use leaves none in use and the sentence says so, rather than a black
+  panel. Every question this feature asks is a screen the app draws itself: an `AlertDialog` came up
+  in Android's light theme over a dark panel **and took the immersive mode with it**, so a
+  navigation bar appeared on a locked kiosk (measured on API 26).
+- **Every tap on that page repaints one pane, not the screen.** The first version answered a folder
+  tap, a tick and a Remove by calling `showPlaylistPage` again, which is correct and unusable: the
+  page was rebuilt from the top, so picking twenty pictures meant scrolling back down twenty times.
+  `PlaylistPage` holds the three panes and the tick box of every picture on screen, and each action
+  touches only what it changed: a folder tap repaints the folder list from the tree already in
+  memory and re-reads the right pane, a tick repaints the Selected pane alone, and Remove also
+  unticks the box if that folder happens to be open, so the two panes cannot disagree. A background
+  read that finishes for a page that has been left, or for a folder somebody has since navigated
+  away from, is dropped rather than painted. `showPlaylistPage` itself is now only arrival and
+  rotation. **List actions use a smaller button than the rest of the app** (`rowButton`): a wall
+  panel's buttons are sized for standing distance and three of them at that size fill a playlist row
+  and crowd out the name they belong to. And a pair of short labels stays side by side on a phone
+  (`pairedButtonRow`, Select all/Select none and Cancel/Save), where `buttonRow` would stack them;
+  above 600 dp it defers to `buttonRow`, because stretching two buttons across a 1200 px card is the
+  bar-shaped button that rule exists to prevent. On a phone the Selected rows put the path on its
+  own line above its two buttons, since side by side it was ellipsized to `./Pictures.../pd_1.jpg`
+  for two different pictures in different folders.
+- **The migration off document URIs is deliberately unable to lose a selection.** It matches each
+  old address to a media id by the path its document id encodes, which for the external-storage
+  provider is exactly MediaStore's relative path plus display name, with the display name alone as
+  the fallback for genuinely opaque providers. That difference is not academic: the phone held two
+  files called `pd_1.jpg` in different folders, which a name cannot tell apart and a path can. It
+  waits for the read permission, and it only counts itself finished once every address matched, so
+  a later run picks up what an earlier one could not. **What it cannot match is kept, not removed**:
+  the first version deleted it, and on the phone that emptied a playlist of five files that were on
+  disk the whole time and simply not indexed yet, because they arrived over adb. "The index has not
+  caught up" and "the picture is gone" are not the same thing. A kept item still opens on its own
+  persisted grant, and one sentence names it. Measured on the phone: all five repointed, none lost.
+- **The web admin's screensaver is a page of its own (`/screensaver`), a playlist is a page of its
+  own under it (`/playlist?id=`), and neither reloads while it is used.** The screensaver page was
+  a `<details>` inside the settings grid, so a two-pane browser and a playlist table were unfolding
+  inside a 300 px column of a multi-column page. That page now holds the mode, the options named
+  after it, and the list of playlists: name, count, Use or "In use", a green Edit and a red Delete,
+  and nothing else. **Edit opens the playlist's own page**, arranged as the panel's own since
+  2026-09-19: the name is the title, renamed through the pencil beside it (a `<details>`, so it
+  opens, closes and posts with no scripting, and the script only keeps the answer on the page);
+  Folders, with the upload at its foot because that is where a picture arrives, and Content side by
+  side; In this playlist under Folders in the left column, Content with the right column to itself,
+  placed by hand like the screensaver page's panels (In this playlist is the panel's own pane, with
+  the folder prepended, the box that names a picture for its credit with a plain Save, and Remove).
+  Content shows ten pictures at a time and offers Show 10 25 50 100 under the list where there is
+  more than ten to show; the choice rides in the address as `n=` and in every fragment request, and
+  a new size starts the folder over. Every one of them is scoped to
+  that playlist rather
+  than to whichever one happens to be playing (Juri, 2026-09-12: the two surfaces should be arranged
+  alike and the panel's shape is the better one). The rename box that used to own a column of the
+  table went with it: nobody renames a playlist often enough to spend a column on it. Unlike the
+  panel the page applies as it goes rather than collecting a draft behind a Save, because every
+  other control in this admin already works that way and a draft would need the whole selection
+  carried in the browser. The three panels are placed by hand rather than left to flow: the options
+  panel is much the tallest, so in document order the playlist list landed in a row that began below
+  it and left a hand's width of nothing under the mode chooser. **A folder is a link**, not a
+  form button, with a real `/playlist?id=<id>&at=<path>` address, so a folder can be reloaded,
+  bookmarked or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
+  folder. That is also what fixed a stale-address 404: a folder used to be a POST to
+  `/api/pictures/folder/browse`, whose URL then sat in the address bar and answered nothing on a
+  reload. `admin_pictures.js` intercepts those links and every POST form on the page, not only the
+  ones inside the browser: the name box and the held-pictures list sit outside it and would
+  otherwise navigate to `/api/...` and leave that address in the bar. It re-reads three fragments
+  after every change, Folders (`/api/pictures/folders`), Content (`/api/pictures/content`) and what
+  the playlist holds, because a tick changes the row and the list, an upload changes a count, and a
+  page whose panels disagree is a page nobody trusts. An upload carries its playlist in the
+  form's action instead, since a multipart body is not parsed for anything but the file. The
+  server answers each change twice over, as a sentence and a flag for `?fragment=1` and as the whole
+  page for a browser with no scripting, so nothing navigates and nothing scrolls. Form bodies are
+  URL-encoded, deliberately: a `FormData` body is sent as multipart and this server parses multipart
+  for the upload alone, so posting a tick that way arrived with no fields at all. The upload's answer
+  is a banner directly under the Upload button, red for a refusal, with a cross and a five-second
+  timer; **a success says nothing on this page** (Juri, 2026-09-19: "Playlist updated." on every
+  added picture was noise), the panels re-read after it are the answer, and "Uploading..." shows
+  while a file is on its way.
+  The stats poll runs on this page too, for the chip and for the fields it keeps current, so its
+  readout element is optional: writing to the missing `#stats` threw on every tick and took the rest
+  of the poll down with it. **Use, Delete and Create playlist are silent since 2026-09-19:**
+  `admin_playlists.js` posts them as fragments from the screensaver page and re-reads the table
+  (`GET /api/playlists/table`) in place, so the "In use" mark moving, a row going or a row appearing
+  is the whole answer; only a refusal is said, red, in the banner under the table. Before that, Use
+  came back as the whole page with "Playlist in use." on top and `/api/playlists/activate` in the
+  address bar, which said nothing the mark did not (Juri: tap the playlist you want and simply
+  switch). Without scripting the forms still post for real and the page comes back with its
+  sentence, or with none for Use; an empty sentence in a fragment answer hides the banner instead
+  of showing the raw JSON, on both pages.
+- **Wording both surfaces share, trimmed 2026-09-11**: "One picture per screensaver" (not "..., the
+  next one next time"), "Show the title and credit line" (not "... (always on for the online
+  sources)"), "Preview" rather than "Show it now", and every way back is "← Back" with the arrow.
+  Upload's row reads Browse, the chosen file, then Upload against the right edge.
+- **The palette is the app's own, and the accents are chosen for contrast, not for a name.** It
+  began near a well-known palette and diverged accent by accent ("intensified at the user's
+  request"); on 2026-09-19 Juri judged it similar but not that palette any more, and its credit
+  went from the About screen, the README, the site's imprint and every comment, the flavour names
+  with it (`KioskTheme.darkPalette()` and `lightPalette()`). On 2026-09-12 the light theme's
+  accents were darkened, because the earlier values did not clear WCAG's 4.5:1 for text on this
+  app's card colour: measured, subtext 3.73, blue 3.71, red 4.10, green 2.58, yellow 2.28. The app's stats
+  readout was worse still, 1.02 to 2.13 on the light card, because the service bakes its colours
+  into the markup and has no screen; it recolours itself for a light surface now, and is unchanged
+  over the dashboard, where it sits on a black plate. Hue and saturation are kept exactly in every
+  case; only lightness moved, by the smallest amount that clears the minimum, and the dark theme
+  needed nothing. **Both surfaces are audited by measurement rather than by eye**: every pair
+  either one actually draws is listed and checked, and the only remaining miss is the 1 px row
+  separator, which is decorative. Juri's rule, 2026-09-12: "we must make the themes look good",
+  and no palette's name is a constraint.
+- **What the review of 2026-09-19 found and fixed, all on the branch's last day.** An upload from
+  a playlist's page landed in whichever playlist was in use, because the upload handler never
+  passed the page's id to `saveLocal`; it does now. Every playlist edit goes through
+  `PictureLibrary.editPlaylists`, one lock for the web admin, Home Assistant and the panel, where
+  each had its own load-modify-store and a tick in the browser could undo a switch from a card.
+  A playlists file that cannot be parsed is moved aside under a dated name and said for a day,
+  instead of being overwritten by the next save. A picture is dropped from a playlist only when
+  MediaStore answered for every picture and at least one is still there: a provider that does not
+  answer throws `PictureBrowser.Unavailable` rather than looking like a missing row, and every
+  picture vanishing at once is treated as an ejected card, not a deletion. The migration stores
+  only when it changed something, which ends a loop on an ordinary install waiting for its
+  permission (store, publish, list, migrate, store). The dropped-pictures sentence lasts ten
+  minutes instead of being swallowed by the first reader, which was the telemetry publish.
+  Discovery goes out again before a state publish when the playlist names differ from what it
+  announced, so a new or renamed playlist reaches the Home Assistant select without a reconnect.
+  `screensaver.start` is refused while an operator is in the settings, because the activity
+  answered it by showing the dashboard over a half-made draft. The web's Delete asks first, as the
+  panel does. The held rows' labels are looked up on the worker and cached per page. The
+  retired folder feature's leftovers went: the SAF keys in `KioskConfig`, the picker runnable, the
+  `screensaver.folder` and `screensaver.pick_folder` commands with their test, and the
+  `/api/pictures/folder/pick` route. `READ_MEDIA_VISUAL_USER_SELECTED` is declared and accepted
+  as a partial grant on Android 14, per the vendor's page; **not yet tried on an Android 14
+  device**. A second pass on 2026-09-20 closed what the first left half done: the panel's own Save,
+  Use, Delete and Create go through `editPlaylists` too; the permission result is judged by what
+  the browser can now read, not by the first answer; the activity ignores a `screensaver.start`
+  that arrives with settings open instead of showing the dashboard; the migration's matching step
+  retries by the minute, not per listing; playlist names for discovery come from the document last
+  read or written, not a third file read per publish; MediaStore names are cached for half a
+  minute so a listing under a stats poll is not a query per picture; a one-picture playlist whose
+  file is gone is still cleaned; and a store that throws without the permission still says
+  "picture". A separate security pass found nothing.
+- **Three weights, none of them hollow (chosen 2026-09-12 after five treatments were compared on
+  the live pages).** Filled is the action of the thing it sits in and every action inside a list
+  row; outlined is a command that acts now and stores nothing; **tonal** is navigation. Tonal
+  rather than a text button because the same language is mirrored on the panel's touch UI, where
+  there is no hover, and a control with no body until you point at it is one nobody finds; Material
+  is the precedent ("tonal is useful where a lower-priority button requires slightly more emphasis
+  than an outline would give"). **A tonal label is `--ink-alt`, never the hue**: the
+  hue on a tint of itself cannot reach 4.5:1 at any strength. Measured at 18% into the card: 4.74
+  dark and 5.62 light, borders clearing 3:1 in both. There is one tonal hue, the blue; a purple one
+  was built the same day and deleted unused rather than left in the stylesheet. The panel carries
+  the same tier (`KioskActivity.tonalButton`, `KioskTheme.inkAlt`), so the two surfaces are one
+  design rather than two that resemble each other. **A navigation button that carries a role class
+  is that role first**: Edit is a GET form and green, and only an unclassed button in a GET form is
+  tonal, which is what the `:not([class])` in that rule is for. Counted across the whole admin
+  the same day, exactly **two rows** mixed a filled button with a hollow one, Save + Open once and
+  Browse + Upload; a hollow button beside a filled sibling is what reads as abandoned, so both
+  gained a body. The unit for counting filled buttons is the **card**, following Atlassian's
+  per-section and Polaris's per-card rule rather than Material's, Carbon's and Primer's
+  one-per-page, which is a deliberate relaxation.
+  **The panel's buttons carry the web's measurements since 2026-09-19** (Juri: the same colours and
+  style everywhere in the app, the screensaver pages in particular): padding .5rem .9rem, a 10 px
+  radius, a 1 px border, a 2 px hard edge and .9rem text become 8 by 14 dp, 10 dp, 1 dp, 2 dp and
+  14 sp (`KioskActivity.webShaped`), a row button .25rem .6rem at .8rem, the tonal edge the hue at
+  45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
+  cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
+  160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
+- **A button's colour says what it does, on both surfaces.** Juri's rule, 2026-09-11: the main
+  colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
+  playlist" as the mark that something is enabled); a plain outline is a visible action that saves
+  nothing (Open once, Reboot, Reload, Display on and off, Preview, Back); **red deletes
+  something** (Delete a picture, Delete a playlist, and the confirm screen's own button); **green
+  adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
+  where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better").
+  Taking a picture out of a playlist is the main colour and never red, on both surfaces: red here
+  deletes a file or a playlist and this deletes neither. `button.danger` and `button.add` in
+  `admin.css`, `dangerButton` and `addButton` in `KioskActivity`, both built on the same shape and
+  lift as the main button so a row of mixed buttons still reads as one family. The rule is applied
+  across the pictures and screensaver surfaces; everything else it names already followed it.
+  Buttons on the web page also take the page's own font, not the browser's button font, which is
+  what left the Browse label three pixels taller than the Upload button beside it.
+- **The screensaver page is three panels, on both surfaces, named after what is chosen.**
+  Juri's structure, 2026-09-11: **"Screensaver mode"** holds the mode chooser and nothing else;
+  the second panel is named after the mode (`Dimmed page options`, `Black film option` singular,
+  `Web page options`, `Pictures options`) and holds everything that mode uses, in the order idle,
+  display-off, the mode's own field, the wake choice, then the sentence it all adds up to, then
+  Show it now; and **"Playlist"** appears only for the Pictures mode with this panel as the source.
+  **Off has no second panel at all**, his decision and his words: "it is Off so there is no
+  settings for it in any case". The times keep applying the moment a mode is picked. On the web
+  the legend is rewritten from the chooser's own option text (`admin_setting.js`), so a mode
+  changed without a reload renames its panel and the two surfaces cannot drift over a word. The
+  mode is **five radios on both surfaces** (2026-09-11): it is the only chooser on the page whose
+  value changes what else is on the page, so it is worth seeing at once. The settings page's own
+  Screensaver card keeps a menu, because it is one card among a dozen and every other chooser
+  there is a menu; `admin_setting.js` and `admin_stats.js` read and follow both shapes. Web radios
+  are drawn rather than given `accent-color`: Chrome derives an unchecked radio's ring from it and
+  against this purple on a dark scheme the ring came out khaki. **A mode with no wake choice shows
+  none**, rather than a disabled one with a note explaining it: the black film has nothing to look
+  at on waking, and a control that can never be enabled is clutter. This
+  also fixed a real bug he found: with any mode but Pictures the second web panel was still headed
+  "Pictures" and was **empty**, because it held the picture fields alone while the web page's
+  address and the dimmed brightness sat in the first panel.
+- **The web browser has the panel's "nothing opened yet" state.** It used to open the top of the
+  volume on arrival, so it had no way to say "pick a folder"; the top of the volume is a folder
+  like any other and is now reached by tapping it. Absent and empty are different answers for the
+  `at` parameter, which is why `browseTarget` returns null rather than "" when it is missing.
+- **The screensaver page does not use the settings page's multicol.** `.saver` is an explicit grid
+  of `auto-fill` columns with a 30 rem floor and a 72 rem cap, so the page is two equal columns at
+  any desktop size and one on a phone, and the Playlist panel spans the pair rather than the
+  window. Multicol balances by height, and with two boxes in four columns it put one at the far
+  left and one at the far right with a hand's width of nothing between them, and moved the right
+  one every time a scrollbar changed the width by a pixel (Juri, 2026-09-11, with a screenshot).
+  The playlist table is sized to its content rather than stretched, for the same reason: at full
+  width the Rename cell took every spare pixel and pushed Delete to the far edge of the card.
+- **Two things the screensaver page deliberately does not have.** There is no "Back to the page"
+  button beside "Show it now": it ends a showing screensaver, which is what Display on already does
+  to a lit panel, and on a dark panel it ends one without lighting the panel, which nobody presses a
+  button for; the tablet's own page never had it (Juri asked what distinguished them, 2026-09-11).
+  The `screensaver.stop` command is unchanged for MQTT and the API. And a page below the settings
+  page carries its heading alone, with no subtitle and no status chip: the panel's id, its address
+  and its load belong where somebody is configuring the panel, not on a page about one feature of
+  it. The way back is a "Back" button at the top and at the bottom, the same on the privacy and
+  terms pages, because a page you have to scroll to read is one you would have to scroll back up to
+  leave.
+- **`screensaver.playlist` switches the playlist by name**, and a Home Assistant select carries the
+  panel's own names. By name because that is what a person and a card know, and an unknown name is
+  refused with the names that do exist. The select's "no playlist" option is the word `None`,
+  because a select cannot hold an empty option, so the panel treats that word as none unless a
+  playlist is actually called that; without it, clearing the playlist from a card was refused
+  (found over MQTT, 2026-09-10). Uploads still need no permission at all and appear as their own
+  folder in the browser.
+- **Captions and uploads.** A caption is keyed by the picture's own address, at most 200
+  characters, and there is no file-name fallback any more: reading the name as a fallback is what
+  crossed captions between same-named pictures in different folders (a second folder's `pd_2.jpg`
+  shown on the glass under the first folder's "The Great Wave off Kanagawa, Hokusai", measured
+  2026-09-10). `migrateCaptionKeys` moved the old name keys onto the addresses they were written
+  for and then dropped every bare name; `captions_key_version` is 2, so a panel that already ran
+  the first pass gets the second sweep too. The caption is also the friendly name the playlist page
+  edits, not a second field. Only uploaded picture files may be deleted; a picture chosen from the
+  panel's own storage is only removed from the playlist. Multipart parsing rejects the whole
+  truncated request and preserves boundary-prefix bytes inside images. Authentication and
+  cross-site checks precede body allocation. Only exact POST `/api/pictures` gets 24 MiB/120 s; one
+  process-wide upload permit prevents multiplying that allocation by worker count. Other requests
+  retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
+- **Credited display.** Decode uses a power-of-two sample with at most 2,097,152 ARGB pixels
+  (8 MiB) per bitmap, independent of image shape. Generation and frame/source checks discard stale
+  work, including work invalidated by sleep. Wake resumes an interrupted initial decode even for
+  one-picture-per-cycle. **The credit line is the title and the names, and never a web address**
+  (2026-09-10, after reading the lines on the panel): Commons carries artist, licence short name,
+  "Wikimedia Commons" and the supplied Credit and Attribution notices, and Bing its `copyright`
+  line verbatim, while the licence address and the source-page address stay in the picture and in
+  the cache manifest without reaching the glass, because a wall panel is read from across a room
+  and nobody types a URL off one. A supplied notice that is nothing but an address is dropped for
+  the same reason; one that names somebody is shown as the source worded it. Online credits cannot
+  be disabled. **One credit panel at a time**, decided the same day: the outgoing picture keeps the
+  line until it has left the glass and the incoming one takes it in the transition's end action.
+  Stacking both attributions was built that morning and rejected that afternoon, because a second
+  panel appearing over a picture still on screen reads as a fault; the caption always names a
+  picture that is visible either way. If a full credit cannot fit, refuse the image rather than
+  ellipsize, because an ellipsis is not attribution. Error messages clear old pictures and picture
+  telemetry. The composed credit is what a cache manifest stores, so
+  `PictureLibrary.ATTRIBUTION_VERSION` invalidates every manifest an older build wrote; it is 3.
+  Attribution is not evidence of permission to redistribute Bing photographs: its unofficial
+  endpoint remains an opt-in product/legal risk, not a licence supplied by Muralis.
+- **Settings stay shared.** The existing dispatcher validates every screensaver setting on all
+  three surfaces. Every screensaver setting is a discovery entity (read back off the broker
+  2026-09-10: 36 components on the device-owner Lenovo, sixteen of them the screensaver's, the
+  newest being the playlist select), and
+  the four boolean switches use a template that renders `None`, which Home Assistant reads as
+  unknown, for a missing field, a null, a non-boolean and a `screensaver` block that is not a
+  mapping; nine such payloads were rendered through Jinja to check it. **Verified against a real instance 2026-09-10**: a throwaway Home
+  Assistant in podman consumed the discovery document and built 35 entities per panel, fifteen of
+  them the screensaver's, 22 entity round trips through Home Assistant services all matched the
+  panel, and the four boolean switches read `unknown` for each of the four bad payload shapes. **A mode changed under a showing
+  screensaver ends it** and the next one comes after the idle time in the new mode, which is
+  deliberate and documented at `tickScreensaver`; a same-mode change (a dim floor, a transition,
+  a playlist revision) is re-applied in place **with the clock towards display off left where it
+  was**, measured on the Lenovo: a 40 s off timer still fired at 40 s across an in-place change at
+  10 s. The same-boot screensaver start timestamp survives an activity rebuild too, measured the
+  same way across `kiosk.restart`. **A local decode failure used to be remembered until the
+  process restarted**, so a panel whose storage came back kept saying a selected picture cannot be
+  read through three clean cycles and a rebuild, cleared only by a reboot, because the record was an
+  in-memory `problems` map with no counterpart on success. Fixed 2026-09-10: a successful local
+  decode clears it, which is the only event that actually answers the question the sentence asks. The secondary WebView handles renderer death and leaves the
+  saver, **demonstrated on the Lenovo 2026-09-10** once rooted debugging was enabled (killing
+  another app's isolated renderer needs root): `Renderer process crash detected` was followed by
+  `Screensaver off (screensaver renderer ended)`, `renderer_deaths=1`, HTTPS still answering 200,
+  MQTT still accepting commands, a new renderer spawned and the dashboard back. Renderer memory cannot be
+  inferred from the app's own heap and is reported as its own process: on the Lenovo the app sat
+  at 162 to 187 MB and the renderer at 95 to 126 MB across dashboard, second WebView, one picture,
+  repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
+  renderer death, and file descriptors steady at 188 to 191 (210 while the second WebView is up).
+- **The HTTPS server's capacity is sized for a browser, not for curl.** 16 workers, 12 connections
+  per host, a queue depth of 8, and a socket that has sent nothing by 2 s is closed, which is what
+  keeps a browser's speculative connections from spending the whole per-host budget. Measured on
+  the Lenovo 2026-09-10 against the failure reported that morning: six silent sockets held open
+  from one address no longer cost anything, the admin page still loads in half a second; twelve or
+  twenty do refuse the next connection, immediately rather than after a ten-second hang, and
+  capacity is back inside 2.6 s without anyone closing them. Capacity refusals are logged, one
+  line per 30 s. Failed TLS wrappers and queued sockets close on shutdown. **The plain-HTTP redirect
+  was broken for a real browser and is fixed** (2026-09-10): the 301 arrived with its headers and
+  `Content-Length: 50`, the body never did, and the connection ended in a reset, so Chrome rendered
+  an empty document and Firefox hung. curl printed the headers it got and looked fine, which is how
+  it survived a first diagnosis. Three causes, all now closed. `handleConnection` had begun
+  assigning `channel = tls` *before* the handshake, so the `finally` block closed the TLS wrapper
+  over the same file descriptor the raw-socket 301 had just been written to; the channel is now the
+  TLS socket only after a successful handshake, with a separate `tlsToRelease` so a failed wrapper
+  is still freed. The header and the body left in two writes and now leave in one. And every
+  connection ends with a **lingering close**, FIN, then drain the client's unread bytes to a 500 ms
+  deadline, then close, which is what Apache's `ap_lingering_close` and nginx's `lingering_close`
+  do and what any early refusal needs anyway: a 401 answered before a 24 MiB upload is read leaves
+  unread bytes by design. Measured afterwards: 186 bytes, the full declared body, a clean FIN.
+- **Fleet is not implemented by a local playlist.** Section 10b of the fleet design still owns
+  content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
+  never cross-panel IDs. Keep uploads alongside grants so removed or cloud storage is not required
+  for a self-contained panel. No claim of fleet compatibility, and none of unattended readiness:
+  the open items are in `../review-screensaver-keyguard-2026-09-10.md`. The three that were defects
+  rather than gaps, the plain-HTTP redirect, the legacy caption keys and the uncleared decode
+  failure, were all fixed and measured on 2026-09-10; what remains there are gaps, and a soak is
+  still the largest of them.
 
 ## Platform constraints that shape the code
 

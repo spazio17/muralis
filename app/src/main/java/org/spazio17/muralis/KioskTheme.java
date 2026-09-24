@@ -10,14 +10,16 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 
 /**
- * Catppuccin palette for every Muralis surface, the on-device configuration screens, the escape
+ * The palette for every Muralis surface: the on-device configuration screens, the escape
  * recorder, the stats overlay and the HTTP admin page all take their colours from here so the app
  * and the web page look like one product.
  *
- * <p>Mocha for dark, Latte for light, matching the existing light/dark switch. Accents are
- * Catppuccin's own hues pushed slightly further towards saturation at the user's request: on a wall
- * panel seen from across a room the stock accents read as washed out, and the stats overlay in
- * particular has to carry meaning by colour alone.
+ * <p>A dark palette and a light one, matching the light/dark switch. The neutrals are greys with a
+ * faint blue cast; the accents are vivid enough to carry meaning by colour alone, because on a
+ * wall panel seen from across a room a washed-out accent says nothing, and the stats overlay in
+ * particular has nothing but colour to say it with. It is the app's own palette: it began near a
+ * well-known one and diverged accent by accent, and since 2026-09-19 it is not credited as that
+ * one anywhere (Juri: similar, but not it).
  *
  * <p>Kept as plain constants and drawable factories rather than XML themes because this app builds
  * its UI in code; there is no layout inflation to hook a style onto.
@@ -32,13 +34,22 @@ final class KioskTheme {
     final int subtext;
     final int accent;
     final int accentAlt;
+    /**
+     * The label a tonal button uses.
+     *
+     * <p>A tonal button is its hue at 18% over the card, and the hue itself cannot be read on a
+     * tint of itself at any strength: measured 3.24:1 at best. This is the same value the web
+     * admin carries as --ink-alt, so the two surfaces are one design.
+     */
+    final int inkAlt;
     final int ok;
     final int warn;
     final int bad;
     final boolean light;
 
     private KioskTheme(int base, int mantle, int surface, int surfaceAlt, int border, int text,
-            int subtext, int accent, int accentAlt, int ok, int warn, int bad, boolean light) {
+            int subtext, int accent, int accentAlt, int ok, int warn, int bad,
+            int inkAlt, boolean light) {
         this.base = base;
         this.mantle = mantle;
         this.surface = surface;
@@ -51,33 +62,44 @@ final class KioskTheme {
         this.ok = ok;
         this.warn = warn;
         this.bad = bad;
+        this.inkAlt = inkAlt;
         this.light = light;
     }
 
     static KioskTheme of(boolean lightTheme) {
-        return lightTheme ? latte() : mocha();
+        return lightTheme ? lightPalette() : darkPalette();
     }
 
-    /** Catppuccin Mocha, accents intensified. */
-    static KioskTheme mocha() {
+    /** The dark palette. */
+    static KioskTheme darkPalette() {
         return new KioskTheme(
                 Color.parseColor("#1e1e2e"),   // base
                 Color.parseColor("#181825"),   // mantle
-                Color.parseColor("#313244"),   // surface0
-                Color.parseColor("#45475a"),   // surface1
-                Color.parseColor("#585b70"),   // surface2 as a border
+                Color.parseColor("#313244"),   // surface
+                Color.parseColor("#45475a"),   // surface, alternate
+                Color.parseColor("#585b70"),   // border
                 Color.parseColor("#cdd6f4"),   // text
-                Color.parseColor("#a6adc8"),   // subtext0
-                Color.parseColor("#c08cff"),   // mauve, more vivid
-                Color.parseColor("#7aa2ff"),   // blue, more vivid
-                Color.parseColor("#8ee88a"),   // green, more vivid
-                Color.parseColor("#ffdf8f"),   // yellow, more vivid
-                Color.parseColor("#ff6f91"),   // red, more vivid
+                Color.parseColor("#a6adc8"),   // subtext
+                Color.parseColor("#c08cff"),   // accent, violet
+                Color.parseColor("#7aa2ff"),   // accent, blue
+                Color.parseColor("#8ee88a"),   // ok, green
+                Color.parseColor("#ffdf8f"),   // warn, yellow
+                Color.parseColor("#ff6f91"),   // bad, red
+                Color.parseColor("#9bb9ff"),   // the label a tonal button uses
                 false);
     }
 
-    /** Catppuccin Latte, same treatment. */
-    static KioskTheme latte() {
+    /**
+     * The light palette.
+     *
+     * <p>Its accents were darkened on 2026-09-12 so every pair this app actually draws clears
+     * WCAG's 4.5:1 for text. Before that, measured against the card colour, the subtext was 3.73,
+     * the blue 3.71, the red 4.10, the green 2.58 and the yellow 2.28, and the green and yellow
+     * are the ones a person would actually have trouble reading. Hue and saturation were kept
+     * exactly; only lightness moved, by the smallest amount that clears the minimum. The dark
+     * palette needed nothing.
+     */
+    static KioskTheme lightPalette() {
         return new KioskTheme(
                 Color.parseColor("#eff1f5"),
                 Color.parseColor("#e6e9ef"),
@@ -85,12 +107,13 @@ final class KioskTheme {
                 Color.parseColor("#ccd0da"),
                 Color.parseColor("#bcc0cc"),
                 Color.parseColor("#4c4f69"),
-                Color.parseColor("#6c6f85"),
+                Color.parseColor("#606276"),
                 Color.parseColor("#8226ef"),
-                Color.parseColor("#1e66f5"),
-                Color.parseColor("#2fa019"),
-                Color.parseColor("#d68000"),
-                Color.parseColor("#d20f39"),
+                Color.parseColor("#0a55eb"),
+                Color.parseColor("#227212"),
+                Color.parseColor("#905600"),
+                Color.parseColor("#c60e36"),
+                Color.parseColor("#083e9e"),
                 true);
     }
 
@@ -124,7 +147,7 @@ final class KioskTheme {
      * {@code face} over a solid colour peeking out along the bottom edge, the same offset the web
      * admin's buttons use ({@code box-shadow: 0 2px 0 0 <colour>}). Needed on this device: a plain
      * {@code View.setElevation} shadow is an ambient/spot *shadow*, essentially black, and is barely
-     * visible against Mocha's near-black base. A solid coloured edge is visible regardless of the
+     * visible against the dark palette's near-black base. A solid coloured edge is visible regardless of the
      * background it sits on.
      */
     Drawable raisedButton(GradientDrawable face, int edgeColor, float cornerRadiusPx, int edgePx) {
@@ -179,6 +202,22 @@ final class KioskTheme {
         Color.colorToHSV(color, hsv);
         hsv[2] *= factor;
         return Color.HSVToColor(Color.alpha(color), hsv);
+    }
+
+    /**
+     * {@code fraction} of one colour over another, both opaque.
+     *
+     * <p>For the tinted role: the accent at about a quarter strength over the card it sits on, so
+     * a button can be plainly the same family as the main one and plainly lighter. Mixed against a
+     * real colour rather than drawn with alpha, because these fills are layered inside a
+     * {@code LayerDrawable} where a translucent layer shows whatever is beneath it, not the card.
+     */
+    static int mix(int over, int under, float fraction) {
+        float keep = 1f - fraction;
+        return Color.argb(255,
+                Math.round(Color.red(over) * fraction + Color.red(under) * keep),
+                Math.round(Color.green(over) * fraction + Color.green(under) * keep),
+                Math.round(Color.blue(over) * fraction + Color.blue(under) * keep));
     }
 
     /** Outlined button for secondary actions, so the primary action stays obvious. */

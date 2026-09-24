@@ -67,7 +67,8 @@ host_test_dir=${project_dir}/app/src/test-host/java/org/spazio17/muralis
 for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ServerProbePolicy EscapeSequence KioskRuntimeState \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
-            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin; do
+            SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
+            ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -86,6 +87,9 @@ mkdir -p "${test_dir}/dispatcher" "${test_dir}/stats"
 javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/KioskCommandDispatcher.java" \
     "${pure_java_dir}/DisplayOffPolicy.java" \
+    "${pure_java_dir}/ScreensaverPolicy.java" \
+    "${pure_java_dir}/PictureSources.java" \
+    "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
 
@@ -100,6 +104,16 @@ javac -d "${test_dir}/origin" \
     "${pure_java_dir}/RequestOrigin.java" \
     "${host_test_dir}/RequestOriginTest.java"
 java -cp "${test_dir}/origin" org.spazio17.muralis.RequestOriginTest
+
+# The playlist invariants a database would have held with a UNIQUE column and a transaction, and
+# which this app holds in one JSON document instead: unique names, one active playlist, an ordered
+# item list, and a reorder that refuses a stale order rather than half-applying it.
+mkdir -p "${test_dir}/playlist"
+javac -d "${test_dir}/playlist" \
+    "${pure_java_dir}/PlaylistDocument.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/PlaylistDocumentTest.java"
+java -cp "${test_dir}/playlist" org.spazio17.muralis.PlaylistDocumentTest
 
 # Where the corner tap targets land, per device, from whatever the platform reports. Extracted
 # from the activity because three of its four cases need a device with visible system bars, and
@@ -148,6 +162,27 @@ javac -d "${test_dir}/pin" \
     "${pure_java_dir}/EscapePin.java" \
     "${host_test_dir}/EscapePinTest.java"
 java -cp "${test_dir}/pin" org.spazio17.muralis.EscapePinTest
+
+# The screensaver's clock and vocabulary: idle times, the hand-over to display off, the wake choice.
+mkdir -p "${test_dir}/screensaver"
+javac -d "${test_dir}/screensaver" \
+    "${pure_java_dir}/ScreensaverPolicy.java" \
+    "${pure_java_dir}/PictureSources.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/ScreensaverPolicyTest.java"
+java -cp "${test_dir}/screensaver" org.spazio17.muralis.ScreensaverPolicyTest
+
+# The picture sources' parsers against recorded Bing and Wikimedia answers: the credit line is a
+# licence obligation. And the upload body parser, where one boundary byte off corrupts pictures.
+mkdir -p "${test_dir}/pictures"
+javac -d "${test_dir}/pictures" \
+    "${pure_java_dir}/PictureSources.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${pure_java_dir}/MultipartForm.java" \
+    "${host_test_dir}/PictureSourcesTest.java" \
+    "${host_test_dir}/MultipartFormTest.java"
+java -cp "${test_dir}/pictures" org.spazio17.muralis.PictureSourcesTest
+java -cp "${test_dir}/pictures" org.spazio17.muralis.MultipartFormTest
 
 mkdir -p "${test_dir}/throttle"
 javac -d "${test_dir}/throttle" \

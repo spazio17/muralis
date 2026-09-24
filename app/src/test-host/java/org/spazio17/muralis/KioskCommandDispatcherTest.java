@@ -25,6 +25,7 @@ public final class KioskCommandDispatcherTest {
         testOneOffUrlAndHome();
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
+        testScreensaverCommands();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
                 "display.brightness", new KioskCommandDispatcher.CommandArgs(150, null), executor);
@@ -144,6 +145,7 @@ public final class KioskCommandDispatcherTest {
                 "kiosk.self_destruct", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(unknown.status.equals("unsupported"), "unknown command should be unsupported");
 
+        screensaverPlaylistIsChosenByName();
         System.out.println("KioskCommandDispatcherTest passed");
     }
 
@@ -427,6 +429,141 @@ public final class KioskCommandDispatcherTest {
         require(applied.status.equals("accepted"), "an applied brightness was not accepted");
     }
 
+    /**
+     * The screensaver's three commands. Start tells the truth the way brightness does: a panel
+     * whose mode is off, or whose web-page mode has no address, refuses with the reason rather
+     * than accepting a screensaver that shows nothing. The mode is a closed vocabulary.
+     */
+    private static void testScreensaverCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("screensaver.start",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
+                "start with a runnable screensaver must be accepted");
+        require(executor.calls.contains("screensaverStart"), "start did not reach the executor");
+        executor.screensaverProblem = "the screensaver mode is off";
+        KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
+                "screensaver.start", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(refused.status.equals("rejected") && refused.detail.contains("mode is off"),
+                "a screensaver that cannot run must say so: " + refused.detail);
+        require(KioskCommandDispatcher.dispatch("screensaver.stop",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
+                "stop is always accepted");
+        require(executor.calls.contains("screensaverStop"), "stop did not reach the executor");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "mode without a value must be rejected");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "photos"), executor)
+                .status.equals("rejected"), "an unknown mode must be rejected");
+        require(executor.screensaverSettings.isEmpty(), "executor ran despite a bad mode");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "url"), executor)
+                .status.equals("accepted"), "url is a mode");
+        require("url".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.MODE)), "mode not forwarded");
+        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "off"), executor)
+                .status.equals("accepted"), "off is a mode too: it is how the screensaver is switched off");
+        testScreensaverSettingCommands();
+    }
+
+    /**
+     * Every screensaver setting is a command, because MQTT and HTTP must be able to set what the
+     * two user interfaces can (Juri, 2026-09-09). The table below is the whole vocabulary: a
+     * good value forwarded canonically, a bad one refused with its rule.
+     */
+    private static void testScreensaverSettingCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        String[][] good = {
+                {"screensaver.source", "wikimedia", "SOURCE", "wikimedia"},
+                {"screensaver.idle_seconds", " 45 ", "IDLE_SECONDS", "45"},
+                {"screensaver.off_seconds", "0", "OFF_SECONDS", "0"},
+                {"screensaver.picture_seconds", "30", "PICTURE_SECONDS", "30"},
+                {"screensaver.dim_percent", "8", "DIM_PERCENT", "8"},
+                {"screensaver.transition", "slide", "TRANSITION", "slide"},
+                {"screensaver.credit_corner", "top_right", "CREDIT_CORNER", "top_right"},
+                {"screensaver.on_wake", "dashboard", "ON_WAKE", "dashboard"},
+        };
+        for (String[] row : good) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("accepted"), row[0] + " was rejected: " + result.detail);
+            require(row[3].equals(executor.screensaverSettings.get(
+                    KioskCommandDispatcher.ScreensaverSetting.valueOf(row[2]))),
+                    row[0] + " stored " + executor.screensaverSettings.get(
+                            KioskCommandDispatcher.ScreensaverSetting.valueOf(row[2])));
+        }
+        String[][] bad = {
+                {"screensaver.source", "nasa"},
+                {"screensaver.idle_seconds", "2 min"},
+                {"screensaver.off_seconds", "-1"},
+                {"screensaver.picture_seconds", "0"},
+                {"screensaver.dim_percent", "0"},
+                {"screensaver.transition", "zoom"},
+                {"screensaver.credit_corner", "centre"},
+                {"screensaver.on_wake", "later"},
+        };
+        for (String[] row : bad) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("rejected"), row[0] + " accepted " + row[1]);
+            require(!result.detail.isEmpty(), row[0] + " refused without a reason");
+        }
+        // The three flags take the same enabled parsing as every other flag in this app.
+        for (String command : new String[] {"screensaver.shuffle", "screensaver.one_per_cycle",
+                "screensaver.credit"}) {
+            require(KioskCommandDispatcher.dispatch(command,
+                    KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                    command + " without a flag was accepted");
+            require(KioskCommandDispatcher.dispatch(command,
+                    new KioskCommandDispatcher.CommandArgs(-1, null, Boolean.TRUE), executor)
+                    .status.equals("accepted"), command + " with true was rejected");
+        }
+        require("true".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.SHUFFLE)), "shuffle stored");
+        // The screensaver's page: the dashboard's own validator, and empty is how it is cleared.
+        require(KioskCommandDispatcher.dispatch("screensaver.url",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "example.com"), executor)
+                .status.equals("rejected"), "a schemeless page address was accepted");
+        require(KioskCommandDispatcher.dispatch("screensaver.url",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "https://example.com/frame"),
+                executor).status.equals("accepted"), "a page address was rejected");
+        require("https://example.com/frame".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.URL)), "the page address is stored");
+        require(KioskCommandDispatcher.dispatch("screensaver.url",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
+                .status.equals("accepted"), "an empty address clears it");
+        require("".equals(executor.screensaverSettings.get(
+                KioskCommandDispatcher.ScreensaverSetting.URL)), "cleared");
+    }
+
+    /**
+     * The playlist is chosen by name, and an empty name means none, which is a real state because a
+     * playlist can be deleted while it is in use.
+     */
+    private static void screensaverPlaylistIsChosenByName() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Holidays"), executor)
+                .status.equals("accepted"), "a playlist name must be accepted");
+        require("Holidays".equals(executor.lastPlaylist), "the name must reach the executor");
+        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
+                .status.equals("accepted"), "an empty name means none and must be accepted");
+        require("".equals(executor.lastPlaylist), "the empty name must reach the executor");
+        // No value at all is a caller mistake rather than a request for none.
+        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "a playlist command with no value must be rejected");
+        // The executor's own refusal is what the caller is told, so a wrong name names the right ones.
+        executor.playlistProblem = "no playlist called Nope; this panel has Holidays";
+        KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
+                "screensaver.playlist",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Nope"), executor);
+        require(refused.status.equals("rejected") && refused.detail.contains("has Holidays"),
+                "an unknown playlist must be refused with the names that exist: " + refused.detail);
+    }
+
     private static final class RecordingExecutor implements KioskCommandDispatcher.Executor {
         final List<String> calls = new ArrayList<>();
         int lastBrightness = -1;
@@ -524,6 +661,42 @@ public final class KioskCommandDispatcherTest {
         }
 
         Boolean lastWebAdminEnabled = null;
+
+        /** Non-null stands in for a panel whose screensaver cannot run right now. */
+        String screensaverProblem;
+        final java.util.Map<KioskCommandDispatcher.ScreensaverSetting, String> screensaverSettings =
+                new java.util.LinkedHashMap<>();
+
+        @Override
+        public String screensaverStart() {
+            calls.add("screensaverStart");
+            return screensaverProblem;
+        }
+
+        @Override
+        public void screensaverStop() {
+            calls.add("screensaverStop");
+        }
+
+        String playlistProblem;
+        String lastPlaylist;
+
+        @Override
+        public String setScreensaverPlaylist(String name) {
+            calls.add("setScreensaverPlaylist:" + name);
+            if (playlistProblem != null) {
+                return playlistProblem;
+            }
+            lastPlaylist = name;
+            return null;
+        }
+
+        @Override
+        public void setScreensaverSetting(KioskCommandDispatcher.ScreensaverSetting setting,
+                String value) {
+            calls.add("setScreensaverSetting:" + setting + "=" + value);
+            screensaverSettings.put(setting, value);
+        }
 
         @Override
         public void setWebAdminEnabled(boolean enabled) {
