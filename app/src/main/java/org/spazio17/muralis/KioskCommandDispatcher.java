@@ -141,7 +141,9 @@ final class KioskCommandDispatcher {
 
         /**
          * Shows the screensaver now, whatever the idle time. Returns why it cannot, or null: the
-         * mode is off, or the web-page mode has no address; the shape of {@link #setBrightness}.
+         * mode is off or has no address, the kiosk is stopped, Muralis is not on screen, the
+         * display is off, or the wizard or the escape recorder is up; the shape of
+         * {@link #setBrightness}. With the settings open it shows as a preview.
          */
         String screensaverStart();
 
@@ -414,7 +416,6 @@ final class KioskCommandDispatcher {
     }
 
 
-    /** Returns null when {@code url} is an acceptable dashboard URL, an error message otherwise. */
     /**
      * The example both settings surfaces show for the dashboard URL, and they show it as a hint,
      * never as a value.
@@ -432,6 +433,7 @@ final class KioskCommandDispatcher {
      */
     static final String EXAMPLE_DASHBOARD_URL = "https://example.com/dashboard";
 
+    /** Returns null when {@code url} is an acceptable dashboard URL, an error message otherwise. */
     static String validateDashboardUrl(String url) {
         if (url == null || url.trim().isEmpty()) {
             return "url must not be empty";

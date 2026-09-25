@@ -517,7 +517,7 @@ final class SystemStats {
          * restart exits the process, so a panel that restarted at 04:00 still read "UP 3d" all day.
          * Measured on the API 28 phone 2026-08-23, the app had been up 13 minutes and the row said
          * 50m, which was the device's age. Device uptime is still published as
-         * {@code device_uptime_ms} for anyone who wants it.
+         * {@code uptime_ms} for anyone who wants it, beside this one as {@code app_uptime_ms}.
          */
         long appUptimeMs;
         double batteryPercent = -1;

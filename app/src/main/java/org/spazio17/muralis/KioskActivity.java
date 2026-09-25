@@ -105,13 +105,13 @@ public final class KioskActivity extends Activity {
      */
     private static final long FROZEN_PAGE_CHECK_INTERVAL_MS = 5 * 60 * 1_000L;
     private static final long OVERLAY_REFRESH_MS = 1_000L;
+    /** The picture read permission, asked for only on an install that is not the device owner. */
+    private static final int REQUEST_PICTURE_READ = 21;
     /**
      * How often the configuration screen re-reads its instantly applied controls from storage, so
      * a change made over MQTT or from the web admin is reflected here. Matches the web admin's own
      * poll.
      */
-    /** The picture read permission, asked for only on an install that is not the device owner. */
-    private static final int REQUEST_PICTURE_READ = 21;
     private static final long LIVE_SETTING_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
     private static final int ADMIN_ESCAPE_ZONE_DP = 96;
@@ -212,7 +212,8 @@ public final class KioskActivity extends Activity {
     /** Display off resolved to a real sleep; cleared by the wake, whichever way it arrives. */
     private boolean asleep;
     /**
-     * The showing screensaver is the settings page's "Show it now": the touch that ends it goes
+     * The showing screensaver is a preview (the settings page's Preview, or a start that arrived
+     * with the settings open): the touch that ends it goes
      * back to that page, not to the dashboard (Juri, 2026-09-09: a test must not leave the test
      * page). Ends with the screensaver; a remote stop or the display going dark drops it.
      */
@@ -355,22 +356,6 @@ public final class KioskActivity extends Activity {
     private final java.util.List<String> recordedZones = new java.util.ArrayList<>();
     private TextView recorderReadout;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    /**
-     * The dashboard's recovery clock. Ticks for as long as a dashboard is on screen, and is the only
-     * thing that ever reloads it after a failure.
-     *
-     * <p><b>It is never cancelled by a page callback</b>, which is the whole point. The previous design
-     * had every callback posting and cancelling one shared {@code reloadTask}, with two different
-     * meanings, a 10-second retry and a 60-second hung-load timeout, riding on the same handle. That
-     * could not work, and did not: the WebView reports an HTTP 502 as
-     * {@code onReceivedHttpError} then {@code onPageStarted} then {@code onPageFinished}, so
-     * {@code onPageStarted} removed the 10-second retry the error had just scheduled and replaced it
-     * with the 60-second timeout, every cycle. Measured on the panel 2026-08-19: one 502 logged, zero
-     * reloads, and a dashboard that never came back. Two attempts to fix the ordering failed, because
-     * the ordering was not the problem: sharing one cancellable handle between two intents was.
-     *
-     * <p>So the callbacks now only record facts, and this decides what to do about them.
-     */
     /** Writes the level the slider has settled on. See the listener for why it is coalesced. */
     private final Runnable brightnessApplyTask = () -> {
         if (pendingBrightnessPercent < 0) {
@@ -421,6 +406,22 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * The dashboard's recovery clock. Ticks for as long as a dashboard is on screen, and is the only
+     * thing that ever reloads it after a failure.
+     *
+     * <p><b>It is never cancelled by a page callback</b>, which is the whole point. The previous design
+     * had every callback posting and cancelling one shared {@code reloadTask}, with two different
+     * meanings, a 10-second retry and a 60-second hung-load timeout, riding on the same handle. That
+     * could not work, and did not: the WebView reports an HTTP 502 as
+     * {@code onReceivedHttpError} then {@code onPageStarted} then {@code onPageFinished}, so
+     * {@code onPageStarted} removed the 10-second retry the error had just scheduled and replaced it
+     * with the 60-second timeout, every cycle. Measured on the panel 2026-08-19: one 502 logged, zero
+     * reloads, and a dashboard that never came back. Two attempts to fix the ordering failed, because
+     * the ordering was not the problem: sharing one cancellable handle between two intents was.
+     *
+     * <p>So the callbacks now only record facts, and this decides what to do about them.
+     */
     private final Runnable dashboardSupervisor = new Runnable() {
         @Override
         public void run() {
@@ -875,7 +876,8 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Deliberately does nothing.
+     * Inert on a device-owner panel; on an ordinary install it moves one screen back, and on the
+     * dashboard it leaves Muralis like any other app.
      *
      * <p>Android offers no way to remove the Back button: lock task has feature flags for Home,
      * Overview, notifications and the rest, but Back is always available, so on this hardware an
@@ -906,13 +908,6 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /**
-     * Moves one screen back, for an ordinary install where Back is a working button.
-     *
-     * @return true when this consumed the gesture, false on the dashboard, where there is nowhere
-     *     left to go and the caller should let the system finish the activity, which is what leaving
-     *     any other app looks like.
-     */
     /**
      * Tells the service whether an operator screen is up, so the pressure rebuild can wait
      * instead of destroying a half-edited form (see {@code RecyclePolicy.decide}). Called after
@@ -1024,6 +1019,13 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * Moves one screen back, for an ordinary install where Back is a working button.
+     *
+     * @return true when this consumed the gesture, false on the dashboard, where there is nowhere
+     *     left to go and the caller should let the system finish the activity, which is what leaving
+     *     any other app looks like.
+     */
     private boolean navigateBack() {
         if (recorderVisible) {
             // Same destination the recorder's own Cancel/Back button uses, rather than a second
@@ -3054,7 +3056,10 @@ public final class KioskActivity extends Activity {
 
     private String displaySummary() {
         String orientation = KioskConfig.orientationOf(this);
-        String method = KioskConfig.displayOffMethodOf(this);
+        // An ordinary install has one way to darken, the film, whatever is stored: it offers
+        // Black film alone, greyed (2026-09-24), and the summary must not say "automatic" beside it.
+        String method = KioskService.isDeviceOwner(this) ? KioskConfig.displayOffMethodOf(this)
+                : DisplayOffPolicy.FILM;
         return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
                 : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
                 + " · "
@@ -3087,12 +3092,12 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The screensaver's own page: every field, "Show it now", and the way back. The card on the
+     * The screensaver's own page: every field, "Preview", and the way back. The card on the
      * configuration screen carries the mode alone; this page has the times and the rest.
      */
     private void showScreensaverSettings() {
         // Reached from the configuration screen, where no page is up, and from the touch that
-        // ends a "Show it now", where the dashboard is: the same prelude as showConfiguration,
+        // ends a Preview, where the dashboard is: the same prelude as showConfiguration,
         // so the page never sits over a live WebView and its clocks.
         destroyWebView();
         setDashboardFullscreen(true);
@@ -3235,9 +3240,8 @@ public final class KioskActivity extends Activity {
 
         /**
          * Only the fields the chosen mode uses are on the page (Juri, 2026-09-09): the address
-         * for the web page, the floor for the dimmed page; the two times and the wake choice
-         * for every mode, the wake choice greyed out for the film, which has nothing to glance
-         * at, with the reason under it.
+         * for the web page, the floor for the dimmed page; the two times for every mode, and
+         * the wake choice for every mode but the film, which has nothing to glance at.
          */
         void applyMode(String mode) {
             if (urlInput == null) {
@@ -3272,10 +3276,6 @@ public final class KioskActivity extends Activity {
             }
         }
 
-        /**
-         * The source decides the rest of the group: playlist access belongs to the local source,
-         * fetching to online sources, whose credit switch remains forced on.
-         */
         /** "Dimmed page options", and so on: the mode named where its settings are. */
         void paintOptionsTitle(String mode) {
             if (optionsTitle == null) {
@@ -3289,6 +3289,10 @@ public final class KioskActivity extends Activity {
             optionsTitle.setText(name + " options");
         }
 
+        /**
+         * The source decides the rest of the group: playlist access belongs to the local source,
+         * fetching to online sources, whose credit switch remains forced on.
+         */
         void applySource(String source) {
             if (picturesGroup == null) {
                 return;
@@ -3752,11 +3756,6 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Opens the system's folder picker for the Pictures screensaver. Lock task is released first
-     * and the picker is another app, exactly as the brightness grant screen is handled: releasing
-     * is what makes the hand-over legal, and no allowlist entry is needed or wanted.
-     */
-    /**
      * The Playlist panel, the web page's copied line for line (Juri, 2026-09-19): one row per
      * playlist, its name, how many pictures it holds, Use or "In use", Edit and Delete, and under
      * the list the box that names a new playlist with Create beside it.
@@ -4029,7 +4028,7 @@ public final class KioskActivity extends Activity {
         boolean allowed = library.browser().canReadStorage();
         Toast.makeText(this, allowed
                 ? "Muralis can read this panel's pictures now."
-                : "Without that permission Muralis can only show pictures uploaded to it.",
+                : "Without that permission the Pictures screensaver cannot be set up here.",
                 Toast.LENGTH_LONG).show();
         if (currentScreen != null && configurationVisible) {
             redrawInPlace(currentScreen);
@@ -6212,8 +6211,6 @@ public final class KioskActivity extends Activity {
         }
         return row;
     }
-
-    /** Actions sit in a row on a wide screen and stack on a narrow one. */
 
     /**
      * A warning banner shown when Muralis is not the device owner, or null when it is.
@@ -8650,14 +8647,6 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Two picture views that take turns, so a fade or a slide has both the old and the new
-     * picture on screen, and a caption in the chosen corner.
-     *
-     * <p>How a picture is laid in them is the operator's setting since 2026-09-23, and it is Fit
-     * unless they say otherwise: these are somebody's photographs and somebody's licensed work,
-     * so nothing is cropped or pulled out of shape by default.
-     */
-    /**
      * A label that stands on its ink. A TextView lays its first glyph out from the glyph's origin,
      * and the visible letter starts a side bearing to the right of that, a distance that grows
      * with the type size and differs from letter to letter: on the settings screen "Muralis" at
@@ -8712,6 +8701,14 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * Two picture views that take turns, so a fade or a slide has both the old and the new
+     * picture on screen, and a caption in the chosen corner.
+     *
+     * <p>How a picture is laid in them is the operator's setting since 2026-09-23, and it is Fit
+     * unless they say otherwise: these are somebody's photographs and somebody's licensed work,
+     * so nothing is cropped or pulled out of shape by default.
+     */
     private final class PictureFrame extends FrameLayout {
         private final ImageView[] views = new ImageView[2];
         private int front;
@@ -9164,12 +9161,6 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Immersive-sticky hides the bars but its documented behaviour is to draw them back
-     * transiently on an edge swipe, which is exactly what still happened on the dashboard even
-     * with lock-task mode blanking the status bar. FLAG_FULLSCREEN removes the status bar at the
-     * window level, so there is nothing left to reveal.
-     */
-    /**
      * Turns the panel to the stored orientation: a fixed landscape or portrait, or "auto", which
      * follows the accelerometer around all four ways up until the operator fixes one, the same
      * shape auto-brightness has with the light sensor.
@@ -9209,6 +9200,12 @@ public final class KioskActivity extends Activity {
         setRequestedOrientation(request);
     }
 
+    /**
+     * Immersive-sticky hides the bars but its documented behaviour is to draw them back
+     * transiently on an edge swipe, which is exactly what still happened on the dashboard even
+     * with lock-task mode blanking the status bar. FLAG_FULLSCREEN removes the status bar at the
+     * window level, so there is nothing left to reveal.
+     */
     private void setDashboardFullscreen(boolean fullscreen) {
         // Same gate as enterImmersiveMode, and needed separately: FLAG_FULLSCREEN removes the status
         // bar at the window level, so leaving it set would keep the bar gone on an ordinary install
@@ -9718,6 +9715,9 @@ public final class KioskActivity extends Activity {
         return row;
     }
 
+    /** What a row's action does, which is what decides its colour. See {@link #filledButton}. */
+    private enum RowColour { PLAIN, MAIN, DANGER, ADD }
+
     /**
      * A compact action button for a list row: Use, Edit, Delete, Name, Remove.
      *
@@ -9730,9 +9730,6 @@ public final class KioskActivity extends Activity {
      * height that padding alone cannot get under, and that height is most of what made these read
      * as slabs.
      */
-    /** What a row's action does, which is what decides its colour. See {@link #filledButton}. */
-    private enum RowColour { PLAIN, MAIN, DANGER, ADD }
-
     private Button rowButton(KioskTheme theme, String label) {
         return rowButton(theme, label, RowColour.PLAIN);
     }

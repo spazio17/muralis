@@ -45,6 +45,36 @@ for permission in "${forbidden[@]}"; do
     fi
 done
 
+# Every preference file, and every SecretStore, is opened through
+# KioskConfig.storageContext: device-protected storage, readable on
+# LOCKED_BOOT_COMPLETED, which is when the service starts. 0.6.0 opened the
+# web admin's TLS key with the plain context, credential-encrypted storage,
+# which a service started before the first unlock cannot read, so a panel could
+# serve plain HTTP after a reboot (found 2026-09-25). The one deliberate read of
+# that storage carries the words "credential-encrypted on purpose" on the line
+# above it; anything else on a plain context fails here.
+python3 - "${project_dir}/app/src/main/java/org/spazio17/muralis" <<'PY'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+bad = []
+for path in sorted(root.glob('*.java')):
+    if path.name == 'SecretStore.java':
+        continue  # it is handed a context; the callers are what this checks
+    lines = path.read_text().split('\n')
+    for i, line in enumerate(lines):
+        if 'getSharedPreferences(' not in line and 'new SecretStore(' not in line:
+            continue
+        window = '\n'.join(lines[max(0, i - 2):i + 1])
+        if 'storageContext' in window or 'credential-encrypted on purpose' in window.lower():
+            continue
+        bad.append(f'{path.name}:{i + 1}: {line.strip()}')
+if bad:
+    print('Preferences opened outside device-protected storage:', file=sys.stderr)
+    print('\n'.join('  ' + b for b in bad), file=sys.stderr)
+    sys.exit(1)
+print('preferences all in device-protected storage')
+PY
+
 # Same idea for the API-26 traps: any setLockTaskFeatures or WindowInsetsController
 # call site must sit near an SDK_INT check, since the MediaPad is API 26.
 # `grep -vE` drops comment lines before the scan: a javadoc paragraph explaining *why* a call is

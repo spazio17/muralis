@@ -30,7 +30,8 @@ import javax.net.ssl.X509ExtendedKeyManager;
 
 /**
  * The certificate the web admin serves HTTPS with, made by the panel itself: an EC P-256 key
- * pair generated in software, kept encrypted at rest through {@link SecretStore}, and a
+ * pair generated in software, kept encrypted at rest through {@link SecretStore} in
+ * device-protected storage, and a
  * self-signed X.509 built by {@link SelfSignedCertificate}.
  *
  * <p>Until 2026-09-24 the key pair lived in the Android Keystore, which issued the certificate
@@ -79,14 +80,31 @@ final class AdminCertificate {
     /**
      * The panel's certificate, created on first use, or null when it cannot be had right now.
      *
-     * <p>Null also when the stored key is there but cannot be decrypted at this moment, which is
-     * what SecretStore reports before the first unlock: a new key is made only when nothing is
-     * stored, never over a key that is merely unreadable, so a Keystore that is slow to wake
-     * cannot cost the operator the fingerprint they wrote down.
+     * <p>Kept in device-protected storage, like every other secret here
+     * ({@link KioskConfig#storageContext}), because the service starts on
+     * {@code LOCKED_BOOT_COMPLETED}, before the user's first unlock, and credential-encrypted
+     * storage cannot be opened then. 0.6.0 kept the key in credential-encrypted storage by mistake,
+     * so a panel whose service came up before the unlock served plain HTTP until something
+     * restarted the web admin (review of 2026-09-25); {@link #adoptCredentialStoredKey} moves such a
+     * key across once, so the fingerprint does not change a second time.
+     *
+     * <p>Null also when the stored key is there but SecretStore cannot decrypt it at this moment,
+     * and when nothing is stored yet but the user is still locked, since 0.6.0's copy may be
+     * waiting in the storage that cannot be opened yet. Before the first unlock the Keystore did
+     * decrypt on the Android 10 test tablet with a PIN set (2026-09-25), so HTTPS was up while
+     * the lock screen still showed; a device whose Keystore waits for the unlock gets null here. A new key is made only when nothing is stored anywhere, never
+     * over a key that is merely unreadable, so a Keystore that is slow to wake cannot cost the
+     * operator the fingerprint they wrote down. {@code KioskService} starts the web admin once more
+     * at the first unlock for exactly these cases.
      */
     static AdminCertificate load(Context context) {
         try {
-            SecretStore secrets = new SecretStore(context);
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            if (!secrets.has(KEY_NAME) && !adoptCredentialStoredKey(context, secrets)
+                    && !isUserUnlocked(context)) {
+                Log.i(TAG, "No TLS key readable before the first unlock; plain HTTP until then");
+                return null;
+            }
             String storedKey = secrets.getOrNull(KEY_NAME);
             String storedCertificate = secrets.getOrNull(CERTIFICATE_NAME);
             if (storedKey == null || storedCertificate == null) {
@@ -144,6 +162,43 @@ final class AdminCertificate {
         @Override public PrivateKey getPrivateKey(String alias) { return ALIAS.equals(alias) ? key : null; }
         @Override public String chooseClientAlias(String[] keyType, java.security.Principal[] issuers, java.net.Socket socket) { return null; }
         @Override public String[] getClientAliases(String keyType, java.security.Principal[] issuers) { return null; }
+    }
+
+    /**
+     * Moves a key kept by 0.6.0 in credential-encrypted storage into the device-protected store,
+     * and clears the old copy once the new one is in place.
+     *
+     * @return true when a key was moved, false when there was none or it cannot be read yet
+     */
+    private static boolean adoptCredentialStoredKey(Context context, SecretStore target) {
+        if (!isUserUnlocked(context)) {
+            return false;
+        }
+        try {
+            // Credential-encrypted on purpose: this is where 0.6.0 kept it, and the only read.
+            SecretStore old = new SecretStore(context);
+            String key = old.getOrNull(KEY_NAME);
+            String certificate = old.getOrNull(CERTIFICATE_NAME);
+            if (key == null || certificate == null || key.isEmpty() || certificate.isEmpty()) {
+                return false;
+            }
+            target.put(KEY_NAME, key);
+            target.put(CERTIFICATE_NAME, certificate);
+            if (!target.has(KEY_NAME) || !target.has(CERTIFICATE_NAME)) {
+                return false;
+            }
+            old.clear(KEY_NAME);
+            old.clear(CERTIFICATE_NAME);
+            Log.i(TAG, "Moved the web admin's TLS key to device-protected storage");
+            return true;
+        } catch (RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    private static boolean isUserUnlocked(Context context) {
+        android.os.UserManager users = context.getSystemService(android.os.UserManager.class);
+        return users == null || users.isUserUnlocked();
     }
 
     private static KeyPair generate() throws GeneralSecurityException {
