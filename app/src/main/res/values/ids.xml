@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The screen reader's Move up and Move down on a playlist's held picture, the drag's
+     equivalent for somebody who cannot drag (KioskActivity.HeldMoveActions). Resource ids so
+     they can never collide with the platform's own accessibility actions. -->
+<resources>
+    <item name="held_move_up" type="id" />
+    <item name="held_move_down" type="id" />
+</resources>

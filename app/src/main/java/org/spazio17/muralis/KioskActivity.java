@@ -2964,6 +2964,11 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
+    /**
+     * Puts the keyboard away and takes the focus out of the box that has it, which is also what
+     * makes a box that stores itself when it lets go (a picture's name on the playlist page) do
+     * so before the screen changes under it.
+     */
     private void hideKeyboardIfShown() {
         View focused = getCurrentFocus();
         if (focused instanceof EditText) {
@@ -5115,19 +5120,45 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * Everything picked so far: the picture, the folder and the name, then the box that names the
-     * picture for its credit with the save tick inside and the remove button beside it, both
-     * 40 dp on one line (Juri, 2026-09-23; the Save and Remove words that stood there read as
-     * noise repeated down the list).
+     * Everything picked so far, in the order the screensaver shows it: the picture, the folder and
+     * the name, then the box that names the picture for its credit, the eye that switches its
+     * credit off or on, and the remove button, all 40 dp on one line (Juri, 2026-09-23 and
+     * 2026-09-25; the Save and Remove words that stood there read as noise repeated down the
+     * list, and the save tick inside the box went too: the box stores itself when it lets go).
      *
      * <p>The path is prepended because this list is the one place two pictures with the same name
      * from two folders sit next to each other, and one folder cannot hold both, so the folder is
      * what tells them apart (Juri, 2026-09-10: a bare "test.jpg" twice named neither).
+     *
+     * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
+     * thumbnail ({@link HeldDrag}), the web page's gesture; the new order is part of the draft and
+     * reaches disk with Save, like every other change on this page. The name, when its box lets
+     * go of the focus, and the eye are stored at once instead, because they belong to the picture
+     * and not to this playlist. No
+     * sentence explains any of it (Juri, 2026-09-25: a sentence is the last resort): an empty name
+     * box shows, greyed, the file name the screensaver prints instead, a shuffling screensaver
+     * puts its glyph in the pane's head, and with every credit switched off in the screensaver
+     * settings each eye stands crossed out and inert.
      */
     private void paintSelectedPane(PlaylistPage screen) {
         KioskTheme theme = screen.theme;
         PlaylistDraft draft = screen.draft;
+        // A name box in this pane being typed in lets go of the focus first, which stores what
+        // it holds: the rows are about to be built again, and a box taken off the screen with
+        // the focus still in it never hears that it lost it. Only this pane's: the playlist's
+        // own name box in the heading must keep its keyboard when the labels arrive and this
+        // paints a second time.
+        View focused = getCurrentFocus();
+        for (android.view.ViewParent up = focused == null ? null : focused.getParent(); up != null;
+                up = up.getParent()) {
+            if (up == screen.selected.body) {
+                hideKeyboard(focused);
+                break;
+            }
+        }
         screen.selected.clear();
+        ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(this);
+        screen.selected.trailing(saver.shuffle ? shuffleMark(theme) : null);
         if (draft.items.isEmpty()) {
             screen.selected.body.addView(
                     paneNote(theme, "Nothing picked yet. Open a folder above and tick its pictures.",
@@ -5138,13 +5169,44 @@ public final class KioskActivity extends Activity {
                 + (draft.items.size() == 1 ? " picture" : " pictures"), false), matchWrapClose());
         PictureLibrary library = PictureLibrary.get(this);
         java.util.Map<String, String> captions = library.captions();
+        java.util.Set<String> creditsOff = library.hiddenCredits();
         List<String> unnamed = new ArrayList<>();
         List<String> items = new ArrayList<>(draft.items);
+        // On a phone the credit line goes under the grip and the picture instead of beside them,
+        // so the name box keeps the width its label needs; the web page does the same below
+        // 480 px.
+        boolean narrow = getResources().getConfiguration().screenWidthDp < 480;
+        // The rows alone in a column of their own, each with its own rule above it, so a row
+        // being dragged carries its rule along and a row's index is its place in the draft.
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setClipChildren(false);
+        screen.selected.body.setClipChildren(false);
         for (int index = 0; index < items.size(); index++) {
             String uri = items.get(index);
+            LinearLayout entry = new LinearLayout(this);
+            entry.setOrientation(LinearLayout.VERTICAL);
+            if (index > 0) {
+                View rule = new View(this);
+                rule.setBackgroundColor(theme.outlineVariant);
+                entry.addView(rule, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            }
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setPadding(0, dp(10), 0, dp(10));
+            entry.addView(row, matchWrapClose());
+            ImageView grip = null;
+            if (items.size() > 1) {
+                grip = new ImageView(this);
+                grip.setImageResource(R.drawable.ic_drag_indicator);
+                grip.setImageTintList(ColorStateList.valueOf(theme.subtext));
+                grip.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                LinearLayout.LayoutParams gripParams = new LinearLayout.LayoutParams(dp(20), dp(40));
+                gripParams.rightMargin = dp(4);
+                gripParams.topMargin = dp(2);
+                row.addView(grip, gripParams);
+            }
             ImageView thumb = thumbnailView(theme, dp(40));
             LinearLayout.LayoutParams thumbParams = new LinearLayout.LayoutParams(dp(40), dp(40));
             thumbParams.rightMargin = dp(12);
@@ -5167,21 +5229,44 @@ public final class KioskActivity extends Activity {
             path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
             column.addView(path, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (grip != null) {
+                // The grip is what says a row moves; the thumbnail beside it moves it too, since
+                // that is where a finger lands first. A screen reader hears the grip alone.
+                HeldDrag drag = new HeldDrag(screen, list, entry, uri);
+                grip.setOnTouchListener(drag);
+                thumb.setOnTouchListener(drag);
+                grip.setContentDescription("Move " + shown);
+                grip.setAccessibilityDelegate(new HeldMoveActions(screen, uri));
+            }
 
-            // The credit field, dense, with its save tick inside the box, and the minus beside it
-            // on the same line: the name belongs to the file and is stored at once, only a
-            // refusal is said.
+            // The credit field, dense, then the eye and the minus beside it on the same line: the
+            // name and the eye belong to the file and are stored at once, only a refusal is said.
             LinearLayout acts = new LinearLayout(this);
             acts.setOrientation(LinearLayout.HORIZONTAL);
             acts.setGravity(Gravity.CENTER_VERTICAL);
             EditText credit = proseInput(theme, captions.getOrDefault(uri, ""));
+            // The store's own limit, which the web page's box has as maxlength.
+            credit.setFilters(new android.text.InputFilter[] {
+                    new android.text.InputFilter.LengthFilter(200)});
             credit.setTextSize(14);
             credit.setMinHeight(dp(40));
             credit.setMinimumHeight(dp(40));
-            credit.setPadding(dp(12), 0, dp(48), 0);
-            credit.setOnEditorActionListener((view, actionId, event) -> {
-                saveCredit(uri, credit);
-                return true;
+            credit.setPadding(dp(12), 0, dp(12), 0);
+            credit.setHint(PictureSources.creditFromLabel(screen.paths.get(uri)));
+            credit.setHintTextColor(theme.subtext & 0x00FFFFFF | 0xB3000000);
+            // Stored when the box lets go of the focus, or on the keyboard's Done, which is the
+            // same thing (Juri, 2026-09-25: the save tick inside the box went, it was one more
+            // thing to press for what leaving the box already says). Only a change is written.
+            String[] stored = {captions.getOrDefault(uri, "")};
+            onApply(credit, () -> {
+                String typed = credit.getText().toString().trim();
+                if (!typed.equals(stored[0])) {
+                    String before = stored[0];
+                    stored[0] = typed;
+                    // Refused, the box keeps what was typed and the next time it lets go it tries
+                    // again, as the web page's box does.
+                    saveCredit(uri, typed, () -> stored[0] = before);
+                }
             });
             FrameLayout field = new FrameLayout(this);
             FrameLayout.LayoutParams creditParams = new FrameLayout.LayoutParams(
@@ -5189,7 +5274,6 @@ public final class KioskActivity extends Activity {
             creditParams.topMargin = dp(8);
             field.addView(credit, creditParams);
             TextView label = new FlushText(this);
-            label.setText("Name for the credit");
             label.setTextColor(theme.subtext);
             label.setTextSize(12);
             label.setBackgroundColor(theme.card);
@@ -5198,14 +5282,55 @@ public final class KioskActivity extends Activity {
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             labelParams.leftMargin = dp(8);
             field.addView(label, labelParams);
-            ImageButton keep = iconButtonPrimary(theme, R.drawable.ic_check, "Save the name");
-            keep.setOnClickListener(view -> saveCredit(uri, credit));
-            FrameLayout.LayoutParams keepParams = new FrameLayout.LayoutParams(dp(48), dp(48));
-            keepParams.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
-            keepParams.topMargin = dp(4);
-            field.addView(keep, keepParams);
             acts.addView(field, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            ImageButton eye = iconButton(theme, R.drawable.ic_visibility, "Hide the credit");
+            boolean[] off = {creditsOff.contains(uri)};
+            Runnable paintCredit = () -> {
+                if (!saver.credit) {
+                    // Every credit is off in the screensaver settings: the eye says so, crossed
+                    // out and inert, and the picture's own choice waits underneath.
+                    eye.setImageResource(R.drawable.ic_visibility_off);
+                    eye.setContentDescription("Credits are off in the screensaver settings");
+                    eye.setTooltipText("Credits are off in the screensaver settings");
+                    eye.setEnabled(false);
+                    eye.setAlpha(0.38f);
+                    label.setText("Name for the credit");
+                    return;
+                }
+                eye.setImageResource(off[0] ? R.drawable.ic_visibility_off
+                        : R.drawable.ic_visibility);
+                String says = off[0] ? "Show the credit" : "Hide the credit";
+                eye.setContentDescription(says);
+                eye.setTooltipText(says);
+                label.setText(off[0] ? "Credit hidden" : "Name for the credit");
+                credit.setEnabled(!off[0]);
+                credit.setTextColor(off[0] ? theme.subtext : theme.text);
+            };
+            paintCredit.run();
+            eye.setOnClickListener(view -> {
+                boolean hide = !off[0];
+                eye.setEnabled(false);
+                hideKeyboard(credit);
+                library.run(() -> {
+                    String refusal = library.setCreditHidden(uri, hide);
+                    library.onMain(() -> {
+                        eye.setEnabled(true);
+                        if (refusal != null) {
+                            if (!isFinishing() && !isDestroyed()) {
+                                Toast.makeText(this, PictureLibrary.capitalise(refusal),
+                                        Toast.LENGTH_LONG).show();
+                            }
+                            return;
+                        }
+                        off[0] = hide;
+                        paintCredit.run();
+                    });
+                });
+            });
+            LinearLayout.LayoutParams eyeParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+            eyeParams.topMargin = dp(4);
+            acts.addView(eye, eyeParams);
             ImageButton drop = iconButton(theme, R.drawable.ic_remove_circle,
                     "Remove from the playlist");
             drop.setOnClickListener(view -> {
@@ -5223,18 +5348,20 @@ public final class KioskActivity extends Activity {
             LinearLayout.LayoutParams actsParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             actsParams.topMargin = dp(2);
-            column.addView(acts, actsParams);
+            if (narrow) {
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0, dp(10), 0, 0);
+                actsParams.bottomMargin = dp(10);
+                entry.addView(acts, actsParams);
+            } else {
+                column.addView(acts, actsParams);
+            }
             row.addView(column, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            screen.selected.body.addView(row, new LinearLayout.LayoutParams(
+            list.addView(entry, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            if (index < items.size() - 1) {
-                View rule = new View(this);
-                rule.setBackgroundColor(theme.outlineVariant);
-                screen.selected.body.addView(rule, new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
-            }
         }
+        screen.selected.body.addView(list, matchWrapClose());
         if (!unnamed.isEmpty()) {
             // The labels arrive from the worker and the pane is painted once more; every name is
             // in the map by then, so that second paint asks for nothing and this ends.
@@ -5254,15 +5381,286 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** Stores one picture's credit name from its box, at once and quietly; only a refusal is said. */
-    private void saveCredit(String uri, EditText credit) {
-        String typed = credit.getText().toString();
-        hideKeyboard(credit);
+    /**
+     * The shuffle glyph for the held pane's head while the screensaver shuffles: a mark and not a
+     * button, since shuffle is set with the other screensaver settings, and a mark rather than a
+     * sentence (Juri, 2026-09-25). The web page draws the same one.
+     */
+    private ImageView shuffleMark(KioskTheme theme) {
+        ImageView mark = new ImageView(this);
+        mark.setImageResource(R.drawable.ic_shuffle);
+        mark.setImageTintList(ColorStateList.valueOf(theme.subtext));
+        mark.setScaleType(ImageView.ScaleType.CENTER);
+        mark.setMinimumWidth(dp(48));
+        mark.setMinimumHeight(dp(48));
+        String says = "Shuffle is on, so the screensaver does not follow this order";
+        mark.setContentDescription(says);
+        mark.setTooltipText(says);
+        return mark;
+    }
+
+    /**
+     * Moves one held picture to another place in the draft and paints the list again: the end of
+     * a drag, and the Move up and Move down a screen reader offers. Nothing is written; the new
+     * order reaches disk with the page's Save, like the rest of the draft.
+     */
+    private void moveHeld(PlaylistPage screen, String uri, int to) {
+        List<String> items = screen.draft.items;
+        int from = items.indexOf(uri);
+        if (from < 0 || to < 0 || to >= items.size() || to == from) {
+            return;
+        }
+        items.remove(from);
+        items.add(to, uri);
+        screen.draft.edited = true;
+        paintSelectedPane(screen);
+    }
+
+    /**
+     * A held picture dragged by its thumbnail to a new place in the list (Juri, 2026-09-25), the
+     * web page's gesture on the glass.
+     *
+     * <p>The thumbnail claims the touch the moment it lands, because the page scrolls and the
+     * scroll view would otherwise take any vertical movement for itself; a swipe that starts on
+     * a thumbnail therefore moves the picture, and one that starts anywhere else scrolls. The row
+     * follows the finger and its neighbours slide aside to show where it will land; nothing moves
+     * in the draft until the finger lifts, and a cancelled gesture puts everything back. Near the
+     * top or bottom of the screen the page scrolls by itself, so a long playlist can be crossed
+     * in one drag.
+     */
+    private final class HeldDrag implements View.OnTouchListener {
+        private final PlaylistPage screen;
+        private final LinearLayout list;
+        private final View entry;
+        private final String uri;
+        private final int slop;
+        private final Runnable edgeScroll = this::scrollAtEdge;
+        private float startY;
+        private float lastY;
+        private int scrolled;
+        private boolean moving;
+        private int from;
+        private int to;
+        private int[] tops = new int[0];
+        private int[] heights = new int[0];
+        private ScrollView scroller;
+
+        HeldDrag(PlaylistPage screen, LinearLayout list, View entry, String uri) {
+            this.screen = screen;
+            this.list = list;
+            this.entry = entry;
+            this.uri = uri;
+            slop = android.view.ViewConfiguration.get(KioskActivity.this).getScaledTouchSlop();
+        }
+
+        @Override
+        public boolean onTouch(View handle, MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    startY = event.getRawY();
+                    lastY = startY;
+                    scrolled = 0;
+                    moving = false;
+                    handle.getParent().requestDisallowInterceptTouchEvent(true);
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    lastY = event.getRawY();
+                    if (!moving) {
+                        if (Math.abs(lastY - startY) < slop) {
+                            return true;
+                        }
+                        begin();
+                    }
+                    place();
+                    scheduleEdgeScroll();
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!moving) {
+                        handle.performClick();
+                    }
+                    finish(false);
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    finish(true);
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        private void begin() {
+            moving = true;
+            from = list.indexOfChild(entry);
+            to = from;
+            int count = list.getChildCount();
+            tops = new int[count];
+            heights = new int[count];
+            for (int i = 0; i < count; i++) {
+                View child = list.getChildAt(i);
+                tops[i] = child.getTop();
+                heights[i] = child.getHeight();
+            }
+            entry.setBackground(screen.theme.panel(screen.theme.cardHigh, dp(8)));
+            entry.setTranslationZ(dp(6));
+            scroller = null;
+            for (android.view.ViewParent up = list.getParent(); up != null; up = up.getParent()) {
+                if (up instanceof ScrollView) {
+                    scroller = (ScrollView) up;
+                    break;
+                }
+            }
+        }
+
+        private void place() {
+            if (from < 0) {
+                return;
+            }
+            int last = tops.length - 1;
+            float dy = lastY - startY + scrolled;
+            // Drawn inside the list, so the row cannot be dragged out over the other cards; the
+            // place it lands is judged from the finger, not from the clamped row, or the first
+            // row, which has no rule above it and is a pixel shorter, could never be reached.
+            entry.setTranslationY(Math.max(tops[0] - tops[from],
+                    Math.min(tops[last] + heights[last] - heights[from] - tops[from], dy)));
+            float centre = tops[from] + heights[from] / 2f + dy;
+            int target = from;
+            for (int i = from + 1; i <= last; i++) {
+                if (centre > tops[i] + heights[i] / 2f) {
+                    target = i;
+                }
+            }
+            for (int i = from - 1; i >= 0; i--) {
+                if (centre < tops[i] + heights[i] / 2f) {
+                    target = i;
+                }
+            }
+            if (target == to) {
+                return;
+            }
+            to = target;
+            for (int i = 0; i <= last; i++) {
+                if (i == from) {
+                    continue;
+                }
+                float shift = i > from && i <= to ? -heights[from]
+                        : i < from && i >= to ? heights[from] : 0;
+                list.getChildAt(i).animate().translationY(shift).setDuration(120).start();
+            }
+        }
+
+        private int edgeStep() {
+            if (scroller == null || !moving) {
+                return 0;
+            }
+            int[] at = new int[2];
+            scroller.getLocationOnScreen(at);
+            float y = lastY - at[1];
+            int edge = dp(56);
+            int height = scroller.getHeight();
+            if (y < edge) {
+                return -Math.max(2, Math.round((edge - y) / 3));
+            }
+            if (y > height - edge) {
+                return Math.max(2, Math.round((y - height + edge) / 3));
+            }
+            return 0;
+        }
+
+        private void scheduleEdgeScroll() {
+            mainHandler.removeCallbacks(edgeScroll);
+            if (edgeStep() != 0) {
+                mainHandler.postDelayed(edgeScroll, 16);
+            }
+        }
+
+        private void scrollAtEdge() {
+            int step = edgeStep();
+            if (step == 0) {
+                return;
+            }
+            int before = scroller.getScrollY();
+            scroller.scrollBy(0, step);
+            scrolled += scroller.getScrollY() - before;
+            place();
+            scheduleEdgeScroll();
+        }
+
+        private void finish(boolean cancelled) {
+            mainHandler.removeCallbacks(edgeScroll);
+            if (!moving) {
+                return;
+            }
+            moving = false;
+            for (int i = 0; i < list.getChildCount(); i++) {
+                View child = list.getChildAt(i);
+                child.animate().cancel();
+                child.setTranslationY(0);
+            }
+            entry.setTranslationZ(0);
+            entry.setBackground(null);
+            if (!cancelled && to != from) {
+                moveHeld(screen, uri, to);
+            }
+        }
+    }
+
+    /**
+     * Move up and Move down for a screen reader, which cannot drag: the same move a drag makes,
+     * one place at a time, offered on the thumbnail that is the drag handle.
+     */
+    private final class HeldMoveActions extends View.AccessibilityDelegate {
+        private final PlaylistPage screen;
+        private final String uri;
+
+        HeldMoveActions(PlaylistPage screen, String uri) {
+            this.screen = screen;
+            this.uri = uri;
+        }
+
+        @Override
+        public void onInitializeAccessibilityNodeInfo(View host,
+                android.view.accessibility.AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(host, info);
+            int at = screen.draft.items.indexOf(uri);
+            if (at > 0) {
+                info.addAction(new android.view.accessibility.AccessibilityNodeInfo
+                        .AccessibilityAction(R.id.held_move_up, "Move up"));
+            }
+            if (at >= 0 && at < screen.draft.items.size() - 1) {
+                info.addAction(new android.view.accessibility.AccessibilityNodeInfo
+                        .AccessibilityAction(R.id.held_move_down, "Move down"));
+            }
+        }
+
+        @Override
+        public boolean performAccessibilityAction(View host, int action, Bundle arguments) {
+            int at = screen.draft.items.indexOf(uri);
+            if (action == R.id.held_move_up) {
+                moveHeld(screen, uri, at - 1);
+                return true;
+            }
+            if (action == R.id.held_move_down) {
+                moveHeld(screen, uri, at + 1);
+                return true;
+            }
+            return super.performAccessibilityAction(host, action, arguments);
+        }
+    }
+
+    /**
+     * Stores one picture's credit name, at once and quietly; only a refusal is said, and then
+     * {@code onRefused} runs on the main thread.
+     */
+    private void saveCredit(String uri, String typed, Runnable onRefused) {
         PictureLibrary library = PictureLibrary.get(this);
         library.run(() -> {
             String refusal = library.setCaption(uri, typed);
             library.onMain(() -> {
-                if (refusal != null && !isFinishing() && !isDestroyed()) {
+                if (refusal == null) {
+                    return;
+                }
+                onRefused.run();
+                if (!isFinishing() && !isDestroyed()) {
                     Toast.makeText(this, PictureLibrary.capitalise(refusal), Toast.LENGTH_LONG)
                             .show();
                 }
@@ -5272,6 +5670,7 @@ public final class KioskActivity extends Activity {
 
     /** Leaving with unsaved changes asks first; leaving an untouched page just goes back. */
     private void leavePlaylistPage(PlaylistDraft draft) {
+        hideKeyboardIfShown();
         if (!draft.edited) {
             playlistDraft = null;
             showScreensaverSettings();
@@ -5298,6 +5697,7 @@ public final class KioskActivity extends Activity {
      * because somebody who has just picked pictures means to see them.
      */
     private void savePlaylist(PlaylistDraft draft) {
+        hideKeyboardIfShown();
         PictureLibrary library = PictureLibrary.get(this);
         if (draft.items.isEmpty()) {
             Toast.makeText(this, "Tick at least one picture first.", Toast.LENGTH_LONG).show();
@@ -8607,8 +9007,8 @@ public final class KioskActivity extends Activity {
 
     /**
      * Title and credit as the source demands them, or null for a local picture whose owner has
-     * switched the line off. The online sources' lines are never switched off: they are the
-     * attribution their licences require.
+     * switched the line off, for every picture or for this one. The online sources' lines are
+     * never switched off: they are the attribution their licences require.
      */
     private static String creditLineFor(PictureSources.Picture picture,
             ScreensaverPolicy.Settings settings) {
@@ -8616,6 +9016,10 @@ public final class KioskActivity extends Activity {
             return null;
         }
         if (PictureSources.LOCAL.equals(settings.source)) {
+            // One picture's line switched off on the playlist page; the rest keep theirs.
+            if (picture.creditHidden) {
+                return null;
+            }
             return picture.title.isEmpty() ? picture.credit : picture.title;
         }
         // The title and the names, never the addresses. A wall panel is read from across a room

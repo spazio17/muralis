@@ -70,7 +70,7 @@ picked?fetch('/api/playlists/items?playlist='+encodeURIComponent(playlist),
 {credentials:'same-origin'}).then(text):null])
 .then(function(parts){folders.innerHTML=parts[0];content.innerHTML=parts[1];
 if(picked&&parts[2]!==null){picked.innerHTML=parts[2];}
-markSome();paintTree();
+markSome();paintTree();paintHeld();
 try{history.replaceState(null,'',shown);}
 catch(ignored){}})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
@@ -168,6 +168,10 @@ openFolder(link.dataset.at||'');
 // ticking a picture, naming it, removing it, deleting an upload and renaming the playlist. It is
 // on <main> rather than on the browser because the name box and the held-pictures list are
 // outside the browser and would otherwise navigate to /api/... and leave that address in the bar.
+// One change at a time, in the order they were made: a name stored as its box lets go and the
+// eye or the remove pressed with that same click reach the panel in that order, and the list is
+// re-read after both, not between them.
+var posting=Promise.resolve();
 function post(form){
 // URL-encoded, not FormData: a FormData body is sent as multipart, and the server parses
 // multipart for the upload alone. Posted as multipart these fields arrived empty, so ticking a
@@ -175,13 +179,36 @@ function post(form){
 var data=new URLSearchParams(new FormData(form));
 if(at===null){data.delete('at');}else{data.set('at',at);}
 data.set('playlist',playlist);
-return fetch(form.action+'?fragment=1',{method:'POST',credentials:'same-origin',
-headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
+function send(){return fetch(form.action+'?fragment=1',{method:'POST',credentials:'same-origin',
+// Kept alive so a name whose box lets go because the page is being left still arrives.
+keepalive:true,headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
 .then(function(r){return r.text();})
 .then(function(text){var ok=true,message=text;
 try{var parsed=JSON.parse(text);ok=parsed.ok!==false;message=parsed.message||'';}
 catch(ignored){ok=false;}
 return {ok:ok,message:message,form:form};});}
+var sent=posting.then(send,send);
+posting=sent.catch(function(){});
+return sent;}
+
+// A picture's name is stored when its box lets go of the focus, or on Enter (Juri, 2026-09-25:
+// the save tick inside the box went). Only a change is sent, and the list is not re-read after
+// it: nothing in it changes, and re-reading would take the focus out of the next box somebody
+// has already moved to. A refusal is said and the box keeps what was typed.
+function saveName(form){
+var box=form.querySelector('input[name=caption]');
+if(!box||box.disabled){return;}
+var typed=box.value.trim(),stored=(box.dataset.stored!==undefined?box.dataset.stored:box.defaultValue).trim();
+if(typed===stored){return;}
+box.dataset.stored=typed;
+post(form).then(function(r){if(!r.ok){box.dataset.stored=stored;}say(r.message,r.ok);})
+.catch(function(){box.dataset.stored=stored;
+say('The panel did not answer. It may be rebooting or off the network.',false);});
+}
+main.addEventListener('change',function(event){
+var box=event.target;
+if(box&&box.name==='caption'&&box.form&&box.form.classList.contains('caption')){saveName(box.form);}
+});
 
 // A picture's check box, in a row or in a tile's corner, is the form that puts it in the
 // playlist or takes it out: ticking posts at once, no button. The header box ticks or clears
@@ -210,12 +237,125 @@ function markSome(){var all=document.getElementById('select-all');
 if(all){all.indeterminate=!!all.dataset.some;}}
 markSome();paintTree();
 
+// The order of what the playlist holds, which is the order the screensaver shows it in (Juri,
+// 2026-09-25). A picture is dragged by its grip, the six dots drawn beside it, or by its
+// thumbnail: pointer events, so a mouse, a finger and a pen all do the same thing, and the
+// neighbours slide aside while it moves. Nothing is posted
+// until the drop, and then the whole order goes at once, which the panel refuses whole if it is
+// not exactly the playlist's pictures (a page opened before somebody else's change), in which
+// case the refusal is said and the list is read again. The arrow keys move a focused thumbnail
+// one place, for anyone not using a pointer.
+function heldItems(list){return Array.prototype.slice.call(list.children);}
+function paintHeld(){
+var list=document.getElementById('held-list');
+if(!list){return;}
+var items=heldItems(list),movable=items.length>1;
+list.classList.toggle('movable',movable);
+items.forEach(function(li,k){
+var grab=li.querySelector('.grab'),named=li.querySelector('.name');
+if(!grab){return;}
+var img=grab.querySelector('img');if(img){img.draggable=false;}
+if(movable){grab.setAttribute('role','button');grab.tabIndex=0;grab.title='Drag to move';
+grab.setAttribute('aria-label','Move '+(named?named.textContent:'this picture')
++', '+(k+1)+' of '+items.length+'. The arrow keys move it one place.');}
+else{['role','tabindex','title','aria-label'].forEach(function(a){grab.removeAttribute(a);});}});
+}
+paintHeld();
+function saveOrder(list){
+var data=new URLSearchParams();
+data.set('id',playlist);data.set('playlist',playlist);
+data.set('order',heldItems(list).map(function(li){return li.dataset.uri;}).join('\n'));
+return fetch('/api/playlists/order?fragment=1',{method:'POST',credentials:'same-origin',
+headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
+.then(function(r){return r.text();})
+.then(function(text){var ok=true,message='';
+try{var parsed=JSON.parse(text);ok=parsed.ok!==false;message=parsed.message||'';}
+catch(ignored){ok=false;message='The panel did not take the new order.';}
+if(!ok){say(message,false);return reload();}
+say('',true);paintHeld();})
+.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);
+return reload();});
+}
+function moveHeld(list,from,to){
+var items=heldItems(list),li=items[from];
+if(!li||to<0||to>=items.length||to===from){return;}
+list.insertBefore(li,to>from?items[to].nextSibling:items[to]);
+saveOrder(list);
+return li;
+}
+var drag=null;
+function placeDrag(){
+var d=drag,dy=d.lastY+window.scrollY-d.startY,h=d.heights[d.from];
+d.li.style.transform='translateY('+dy+'px)';
+var centre=d.tops[d.from]+h/2+dy,to=d.from,i;
+for(i=d.from+1;i<d.items.length;i++){if(centre>d.tops[i]+d.heights[i]/2){to=i;}}
+for(i=d.from-1;i>=0;i--){if(centre<d.tops[i]+d.heights[i]/2){to=i;}}
+d.to=to;
+d.items.forEach(function(li,k){if(li===d.li){return;}
+var shift=k>d.from&&k<=to?-h:k<d.from&&k>=to?h:0;
+li.style.transform=shift?'translateY('+shift+'px)':'';});
+}
+// Near the top or the bottom of the window the page scrolls by itself, faster the closer the
+// pointer is, so a long playlist can be crossed in one drag.
+function scrollDrag(){
+var d=drag;
+if(!d||d.frame){return;}
+var edge=56,y=d.lastY,room=window.innerHeight,step=0;
+if(y<edge){step=-Math.ceil((edge-y)/3);}else if(y>room-edge){step=Math.ceil((y-room+edge)/3);}
+if(!step){return;}
+d.frame=requestAnimationFrame(function(){d.frame=0;if(drag!==d){return;}
+window.scrollBy(0,step);placeDrag();scrollDrag();});
+}
+main.addEventListener('pointerdown',function(event){
+var grab=event.target.closest?event.target.closest('ul.held.movable .grab'):null;
+if(!grab||event.button>0){return;}
+event.preventDefault();
+var li=grab.closest('li'),list=li.parentNode,items=heldItems(list);
+drag={li:li,list:list,items:items,from:items.indexOf(li),to:items.indexOf(li),
+pointer:event.pointerId,startY:event.clientY+window.scrollY,lastY:event.clientY,moved:false,frame:0,
+tops:items.map(function(x){return x.getBoundingClientRect().top+window.scrollY;}),
+heights:items.map(function(x){return x.getBoundingClientRect().height;})};
+try{grab.setPointerCapture(event.pointerId);}catch(ignored){}
+});
+main.addEventListener('pointermove',function(event){
+var d=drag;
+if(!d||event.pointerId!==d.pointer){return;}
+d.lastY=event.clientY;
+if(!d.moved){
+// A few pixels of travel before it counts, so a click on a thumbnail is not a drag.
+if(Math.abs(event.clientY+window.scrollY-d.startY)<4){return;}
+d.moved=true;d.li.classList.add('dragging');
+d.items.forEach(function(li){if(li!==d.li){li.classList.add('shifting');}});}
+placeDrag();scrollDrag();
+});
+function endDrag(event,cancelled){
+var d=drag;
+if(!d||event.pointerId!==d.pointer){return;}
+drag=null;
+if(d.frame){cancelAnimationFrame(d.frame);}
+d.items.forEach(function(li){li.classList.remove('dragging','shifting');li.style.transform='';});
+if(!cancelled&&d.moved&&d.to!==d.from){moveHeld(d.list,d.from,d.to);}
+}
+main.addEventListener('pointerup',function(event){endDrag(event,false);});
+main.addEventListener('pointercancel',function(event){endDrag(event,true);});
+main.addEventListener('dragstart',function(event){
+if(event.target.closest&&event.target.closest('ul.held .grab')){event.preventDefault();}});
+main.addEventListener('keydown',function(event){
+if(event.key!=='ArrowUp'&&event.key!=='ArrowDown'){return;}
+var grab=event.target.closest?event.target.closest('ul.held.movable .grab'):null;
+if(!grab){return;}
+event.preventDefault();
+var li=grab.closest('li'),list=li.parentNode,from=heldItems(list).indexOf(li);
+if(moveHeld(list,from,from+(event.key==='ArrowUp'?-1:1))){grab.focus();paintHeld();}
+});
+
 main.addEventListener('submit',function(event){
 var form=event.target;
 if(form.tagName!=='FORM'||form.id==='picture-upload'){return;}
 // A GET form is navigation, not a change: Edit opens the playlist's page and must be left alone.
 if((form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
 event.preventDefault();
+if(form.classList.contains('caption')){saveName(form);return;}
 // Deleting a file asks first, as the panel does: an icon button carries no word to slow the
 // hand down, and the file is gone for good.
 if(/\/api\/pictures\/delete$/.test(form.action)){

@@ -42,6 +42,13 @@ against a screenshot of one surface. Material 3 is the reference, not a look to 
 "Google clone", no Material branding, and no platform widget used unstyled because it happened to
 be there.
 
+**A sentence is the last resort (Juri, 2026-09-25).** Tell a person what they can do, and what
+state something is in, with the component and the glyph they already know: a grip for a row that
+moves, an eye for something shown or hidden, a mark in a card's head for a state set elsewhere,
+a greyed control for one that does nothing now, with the reason in its tooltip and spoken label.
+Add explanatory text only where no control or glyph can carry the meaning. The drag sentence on
+the playlist page was the case that set the rule.
+
 ## Core architecture
 
 - **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
@@ -51,8 +58,9 @@ be there.
   picture_seconds/dim_percent/url/on_wake/transition/picture_fit/credit_corner/shuffle/one_per_cycle/
   credit`,
   `system.reboot`, `telemetry.publish`;
-  the web admin alone adds `/api/pictures`, `/api/pictures/delete`, `/api/pictures/refresh` and the
-  `/api/playlists` family for the picture playlists, which are not commands)
+  the web admin alone adds `/api/pictures` and its family (`delete`, `refresh`, `caption`, `credit`,
+  `select` and the rest) and the `/api/playlists` family, `order` included, for the picture
+  playlists, which are not commands)
   behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
   command behaves identically regardless of which surface it arrived on. Preserve this: it is the
   point of the design, not incidental structure to simplify away.
@@ -692,7 +700,32 @@ be there.
   Each held row carries the box that names the picture for its credit, with Save beside it and
   Remove in the main colour, the web page's row copied (2026-09-19) in place of a Name button that
   opened a page; the name is the existing caption, stored at once because it belongs to the file,
-  and only a refusal is said. The pencil sits against the title's last letter, a 14 dp glyph with
+  and only a refusal is said. Since 2026-09-25 the box has no save tick either: it stores itself
+  when it lets go of the focus, or on Enter or the keyboard's Done, only when its words changed,
+  and the web page sends it without re-reading the list so the focus can move on to the next
+  control (Juri: "is the V necessary?"). The panel takes the focus out of a box in the pane before
+  it repaints the rows and before Save or leaving the page, since a box removed with the focus in
+  it never hears that it lost it; the web page queues its posts, so a name and the eye pressed with
+  the same click arrive in that order. **The held list is the order the screensaver shows (2026-09-25):** a
+  picture is dragged by the grip beside it, Material's six-dot `drag_indicator`, or by its
+  thumbnail, on both surfaces, the neighbours sliding aside; grip and thumbnail claim the touch the
+  moment it lands, so a swipe that starts on one moves the picture and a swipe anywhere else
+  scrolls; near the top or bottom edge the page scrolls by itself. The
+  web page posts the whole order at the drop to `/api/playlists/order` (one address per line,
+  refused whole by `PlaylistDocument.reorder` unless it is exactly the playlist's pictures, so a
+  stale page is told and re-reads the list) and moves a focused thumbnail with the arrow keys; the
+  panel changes the draft, stored with Save like everything else there, and offers Move up and Move
+  down to a screen reader on the grip. Nothing is explained in a sentence: the grip says a row
+  moves (drawn only with scripting on the web, and only for two pictures or more), and a shuffling
+  screensaver puts the shuffle glyph in the pane's head as a mark, not a button. A first version
+  said all of this in sentences, and Juri replaced them with the glyphs the same day (see the
+  Design language section). **Each row also has an eye** that
+  switches that picture's credit off or back on, stored at once like the name, and an empty name box
+  shows, greyed, the file name the screensaver prints instead (`PictureSources.creditFromLabel`,
+  worked out from the label already on the page, so no second MediaStore query). Juri asked for a
+  hide switch because an empty box already meant "the file name"; the eye keeps the typed name, so
+  switching the line back on brings the same words back. With the screensaver's own credit switch
+  off, every eye stands crossed out and inert, its tooltip saying why. The pencil sits against the title's last letter, a 14 dp glyph with
   no pill, the title capped in width so a long name cannot push it off the row. **The playlist's name is the page's title, with a pencil beside it that turns
   the title into a box** (2026-09-19, the way a pull request's title is edited); the Name card went
   with it, a new playlist opens with the box already showing, and the box's Save only settles the
@@ -1017,13 +1050,19 @@ be there.
   shown on the glass under the first folder's "The Great Wave off Kanagawa, Hokusai", measured
   2026-09-10). `migrateCaptionKeys` moved the old name keys onto the addresses they were written
   for and then dropped every bare name; `captions_key_version` is 2, so a panel that already ran
-  the first pass gets the second sweep too. The caption is also the friendly name the playlist page
+  the first pass gets the second sweep too. A picture whose credit is switched off is listed by
+  address in `credits_hidden.json` beside `captions.json` (`PictureLibrary.hiddenCredits`), a file
+  of its own so the name survives the switch; the screensaver draws no line for it
+  (`creditLineFor`), while the status document still names the picture. Neither file is cleaned
+  when an upload is deleted, so a re-upload under the same name inherits both, as captions always
+  did. The caption is also the friendly name the playlist page
   edits, not a second field. Only uploaded picture files may be deleted; a picture chosen from the
   panel's own storage is only removed from the playlist. Multipart parsing rejects the whole
   truncated request and preserves boundary-prefix bytes inside images. Authentication and
   cross-site checks precede body allocation. Only exact POST `/api/pictures` gets 24 MiB/120 s; one
-  process-wide upload permit prevents multiplying that allocation by worker count. Other requests
-  retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
+  process-wide upload permit prevents multiplying that allocation by worker count. A playlist's
+  order (`/api/playlists/order`, every address in it) gets 256 KiB in the same 8 s, since 16 KiB
+  held about 170 addresses; other requests retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
 - **Credited display.** Decode uses a power-of-two sample with at most 2,097,152 ARGB pixels
   (8 MiB) per bitmap, independent of image shape. Generation and frame/source checks discard stale
   work, including work invalidated by sleep. Wake resumes an interrupted initial decode even for
