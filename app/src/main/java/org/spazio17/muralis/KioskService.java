@@ -268,6 +268,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         acquireRuntimeLocks();
         startControllers();
         startTelemetry();
+        sensors = new Sensors(this, this::displayWake);
+        sensors.refresh();
         new Handler(Looper.getMainLooper()).postDelayed(
                 () -> ensureDashboardOnScreen("service started"), RelaunchPolicy.SETTLE_MS);
     }
@@ -323,6 +325,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
             publishStateSoon();
+        } else if (intent != null && ACTION_REFRESH_SENSORS.equals(intent.getAction())) {
+            refreshSensors();
+            publishStateSoon();
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
             displayVisualOff();
             // Not a dispatched command, so nothing else republishes: without this the Screensaver
@@ -345,6 +350,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         stopControllers();
         stopTelemetry();
+        if (sensors != null) {
+            sensors.stop();
+        }
+        stopAudio();
         releaseRuntimeLocks();
         super.onDestroy();
     }
@@ -1001,6 +1010,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
             stats.put("screensaver", screensaverSnapshot(includeAdminDetail));
+            // The sensors the person switched on, with their readings; see Sensors. The block
+            // is kept where the panel's rows and discovery can read it without the service.
+            Sensors hub = sensors;
+            org.json.JSONObject sensorBlock =
+                    hub == null ? new org.json.JSONObject() : hub.snapshot();
+            KioskRuntimeState.publishSensors(sensorBlock);
+            stats.put("sensors", sensorBlock);
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
@@ -1918,6 +1934,128 @@ public final class KioskService extends Service implements KioskCommandDispatche
         });
         publishTelemetrySoon(this);
         return refusal;
+    }
+
+    /** The panel's sensors; built in onCreate, dropped in onDestroy. */
+    private Sensors sensors;
+    private android.media.MediaPlayer player;
+    private android.speech.tts.TextToSpeech speech;
+    private boolean speechReady;
+
+    @Override
+    public String setSensorEnabled(String id, boolean enabled) {
+        Sensors.Def def = Sensors.byId(id);
+        if (def == null) {
+            return "no sensor is called " + id;
+        }
+        Sensors hub = sensors;
+        if (hub == null || !hub.available(def)) {
+            return "this device has no " + def.name.toLowerCase(java.util.Locale.ROOT) + " sensor";
+        }
+        KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
+        hub.refresh();
+        publishStateSoon();
+        return null;
+    }
+
+    /** A settings surface changed a sensor's switch: re-register and publish. */
+    static void refreshSensorsSoon(Context context) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_REFRESH_SENSORS);
+        context.startService(intent);
+    }
+
+    static final String ACTION_REFRESH_SENSORS = "org.spazio17.muralis.REFRESH_SENSORS";
+
+    /** Re-reads the stored switches, for a change made on a settings surface. */
+    void refreshSensors() {
+        Sensors hub = sensors;
+        if (hub != null) {
+            hub.refresh();
+        }
+    }
+
+    @Override
+    public void setMediaVolume(int percent) {
+        android.media.AudioManager audio = getSystemService(android.media.AudioManager.class);
+        if (audio == null) {
+            return;
+        }
+        int max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                Math.round(max * percent / 100f), 0);
+        publishStateSoon();
+    }
+
+    /**
+     * Plays a sound from a URL on the media stream, what Fully's playSound and Dashie's audio
+     * commands do: a doorbell, a chime, a spoken file made elsewhere. One player at a time;
+     * a new URL replaces what is playing, null stops it.
+     */
+    @Override
+    public synchronized String playAudio(String url) {
+        stopAudio();
+        if (url == null) {
+            return null;
+        }
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return "url must start with http:// or https://";
+        }
+        try {
+            android.media.MediaPlayer next = new android.media.MediaPlayer();
+            next.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            next.setDataSource(url);
+            next.setOnPreparedListener(android.media.MediaPlayer::start);
+            next.setOnCompletionListener(done -> stopAudio());
+            next.setOnErrorListener((failed, what, extra) -> {
+                Log.w(TAG, "Audio failed (" + what + "/" + extra + "): " + url);
+                stopAudio();
+                return true;
+            });
+            next.prepareAsync();
+            player = next;
+            return null;
+        } catch (java.io.IOException | RuntimeException unplayable) {
+            Log.w(TAG, "Audio refused: " + url, unplayable);
+            return "the panel cannot play that address";
+        }
+    }
+
+    private synchronized void stopAudio() {
+        if (player != null) {
+            try {
+                player.stop();
+            } catch (IllegalStateException notStarted) {
+                // Stopped before it was prepared: releasing is all that is needed.
+            }
+            player.release();
+            player = null;
+        }
+    }
+
+    /** Speaks through the device's own text-to-speech engine, the way Fully's textToSpeech does. */
+    @Override
+    public synchronized String say(String text) {
+        if (speech == null) {
+            speech = new android.speech.tts.TextToSpeech(this, status -> {
+                speechReady = status == android.speech.tts.TextToSpeech.SUCCESS;
+                if (speechReady) {
+                    speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null,
+                            "muralis-say");
+                } else {
+                    Log.w(TAG, "No text-to-speech engine answered");
+                }
+            });
+            return null;
+        }
+        if (!speechReady) {
+            return "the text-to-speech engine is not ready";
+        }
+        speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "muralis-say");
+        return null;
     }
 
     @Override

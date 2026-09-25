@@ -711,6 +711,25 @@ public final class KioskCommandDispatcherTest {
         String telemetryProblem = null;
 
         @Override
+        public String setSensorEnabled(String id, boolean enabled) {
+            calls.add("setSensorEnabled:" + id + ":" + enabled);
+            return null;
+        }
+
+        public void setMediaVolume(int percent) {
+            calls.add("setMediaVolume:" + percent);
+        }
+
+        public String playAudio(String url) {
+            calls.add("playAudio:" + url);
+            return null;
+        }
+
+        public String say(String text) {
+            calls.add("say:" + text);
+            return null;
+        }
+
         public String publishTelemetry() {
             calls.add("publishTelemetry");
             return telemetryProblem;

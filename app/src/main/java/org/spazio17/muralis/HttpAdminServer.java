@@ -1014,6 +1014,15 @@ final class HttpAdminServer {
                 // applies on its own, in this order: a hand-built request carrying several keys
                 // gets the earlier ones applied and the first refusal reported. The screensaver
                 // keys are the exception, checked as a set before any of them is stored.
+                for (Sensors.Def def : Sensors.ALL) {
+                    String key = "sensor_" + def.id;
+                    if (form.containsKey(key)) {
+                        String problem = kioskService.setSensorEnabled(def.id, isTrue(form.get(key)));
+                        if (problem != null) {
+                            return problem;
+                        }
+                    }
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
@@ -1409,6 +1418,8 @@ final class HttpAdminServer {
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
         sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
                 screensaverBody()});
+        sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
+                sensorsBody()});
         sections.add(new String[] {"stats", "stats", "System stats", statsSummary(),
                 statsBody(config)});
         sections.add(new String[] {"quick", "bolt", "Quick actions",
@@ -1496,6 +1507,42 @@ final class HttpAdminServer {
     }
 
     /** Memory, load and uptime from the same document the poll reads; the script keeps it current. */
+    /** "2 of 7 on": the companion app's manage-sensors page in one line. */
+    private String sensorsSummary() {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        int have = block.length();
+        if (have == 0) {
+            return "None on this device";
+        }
+        return Sensors.enabledIds(block).size() + " of " + have + " on";
+    }
+
+    /**
+     * One row per sensor this device has: its name, its reading, and a switch that applies at
+     * once (data-setting, like the stats overlay's). The readings are refreshed by the stats
+     * poll from the status document's sensors block; see admin_stats.js.
+     */
+    private String sensorsBody() {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        StringBuilder rows = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            rows.append("<label class=\"switch sensor\"><span>").append(escapeHtml(def.name))
+                    .append("<small id=\"sensor-").append(def.id).append("-value\">")
+                    .append(escapeHtml(Sensors.describe(one))).append("</small></span>")
+                    .append("<input type=\"checkbox\" id=\"sensor-").append(def.id)
+                    .append("\" data-setting=\"sensor_").append(def.id).append("\"")
+                    .append(one.optBoolean("enabled") ? " checked" : "").append("></label>");
+        }
+        if (rows.length() == 0) {
+            return "<p class=\"hint\">This device reports no sensors.</p>";
+        }
+        return rows.toString();
+    }
+
     private String statsSummary() {
         try {
             org.json.JSONObject stats = kioskService.statsJson();

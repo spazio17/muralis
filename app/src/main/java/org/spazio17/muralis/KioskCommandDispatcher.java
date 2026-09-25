@@ -170,6 +170,18 @@ final class KioskCommandDispatcher {
          */
         String publishTelemetry();
 
+        /** Switches one sensor on or off; null when done, else the refusal. See Sensors. */
+        String setSensorEnabled(String id, boolean enabled);
+
+        /** Sets the media volume, 0 to 100. */
+        void setMediaVolume(int percent);
+
+        /** Plays a sound from a URL, or stops what is playing for null. Null when started. */
+        String playAudio(String url);
+
+        /** Speaks a sentence through the device's text-to-speech. Null when accepted. */
+        String say(String text);
+
         /**
          * Reboots the device, asynchronously.
          *
@@ -387,6 +399,44 @@ final class KioskCommandDispatcher {
                                 : ScreensaverSetting.ONE_PER_CYCLE;
                 executor.setScreensaverSetting(which, args.enabled ? "true" : "false");
                 return accepted();
+            }
+            case "sensor.enabled": {
+                // value names the sensor, enabled says which way: the shape every other
+                // on/off command has, with the sensor id where the others need nothing.
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                if (args.value == null || args.value.isEmpty()) {
+                    return rejected("value must name a sensor");
+                }
+                String problem = executor.setSensorEnabled(args.value, args.enabled);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "audio.volume": {
+                // The media stream, 0 to 100, what Fully's setAudioVolume does for stream 3.
+                if (args.brightnessPercent < 0 || args.brightnessPercent > 100) {
+                    return rejected("percent must be between 0 and 100");
+                }
+                executor.setMediaVolume(args.brightnessPercent);
+                return accepted();
+            }
+            case "audio.play": {
+                if (args.url == null || args.url.isEmpty()) {
+                    return rejected("url is required");
+                }
+                String problem = executor.playAudio(args.url);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "audio.stop": {
+                executor.playAudio(null);
+                return accepted();
+            }
+            case "audio.say": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must hold the sentence to say");
+                }
+                String problem = executor.say(args.value.trim());
+                return problem == null ? accepted() : rejected(problem);
             }
             case "telemetry.publish": {
                 // The executor answers for itself: with no broker configured, or a session that is

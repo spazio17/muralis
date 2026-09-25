@@ -65,6 +65,11 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- The Bluetooth and NFC state sensors (Sensors.java) read whether each radio is on.
+         Both are normal permissions; BLUETOOTH is only asked for below Android 12, where
+         isEnabled() still wants it. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or

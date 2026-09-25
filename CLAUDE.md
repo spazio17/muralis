@@ -368,6 +368,22 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
+- **Sensors, the companion app's "Manage sensors" (2026-09-26).** `Sensors` lists every sensor
+  this app knows (proximity, light, pressure, ambient temperature, humidity, movement, Bluetooth,
+  NFC, ringer mode); a device lists only the ones it has, every one starts off, and a Sensors
+  section on both surfaces is one row per sensor with its reading and a switch that applies at
+  once (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command). A
+  hardware sensor registers its listener only while on, asking for the wake-up variant so it
+  answers under a real sleep; the state ones are read when the status document is built, which
+  carries a `sensors` block. Discovery announces one entity per sensor that is on, named as the
+  companion app names its own (`sensor.muralis_<id>_light`), and withdraws the ones that are off
+  or absent. Proximity also acts: the change to near wakes the display, at most once every three
+  seconds (Juri's use case: a hand in front of a panel whose buttons sit under a case); a mount
+  that covers the sensor is answered by switching the row off, the companion app's answer. Audio
+  is the one sensor that also receives: `audio.volume` (percent, the media stream), `audio.play`
+  (a URL, one player, a new URL replaces it), `audio.stop`, `audio.say` (text-to-speech), what
+  Fully's setAudioVolume, playSound and textToSpeech do. Not built yet: BLE beacon monitor and
+  transmitter, camera motion, microphone level, each its own permission and Play text.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public

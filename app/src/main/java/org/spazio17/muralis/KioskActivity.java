@@ -624,6 +624,7 @@ public final class KioskActivity extends Activity {
             if (updateStatusChip()) {
                 anythingToRepaint = true;
             }
+            repaintSensors();
             if (anythingToRepaint) {
                 mainHandler.postDelayed(this, OVERLAY_REFRESH_MS);
             }
@@ -2301,6 +2302,58 @@ public final class KioskActivity extends Activity {
         screensaverMore.setOnClickListener(view -> showScreensaverSettings());
         screensaverCard.addView(buttonRow(screensaverMore), matchWrap());
 
+        // The panel's sensors, the companion app's manage-sensors list: one row per sensor this
+        // device has, its name, its reading under it, and a switch that applies at once. The
+        // readings follow the status document on the one-second tick (see overlayTask).
+        LinearLayout sensorsCard = sectionBody(theme);
+        sensorReadouts.clear();
+        org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setMinimumHeight(dp(56));
+            LinearLayout words = new LinearLayout(this);
+            words.setOrientation(LinearLayout.VERTICAL);
+            TextView name = new FlushText(this);
+            name.setText(def.name);
+            name.setTextColor(theme.text);
+            name.setTextSize(16);
+            words.addView(name, matchWrap());
+            TextView reading = new FlushText(this);
+            reading.setText(Sensors.describe(one));
+            reading.setTextColor(theme.subtext);
+            reading.setTextSize(13);
+            words.addView(reading, matchWrap());
+            sensorReadouts.put(def.id, reading);
+            row.addView(words, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            CompoundButton toggle = themedSwitch(theme, "", one.optBoolean("enabled"));
+            toggle.setContentDescription(def.name);
+            toggle.setOnCheckedChangeListener((button, checked) -> {
+                if (syncingLiveControls) {
+                    return;
+                }
+                KioskConfig.edit(this).sensorEnabled(def.id, checked).apply();
+                KioskService.refreshSensorsSoon(this);
+            });
+            sensorSwitches.put(def.id, toggle);
+            row.addView(toggle, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            sensorsCard.addView(row, matchWrap());
+        }
+        if (sensorReadouts.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setText("This device reports no sensors.");
+            none.setTextColor(theme.subtext);
+            none.setTextSize(14);
+            sensorsCard.addView(none, matchWrap());
+        }
+
         LinearLayout statsCard = sectionBody(theme);
         TextView statsReadout = new FlushText(this);
         statsReadout.setTypeface(Typeface.MONOSPACE);
@@ -2512,6 +2565,7 @@ public final class KioskActivity extends Activity {
                         themeToggle(theme)),
                 new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
                         screensaverCard),
+                new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
                 new Section(R.drawable.ic_stats, "System stats", statsSummary(), statsCard),
                 new Section(R.drawable.ic_info, "About", appVersionName(), aboutCard));
 
@@ -3080,6 +3134,44 @@ public final class KioskActivity extends Activity {
                 : ScreensaverPolicy.PICTURES.equals(saver.mode) ? "Pictures" : "Off";
         return ScreensaverPolicy.OFF.equals(saver.mode) ? name
                 : name + " · after " + saver.idleSeconds + " s";
+    }
+
+    /** "2 of 7 on", the same line the web page's section shows. */
+    private String sensorsSummary() {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        return block.length() == 0 ? "None on this device"
+                : Sensors.enabledIds(block).size() + " of " + block.length() + " on";
+    }
+
+    /** The Sensors section's reading lines and switches, repainted by overlayTask. */
+    private final java.util.Map<String, TextView> sensorReadouts = new java.util.HashMap<>();
+    private final java.util.Map<String, CompoundButton> sensorSwitches = new java.util.HashMap<>();
+
+    private void repaintSensors() {
+        if (sensorReadouts.isEmpty()) {
+            return;
+        }
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        for (java.util.Map.Entry<String, TextView> entry : sensorReadouts.entrySet()) {
+            TextView reading = entry.getValue();
+            if (!reading.isAttachedToWindow()) {
+                continue;
+            }
+            org.json.JSONObject one = block.optJSONObject(entry.getKey());
+            String text = Sensors.describe(one);
+            if (!text.contentEquals(reading.getText())) {
+                reading.setText(text);
+            }
+            CompoundButton toggle = sensorSwitches.get(entry.getKey());
+            if (toggle != null && one != null && toggle.isChecked() != one.optBoolean("enabled")) {
+                syncingLiveControls = true;
+                try {
+                    toggle.setChecked(one.optBoolean("enabled"));
+                } finally {
+                    syncingLiveControls = false;
+                }
+            }
+        }
     }
 
     private String statsSummary() {
