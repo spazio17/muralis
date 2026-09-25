@@ -375,11 +375,13 @@ the playlist page was the case that set the rule.
   re-reads every three seconds on its own thread while the block is on screen, the web page every
   five with the stats poll's refusals, and follows the end while the reader is at the end. Above
   the block, on both surfaces, the row every log reader has (Home Assistant's log page, MatLog):
-  level chips E, W, All (W by default; `?level=` on the endpoint, filtered before the tail so
-  errors reach back through an OEM's chatter), a search box (`?q=`), pause, copy to the
-  clipboard, and clear, which hides what was logged before the press. Lines are painted by
-  level: errors in `bad`, warnings in `warn`, info in `text`, the rest in `subtext`; the
-  date and the pid are dropped, the tag kept. Nothing is stored or sent; logd prunes the
+  chips Muralis, E, W, All (Muralis, the app's own tags, by default, the way Android Studio's
+  Logcat opens on `package:mine`; `?level=` and `?own=1` on the endpoint, filtered before the
+  tail so errors reach back through an OEM's chatter), a count ("14 of 200"), a search box
+  (`?q=`), pause, copy to the clipboard, download as a file (web only), and clear, which hides
+  what was logged before the press. Lines are painted by level: errors in `bad`, warnings in
+  `warn`, info in `text`, the rest in `subtext`, the time and tag bold; the date and the pid are
+  dropped, the tag kept. Nothing is stored or sent; logd prunes the
   buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
   reshaped 2026-09-26 ("it looks poor"); the site's API page does not describe it yet.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a

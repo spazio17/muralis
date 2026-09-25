@@ -716,11 +716,14 @@ final class HttpAdminServer {
                     bytes(kioskService.statsJson().toString()));
         } else if (path.equals("/api/log") && method.equals("GET")) {
             // The app's own log, plain text, the last AppLog.LINES lines at or above ?level=
-            // (V, D, I, W, E; everything without it) that contain ?q= (anything without it):
-            // what the settings page's log block polls, and what a curl gets for a support mail.
+            // (V, D, I, W, E; everything without it), only Muralis's own tags with ?own=1, that
+            // contain ?q= (anything without it): what the settings page's log block polls, and
+            // what a curl gets for a support mail.
             writeResponse(output, 200, "text/plain; charset=utf-8", bytes(AppLog.text(
                     AppLog.matching(AppLog.tail(AppLog.LINES,
-                            AppLog.levelOf(queryValue(query, "level"))), queryValue(query, "q")))));
+                            AppLog.levelOf(queryValue(query, "level")),
+                            KioskCommandDispatcher.parseEnabledFlag(queryValue(query, "own"))
+                                    == Boolean.TRUE), queryValue(query, "q")))));
         } else if (path.equals("/api/check") && method.equals("POST")) {
             // POST, not GET, even though it changes nothing on this device. It makes the panel
             // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
@@ -1353,6 +1356,7 @@ final class HttpAdminServer {
         paths.put("copy", "<rect x=\"9\" y=\"9\" width=\"11\" height=\"11\" rx=\"1.5\"/>"
                 + "<path d=\"M15 9V5.5A1.5 1.5 0 0013.5 4h-8A1.5 1.5 0 004 5.5v8A1.5 1.5 0 005.5 15H9\"/>");
         paths.put("clear", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M5.6 5.6l12.8 12.8\"/>");
+        paths.put("download", "<path d=\"M12 4v11M7 10l5 5 5-5M5 20h14\"/>");
         paths.put("power", "<path d=\"M12 3v9M18.4 6.6a8 8 0 11-12.8 0\"/>");
         paths.put("open", "<path d=\"M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7"
                 + "a1 1 0 011-1h5\"/>");
@@ -1651,11 +1655,14 @@ final class HttpAdminServer {
                 + switchRow("stats-overlay", "Show system stats on the dashboard",
                         " data-setting=\"stats_overlay\"", config.statsOverlay)
                 + "<div class=\"logbar\" id=\"logbar\">"
-                + "<div class=\"levels\" role=\"group\" aria-label=\"Log level\">"
+                + "<div class=\"levels\" role=\"group\" aria-label=\"What the log shows\">"
+                + "<button type=\"button\" class=\"lvl\" data-level=\"V\" data-own=\"1\""
+                + " aria-pressed=\"true\">Muralis</button>"
                 + "<button type=\"button\" class=\"lvl\" data-level=\"E\" aria-pressed=\"false\">E</button>"
-                + "<button type=\"button\" class=\"lvl\" data-level=\"W\" aria-pressed=\"true\">W</button>"
+                + "<button type=\"button\" class=\"lvl\" data-level=\"W\" aria-pressed=\"false\">W</button>"
                 + "<button type=\"button\" class=\"lvl\" data-level=\"V\" aria-pressed=\"false\">All</button>"
                 + "</div>"
+                + "<span class=\"logcount\" id=\"log-count\" aria-live=\"polite\"></span>"
                 + "<label class=\"logsearch\">" + glyph("search")
                 + "<input type=\"search\" id=\"log-q\" autocomplete=\"off\""
                 + " aria-label=\"Search the log\"></label>"
@@ -1663,6 +1670,8 @@ final class HttpAdminServer {
                 + " aria-label=\"Pause\" aria-pressed=\"false\">" + glyph("pause") + "</button>"
                 + "<button type=\"button\" class=\"ib\" id=\"log-copy\" title=\"Copy\""
                 + " aria-label=\"Copy\">" + glyph("copy") + "</button>"
+                + "<button type=\"button\" class=\"ib\" id=\"log-download\" title=\"Download\""
+                + " aria-label=\"Download\">" + glyph("download") + "</button>"
                 + "<button type=\"button\" class=\"ib\" id=\"log-clear\" title=\"Clear\""
                 + " aria-label=\"Clear\">" + glyph("clear") + "</button>"
                 + "</div>"

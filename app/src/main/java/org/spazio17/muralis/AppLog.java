@@ -93,10 +93,22 @@ final class AppLog {
     }
 
     /**
-     * The last {@code lines} entries this process logged at {@code minLevel} or above, oldest
-     * first, or an empty list when logcat cannot be read.
+     * Whether a line is Muralis's own rather than a framework's under its pid: every tag of this
+     * app starts with "Muralis" or "Pro" (ProBilling, ProEntitlement), and the kernel's audit
+     * lines carry the thread name, "MuralisTelemetr", which is about this app as well. An OEM's
+     * frameworks log a line a second under the same pid on a Huawei (ZeroHung, HiTouch), which
+     * is why "own" is the first chip and the default, the way Android Studio's Logcat opens on
+     * {@code package:mine}.
      */
-    static List<Entry> tail(int lines, char minLevel) {
+    static boolean own(Entry entry) {
+        return entry.tag.startsWith("Muralis") || entry.tag.startsWith("Pro");
+    }
+
+    /**
+     * The last {@code lines} entries this process logged at {@code minLevel} or above, only its
+     * own when {@code ownOnly}, oldest first, or an empty list when logcat cannot be read.
+     */
+    static List<Entry> tail(int lines, char minLevel, boolean ownOnly) {
         Process logcat;
         try {
             logcat = new ProcessBuilder("logcat", "-d", "-v", "time",
@@ -115,7 +127,7 @@ final class AppLog {
             while ((line = reader.readLine()) != null && read < MAX_BYTES) {
                 read += line.length() + 1;
                 Entry entry = parse(line);
-                if (entry == null || rank(entry.level) < floor) {
+                if (entry == null || rank(entry.level) < floor || (ownOnly && !own(entry))) {
                     continue;
                 }
                 if (kept.size() == lines) {

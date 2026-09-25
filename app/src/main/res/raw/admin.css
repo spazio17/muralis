@@ -217,6 +217,8 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 #stats,#log{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
 #log{max-height:320px;min-height:72px;overflow:auto;overflow-wrap:anywhere;color:var(--subtext)}
 #log .lv-W{color:var(--warn)}#log .lv-E,#log .lv-F{color:var(--bad)}#log .lv-I{color:var(--text)}
+#log b{font-weight:600}
+.logcount{font-size:12px;color:var(--subtext);white-space:nowrap}
 .logbar{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
 .levels{display:inline-flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
 .lvl{height:36px;min-width:44px;padding:0 12px;border:0;background:transparent;color:var(--subtext);font:inherit;font-size:14px;cursor:pointer}

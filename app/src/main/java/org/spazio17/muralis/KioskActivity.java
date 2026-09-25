@@ -6392,7 +6392,9 @@ public final class KioskActivity extends Activity {
 
     /** What the log block is showing: the chips, the box and the two buttons write here. */
     private static final class LogView {
-        char level = 'W';
+        char level = 'V';
+        /** Only Muralis's own tags, the first chip and the default; see AppLog.own. */
+        boolean own = true;
         String query = "";
         boolean paused;
         /** Lines at or before this time are hidden: what Clear does, from the newest line. */
@@ -6422,12 +6424,13 @@ public final class KioskActivity extends Activity {
         rowParams.topMargin = dp(12);
         card.addView(row, rowParams);
 
-        final Button[] chips = new Button[3];
-        final char[] levels = {'E', 'W', 'V'};
-        final String[] labels = {"E", "W", "All"};
+        final Button[] chips = new Button[4];
+        final char[] levels = {'V', 'E', 'W', 'V'};
+        final boolean[] owns = {true, false, false, false};
+        final String[] labels = {"Muralis", "E", "W", "All"};
         final Runnable paintChips = () -> {
             for (int i = 0; i < chips.length; i++) {
-                boolean on = levels[i] == view.level;
+                boolean on = levels[i] == view.level && owns[i] == view.own;
                 chips[i].setTextColor(on ? theme.onSecondaryContainer : theme.accent);
                 chips[i].setBackground(on
                         ? theme.ripple(theme.pill(theme.secondaryContainer), null,
@@ -6438,11 +6441,13 @@ public final class KioskActivity extends Activity {
         };
         for (int i = 0; i < chips.length; i++) {
             final char level = levels[i];
+            final boolean own = owns[i];
             chips[i] = pillShaped(new Button(this), labels[i], 12);
-            chips[i].setMinWidth(dp(44));
-            chips[i].setMinimumWidth(dp(44));
+            chips[i].setMinWidth(dp(40));
+            chips[i].setMinimumWidth(dp(40));
             chips[i].setOnClickListener(v -> {
                 view.level = level;
+                view.own = own;
                 paintChips.run();
                 worker.removeCallbacks(read[0]);
                 worker.post(read[0]);
@@ -6453,8 +6458,21 @@ public final class KioskActivity extends Activity {
             row.addView(chips[i], chipParams);
         }
         paintChips.run();
-        View spacer = new View(this);
-        row.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        // "14 of 30", so an empty block after a search reads as no match rather than broken.
+        TextView count = new FlushText(this);
+        count.setTextColor(theme.subtext);
+        count.setTextSize(12);
+        count.setGravity(Gravity.END);
+        row.addView(count, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // The search box with the three buttons at its right, a row of their own: four chips
+        // and three buttons together did not fit a phone's width.
+        LinearLayout searchRow = new LinearLayout(this);
+        searchRow.setOrientation(LinearLayout.HORIZONTAL);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams searchRowParams = matchWrap();
+        searchRowParams.topMargin = dp(8);
+        card.addView(searchRow, searchRowParams);
 
         TextView block = new FlushText(this);
         block.setTypeface(Typeface.MONOSPACE);
@@ -6475,7 +6493,9 @@ public final class KioskActivity extends Activity {
                 worker.post(read[0]);
             }
         });
-        row.addView(pause, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        LinearLayout.LayoutParams pauseParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        pauseParams.leftMargin = dp(8);
+        searchRow.addView(pause, pauseParams);
         ImageButton copy = iconButton(theme, R.drawable.ic_content_copy, "Copy");
         copy.setOnClickListener(v -> {
             android.content.ClipboardManager clipboard =
@@ -6485,10 +6505,9 @@ public final class KioskActivity extends Activity {
                         "Muralis log", block.getText()));
             }
         });
-        row.addView(copy, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        searchRow.addView(copy, new LinearLayout.LayoutParams(dp(40), dp(40)));
         ImageButton clear = iconButton(theme, R.drawable.ic_block, "Clear");
-        LinearLayout.LayoutParams clearParams = new LinearLayout.LayoutParams(dp(40), dp(40));
-        row.addView(clear, clearParams);
+        searchRow.addView(clear, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         EditText search = themedInput(theme, "", false);
         search.setContentDescription("Search the log");
@@ -6496,9 +6515,8 @@ public final class KioskActivity extends Activity {
         search.setCompoundDrawablePadding(dp(8));
         search.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(
                 theme.subtext));
-        LinearLayout.LayoutParams searchParams = matchWrap();
-        searchParams.topMargin = dp(8);
-        card.addView(search, searchParams);
+        searchRow.addView(search, 0, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         LinearLayout.LayoutParams blockParams = matchWrap();
         blockParams.topMargin = dp(8);
@@ -6506,19 +6524,28 @@ public final class KioskActivity extends Activity {
 
         final Runnable paint = () -> {
             android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder();
+            int shown = 0;
             for (AppLog.Entry entry : AppLog.matching(view.entries, view.query)) {
                 if (entry.time.compareTo(view.since) <= 0) {
                     continue;
                 }
                 int start = text.length();
-                text.append(entry.line()).append('\n');
+                String line = entry.line();
+                text.append(line).append('\n');
                 int colour = entry.level == 'E' || entry.level == 'F' ? theme.bad
                         : entry.level == 'W' ? theme.warn
                         : entry.level == 'I' ? theme.text : theme.subtext;
                 text.setSpan(new android.text.style.ForegroundColorSpan(colour), start,
                         text.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                // The time and the tag bold, so the eye scans the left edge.
+                int head = line.indexOf(": ", 11);
+                text.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), start,
+                        start + (head < 0 ? line.length() : head + 1),
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                shown++;
             }
             block.setText(text);
+            count.setText(shown + " of " + view.entries.size());
         };
         search.addTextChangedListener(new android.text.TextWatcher() {
             @Override
@@ -6546,7 +6573,7 @@ public final class KioskActivity extends Activity {
             if (gone[0]) {
                 return;
             }
-            List<AppLog.Entry> fresh = AppLog.tail(PANEL_LOG_LINES, view.level);
+            List<AppLog.Entry> fresh = AppLog.tail(PANEL_LOG_LINES, view.level, view.own);
             mainHandler.post(() -> {
                 if (gone[0]) {
                     return;
