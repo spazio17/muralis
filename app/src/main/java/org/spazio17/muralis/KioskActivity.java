@@ -2640,6 +2640,12 @@ public final class KioskActivity extends Activity {
         // turning green while resetting the admin password. A probe should only ever follow a
         // deliberate visit.
         page.setFocusableInTouchMode(true);
+        // Without this the scroller brings the newly focused page "into view" at its first
+        // layout, which on a window padded for the status bar (PageScroll) means scrolling the
+        // page's top edge up to the screen's, as far as the page allows: on the Pixel 9 Pro XL
+        // every opening of this screen started 196px down, the title under the clock
+        // (2026-09-25). A page with no padding above it had nothing to scroll and never showed it.
+        page.setRevealOnFocusHint(false);
         page.requestFocus();
         setContentView(scrollPage(theme, page));
         // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
@@ -6343,7 +6349,7 @@ public final class KioskActivity extends Activity {
     }
 
     private ScrollView scrollPage(KioskTheme theme, LinearLayout content) {
-        ScrollView scroll = new ScrollView(this);
+        PageScroll scroll = new PageScroll(this);
         scroll.setBackgroundColor(theme.base);
         // Tapping the background dismisses the keyboard, which is the other half of having no
         // navigation bar on this screen.
@@ -6362,6 +6368,78 @@ public final class KioskActivity extends Activity {
         keepFocusedFieldAboveKeyboard(scroll);
         restoreCarriedScroll(scroll);
         return scroll;
+    }
+
+    /**
+     * The scroller every page of this app's own sits in, which keeps the page out from under the
+     * system bars on a window laid out edge to edge.
+     *
+     * <p>From Android 15 every app targeting API 35 is laid out edge to edge: the window fills the
+     * screen, the bars are drawn transparent over it, and {@code setDecorFitsSystemWindows(true)},
+     * which {@link #showSystemBars} still asks for, does nothing. Nothing in this app padded for
+     * that, so on the Pixel 9 Pro XL (Android 17, 2026-09-25) the settings screen's title sat under
+     * the clock, the notice under the camera cutout when scrolled, and the Open dashboard button
+     * behind the gesture bar, while the Android 9 phone, whose window starts below its bar, showed
+     * the page the way it was drawn. The bars and the cutout become this view's padding, so the
+     * page starts where the bar ends on every kind of window: hidden bars report zero on the
+     * kiosk, and a decor that does fit the bars (Android 11 to 14) consumes them before they get
+     * here. Below API 30 nothing is read: an ordinary install's window already starts below the
+     * bars there, and the kiosk's {@code LAYOUT_STABLE} flags report a bar that is not on screen,
+     * the same trap {@link #systemBarOverlap} documents.
+     *
+     * <p>The keyboard is the other thing that pads the bottom (see
+     * {@link #keepFocusedFieldAboveKeyboard}), and the two meet here rather than overwrite each
+     * other: the keyboard's inset is measured from the window's bottom edge, so it already covers
+     * the bar, and the larger of the two is what the page gives back.
+     */
+    private static final class PageScroll extends ScrollView {
+        private int barLeft;
+        private int barTop;
+        private int barRight;
+        private int barBottom;
+        private int keyboard;
+
+        PageScroll(android.content.Context context) {
+            super(context);
+        }
+
+        @Override
+        public android.view.WindowInsets dispatchApplyWindowInsets(
+                android.view.WindowInsets insets) {
+            int left = 0;
+            int top = 0;
+            int right = 0;
+            int bottom = 0;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets bars = insets.getInsets(
+                        android.view.WindowInsets.Type.systemBars()
+                                | android.view.WindowInsets.Type.displayCutout());
+                left = bars.left;
+                top = bars.top;
+                right = bars.right;
+                bottom = bars.bottom;
+            }
+            if (left != barLeft || top != barTop || right != barRight || bottom != barBottom) {
+                barLeft = left;
+                barTop = top;
+                barRight = right;
+                barBottom = bottom;
+                applyPadding();
+            }
+            return super.dispatchApplyWindowInsets(insets);
+        }
+
+        /** How much of the bottom the keyboard covers, from {@link #trackKeyboardInset}. */
+        void keyboard(int covered) {
+            if (covered != keyboard) {
+                keyboard = covered;
+                applyPadding();
+            }
+        }
+
+        private void applyPadding() {
+            setPadding(barLeft, barTop, barRight, Math.max(keyboard, barBottom));
+        }
     }
 
     /**
@@ -6530,10 +6608,16 @@ public final class KioskActivity extends Activity {
      * listener covers the second way to end up hidden: moving between fields while the keyboard is
      * already open.
      */
-    private void keepFocusedFieldAboveKeyboard(ScrollView scroll) {
+    private void keepFocusedFieldAboveKeyboard(PageScroll scroll) {
         final Runnable revealFocused = () -> {
             View focused = getCurrentFocus();
-            if (focused == null) {
+            // Only a text box: it is the keyboard this exists for. The settings column takes the
+            // focus itself when the screen is built (see showConfiguration), and Android 17
+            // reports that as a focus change once the window is up, so this revealed a "field"
+            // as tall as the page and scrolled it by the bottom inset plus the margin below:
+            // every launch on the Pixel 9 Pro XL opened with the title pushed under the clock
+            // (2026-09-25). The Android 9 phone reports no change there and never showed it.
+            if (!(focused instanceof EditText)) {
                 return;
             }
             // Scrolled by hand, against the part of the scroll view the keyboard does not cover,
@@ -6564,8 +6648,7 @@ public final class KioskActivity extends Activity {
             });
         };
         trackKeyboardInset(scroll, inset -> {
-            scroll.setPadding(scroll.getPaddingLeft(), scroll.getPaddingTop(),
-                    scroll.getPaddingRight(), inset);
+            scroll.keyboard(inset);
             if (inset > 0) {
                 revealFocused.run();
             }
@@ -9743,9 +9826,13 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Dark status and navigation icons over a light dashboard, the default light icons
-     * everywhere else. The app's own screens are dark by design, so only the WebView, the one
-     * surface whose colour this app does not choose, ever earns the flip.
+     * Dark status and navigation icons over a light page, the default light icons everywhere
+     * else. Over the dashboard the page is the WebView's, whose colour this app does not choose,
+     * so it is asked ({@link #probePageLuminance}). Over the app's own screens it is the theme,
+     * and only from Android 15: below it the window's theme paints both bars black
+     * (styles.xml), and light icons on black are right in either palette; from Android 15 the
+     * bars are transparent and sit on the page itself (see {@link PageScroll}), so a light
+     * theme put white icons on a near-white page.
      *
      * <p>Both API paths for the same reason as {@link #enterImmersiveMode}: the flags are all
      * that exists below API 30, the controller is the only non-deprecated spelling from it.
@@ -9756,7 +9843,9 @@ public final class KioskActivity extends Activity {
             return;
         }
         boolean dashboardShowing = !configurationVisible && !recorderVisible && !wizardVisible;
-        boolean darkIcons = dashboardShowing && dashboardPageIsLight;
+        boolean darkIcons = dashboardShowing ? dashboardPageIsLight
+                : currentTheme().light
+                        && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             android.view.WindowInsetsController insets = getWindow().getInsetsController();
             if (insets != null) {
