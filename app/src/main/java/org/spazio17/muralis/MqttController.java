@@ -780,6 +780,47 @@ final class MqttController implements MqttCallbackExtended {
             components.put("screensaver_picture", sensor(
                     "Screensaver picture", null, null, null,
                     "{{ value_json.screensaver.picture.title | default('', true) }}"));
+            // The panel's sensors (see Sensors): one entity each, under the panel's device, named
+            // as the companion app names its own. A sensor that is off, or that this device does
+            // not have, is announced as a withdrawal, so switching one off in the settings takes
+            // its entity away rather than stranding it, and a panel without the hardware never
+            // shows a row for it.
+            org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+            for (Sensors.Def def : Sensors.ALL) {
+                org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
+                String key = "sensor_" + def.id;
+                if (one == null || !one.optBoolean("enabled")) {
+                    components.put(key, new JSONObject().put("p", def.platform));
+                    continue;
+                }
+                JSONObject entity = new JSONObject();
+                entity.put("p", def.platform);
+                entity.put("name", def.name);
+                entity.put("unique_id", uniqueId(def.name));
+                if (def.deviceClass != null && !"enum".equals(def.deviceClass)) {
+                    entity.put("device_class", def.deviceClass);
+                }
+                if (def.unit != null) {
+                    entity.put("unit_of_measurement", def.unit);
+                }
+                if (def.stateClass != null) {
+                    entity.put("state_class", def.stateClass);
+                }
+                if (Sensors.BINARY.equals(def.platform)) {
+                    entity.put("payload_on", "ON");
+                    entity.put("payload_off", "OFF");
+                    entity.put("value_template", "{{ 'ON' if value_json.sensors." + def.id
+                            + ".value else 'OFF' }}");
+                } else {
+                    entity.put("value_template", "{{ value_json.sensors." + def.id + ".value }}");
+                }
+                if (def == Sensors.AUDIO) {
+                    entity.put("json_attributes_topic", topicPrefix + "state");
+                    entity.put("json_attributes_template",
+                            "{{ value_json.sensors.audio.attributes | tojson }}");
+                }
+                components.put(key, entity);
+            }
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",

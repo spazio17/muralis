@@ -258,6 +258,12 @@ final class KioskConfig {
             return this;
         }
 
+        /** One sensor's switch; see Sensors. Off until switched on, like the companion app. */
+        Editor sensorEnabled(String id, boolean value) {
+            plain.putBoolean("sensor_" + id, value);
+            return this;
+        }
+
         Editor orientation(String value) {
             plain.putString(ORIENTATION, value);
             // Completes the 2026-08-29 migration: the retired boolean stays readable until the
@@ -451,6 +457,13 @@ final class KioskConfig {
      * Reads just the overlay switch. The dashboard ticker consults it on every redraw, and going
      * through {@link #load} for that would decrypt every secret in {@link SecretStore} each time.
      */
+    /** Whether the sensor with this id is switched on; every sensor starts off. */
+    static boolean sensorEnabled(Context context, String id) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean("sensor_" + id, false);
+    }
+
     static boolean statsOverlayEnabled(Context context) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)

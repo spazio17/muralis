@@ -53,6 +53,22 @@ if(typing){return;}
 if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
+// The sensors' switches and readings, from the status document's sensors block.
+var sensors=data.sensors||{};
+Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
+follow('sensor-'+id,one.enabled);
+var out=document.getElementById('sensor-'+id+'-value');
+if(!out){return;}
+var v=one.value,txt='';
+if(one.enabled){
+if(v==null){txt='--';}
+else if(typeof v==='boolean'){txt=id==='movement'?(v?'moving':'still'):(v?'on':'off');}
+else if(id==='proximity'){txt=one.near?'near':'far';}
+else{txt=String(v)+({light:' lx',pressure:' hPa',temperature:' \u00b0C',humidity:' %'}[id]||'');}}
+out.textContent=txt;});
+var ss=document.getElementById('sum-sensors');
+if(ss){var ids=Object.keys(sensors),on=ids.filter(function(id){return sensors[id]&&sensors[id].enabled;}).length;
+ss.textContent=ids.length?on+' of '+ids.length+' on':'None on this device';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
