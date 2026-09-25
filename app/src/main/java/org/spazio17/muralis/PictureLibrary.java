@@ -69,6 +69,8 @@ import org.spazio17.muralis.PictureSources.Picture;
  */
 final class PictureLibrary {
     private static final String TAG = "MuralisPictures";
+    /** Beside {@code captions.json}; see {@link #hiddenCredits}. */
+    private static final String CREDITS_HIDDEN_FILE = "credits_hidden.json";
     /** Which caption-key migration a panel has had; see {@link #migrateCaptionKeys}. */
     private static final String CAPTIONS_KEY_VERSION = "captions_key_version";
     /** 1 moved names onto URIs; 2 also dropped the names nothing had claimed (2026-09-10). */
@@ -795,6 +797,7 @@ final class PictureLibrary {
             return pictures;
         }
         Map<String, String> captions = captions();
+        Set<String> hidden = hiddenCredits();
         List<String> gone = new ArrayList<>();
         boolean unsure = false;
         // The playlist's own order, which is the point of storing a list rather than a set.
@@ -812,7 +815,7 @@ final class PictureLibrary {
                 gone.add(uri);
                 continue;
             }
-            pictures.add(localPicture(uri, name, captions));
+            pictures.add(localPicture(uri, name, captions, hidden));
         }
         // Only a definite answer edits a playlist: the store answered for every picture, and at
         // least one of them is still there. Every picture vanishing at once is what an ejected
@@ -1036,13 +1039,14 @@ final class PictureLibrary {
     private List<Picture> storedUploads() {
         List<Picture> pictures = new ArrayList<>();
         Map<String, String> captions = captions();
+        Set<String> hidden = hiddenCredits();
         File[] stored = storeDir().listFiles();
         if (stored != null) {
             for (File file : stored) {
                 if (file.isFile() && !file.getName().endsWith(".part")
                         && PictureSources.imageMime(header(file)) != null) {
                     pictures.add(localPicture(Uri.fromFile(file).toString(), file.getName(),
-                            captions));
+                            captions, hidden));
                 }
             }
         }
@@ -1052,13 +1056,14 @@ final class PictureLibrary {
     }
 
     /** The credit field carries the file name here: it is what both surfaces list a picture by. */
-    private Picture localPicture(String url, String name, Map<String, String> captions) {
+    private Picture localPicture(String url, String name, Map<String, String> captions,
+            Set<String> hidden) {
         // By URI alone. The file-name fallback this replaced crossed captions between same-named
         // pictures in different folders; migrateCaptionKeys moved the old keys across instead.
         String caption = captions.get(url);
         String title = caption != null && !caption.isEmpty()
                 ? caption : PictureSources.fileTitleToWords(name);
-        return new Picture(url, title, name, "");
+        return new Picture(url, title, name, "", hidden.contains(url));
     }
 
     /** The first bytes of a file, enough for {@link PictureSources#imageMime}. */
@@ -1261,6 +1266,69 @@ final class PictureLibrary {
     }
 
     /**
+     * The pictures whose credit their owner has switched off, by address.
+     *
+     * <p>A file of its own beside {@code captions.json} rather than a second value inside it: a
+     * name and "show no line at all" are two different choices, and switching the line off must
+     * keep the name somebody typed, so switching it back on brings the same words back. Keyed by
+     * address for the reason captions are (see {@link #localPicture}), and scoped like a caption:
+     * the picture's choice, whichever playlist shows it.
+     */
+    Set<String> hiddenCredits() {
+        Set<String> hidden = new java.util.LinkedHashSet<>();
+        File file = new File(storeDir(), CREDITS_HIDDEN_FILE);
+        if (!file.isFile()) {
+            return hidden;
+        }
+        try {
+            JSONArray stored = new JSONArray(readText(file));
+            for (int i = 0; i < stored.length(); i++) {
+                String uri = stored.optString(i, "");
+                if (!uri.isEmpty()) {
+                    hidden.add(uri);
+                }
+            }
+        } catch (IOException | JSONException unreadable) {
+            // Read as none, which shows every credit: the safe side for a line that is on unless
+            // somebody switched it off.
+            Log.w(TAG, "Unreadable hidden credits, treated as none", unreadable);
+        }
+        return hidden;
+    }
+
+    /** Switches one picture's credit off, or back on. Returns a reason, or null. */
+    synchronized String setCreditHidden(String uri, boolean hide) {
+        if (uri == null || uri.trim().isEmpty()) {
+            return "no picture was named";
+        }
+        Set<String> hidden = hiddenCredits();
+        if (uri.length() > 4096 || (hide && !hidden.contains(uri) && hidden.size() >= 1000)) {
+            return "the credit store is full or the picture identifier is too long";
+        }
+        boolean changed = hide ? hidden.add(uri) : hidden.remove(uri);
+        if (!changed) {
+            return null;
+        }
+        File dir = storeDir();
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            return "cannot create the picture store";
+        }
+        File target = new File(dir, CREDITS_HIDDEN_FILE);
+        File partial = new File(target.getPath() + ".part");
+        try (OutputStream out = new FileOutputStream(partial)) {
+            out.write(new JSONArray(hidden).toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException failed) {
+            return "cannot store the choice: " + failed.getMessage();
+        }
+        if (!partial.renameTo(target)) {
+            return "cannot store the choice";
+        }
+        KioskService.publishTelemetrySoon(app);
+        forgetLocalCount();
+        return null;
+    }
+
+    /**
      * The panel's own upload store as a page, for the browser's Uploads folder.
      *
      * <p>Uploads are not in MediaStore: they live inside the app's private files, which is what
@@ -1342,7 +1410,8 @@ final class PictureLibrary {
                 return browser.canReadStorage() ? lastSegmentOf(url) : "picture";
             }
             if (label == null) {
-                return browser.canReadStorage() ? lastSegmentOf(url) + " (not found)" : "picture";
+                return browser.canReadStorage() ? lastSegmentOf(url) + PictureSources.NOT_FOUND
+                        : "picture";
             }
             return label;
         }
@@ -1353,7 +1422,7 @@ final class PictureLibrary {
             return lastSegmentOf(url);
         }
         if (name == null) {
-            return lastSegmentOf(url) + " (not found)";
+            return lastSegmentOf(url) + PictureSources.NOT_FOUND;
         }
         return isUpload(url) ? "./uploads/" + name : name;
     }

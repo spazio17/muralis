@@ -21,6 +21,7 @@ public final class PlaylistDocumentTest {
         addingIsOrderedAndIdempotent();
         removingNeverTouchesAnythingElse();
         reorderTakesAWholePermutation();
+        anOrderArrivesAsOneAddressPerLine();
         repointMovesAnAddressWithoutDuplicating();
         capsHold();
         aStoredDocumentSurvivesARoundTrip();
@@ -229,6 +230,24 @@ public final class PlaylistDocumentTest {
             name.append('x');
         }
         return name.toString();
+    }
+
+    private static void anOrderArrivesAsOneAddressPerLine() {
+        expect(PlaylistDocument.parseOrder(null).isEmpty(), "no field is no order");
+        expect(PlaylistDocument.parseOrder("").isEmpty(), "an empty field is no order");
+        expect(PlaylistDocument.parseOrder("content://media/external/images/media/3\n"
+                + "file:///data/user/0/x/files/pictures/a%20b.jpg\r\n\n  content://m/1  \n")
+                .equals(Arrays.asList("content://media/external/images/media/3",
+                        "file:///data/user/0/x/files/pictures/a%20b.jpg", "content://m/1")),
+                "lines in order, a CRLF and a blank line and surrounding spaces dropped");
+        // What arrives is only split here; whether it is the playlist's pictures is reorder's call.
+        PlaylistDocument document = three();
+        expectOk(document.add("a", Arrays.asList("one", "two", "three"), 10L));
+        expectOk(document.reorder("a", PlaylistDocument.parseOrder("two\nthree\none"), 20L));
+        expect(document.byId("a").items.equals(Arrays.asList("two", "three", "one")),
+                "a parsed order is taken whole");
+        expectRefused(document.reorder("a", PlaylistDocument.parseOrder("two\none"), 30L),
+                "changed while");
     }
 
     private static void expectOk(String refusal) {

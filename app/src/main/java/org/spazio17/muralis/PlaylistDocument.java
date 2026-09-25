@@ -328,6 +328,27 @@ final class PlaylistDocument {
     }
 
     /**
+     * A whole order as a page sends it: one address per line, in the new order. Blank lines and
+     * the spaces around an address are dropped; nothing else is judged here, {@link #reorder}
+     * decides whether the list is a permutation of the playlist. One field rather than a repeated
+     * one, because the form reader keeps one value per name, and a line break cannot occur in an
+     * address.
+     */
+    static List<String> parseOrder(String text) {
+        List<String> uris = new ArrayList<>();
+        if (text == null) {
+            return uris;
+        }
+        for (String line : text.split("\\r?\\n")) {
+            String uri = line.trim();
+            if (!uri.isEmpty()) {
+                uris.add(uri);
+            }
+        }
+        return uris;
+    }
+
+    /**
      * Points one item at a different address without moving it in the order.
      *
      * <p>For the one-off migration off document URIs: the same picture, named the way the panel

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material's drag_indicator, the same six dots the web page's glyph map draws as drag: the grip a
+     person grabs to move a picture in a playlist. White, tinted at runtime from the palette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M9,5h0.01M15,5h0.01M9,12h0.01M15,12h0.01M9,19h0.01M15,19h0.01"/>
+</vector>

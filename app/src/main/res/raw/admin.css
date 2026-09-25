@@ -117,8 +117,6 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
 .field.dense{margin-top:0}
 .field.dense input{height:40px;padding:0 12px;font-size:14px}
 .field.dense input:focus{padding:0 11px}
-.field.dense .ib{position:absolute;right:0;top:0}
-.field.dense input{padding-right:44px}
 /* A button beside a field sits on the box's centre line; neither the floating label above the box
    nor a helper line under it counts, which is why the button is placed from the top: 24 px for the
    field's own margin and 8 px for half the difference between the 56 px box and the 40 px button. */
@@ -286,15 +284,35 @@ ul.pictures.details img.thumb{width:48px;height:48px}
 .sizes a.size{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--outline);font-size:14px;font-weight:500;color:var(--subtext);text-decoration:none;font-variant-numeric:tabular-nums}
 .sizes a.size.on{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
 .sizes a.size.on::before{content:"\2713";font-size:12px}
-/* ---- what the playlist holds: the picture, the path, then the credit field with its save tick
-   inside and the remove button beside it, both 40 px on one line ---- */
-ul.held li{display:grid;grid-template-columns:40px 1fr 48px;grid-template-areas:"pic name name" "pic cap acts";column-gap:12px;row-gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--outline-variant)}
+/* ---- what the playlist holds, in the order it is shown: the grip and the picture, the path, then
+   the credit field, which stores itself when it lets go, the credit's eye and the remove button,
+   all 40 px on one line. The grip, Material's six dots, and the thumbnail are the handle a picture is dragged
+   by; admin_pictures.js marks the list movable when it holds more than one, and without scripting
+   there is no grip and nothing here looks draggable. ---- */
+ul.held li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"pic name name" "pic cap acts";column-gap:12px;row-gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--outline-variant);background:var(--card)}
 ul.held li:last-child{border-bottom:0}
-ul.held img.thumb{grid-area:pic;align-self:start;margin-top:2px}
+ul.held .grab{grid-area:pic;align-self:start;margin-top:2px;display:flex;align-items:center;border-radius:8px}
+ul.held .grip{display:none;width:20px;height:40px;align-items:center;justify-content:center;margin-right:4px;color:var(--subtext)}
+ul.held .grip svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:3.5;stroke-linecap:round}
+html.js ul.held.movable .grip{display:flex}
+html.js ul.held.movable .grab{cursor:grab;touch-action:none}
+html.js ul.held.movable .grab:focus-visible{outline:2px solid var(--accent-alt);outline-offset:2px}
+ul.held li.dragging{position:relative;z-index:2;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.28);border-bottom-color:transparent}
+ul.held li.dragging .grab{cursor:grabbing}
+ul.held li.shifting{transition:transform .12s ease-out}
 ul.held .name{grid-area:name;font-size:14px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 ul.held form.caption{grid-area:cap;display:block;margin:0;min-width:0}
-ul.held .acts{grid-area:acts;display:flex;justify-content:center}
+ul.held .acts{grid-area:acts;display:flex;align-items:center;gap:4px}
 ul.held .acts form{margin:0}
+/* On a phone the credit line starts under the grip and the picture, so the name box keeps the
+   width its label needs; beside them it was 120 px and the label was cut. */
+@media (max-width:479px){ul.held li{grid-template-areas:"pic name name" "cap cap acts"}ul.held .grab{align-self:center;margin-top:0}}
+.field.off input{color:var(--subtext);border-style:dashed;background:transparent}
+.field input::placeholder{color:var(--subtext);opacity:.7}
+.ib:disabled{opacity:.38;cursor:default;background:transparent}
+/* A state shown by a glyph alone, in a card head where a button would sit: the shuffle mark. */
+.mark{width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--subtext)}
+.mark svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 /* ---- upload: Browse is the file input's label, the input itself off screen but focusable ---- */
 .uploadrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 input.offscreen{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}

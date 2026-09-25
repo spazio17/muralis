@@ -61,10 +61,18 @@ final class HttpAdminServer {
     /**
      * The one request that carries megabytes: the picture upload for the screensaver's
      * playlists. Its body budget and deadline are its own; every other request keeps the 16 KB
-     * and eight seconds that suit commands and settings. A browser sends every chosen file in
+     * and eight seconds that suit commands and settings, but for a playlist's order, which gets
+     * {@link #MAX_ORDER_BYTES} in the same eight seconds. A browser sends every chosen file in
      * one request, so the whole-request cap is the working limit a person sees on the page.
      */
     private static final int MAX_UPLOAD_BYTES = 24 * 1024 * 1024;
+    /**
+     * A playlist's whole order, which is every address in it: up to {@link
+     * PlaylistDocument#MAX_PICTURES} of them, form-encoded, at roughly a hundred bytes each for
+     * the addresses panels really hold and room for longer file names. 16 KB held about 170, so a
+     * big playlist could not be reordered from the page at all. Eight seconds still suffice.
+     */
+    private static final int MAX_ORDER_BYTES = 256 * 1024;
     private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
     private static final int UPLOAD_DEADLINE_MS = 120_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
@@ -516,7 +524,10 @@ final class HttpAdminServer {
             }
             byte[] body;
             try {
-                body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES : MAX_BODY_BYTES);
+                boolean order = method.equals("POST")
+                        && requestPath.equals("/api/playlists/order");
+                body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
+                        : order ? MAX_ORDER_BYTES : MAX_BODY_BYTES);
             } catch (BodyTooLargeException tooLarge) {
                 writeResponse(output, 413, "text/plain",
                         bytes("Payload Too Large: " + tooLarge.getMessage()));
@@ -656,6 +667,15 @@ final class HttpAdminServer {
                     .setCaption(form.get("name"), form.getOrDefault("caption", ""));
             answerPictureChange(query, form, refusal == null ? "Name saved."
                     : refused("Not saved", refusal), refusal == null, output);
+        } else if (path.equals("/api/pictures/credit") && method.equals("POST")) {
+            // One picture's credit switched off or back on, from the eye beside its name box.
+            // Stored at once, like the name, because it belongs to the picture and not to a draft.
+            Map<String, String> form = parseFormBody(headers, body);
+            Boolean shown = KioskCommandDispatcher.parseEnabledFlag(form.get("shown"));
+            String refusal = shown == null ? "Supply shown as true or false"
+                    : PictureLibrary.get(context).setCreditHidden(form.get("name"), !shown);
+            answerPictureChange(query, form, refusal == null ? ""
+                    : refused("Not changed", refusal), refusal == null, output);
         } else if (path.equals("/api/pictures/select") && method.equals("POST")) {
             Map<String, String> form = parseFormBody(headers, body);
             Boolean selected = KioskCommandDispatcher.parseEnabledFlag(form.get("selected"));
@@ -1263,6 +1283,14 @@ final class HttpAdminServer {
         paths.put("trash", "<path d=\"M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3\"/>");
         paths.put("minus", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M8 12h8\"/>");
         paths.put("check", "<path d=\"M5 12l5 5L20 7\"/>");
+        // Material's drag_indicator, the six dots a person grabs to move a row.
+        paths.put("drag", "<path d=\"M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01\"/>");
+        paths.put("shuffle", "<path d=\"M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5\"/>");
+        // A picture's credit shown, or switched off: Material's visibility pair.
+        paths.put("eye", "<path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z\"/>"
+                + "<circle cx=\"12\" cy=\"12\" r=\"3\"/>");
+        paths.put("eye_off", "<path d=\"M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z\"/>"
+                + "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M4 4l16 16\"/>");
         paths.put("prev", "<path d=\"M15 6l-6 6 6 6\"/>");
         paths.put("next", "<path d=\"M9 6l6 6-6 6\"/>");
         paths.put("down", "<path d=\"M6 9l6 6 6-6\"/>");
@@ -1328,9 +1356,15 @@ final class HttpAdminServer {
 
     /** A 40 px icon button that submits its form; the label is its tooltip and its spoken name. */
     private static String iconButton(String glyphName, String label, String extraClass) {
+        return iconButton(glyphName, label, extraClass, false);
+    }
+
+    /** The same, greyed and inert when {@code disabled}: the eye while every credit is off. */
+    private static String iconButton(String glyphName, String label, String extraClass,
+            boolean disabled) {
         return "<button type=\"submit\" class=\"ib" + (extraClass.isEmpty() ? "" : " " + extraClass)
-                + "\" title=\"" + escapeHtml(label) + "\" aria-label=\"" + escapeHtml(label) + "\">"
-                + glyph(glyphName) + "</button>";
+                + "\" title=\"" + escapeHtml(label) + "\" aria-label=\"" + escapeHtml(label) + "\""
+                + (disabled ? " disabled" : "") + ">" + glyph(glyphName) + "</button>";
     }
 
     /** The same shape as a link: Back, Edit. */
@@ -1990,7 +2024,9 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append("</section>")
                 .append("<section class=\"card\" id=\"playlist-held\">")
-                .append("<h2>In this playlist</h2>")
+                .append("<div class=\"cardhead\"><h2>In this playlist</h2>")
+                .append(shuffleMark())
+                .append("</div>")
                 .append("<div id=\"playlist-items\">")
                 .append(playlistItems(playlist, library))
                 .append("</div>")
@@ -1999,6 +2035,20 @@ final class HttpAdminServer {
         return html.append(pageEnd()).toString();
     }
 
+
+    /**
+     * The shuffle glyph in the held list's head while the screensaver shuffles, or nothing: a
+     * mark and not a button, since shuffle is set with the other screensaver settings, and a mark
+     * rather than a sentence, because a sentence is the last resort (Juri, 2026-09-25).
+     */
+    private String shuffleMark() {
+        if (!KioskConfig.screensaverOf(context).shuffle) {
+            return "";
+        }
+        String says = "Shuffle is on, so the screensaver does not follow this order";
+        return "<span class=\"mark\" role=\"img\" title=\"" + says + "\" aria-label=\"" + says
+                + "\">" + glyph("shuffle") + "</span>";
+    }
 
     /**
      * The page's title is the playlist's own name, with the rename pencil beside it in the app
@@ -2033,15 +2083,24 @@ final class HttpAdminServer {
 
 
     /**
-     * Everything the playlist holds: the picture, the folder and the name, then the box that
-     * names it for its credit with the save tick inside and the remove button beside it, both
-     * 40 px on one line (Juri, 2026-09-23).
+     * Everything the playlist holds, in the order the screensaver shows it: the picture, the
+     * folder and the name, then the box that names it for its credit, the eye that switches its
+     * credit off or on, and the remove button, all 40 px on one line (Juri, 2026-09-23 and
+     * 2026-09-25). The box has no save tick: {@code admin_pictures.js} stores it when it lets go
+     * of the focus, and Enter submits its form, which is also the path with no scripting.
      *
      * <p>The folder is prepended because this list is the one place two pictures with the same
      * name from two folders sit next to each other (Juri, 2026-09-10). It is a fragment of its
      * own because a tick in the browser changes it, and the page must not reload to say so.
      * Remove takes the picture out of this playlist and deletes nothing; it posts to the same
      * endpoint the browser's tick does, with the selection off.
+     *
+     * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
+     * thumbnail; {@code admin_pictures.js} does the drag and posts the whole order, and without
+     * scripting the grip is not drawn at all. No sentence explains any of it (Juri, 2026-09-25:
+     * a sentence is the last resort). An empty name box shows, greyed, the words the screensaver
+     * prints instead, the file's name. With every credit switched off in the screensaver
+     * settings, each eye stands crossed out and inert, which says the same without a line.
      */
     private String playlistItems(PlaylistDocument.Playlist playlist, PictureLibrary library) {
         StringBuilder html = new StringBuilder();
@@ -2054,25 +2113,43 @@ final class HttpAdminServer {
             return html.append("<p class=\"hint\">Nothing picked yet. Open a folder above and")
                     .append(" add its pictures.</p>").toString();
         }
+        boolean creditsShown = KioskConfig.screensaverOf(context).credit;
+        boolean movable = playlist.items.size() > 1;
         Map<String, String> captions = library.captions();
-        html.append("<ul class=\"pictures held\">");
+        java.util.Set<String> creditsOff = library.hiddenCredits();
+        html.append("<ul class=\"pictures held\" id=\"held-list\">");
         int index = 0;
         for (String uri : playlist.items) {
-            html.append("<li>").append(thumbnail(uri))
-                    .append("<span class=\"name\">")
-                    .append(escapeHtml(library.displayPath(uri))).append("</span>")
+            String label = library.displayPath(uri);
+            String fallback = PictureSources.creditFromLabel(label);
+            boolean off = creditsOff.contains(uri);
+            html.append("<li data-uri=\"").append(escapeHtml(uri)).append("\">")
+                    .append("<span class=\"grab\">")
+                    .append(movable ? "<span class=\"grip\">" + glyph("drag") + "</span>" : "")
+                    .append(thumbnail(uri)).append("</span>")
+                    .append("<span class=\"name\">").append(escapeHtml(label)).append("</span>")
                     .append("<form class=\"caption\" method=\"post\"")
                     .append(" action=\"/api/pictures/caption\">")
                     .append(hidden("name", uri)).append(hidden("playlist", playlist.id))
-                    .append("<div class=\"field dense\"><input type=\"text\" id=\"caption-")
-                    .append(index).append("\" name=\"caption\" maxlength=\"200\" placeholder=\" \"")
+                    .append("<div class=\"field dense").append(off ? " off" : "")
+                    .append("\"><input type=\"text\" id=\"caption-")
+                    .append(index).append("\" name=\"caption\" maxlength=\"200\" placeholder=\"")
+                    .append(fallback.isEmpty() ? " " : escapeHtml(fallback)).append("\"")
                     .append(" value=\"").append(escapeHtml(captions.getOrDefault(uri, "")))
-                    .append("\"").append(MACHINE_TEXT).append(">")
-                    .append("<label for=\"caption-").append(index)
-                    .append("\">Name for the credit</label>")
-                    .append(iconButton("check", "Save the name", "primary"))
+                    .append("\"").append(off ? " disabled" : "").append(MACHINE_TEXT).append(">")
+                    .append("<label for=\"caption-").append(index).append("\">")
+                    .append(off ? "Credit hidden" : "Name for the credit").append("</label>")
                     .append("</div></form>")
                     .append("<span class=\"acts\">")
+                    .append("<form class=\"credit\" method=\"post\"")
+                    .append(" action=\"/api/pictures/credit\">")
+                    .append(hidden("name", uri)).append(hidden("playlist", playlist.id))
+                    .append(hidden("shown", off ? "true" : "false"))
+                    .append(creditsShown ? iconButton(off ? "eye_off" : "eye",
+                            off ? "Show the credit" : "Hide the credit", "")
+                            : iconButton("eye_off",
+                                    "Credits are off in the screensaver settings", "", true))
+                    .append("</form>")
                     .append("<form method=\"post\" action=\"/api/pictures/select\">")
                     .append(hidden("uri", uri)).append(hidden("playlist", playlist.id))
                     .append(hidden("selected", "false"))
@@ -2433,9 +2510,9 @@ final class HttpAdminServer {
     }
 
     /**
-     * Use, rename and delete, from the table above.
+     * Use, rename, delete and create from the table above, and the order from a playlist's page.
      *
-     * <p>One entry point for all three rather than three branches in the router, because they are
+     * <p>One entry point for all of them rather than a branch each in the router, because they are
      * the same operation to this class: load the document, change it, write it back, answer with
      * the page the person is looking at. The rules and every refusal come from
      * {@link PlaylistDocument}, so the panel and this page cannot disagree about them.
@@ -2467,6 +2544,19 @@ final class HttpAdminServer {
                         form.getOrDefault("name", ""), now);
                 done = "Playlist created. Open it to pick its pictures.";
                 break;
+            case "/api/playlists/order": {
+                // The whole order, one address per line, from a drag on the playlist page. A list
+                // that is not exactly the playlist's pictures is refused whole (see reorder), so a
+                // page opened before somebody else's change cannot scramble it. No order at all
+                // is its own refusal: "the playlist changed" would send a person looking for a
+                // change that never happened.
+                java.util.List<String> order = PlaylistDocument.parseOrder(form.get("order"));
+                change = document -> order.isEmpty() ? "no order was sent"
+                        : document.reorder(id, order, now);
+                // Nothing to say: the list already stands in the order that was dropped.
+                done = null;
+                break;
+            }
             default:
                 writeResponse(output, 404, "text/plain; charset=utf-8", bytes("Unknown\n"));
                 return;

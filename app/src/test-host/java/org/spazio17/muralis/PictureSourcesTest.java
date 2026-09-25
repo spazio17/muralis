@@ -32,7 +32,29 @@ public final class PictureSourcesTest {
         testUrls();
         testUntrustedUrls();
         testDecodeBudget();
+        testCreditFromLabel();
         System.out.println("PictureSourcesTest passed");
+    }
+
+    private static void testCreditFromLabel() {
+        require("pd 1".equals(PictureSources.creditFromLabel("./Pictures/MuralisTest/pd_1.jpg")),
+                "a folder label gives the file's name in words, as the screensaver prints it");
+        require("SardineBait-UHD".equals(
+                PictureSources.creditFromLabel("./uploads/SardineBait-UHD.jpg")),
+                "an upload's label works the same");
+        require("IMG 20260925".equals(PictureSources.creditFromLabel("IMG_20260925.png")),
+                "a bare name with an extension, when the store knows no folder");
+        require("".equals(PictureSources.creditFromLabel("186" + PictureSources.NOT_FOUND)),
+                "a picture that is gone has no default credit");
+        require("".equals(PictureSources.creditFromLabel("186")),
+                "a bare store id, when the store did not answer, is not a name");
+        require("".equals(PictureSources.creditFromLabel("picture")),
+                "nor is the word the page shows when the panel may not read its pictures");
+        require("".equals(PictureSources.creditFromLabel(null))
+                && "".equals(PictureSources.creditFromLabel("")), "nothing gives nothing");
+        require("läbel test".equals(
+                PictureSources.creditFromLabel("./Pictures/Review 0.6.1 é/läbel test.png")),
+                "accents and spaces in the folder and the name survive");
     }
 
     private static void testDecodeBudget() {

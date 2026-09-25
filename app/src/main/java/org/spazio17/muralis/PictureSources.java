@@ -39,13 +39,47 @@ final class PictureSources {
         final String credit;
         /** Where the credit line could point, kept for the status document; may be empty. */
         final String link;
+        /**
+         * The owner switched this picture's credit off on the playlist page. Only a local picture
+         * can carry it: an online source's line is the attribution its licence asks for.
+         */
+        final boolean creditHidden;
 
         Picture(String url, String title, String credit, String link) {
+            this(url, title, credit, link, false);
+        }
+
+        Picture(String url, String title, String credit, String link, boolean creditHidden) {
             this.url = url == null ? "" : url;
             this.title = title == null ? "" : title;
             this.credit = credit == null ? "" : credit;
             this.link = link == null ? "" : link;
+            this.creditHidden = creditHidden;
         }
+    }
+
+    /**
+     * What the playlist page says after a picture whose file is gone, so the label can be told
+     * apart from a real name by the code that reads it back (see {@link #creditFromLabel}).
+     */
+    static final String NOT_FOUND = " (not found)";
+
+    /**
+     * The credit a local picture shows when its owner has typed none, worked out from the label
+     * the playlist page already has ({@code ./folder/name.jpg}), so the page can show it in the
+     * empty box without asking the picture store a second time. Empty when the label names no
+     * file: a picture that is gone, and the bare store id or the word "picture" the page falls
+     * back to when the store did not answer, neither of which has a folder or an extension.
+     */
+    static String creditFromLabel(String label) {
+        if (label == null || label.isEmpty() || label.endsWith(NOT_FOUND)) {
+            return "";
+        }
+        String name = label.substring(label.lastIndexOf('/') + 1);
+        if (!label.contains("/") && name.indexOf('.') < 0) {
+            return "";
+        }
+        return fileTitleToWords(name);
     }
 
     private PictureSources() {
