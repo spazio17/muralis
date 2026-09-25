@@ -868,6 +868,10 @@ public final class KioskActivity extends Activity {
             proBilling.release();
             proBilling = null;
         }
+        if (appLogThread != null) {
+            appLogThread.quitSafely();
+            appLogThread = null;
+        }
         destroyWebView();
         super.onDestroy();
     }
@@ -2360,6 +2364,26 @@ public final class KioskActivity extends Activity {
         statsOverlayInput.setOnCheckedChangeListener(
                 (button, checked) -> applyLiveSetting(editor -> editor.statsOverlay(checked)));
         statsCard.addView(statsOverlayInput, matchWrap());
+
+        // The app's own log under the switch, the same block the web page has (see
+        // HttpAdminServer.statsBody and admin_stats.js): the last lines logcat holds for this
+        // process, read every few seconds off the main thread while the block is on screen, and
+        // stopped by its own detach listener. The freshest line is at the bottom, so the block
+        // is scrolled there on every change that arrives while the reader was at the end.
+        TextView logReadout = new FlushText(this);
+        logReadout.setTypeface(Typeface.MONOSPACE);
+        logReadout.setTextSize(11);
+        logReadout.setTextColor(theme.text);
+        logReadout.setLineSpacing(dp(1), 1.05f);
+        logReadout.setPadding(statsPad, statsPad, statsPad, statsPad);
+        logReadout.setBackground(theme.panel(theme.lowest(), dp(10)));
+        // Fewer lines than the web page and no scroller of its own: a block that scrolls inside
+        // a page that scrolls fought the finger on the phone (2026-09-25), and the wall is not
+        // where a long log gets read. The page grows with it; the newest line is at the bottom.
+        LinearLayout.LayoutParams logParams = matchWrap();
+        logParams.topMargin = dp(10);
+        statsCard.addView(logReadout, logParams);
+        followAppLog(logReadout);
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -6368,6 +6392,65 @@ public final class KioskActivity extends Activity {
         keepFocusedFieldAboveKeyboard(scroll);
         restoreCarriedScroll(scroll);
         return scroll;
+    }
+
+    /** How often the settings screen's log block is re-read; logcat is a process spawn each time. */
+    private static final long APP_LOG_REFRESH_MS = 3_000L;
+
+    /** Lines the panel's block shows; the web page shows {@link AppLog#LINES}. */
+    private static final int PANEL_LOG_LINES = 30;
+
+    /**
+     * Keeps a log block current for as long as it is on screen.
+     *
+     * <p>One background thread reads the tail (a logcat spawn, tens of milliseconds, never on the
+     * main thread), the main thread paints it if it changed, and the view's own detach listener
+     * ends the loop, so a settings screen replaced by the dashboard leaves nothing running.
+     */
+    private void followAppLog(TextView block) {
+        final Handler worker = new Handler(readerThread().getLooper());
+        final boolean[] gone = {false};
+        final Runnable[] read = new Runnable[1];
+        read[0] = () -> {
+            if (gone[0]) {
+                return;
+            }
+            String text = AppLog.tail(PANEL_LOG_LINES);
+            mainHandler.post(() -> {
+                if (gone[0]) {
+                    return;
+                }
+                if (!text.contentEquals(block.getText())) {
+                    block.setText(text);
+                }
+                worker.postDelayed(read[0], APP_LOG_REFRESH_MS);
+            });
+        };
+        block.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View view) {
+                gone[0] = false;
+                worker.removeCallbacks(read[0]);
+                worker.post(read[0]);
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View view) {
+                gone[0] = true;
+                worker.removeCallbacks(read[0]);
+            }
+        });
+    }
+
+    private android.os.HandlerThread appLogThread;
+
+    /** The one thread the log block reads on, started when first needed and kept. */
+    private android.os.HandlerThread readerThread() {
+        if (appLogThread == null) {
+            appLogThread = new android.os.HandlerThread("MuralisAppLog");
+            appLogThread.start();
+        }
+        return appLogThread;
     }
 
     /**

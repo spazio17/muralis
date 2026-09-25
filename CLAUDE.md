@@ -368,6 +368,14 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
+- **The app's own log is a block under the system stats on both surfaces (2026-09-25),** the
+  lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
+  needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
+  the last 30 on the panel, which grows with them rather than scrolling inside the page. The panel
+  re-reads every three seconds on its own thread while the block is on screen, the web page every
+  five with the stats poll's refusals, and follows the end while the reader is at the end.
+  Nothing is stored or sent; logd prunes the buffer as it likes, so a missing line proves nothing.
+  Asked for as Fully's `cmd=logcat`; the site's API page does not describe it yet.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public

@@ -181,3 +181,27 @@ ok();})
 bad('stats unavailable: '+((error&&error.message)||'no response'));});}
 poll();
 })();
+// The app's own log under the readout, the last lines logcat holds for this process, polled on
+// the same five-second cadence and with the same refusals as the stats: a 401, 403 or 429 stops
+// it rather than walking up the lockout ladder. The block follows its own end while the reader
+// is at the end, and holds still once they have scrolled up to read something.
+(function(){
+var target=document.getElementById('log');
+if(!target){return;}
+var stopped=false,fails=0;
+function again(){if(stopped){return;}
+setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
+function poll(){fetch('/api/log',{credentials:'same-origin'})
+.then(function(r){
+if(r.status===401||r.status===403||r.status===429){stopped=true;return null;}
+if(!r.ok){throw new Error('HTTP '+r.status);}
+return r.text();})
+.then(function(text){if(text===null){return;}
+fails=0;
+var atEnd=target.scrollHeight-target.scrollTop-target.clientHeight<24;
+if(target.textContent!==text){target.textContent=text;
+if(atEnd){target.scrollTop=target.scrollHeight;}}
+again();})
+.catch(function(){fails++;again();});}
+poll();
+})();

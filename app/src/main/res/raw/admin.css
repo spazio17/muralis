@@ -214,7 +214,8 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 /* ---- stats readout ---- */
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;background:var(--lowest);border-radius:8px;padding:12px 14px;color:var(--subtext);margin:8px 0 0}
 .mono.wrap{overflow-wrap:anywhere}
-#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
+#stats,#log{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
+#log{max-height:320px;overflow:auto;overflow-wrap:anywhere;color:var(--text)}
 /* ---- the rename pencil beside the title: a <details>, so it works with no scripting ---- */
 details.rename{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 1 auto;min-width:0}
 details.rename[open]{flex:1 1 20rem}

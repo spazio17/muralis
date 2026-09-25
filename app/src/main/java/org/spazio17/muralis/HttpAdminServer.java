@@ -714,6 +714,11 @@ final class HttpAdminServer {
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
+        } else if (path.equals("/api/log") && method.equals("GET")) {
+            // The app's own log, plain text, the last AppLog.LINES lines: what the settings page's
+            // log block polls, and what a curl gets for a support mail.
+            writeResponse(output, 200, "text/plain; charset=utf-8",
+                    bytes(AppLog.tail(AppLog.LINES)));
         } else if (path.equals("/api/check") && method.equals("POST")) {
             // POST, not GET, even though it changes nothing on this device. It makes the panel
             // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
@@ -1628,9 +1633,13 @@ final class HttpAdminServer {
     private String statsBody(KioskConfig config) {
         // The switch sits under the readout it governs. No form and no Save button: it stands
         // alone and applies itself, the way the brightness controls do; see settingScript.
+        // The log block under the switch: the panel's settings screen has the same two blocks in
+        // the same order, and admin_stats.js fills both. Empty until the first poll, since a
+        // "loading" word in a log would read as a log line.
         return "<pre id=\"stats\">loading...</pre>"
                 + switchRow("stats-overlay", "Show system stats on the dashboard",
-                        " data-setting=\"stats_overlay\"", config.statsOverlay);
+                        " data-setting=\"stats_overlay\"", config.statsOverlay)
+                + "<pre id=\"log\" aria-label=\"The app's log\"></pre>";
     }
 
     private String quickActionsBody() {
