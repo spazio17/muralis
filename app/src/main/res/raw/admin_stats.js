@@ -184,24 +184,51 @@ poll();
 // The app's own log under the readout, the last lines logcat holds for this process, polled on
 // the same five-second cadence and with the same refusals as the stats: a 401, 403 or 429 stops
 // it rather than walking up the lockout ladder. The block follows its own end while the reader
-// is at the end, and holds still once they have scrolled up to read something.
+// is at the end, and holds still once they have scrolled up to read something. The row above it
+// is what every log reader has: the level (warnings and errors by default), a search, pause,
+// copy, and clear, which hides everything logged before the moment it was pressed.
 (function(){
-var target=document.getElementById('log');
-if(!target){return;}
-var stopped=false,fails=0;
+var target=document.getElementById('log'),bar=document.getElementById('logbar');
+if(!target||!bar){return;}
+var stopped=false,fails=0,level='W',query='',paused=false,since='',lines=[];
+var pause=document.getElementById('log-pause'),box=document.getElementById('log-q');
+function paint(){
+var atEnd=target.scrollHeight-target.scrollTop-target.clientHeight<24,q=query.toLowerCase();
+var frag=document.createDocumentFragment(),n=0;
+lines.forEach(function(l){
+if(l.time<=since){return;}
+if(q&&l.text.toLowerCase().indexOf(q)<0){return;}
+var s=document.createElement('span');s.className='lv-'+l.level;s.textContent=l.text+'\n';frag.appendChild(s);n++;});
+target.textContent='';target.appendChild(frag);
+if(atEnd){target.scrollTop=target.scrollHeight;}}
+// "HH:MM:SS L/Tag: message" per line; the time compared as text, which orders within a day.
+function parse(text){return text.split('\n').filter(Boolean).map(function(t){
+return {time:t.slice(0,8),level:t.charAt(10)==='/'&&'VDIWEF'.indexOf(t.charAt(9))>=0?t.charAt(9):'I',text:t};});}
 function again(){if(stopped){return;}
 setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
-function poll(){fetch('/api/log',{credentials:'same-origin'})
+function poll(){fetch('/api/log?level='+level,{credentials:'same-origin'})
 .then(function(r){
 if(r.status===401||r.status===403||r.status===429){stopped=true;return null;}
 if(!r.ok){throw new Error('HTTP '+r.status);}
 return r.text();})
 .then(function(text){if(text===null){return;}
 fails=0;
-var atEnd=target.scrollHeight-target.scrollTop-target.clientHeight<24;
-if(target.textContent!==text){target.textContent=text;
-if(atEnd){target.scrollTop=target.scrollHeight;}}
+if(!paused){lines=parse(text);paint();}
 again();})
 .catch(function(){fails++;again();});}
+bar.querySelectorAll('.lvl').forEach(function(b){b.addEventListener('click',function(){
+level=b.dataset.level;
+bar.querySelectorAll('.lvl').forEach(function(o){o.setAttribute('aria-pressed',String(o===b));});
+poll();});});
+box.addEventListener('input',function(){query=box.value;paint();});
+pause.addEventListener('click',function(){paused=!paused;
+pause.setAttribute('aria-pressed',String(paused));pause.title=paused?'Follow':'Pause';pause.setAttribute('aria-label',pause.title);
+pause.classList.toggle('on',paused);if(!paused){poll();}});
+document.getElementById('log-copy').addEventListener('click',function(){
+var text=target.textContent;
+if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text);return;}
+var range=document.createRange();range.selectNodeContents(target);var sel=getSelection();sel.removeAllRanges();sel.addRange(range);document.execCommand('copy');sel.removeAllRanges();});
+document.getElementById('log-clear').addEventListener('click',function(){
+since=lines.length?lines[lines.length-1].time:since;paint();});
 poll();
 })();

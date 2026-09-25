@@ -715,10 +715,12 @@ final class HttpAdminServer {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
         } else if (path.equals("/api/log") && method.equals("GET")) {
-            // The app's own log, plain text, the last AppLog.LINES lines: what the settings page's
-            // log block polls, and what a curl gets for a support mail.
-            writeResponse(output, 200, "text/plain; charset=utf-8",
-                    bytes(AppLog.tail(AppLog.LINES)));
+            // The app's own log, plain text, the last AppLog.LINES lines at or above ?level=
+            // (V, D, I, W, E; everything without it) that contain ?q= (anything without it):
+            // what the settings page's log block polls, and what a curl gets for a support mail.
+            writeResponse(output, 200, "text/plain; charset=utf-8", bytes(AppLog.text(
+                    AppLog.matching(AppLog.tail(AppLog.LINES,
+                            AppLog.levelOf(queryValue(query, "level"))), queryValue(query, "q")))));
         } else if (path.equals("/api/check") && method.equals("POST")) {
             // POST, not GET, even though it changes nothing on this device. It makes the panel
             // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
@@ -1344,6 +1346,13 @@ final class HttpAdminServer {
         paths.put("reboot", "<path d=\"M4 4v6h6M20 20v-6h-6M20 9A8 8 0 006.3 5.3L4 10"
                 + "M4 15a8 8 0 0013.7 3.7L20 14\"/>");
         paths.put("reload", "<path d=\"M21 12a9 9 0 11-3-6.7M21 3v6h-6\"/>");
+        // The log block's row: Material's search, pause, play, content_copy and block.
+        paths.put("search", "<circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"M20 20l-4-4\"/>");
+        paths.put("pause", "<path d=\"M8 5v14M16 5v14\"/>");
+        paths.put("play", "<path d=\"M7 5l12 7-12 7z\"/>");
+        paths.put("copy", "<rect x=\"9\" y=\"9\" width=\"11\" height=\"11\" rx=\"1.5\"/>"
+                + "<path d=\"M15 9V5.5A1.5 1.5 0 0013.5 4h-8A1.5 1.5 0 004 5.5v8A1.5 1.5 0 005.5 15H9\"/>");
+        paths.put("clear", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M5.6 5.6l12.8 12.8\"/>");
         paths.put("power", "<path d=\"M12 3v9M18.4 6.6a8 8 0 11-12.8 0\"/>");
         paths.put("open", "<path d=\"M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7"
                 + "a1 1 0 011-1h5\"/>");
@@ -1633,12 +1642,30 @@ final class HttpAdminServer {
     private String statsBody(KioskConfig config) {
         // The switch sits under the readout it governs. No form and no Save button: it stands
         // alone and applies itself, the way the brightness controls do; see settingScript.
-        // The log block under the switch: the panel's settings screen has the same two blocks in
-        // the same order, and admin_stats.js fills both. Empty until the first poll, since a
-        // "loading" word in a log would read as a log line.
+        // The log under the switch, the panel's settings screen has the same in the same order:
+        // the level chips (warnings and errors by default, the way Home Assistant's log page
+        // opens), a search box, pause, copy and clear-from-here, then the block admin_stats.js
+        // fills and colours. Empty until the first poll, since a "loading" word in a log would
+        // read as a log line.
         return "<pre id=\"stats\">loading...</pre>"
                 + switchRow("stats-overlay", "Show system stats on the dashboard",
                         " data-setting=\"stats_overlay\"", config.statsOverlay)
+                + "<div class=\"logbar\" id=\"logbar\">"
+                + "<div class=\"levels\" role=\"group\" aria-label=\"Log level\">"
+                + "<button type=\"button\" class=\"lvl\" data-level=\"E\" aria-pressed=\"false\">E</button>"
+                + "<button type=\"button\" class=\"lvl\" data-level=\"W\" aria-pressed=\"true\">W</button>"
+                + "<button type=\"button\" class=\"lvl\" data-level=\"V\" aria-pressed=\"false\">All</button>"
+                + "</div>"
+                + "<label class=\"logsearch\">" + glyph("search")
+                + "<input type=\"search\" id=\"log-q\" autocomplete=\"off\""
+                + " aria-label=\"Search the log\"></label>"
+                + "<button type=\"button\" class=\"ib\" id=\"log-pause\" title=\"Pause\""
+                + " aria-label=\"Pause\" aria-pressed=\"false\">" + glyph("pause") + "</button>"
+                + "<button type=\"button\" class=\"ib\" id=\"log-copy\" title=\"Copy\""
+                + " aria-label=\"Copy\">" + glyph("copy") + "</button>"
+                + "<button type=\"button\" class=\"ib\" id=\"log-clear\" title=\"Clear\""
+                + " aria-label=\"Clear\">" + glyph("clear") + "</button>"
+                + "</div>"
                 + "<pre id=\"log\" aria-label=\"The app's log\"></pre>";
     }
 

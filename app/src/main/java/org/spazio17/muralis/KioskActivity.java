@@ -2365,25 +2365,15 @@ public final class KioskActivity extends Activity {
                 (button, checked) -> applyLiveSetting(editor -> editor.statsOverlay(checked)));
         statsCard.addView(statsOverlayInput, matchWrap());
 
-        // The app's own log under the switch, the same block the web page has (see
+        // The app's own log under the switch, the same as the web page has (see
         // HttpAdminServer.statsBody and admin_stats.js): the last lines logcat holds for this
         // process, read every few seconds off the main thread while the block is on screen, and
-        // stopped by its own detach listener. The freshest line is at the bottom, so the block
-        // is scrolled there on every change that arrives while the reader was at the end.
-        TextView logReadout = new FlushText(this);
-        logReadout.setTypeface(Typeface.MONOSPACE);
-        logReadout.setTextSize(11);
-        logReadout.setTextColor(theme.text);
-        logReadout.setLineSpacing(dp(1), 1.05f);
-        logReadout.setPadding(statsPad, statsPad, statsPad, statsPad);
-        logReadout.setBackground(theme.panel(theme.lowest(), dp(10)));
-        // Fewer lines than the web page and no scroller of its own: a block that scrolls inside
-        // a page that scrolls fought the finger on the phone (2026-09-25), and the wall is not
-        // where a long log gets read. The page grows with it; the newest line is at the bottom.
-        LinearLayout.LayoutParams logParams = matchWrap();
-        logParams.topMargin = dp(10);
-        statsCard.addView(logReadout, logParams);
-        followAppLog(logReadout);
+        // stopped by its own detach listener. Above it the row every log reader has: the level
+        // (warnings and errors by default), a search, pause, copy and clear-from-here. Fewer
+        // lines than the web page and no scroller of its own: a block that scrolls inside a page
+        // that scrolls fought the finger on the phone (2026-09-25), and the wall is not where a
+        // long log gets read. The page grows with it; the newest line is at the bottom.
+        addAppLog(statsCard, theme, statsPad);
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -6400,42 +6390,184 @@ public final class KioskActivity extends Activity {
     /** Lines the panel's block shows; the web page shows {@link AppLog#LINES}. */
     private static final int PANEL_LOG_LINES = 30;
 
+    /** What the log block is showing: the chips, the box and the two buttons write here. */
+    private static final class LogView {
+        char level = 'W';
+        String query = "";
+        boolean paused;
+        /** Lines at or before this time are hidden: what Clear does, from the newest line. */
+        String since = "";
+        List<AppLog.Entry> entries = new ArrayList<>();
+    }
+
     /**
-     * Keeps a log block current for as long as it is on screen.
+     * Builds the log row and block into the stats card and keeps the block current for as long
+     * as it is on screen.
      *
      * <p>One background thread reads the tail (a logcat spawn, tens of milliseconds, never on the
-     * main thread), the main thread paints it if it changed, and the view's own detach listener
-     * ends the loop, so a settings screen replaced by the dashboard leaves nothing running.
+     * main thread), the main thread paints it, and the block's own detach listener ends the loop,
+     * so a settings screen replaced by the dashboard leaves nothing running. A chip or the pause
+     * button asks for a fresh read at once rather than waiting for the next tick.
      */
-    private void followAppLog(TextView block) {
+    private void addAppLog(LinearLayout card, KioskTheme theme, int pad) {
+        final LogView view = new LogView();
         final Handler worker = new Handler(readerThread().getLooper());
         final boolean[] gone = {false};
         final Runnable[] read = new Runnable[1];
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams rowParams = matchWrap();
+        rowParams.topMargin = dp(12);
+        card.addView(row, rowParams);
+
+        final Button[] chips = new Button[3];
+        final char[] levels = {'E', 'W', 'V'};
+        final String[] labels = {"E", "W", "All"};
+        final Runnable paintChips = () -> {
+            for (int i = 0; i < chips.length; i++) {
+                boolean on = levels[i] == view.level;
+                chips[i].setTextColor(on ? theme.onSecondaryContainer : theme.accent);
+                chips[i].setBackground(on
+                        ? theme.ripple(theme.pill(theme.secondaryContainer), null,
+                                theme.onSecondaryContainer)
+                        : theme.ripple(theme.pillOutlined(dp(1), theme.border),
+                                theme.pill(Color.WHITE), theme.accent));
+            }
+        };
+        for (int i = 0; i < chips.length; i++) {
+            final char level = levels[i];
+            chips[i] = pillShaped(new Button(this), labels[i], 12);
+            chips[i].setMinWidth(dp(44));
+            chips[i].setMinimumWidth(dp(44));
+            chips[i].setOnClickListener(v -> {
+                view.level = level;
+                paintChips.run();
+                worker.removeCallbacks(read[0]);
+                worker.post(read[0]);
+            });
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            chipParams.rightMargin = dp(6);
+            row.addView(chips[i], chipParams);
+        }
+        paintChips.run();
+        View spacer = new View(this);
+        row.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        TextView block = new FlushText(this);
+        block.setTypeface(Typeface.MONOSPACE);
+        block.setTextSize(11);
+        block.setTextColor(theme.subtext);
+        block.setLineSpacing(dp(1), 1.05f);
+        block.setPadding(pad, pad, pad, pad);
+        block.setBackground(theme.panel(theme.lowest(), dp(10)));
+        block.setMinHeight(dp(56));
+
+        ImageButton pause = iconButton(theme, R.drawable.ic_pause, "Pause");
+        pause.setOnClickListener(v -> {
+            view.paused = !view.paused;
+            pause.setImageResource(view.paused ? R.drawable.ic_play : R.drawable.ic_pause);
+            pause.setContentDescription(view.paused ? "Follow" : "Pause");
+            if (!view.paused) {
+                worker.removeCallbacks(read[0]);
+                worker.post(read[0]);
+            }
+        });
+        row.addView(pause, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        ImageButton copy = iconButton(theme, R.drawable.ic_content_copy, "Copy");
+        copy.setOnClickListener(v -> {
+            android.content.ClipboardManager clipboard =
+                    getSystemService(android.content.ClipboardManager.class);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
+                        "Muralis log", block.getText()));
+            }
+        });
+        row.addView(copy, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        ImageButton clear = iconButton(theme, R.drawable.ic_block, "Clear");
+        LinearLayout.LayoutParams clearParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        row.addView(clear, clearParams);
+
+        EditText search = themedInput(theme, "", false);
+        search.setContentDescription("Search the log");
+        search.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
+        search.setCompoundDrawablePadding(dp(8));
+        search.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(
+                theme.subtext));
+        LinearLayout.LayoutParams searchParams = matchWrap();
+        searchParams.topMargin = dp(8);
+        card.addView(search, searchParams);
+
+        LinearLayout.LayoutParams blockParams = matchWrap();
+        blockParams.topMargin = dp(8);
+        card.addView(block, blockParams);
+
+        final Runnable paint = () -> {
+            android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder();
+            for (AppLog.Entry entry : AppLog.matching(view.entries, view.query)) {
+                if (entry.time.compareTo(view.since) <= 0) {
+                    continue;
+                }
+                int start = text.length();
+                text.append(entry.line()).append('\n');
+                int colour = entry.level == 'E' || entry.level == 'F' ? theme.bad
+                        : entry.level == 'W' ? theme.warn
+                        : entry.level == 'I' ? theme.text : theme.subtext;
+                text.setSpan(new android.text.style.ForegroundColorSpan(colour), start,
+                        text.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            block.setText(text);
+        };
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+                view.query = s.toString();
+                paint.run();
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+            }
+        });
+        clear.setOnClickListener(v -> {
+            if (!view.entries.isEmpty()) {
+                view.since = view.entries.get(view.entries.size() - 1).time;
+            }
+            paint.run();
+        });
+
         read[0] = () -> {
             if (gone[0]) {
                 return;
             }
-            String text = AppLog.tail(PANEL_LOG_LINES);
+            List<AppLog.Entry> fresh = AppLog.tail(PANEL_LOG_LINES, view.level);
             mainHandler.post(() -> {
                 if (gone[0]) {
                     return;
                 }
-                if (!text.contentEquals(block.getText())) {
-                    block.setText(text);
+                if (!view.paused) {
+                    view.entries = fresh;
+                    paint.run();
                 }
                 worker.postDelayed(read[0], APP_LOG_REFRESH_MS);
             });
         };
         block.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
-            public void onViewAttachedToWindow(View view) {
+            public void onViewAttachedToWindow(View v) {
                 gone[0] = false;
                 worker.removeCallbacks(read[0]);
                 worker.post(read[0]);
             }
 
             @Override
-            public void onViewDetachedFromWindow(View view) {
+            public void onViewDetachedFromWindow(View v) {
                 gone[0] = true;
                 worker.removeCallbacks(read[0]);
             }
