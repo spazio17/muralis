@@ -1,7 +1,7 @@
 # Muralis
 
-A self-recovering Android kiosk launcher that turns a tablet into a wall-mounted Home Assistant
-dashboard, controllable over MQTT and HTTP.
+A self-recovering Android kiosk launcher that turns a tablet into a wall panel for any web page,
+a dashboard, a board or a page on your own network, controllable over MQTT and HTTP.
 
 Targets the public Android SDK only (no platform signature, no privileged permissions), so it
 installs as an ordinary APK on stock Android, from API 26 up. See [`CLAUDE.md`](CLAUDE.md) for the

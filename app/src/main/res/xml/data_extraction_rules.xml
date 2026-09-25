@@ -14,11 +14,9 @@
       * The escape-tap combinations are what protect the way out of the kiosk, and they are
         per panel by design; the whole reason they are recorded rather than fixed is that
         every device should differ.
-      * The learned memory baseline describes one dashboard on one piece of hardware and is
-        meaningless, or actively wrong, applied to another.
-      * And once there is a paid unlock, its cached entitlement must not ride a transfer:
-        that would let one purchased panel seed another. This is the reason the file cannot
-        wait, a plain flag copied by transfer is not fixable after the fact.
+      * The Pro unlock's cached entitlement must not ride a transfer: that would let one
+        purchased panel seed another, and a plain flag copied by transfer is not fixable
+        after the fact.
 
     A restored or transferred panel is therefore configured from scratch, which for a device
     that is provisioned by QR and then mounted on a wall is the correct amount of ceremony.

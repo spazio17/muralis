@@ -635,11 +635,13 @@ final class MqttController implements MqttCallbackExtended {
                     "display.orientation",
                     orientationOptions,
                     "{{ value_json.config.orientation }}"));
-            // How the Display off button darkens the panel; see DisplayOffPolicy. "sleep" only
-            // where the device owner's lockNow exists to do it, the same gate as "auto" above.
+            // How the Display off button darkens the panel; see DisplayOffPolicy. "auto" and
+            // "sleep" only where the device owner's lockNow exists to do it: an ordinary install
+            // has the film alone, as its own screens show (2026-09-24), and the state reports
+            // "film" there too (KioskService), so the select never reads a value it cannot offer.
             org.json.JSONArray displayOffOptions = new org.json.JSONArray();
-            displayOffOptions.put(DisplayOffPolicy.AUTO);
             if (KioskService.isDeviceOwner(appContext)) {
+                displayOffOptions.put(DisplayOffPolicy.AUTO);
                 displayOffOptions.put(DisplayOffPolicy.SLEEP);
             }
             displayOffOptions.put(DisplayOffPolicy.FILM);
@@ -1018,16 +1020,6 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * A text box. The command carries a URL, so the payload is built with {@code tojson} rather
-     * than by quoting the value into the template: a URL with a quote or a backslash in a query
-     * parameter would otherwise produce a broken envelope, and this box exists precisely for
-     * URLs with parameters.
-     *
-     * <p>{@code max} is Home Assistant's own ceiling for a text entity (255). A longer URL has to
-     * go through a command payload; the box would refuse it in the frontend before it ever
-     * reached the panel.
-     */
-    /**
      * A number a person types or nudges in Home Assistant. Box mode rather than a slider: these
      * are durations in seconds, where a slider's resolution is a guess and a typed value is
      * exact.
@@ -1061,6 +1053,16 @@ final class MqttController implements MqttCallbackExtended {
         return box;
     }
 
+    /**
+     * A text box. The command carries a URL, so the payload is built with {@code tojson} rather
+     * than by quoting the value into the template: a URL with a quote or a backslash in a query
+     * parameter would otherwise produce a broken envelope, and this box exists precisely for
+     * URLs with parameters.
+     *
+     * <p>{@code max} is Home Assistant's own ceiling for a text entity (255). A longer URL has to
+     * go through a command payload; the box would refuse it in the frontend before it ever
+     * reached the panel.
+     */
     private JSONObject text(String name, String command, String valueTemplate)
             throws JSONException {
         JSONObject box = new JSONObject();

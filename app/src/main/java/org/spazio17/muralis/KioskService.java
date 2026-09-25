@@ -259,6 +259,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         startForeground(NOTIFICATION_ID, buildNotification());
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
+        android.os.UserManager users = getSystemService(android.os.UserManager.class);
+        if (users != null && !users.isUserUnlocked()) {
+            registerReceiver(unlockReceiver, new IntentFilter(Intent.ACTION_USER_UNLOCKED));
+            unlockReceiverRegistered = true;
+        }
         applyResourceGuarantees();
         acquireRuntimeLocks();
         startControllers();
@@ -333,6 +338,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             unregisterReceiver(screenReceiver);
         } catch (IllegalArgumentException notRegistered) {
             // onCreate did not get as far as registering it.
+        }
+        if (unlockReceiverRegistered) {
+            unregisterReceiver(unlockReceiver);
+            unlockReceiverRegistered = false;
         }
         stopControllers();
         stopTelemetry();
@@ -467,18 +476,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             Log.w(TAG, "Could not pin stay-on-while-plugged-in", refused);
         }
 
-        // Exempt this package from battery optimisation and app standby, so Doze cannot suspend the
-        // dashboard's WebSocket on an idle wall panel. API 28+ only; on the API 26/27 MediaPad the
-        // partial wake lock plus the foreground service are what carry this, which is weaker but is
-        // the same posture that device had before.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            try {
-                policy.setPackagesSuspended(admin, new String[] {getPackageName()}, false);
-            } catch (SecurityException | IllegalArgumentException refused) {
-                Log.w(TAG, "Could not apply device-owner package restrictions", refused);
-            }
-        }
-
         // DISALLOW_SAFE_BOOT used to be applied here, at every service start. It moved to
         // KioskActivity.applyKioskPolicy on 2026-09-03, behind the escape-combination gate with HOME
         // and lock task: until the wizard has recorded a way out, safe mode is one, and blocking it
@@ -544,8 +541,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // The pictures screensaver's folder browser (2026-09-10). Silent, which is the whole
         // reason it is acceptable on a panel with nobody in front of it, and the reason the
         // browser can stay inside Muralis instead of handing the screen to Android's picker.
-        // An ordinary install is never asked for this and keeps using the picker's grant, so the
-        // grant state here is also what PictureLibrary reads to decide which browser to offer.
+        // An ordinary install cannot be granted anything silently; it asks once, with Android's
+        // dialog, from the Screensaver page (KioskActivity.requestPicturePermission).
         grantOwnPermission(policy, admin,
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
                         ? android.Manifest.permission.READ_MEDIA_IMAGES
@@ -989,7 +986,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             applied.put("stats_overlay", config.statsOverlay);
             applied.put("orientation", config.orientation);
-            applied.put("display_off_method", config.displayOffMethod);
+            // What applies, which on an ordinary install is the film whatever is stored.
+            applied.put("display_off_method",
+                    isDeviceOwner() ? config.displayOffMethod : DisplayOffPolicy.FILM);
             // Live system state rather than a stored preference, so the web admin's checkbox tracks
             // the tablet's own auto-brightness toggle however it was changed.
             applied.put("has_light_sensor", hasLightSensor(this));
@@ -1461,6 +1460,34 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return filter;
     }
 
+    private boolean unlockReceiverRegistered;
+
+    /**
+     * The first unlock after a boot, when credential-encrypted storage becomes readable, and on a
+     * device whose Keystore waits for the unlock, the secrets too. This service starts on
+     * {@code LOCKED_BOOT_COMPLETED}, and a web admin started then may have found no TLS key it
+     * could read (see {@code AdminCertificate.load}) and be serving plain HTTP, or not have started
+     * at all because the admin password could not be read either. Neither changes the web admin's own settings, so the fingerprint check in
+     * {@link #restartControllers} would see nothing to do: the fingerprint is dropped here to force
+     * the one restart that matters.
+     */
+    private final BroadcastReceiver unlockReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!Intent.ACTION_USER_UNLOCKED.equals(intent.getAction())) {
+                return;
+            }
+            if (unlockReceiverRegistered) {
+                unregisterReceiver(this);
+                unlockReceiverRegistered = false;
+            }
+            if (httpAdminServer == null || !KioskRuntimeState.httpAdminSecure()) {
+                httpInputs = null;
+                restartControllers();
+            }
+        }
+    };
+
     /**
      * Either edge of the screen is worth telling Home Assistant about at once, since
      * {@code display.source} follows it. Nothing is decided here: the broadcast is not evidence of
@@ -1637,13 +1664,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return true;
     }
 
-    /**
-     * Whether the {@code WRITE_SETTINGS} app-op has been granted to this package.
-     *
-     * <p>Declared in the manifest but not granted by installing: it is an "special" app op the user
-     * allows from Settings, or that {@code adb shell appops set <pkg> WRITE_SETTINGS allow} sets
-     * directly, which is the practical route on a wall-mounted panel being provisioned over a cable.
-     */
     /** The system brightness as a percentage, or -1 when it cannot be read. */
     static int currentBrightnessPercent(Context context) {
         try {
@@ -1688,16 +1708,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 DarkWatch.refusedThisBoot(context, bootCount(context)));
     }
 
-    /**
-     * The one sentence the Display card, the web admin and the stats all show for the display-off
-     * method in force, so the three surfaces describe one rule. Plain words on purpose: this is
-     * read by whoever wonders why the panel is not going dark the way they expected.
-     */
     /** Whether a sleep that Android ended is on record, which paints the sentence red. */
     static boolean displayOffWarning(Context context) {
         return DarkWatch.stoppedAtMs(context) > 0;
     }
 
+    /**
+     * The one sentence the Display card, the web admin and the stats all show for the display-off
+     * method in force, so the three surfaces describe one rule. Plain words on purpose: this is
+     * read by whoever wonders why the panel is not going dark the way they expected.
+     */
     static String describeDisplayOff(Context context) {
         if (displayOffWarning(context)) {
             // Short on purpose: what changed, why, whose fault it is not, and the way back.
@@ -1738,6 +1758,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
     }
 
+    /**
+     * Whether the {@code WRITE_SETTINGS} app-op has been granted to this package.
+     *
+     * <p>Declared in the manifest but not granted by installing: it is an "special" app op the user
+     * allows from Settings, or that {@code adb shell appops set <pkg> WRITE_SETTINGS allow} sets
+     * directly, which is the practical route on a wall-mounted panel being provisioned over a cable.
+     */
     static boolean canWriteSystemSettings(Context context) {
         return Settings.System.canWrite(context);
     }

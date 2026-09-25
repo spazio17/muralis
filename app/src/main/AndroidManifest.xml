@@ -42,19 +42,21 @@
       This reverses the decision of 2026-09-09 to hold no storage permission at all and reach a
       folder only through the system picker's persisted grant. The reason is the kiosk promise, not
       convenience: handing the screen to Android's file picker takes a locked panel outside Muralis
-      for as long as somebody is choosing, with no tap combination performed, and the maintainer's
-      instruction is that on a device-owner panel the choosing happens inside Muralis. Browsing the
-      filesystem from inside the app needs a read permission; there is no third way.
+      for as long as somebody is choosing, with no tap combination performed, and playlists are
+      also built from the web admin on another computer, where no system picker can appear.
+      Browsing the pictures from inside the app needs a read permission; there is no third way.
+      The system picker path is retired on every install.
 
-      What makes it acceptable on a wall panel rather than a phone: a device owner grants this to
-      itself silently (KioskService.grantOwnRuntimePermissions), so no dialog ever appears on a
-      screen nobody is standing at, and an ordinary install is never asked either, because there
-      the browser keeps using the system picker's grant. The permission is read-only and is used
-      for one thing, listing and decoding the pictures a person picked.
+      How it is granted: a device owner grants it to itself silently
+      (KioskService.grantOwnRuntimePermissions), so no dialog ever appears on a screen nobody is
+      standing at; an ordinary install asks once, with Android's own dialog, from the Screensaver
+      page (KioskActivity.requestPicturePermission). The permission is read-only and is used for
+      one thing, listing and decoding the pictures a person picks.
 
-      Play consequence, on the release checklist rather than here: READ_MEDIA_IMAGES is a
-      declared-use-case permission under the photo and video policy, so the listing needs that
-      declaration before submission.
+      Play consequence: READ_MEDIA_IMAGES is a declared-use-case permission under the photo and
+      video policy. The declaration was filed with 0.6.0 (2026-09-25): a slideshow that runs for
+      months from folders the owner browses, and a system picker that cannot open in a remote
+      browser or in a locked kiosk.
     -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- Android 14's "Select photos and videos" answer to the dialog above. Declared so a partial
@@ -66,28 +68,28 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or
-         `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`. Needed only for
-         display.auto_brightness, which writes Settings.System.SCREEN_BRIGHTNESS_MODE; there is no
-         device-owner setter for the System namespace. The interim MediaPad does have a light sensor
+         `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`. Needed for the two
+         brightness controls, which write Settings.System.SCREEN_BRIGHTNESS_MODE and
+         SCREEN_BRIGHTNESS (KioskService.applyBrightness); there is no device-owner setter for the
+         System namespace. The interim MediaPad does have a light sensor
          (als-bh1745), so unlike the ROM's tablet this path is live and testable here. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
 
     <!-- Package visibility, required from API 30 (targetSdk 30+). Without this, the escape hatch
          breaks on any modern device: queryIntentActivities/resolveActivity return a FILTERED list, so
-         Muralis cannot find the OEM launcher to hand the screen to, and lockTaskPackages() would omit
-         it. Not a problem on the API 26 MediaPad, which predates filtering, which is exactly why it
-         would have gone unnoticed until the first newer panel.
+         Muralis cannot find the OEM launcher to hand the screen to. Not a problem on the API 26
+         MediaPad, which predates filtering, which is exactly why it would have gone unnoticed until
+         the first newer panel.
 
-         Declared as specific intents rather than QUERY_ALL_PACKAGES on purpose: the broad permission
-         is one Google requires a separate declaration and justification for, and this app only ever
-         needs to find two things, a launcher and Settings. -->
+         Declared as one specific intent rather than QUERY_ALL_PACKAGES on purpose: the broad
+         permission is one Google requires a separate declaration and justification for, and this app
+         only ever needs to find the launcher. Settings screens are started, never looked up, and a
+         start needs no visibility; the Settings entry that stood here backed nothing and was removed
+         on 2026-09-25. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
-        </intent>
-        <intent>
-            <action android:name="android.settings.SETTINGS" />
         </intent>
     </queries>
 

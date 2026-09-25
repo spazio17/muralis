@@ -58,8 +58,9 @@ event.preventDefault();
 send(encode(form),form.elements.cmnd.value,form);});});
 // The Dashboard box's second button. It would otherwise submit the whole box to its own
 // formaction, which is the scripting-free path; here the click is caught and only the
-// address is sent, so the result lands in the console like every other command and the
-// page stays put. Nothing is saved either way: that is the Save button's job.
+// address is sent, so the result is handled like every other command's, a refusal in a
+// banner and a success in silence, and the page stays put. Nothing is saved either way: that
+// is the Save button's job.
 var once=document.getElementById('open-once');
 if(once){once.addEventListener('click',function(event){
 event.preventDefault();

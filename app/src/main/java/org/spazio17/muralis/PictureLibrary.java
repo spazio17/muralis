@@ -51,8 +51,9 @@ import org.spazio17.muralis.PictureSources.Picture;
  * The Pictures screensaver's pictures: where they are kept, how the online sets are fetched and
  * how each one is decoded for the screen.
  *
- * <p>Local pictures are the panel's own, read through MediaStore under the read permission a
- * device owner grants itself, plus the private upload store; they are picked one by one into
+ * <p>Local pictures are the panel's own, read through MediaStore under the read permission (a
+ * device owner grants it to itself, an ordinary install asks once), plus the private upload
+ * store; they are picked one by one into
  * named playlists inside Muralis, on every device, and the system's picker is not used.
  *
  * <p><b>The online sets</b> (Bing, Wikimedia Commons) are the last {@link PictureSources#ONLINE_DAYS}
@@ -783,8 +784,8 @@ final class PictureLibrary {
     }
 
     /**
-     * Every selected local picture, from uploads and all saved folder grants. A supplied caption
-     * is its title; otherwise the file name in words is used.
+     * Every picture in the playlist in use, from the panel's storage and the upload store. A
+     * supplied caption is its title; otherwise the file name in words is used.
      */
     List<Picture> listLocal() {
         ensurePlaylist();
@@ -1071,7 +1072,6 @@ final class PictureLibrary {
         }
     }
 
-    /** Whether this picture is one of Muralis's own, which is what may be removed from here. */
     /** A {@code file:} address, which is either one of our uploads or a file on shared storage. */
     static boolean isStored(String url) {
         return url != null && url.startsWith("file:");
@@ -1080,11 +1080,11 @@ final class PictureLibrary {
     /**
      * Whether a {@code file:} address is one of Muralis's own uploads, and so ours to delete.
      *
-     * <p>The distinction arrived with the folder browser on 2026-09-10. Until then every
-     * {@code file:} address was an upload, because the only other kind of local picture came
-     * through a document provider; now a device owner browses shared storage directly, and those
-     * files are the person's, exactly like a picture reached through a grant: they can leave a
-     * playlist but they are never deleted from here.
+     * <p>The distinction arrived with the folder browser on 2026-09-10, which read shared storage
+     * by file path for a while. The browser has named pictures by their MediaStore ids since, so
+     * today only uploads carry {@code file:} addresses, but a playlist from those days may still
+     * hold one of the person's own files by path: it can leave a playlist, and it is never deleted
+     * from here.
      */
     boolean isUpload(String url) {
         if (!isStored(url)) {
@@ -1150,8 +1150,8 @@ final class PictureLibrary {
     }
 
     /**
-     * Removes one of Muralis's uploaded pictures. A picture reached through any saved grant is
-     * the person's own file and is never deleted here.
+     * Removes one of Muralis's uploaded pictures. A picture from the panel's own storage is the
+     * person's file and is never deleted here; it can only leave a playlist.
      */
     synchronized String deleteLocal(String url) {
         if (!isUpload(url)) {
@@ -1320,37 +1320,42 @@ final class PictureLibrary {
     }
 
     /**
-     * A selected picture as {@code ./folder/name.jpg}, so two files with one name read apart.
+     * A picture in a playlist as {@code ./folder/name.jpg}, so two files with one name read apart.
      *
-     * <p>The folder is a label, never an identity: a document id is opaque by contract, so the
-     * folder is read out of one only when the id looks like a path, which is what the storage
-     * providers on every test device produce, and the bare name is shown when it does not. An
-     * upload says {@code ./uploads/} instead, since its real path is inside the app and means
-     * nothing to a person.
-     */
-    String displayPath(String url, String name) {
-        if (isUpload(url)) {
-            return "./uploads/" + name;
-        }
-        String folder = browser.mediaFolder(url);
-        return folder.isEmpty() ? name : "./" + folder + name;
-    }
-
-    /**
-     * The same label, for a picture named by a playlist rather than by a listing.
+     * <p>The folder is a label, never an identity, and it is MediaStore's own relative path for
+     * the panel's pictures. An upload says {@code ./uploads/} instead, since its real path is
+     * inside the app and means nothing to a person; a document address from the retired picker
+     * path shows its stored name alone.
      *
      * <p>A picture whose file is gone says so rather than showing an empty row: the playlist page
      * lists what is in the playlist, and something that cannot be found is exactly what somebody
-     * looking at that page needs to see in order to take it out.
+     * looking at that page needs to see in order to take it out. Only a panel that can read its
+     * own pictures may call one missing, though: without the permission every answer is empty,
+     * which would read as "every picture was deleted".
      */
     String displayPath(String url) {
+        if (PictureBrowser.isMedia(url)) {
+            String label;
+            try {
+                label = browser.mediaLabel(url);
+            } catch (PictureBrowser.Unavailable notNow) {
+                return browser.canReadStorage() ? lastSegmentOf(url) : "picture";
+            }
+            if (label == null) {
+                return browser.canReadStorage() ? lastSegmentOf(url) + " (not found)" : "picture";
+            }
+            return label;
+        }
         String name;
         try {
             name = localName(url);
         } catch (PictureBrowser.Unavailable notNow) {
             return lastSegmentOf(url);
         }
-        return name == null ? lastSegmentOf(url) + " (not found)" : displayPath(url, name);
+        if (name == null) {
+            return lastSegmentOf(url) + " (not found)";
+        }
+        return isUpload(url) ? "./uploads/" + name : name;
     }
 
     /** The tail of an address, for labelling something that can no longer be asked its name. */

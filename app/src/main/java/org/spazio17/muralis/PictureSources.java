@@ -21,7 +21,7 @@ import java.util.Map;
  * {@code PictureLibrary}.
  */
 final class PictureSources {
-    /** Individually selected pictures from local grants and the private upload store. */
+    /** Individually selected pictures from the panel's storage and the private upload store. */
     static final String LOCAL = "local";
     /** Bing's homepage image of the day; unofficial endpoint, credited, off until chosen. */
     static final String BING = "bing";

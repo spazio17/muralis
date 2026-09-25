@@ -510,24 +510,38 @@ final class PictureBrowser {
     }
 
     /**
-     * The folder path one of the panel's own pictures sits in, ending in "/", or "" when unknown.
+     * One of the panel's own pictures as {@code ./folder/name.jpg}, or its bare name when the
+     * store knows no folder for it, or null when it is not a readable picture.
      *
-     * <p>The whole path and not just the last segment, because the Selected list prepends it so
-     * two files called {@code test.jpg} in different folders read apart, which is the form agreed
-     * on 2026-09-10.
+     * <p>The whole folder path and not just the last segment, because the playlist's list
+     * prepends it so two files called {@code test.jpg} in different folders read apart, which is
+     * the form agreed on 2026-09-10. One query for the name and the folder together: the list
+     * asked MediaStore twice per picture on every re-read until 2026-09-25, a name lookup and a
+     * folder lookup, and it is re-read after every tick.
+     *
+     * @throws Unavailable when the store did not answer, which is not a missing picture
      */
-    String mediaFolder(String uri) {
-        try (Cursor cursor = app.getContentResolver().query(Uri.parse(uri),
-                hasRelativePath()
-                        ? new String[] {android.provider.MediaStore.Images.Media.RELATIVE_PATH}
-                        : new String[] {android.provider.MediaStore.Images.Media.DATA},
-                null, null, null)) {
+    String mediaLabel(String uri) {
+        try (Cursor cursor = app.getContentResolver().query(Uri.parse(uri), new String[] {
+                android.provider.MediaStore.Images.Media.DISPLAY_NAME,
+                android.provider.MediaStore.Images.Media.MIME_TYPE,
+                hasRelativePath() ? android.provider.MediaStore.Images.Media.RELATIVE_PATH
+                        : android.provider.MediaStore.Images.Media.DATA}, null, null, null)) {
             if (cursor == null || !cursor.moveToFirst()) {
-                return "";
+                return null;
             }
-            return relativePathOf(cursor.getString(0));
+            String mime = cursor.getString(1);
+            if (mime == null || !IMAGE_MIMES.contains(mime.toLowerCase(Locale.ROOT))) {
+                return null;
+            }
+            String name = cursor.getString(0);
+            if (name == null || name.isEmpty()) {
+                name = "picture";
+            }
+            String folder = relativePathOf(cursor.getString(2));
+            return folder.isEmpty() ? name : "./" + folder + name;
         } catch (RuntimeException unreadable) {
-            return "";
+            throw new Unavailable(unreadable);
         }
     }
 

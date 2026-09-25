@@ -48,7 +48,8 @@ be there.
   switch (`kiosk.start/stop/reload/restart/set_url`,
   `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
   `webadmin.enabled`, `screensaver.start/stop/mode/playlist/source/idle_seconds/off_seconds/
-  picture_seconds/dim_percent/url/on_wake/transition/credit_corner/shuffle/one_per_cycle/credit`,
+  picture_seconds/dim_percent/url/on_wake/transition/picture_fit/credit_corner/shuffle/one_per_cycle/
+  credit`,
   `system.reboot`, `telemetry.publish`;
   the web admin alone adds `/api/pictures`, `/api/pictures/delete`, `/api/pictures/refresh` and the
   `/api/playlists` family for the picture playlists, which are not commands)
@@ -119,7 +120,14 @@ be there.
   embedded newline cannot forge log lines.
 - **The web admin serves HTTPS with a certificate the panel makes itself (2026-09-09).**
   `AdminCertificate` holds an EC P-256 key pair made in software and kept encrypted through
-  `SecretStore`, and `SelfSignedCertificate` writes the X.509 for it by hand (ten years,
+  `SecretStore` in device-protected storage, like every other secret, so it can be read on
+  `LOCKED_BOOT_COMPLETED`; 0.6.0 put it in credential-encrypted storage by mistake, where a service
+  started before the first unlock could not open it and served plain HTTP, and 0.6.1 moves such a
+  key across once and restarts the web admin at the first unlock (`KioskService.unlockReceiver`).
+  Reproduced on the Android 10 Lenovo with a PIN set, 2026-09-25: 0.6.0 served plain HTTP before
+  the unlock and after it; 0.6.1 served HTTPS with the same fingerprint while the lock screen was
+  still up, because that device's Keystore decrypts before the unlock.
+  `SelfSignedCertificate` writes the X.509 for it by hand (ten years,
   `CN=Muralis <device id>`, no extensions; no address in it, since a panel's address changes, so
   a browser shows two warnings, authority and name, and one click accepts both). **The key pair
   was in the Android Keystore until 2026-09-24, and that is why the playlist page failed:**
@@ -188,8 +196,7 @@ be there.
   inert, one line and a Buy button each) are the whole story. A purchase completing at the panel
   starts the surfaces immediately via `reloadConfiguration`, no restart needed. Debug builds accept
   `MURALIS_PRO_OVERRIDE=on|off` to force either path (R8-stripped from release); a signed release
-  refuses to build without `MURALIS_LICENSE_KEY`, or with one that does not parse.
-  rather than crashing. This app runs across a much wider spread of Android versions and device
+  refuses to build without `MURALIS_LICENSE_KEY`, or with one that does not parse. This app runs across a much wider spread of Android versions and device
   policies than a build for one fixed piece of hardware would, so this matters more here, not less.
 - **A broker that is down when the client is built is retried, not abandoned.** Paho's automatic
   reconnect covers a connection that was established and then lost, nothing else: a first connect
@@ -313,8 +320,8 @@ be there.
   owner's uid (`ActivityStarter`/`BackgroundActivityStartController`, "don't abort if the
   callingUid is the device owner"); the developer page on background starts does not list it.
   Whether PowerGenie honours the Doze allowlist is being measured; the app is not on it and has no
-  device-owner API to put itself there, contrary to what an older comment in
-  `applyResourceGuarantees` claimed.
+  device-owner API to put itself there. A `setPackagesSuspended(..., false)` call that claimed to
+  exempt it, and exempted nothing, was removed on 2026-09-25.
 - **The restart relaunches through an `AlarmManager` one-shot, not by trusting `START_STICKY`.** The
   service would come back on its own and the activity usually follows because it is HOME, but
   "usually" is doing too much work for the mechanism that has to survive unattended for months. An
@@ -601,8 +608,8 @@ be there.
   the black view), asks the service for the display off (`KioskService.displayOff`, so sleep or
   film is decided by `DisplayOffPolicy` exactly as for the button), and consumes the first touch
   on a showing screensaver while still counting it for the escape combinations. What a wake from
-  display off shows is the user's choice (`screensaver_on_wake`, for `url` and `dim`; the film
-  has nothing to glance at, so the control is greyed out there with the reason, and both pages
+  display off shows is the user's choice (`screensaver_on_wake`, for `url`, `dim` and `pictures`;
+  the film has nothing to glance at, so the control is not there at all for it, and both pages
   show only the fields the chosen mode uses):
   `onDisplayWoke` is idempotent because a wake from sleep reaches it twice, from `onResume` and
   from the `display.wake` broadcast. The web-page mode with no address is stored anyway and
@@ -611,10 +618,12 @@ be there.
   Settings go through the instant path (`screensaver_mode/_idle_s/_off_s/_url/_dim_percent/
   _on_wake` in the web admin's behaviour section, applied on change and refused in red on the
   field itself; the tablet's card carries the mode and the sentence, its page every field,
-  applied on blur or Done with a toast for a refusal, and "Show it now", whose preview a touch
+  applied on blur or Done with a toast for a refusal, and "Preview", whose preview a touch
   ends by returning to that page rather than to the dashboard); the commands are
   `screensaver.start` (refused, not accepted, when it cannot show: mode off, no address, kiosk
-  stopped), `screensaver.stop` and `screensaver.mode`. The status document carries a
+  stopped, Muralis not on screen, the display off, the first-start wizard or the escape
+  recorder up; with the settings open it shows as a preview, see below), `screensaver.stop` and
+  `screensaver.mode`. The status document carries a
   `screensaver` block (`active`, `mode`, the times, `summary`, `problem`, and `url`, shared rather
   than admin-only because the Home Assistant text entity reads it), and
   `display.source` reads `screensaver` while the dim floor or the film is the screensaver's, so a
@@ -783,7 +792,7 @@ be there.
   of showing the raw JSON, on both pages.
 - **Wording both surfaces share, trimmed 2026-09-11**: "One picture per screensaver" (not "..., the
   next one next time"), "Show the title and credit line" (not "... (always on for the online
-  sources)"), "Preview" rather than "Show it now", and every way back is "← Back" with the arrow.
+  sources)"), "Preview" rather than "Show it now", and every way back is the arrow in the app bar.
   Upload's row reads Browse, the chosen file, then Upload against the right edge.
 - **The palette is the app's own, and the accents are chosen for contrast, not for a name.** It
   began near a well-known palette and diverged accent by accent ("intensified at the user's
@@ -815,8 +824,10 @@ be there.
   minutes instead of being swallowed by the first reader, which was the telemetry publish.
   Discovery goes out again before a state publish when the playlist names differ from what it
   announced, so a new or renamed playlist reaches the Home Assistant select without a reconnect.
-  `screensaver.start` is refused while an operator is in the settings, because the activity
-  answered it by showing the dashboard over a half-made draft. The web's Delete asks first, as the
+  `screensaver.start` was refused while an operator was in the settings, because the activity
+  answered it by showing the dashboard over a half-made draft; since 2026-09-24 it shows as a
+  preview over the open settings instead and a tap brings the same screen back, so nothing is
+  thrown away (Juri: "Preview should work anyway"). The web's Delete asks first, as the
   panel does. The held rows' labels are looked up on the worker and cached per page. The
   retired folder feature's leftovers went: the SAF keys in `KioskConfig`, the picker runnable, the
   `screensaver.folder` and `screensaver.pick_folder` commands with their test, and the
@@ -824,8 +835,8 @@ be there.
   as a partial grant on Android 14, per the vendor's page; **not yet tried on an Android 14
   device**. A second pass on 2026-09-20 closed what the first left half done: the panel's own Save,
   Use, Delete and Create go through `editPlaylists` too; the permission result is judged by what
-  the browser can now read, not by the first answer; the activity ignores a `screensaver.start`
-  that arrives with settings open instead of showing the dashboard; the migration's matching step
+  the browser can now read, not by the first answer; a `screensaver.start` that arrives with the
+  settings open no longer shows the dashboard over them (a preview since 2026-09-24); the migration's matching step
   retries by the minute, not per listing; playlist names for discovery come from the document last
   read or written, not a third file read per publish; MediaStore names are cached for half a
   minute so a listing under a stats poll is not a query per picture; a one-picture playlist whose
@@ -926,7 +937,8 @@ be there.
   **The panel's buttons carry the web's measurements since 2026-09-19** (Juri: the same colours and
   style everywhere in the app, the screensaver pages in particular): padding .5rem .9rem, a 10 px
   radius, a 1 px border, a 2 px hard edge and .9rem text become 8 by 14 dp, 10 dp, 1 dp, 2 dp and
-  14 sp (`KioskActivity.webShaped`), a row button .25rem .6rem at .8rem, the tonal edge the hue at
+  14 sp (the Material 3 pass of 2026-09-23 then made both surfaces draw pills,
+  `KioskActivity.pillShaped`), a row button .25rem .6rem at .8rem, the tonal edge the hue at
   45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
   cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
   160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
@@ -937,14 +949,14 @@ be there.
   something** (Delete a picture, Delete a playlist, and the confirm screen's own button); **green
   adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
   where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better"). **A quick action the panel refuses says so on the page** (2026-09-24): `admin_command.js`
-  puts the playlist page's red banner under the pressed button's row, "Not done: Muralis
-  settings are open on the panel.", gone after five seconds, and a panel that does not answer
+  puts the playlist page's red banner under the pressed button's row, for example "Not done:
+  the escape combination recorder is on screen.", gone after five seconds, and a panel that does not answer
   gets the same sentence the playlist page uses. Before that a refusal went to the console
   alone and Preview, pressed while the panel's settings were open, looked broken. A success
   still says nothing on the page.
   Taking a picture out of a playlist is the main colour and never red, on both surfaces: red here
   deletes a file or a playlist and this deletes neither. `button.danger` and `button.add` in
-  `admin.css`, `dangerButton` and `addButton` in `KioskActivity`, both built on the same shape and
+  `admin.css`, `dangerButton` and the `ADD` colour of `rowButton` in `KioskActivity`, both built on the same shape and
   lift as the main button so a row of mixed buttons still reads as one family. The rule is applied
   across the pictures and screensaver surfaces; everything else it names already followed it.
   Buttons on the web page also take the page's own font, not the browser's button font, which is
@@ -954,7 +966,7 @@ be there.
   the second panel is named after the mode (`Dimmed page options`, `Black film option` singular,
   `Web page options`, `Pictures options`) and holds everything that mode uses, in the order idle,
   display-off, the mode's own field, the wake choice, then the sentence it all adds up to, then
-  Show it now; and **"Playlist"** appears only for the Pictures mode with this panel as the source.
+  Preview; and **"Playlist"** appears only for the Pictures mode with this panel as the source.
   **Off has no second panel at all**, his decision and his words: "it is Off so there is no
   settings for it in any case". The times keep applying the moment a mode is picked. On the web
   the legend is rewritten from the chooser's own option text (`admin_setting.js`), so a mode
@@ -983,22 +995,22 @@ be there.
   The playlist table is sized to its content rather than stretched, for the same reason: at full
   width the Rename cell took every spare pixel and pushed Delete to the far edge of the card.
 - **Two things the screensaver page deliberately does not have.** There is no "Back to the page"
-  button beside "Show it now": it ends a showing screensaver, which is what Display on already does
+  button beside "Preview": it ends a showing screensaver, which is what Display on already does
   to a lit panel, and on a dark panel it ends one without lighting the panel, which nobody presses a
   button for; the tablet's own page never had it (Juri asked what distinguished them, 2026-09-11).
   The `screensaver.stop` command is unchanged for MQTT and the API. And a page below the settings
   page carries its heading alone, with no subtitle and no status chip: the panel's id, its address
   and its load belong where somebody is configuring the panel, not on a page about one feature of
-  it. The way back is a "Back" button at the top and at the bottom, the same on the privacy and
-  terms pages, because a page you have to scroll to read is one you would have to scroll back up to
-  leave.
+  it. The way back is the arrow in the app bar, the same on the privacy and terms pages.
 - **`screensaver.playlist` switches the playlist by name**, and a Home Assistant select carries the
   panel's own names. By name because that is what a person and a card know, and an unknown name is
   refused with the names that do exist. The select's "no playlist" option is the word `None`,
   because a select cannot hold an empty option, so the panel treats that word as none unless a
   playlist is actually called that; without it, clearing the playlist from a card was refused
-  (found over MQTT, 2026-09-10). Uploads still need no permission at all and appear as their own
-  folder in the browser.
+  (found over MQTT, 2026-09-10). Uploads appear as their own folder in the browser, but on an
+  ordinary install that refused the picture permission the browser does not open at all, so today
+  neither the panel's pictures nor the uploads can be put in a playlist there (found 2026-09-25;
+  whether uploads should work without it is an open product question).
 - **Captions and uploads.** A caption is keyed by the picture's own address, at most 200
   characters, and there is no file-name fallback any more: reading the name as a fallback is what
   crossed captions between same-named pictures in different folders (a second folder's `pd_2.jpg`
@@ -1082,7 +1094,7 @@ be there.
   unread bytes by design. Measured afterwards: 186 bytes, the full declared body, a clean FIN.
 - **Fleet is not implemented by a local playlist.** Section 10b of the fleet design still owns
   content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
-  never cross-panel IDs. Keep uploads alongside grants so removed or cloud storage is not required
+  never cross-panel IDs. Keep uploads alongside the panel's own pictures so removed or cloud storage is not required
   for a self-contained panel. No claim of fleet compatibility, and none of unattended readiness:
   the open items are in `../review-screensaver-keyguard-2026-09-10.md`. The three that were defects
   rather than gaps, the plain-HTTP redirect, the legacy caption keys and the uncleared decode

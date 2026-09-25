@@ -59,8 +59,8 @@ final class HttpAdminServer {
     private static final int MAX_HEADER_LINES = 40;
     private static final int MAX_BODY_BYTES = 16_384;
     /**
-     * The one request that carries megabytes: the picture upload for the screensaver's local
-     * folder. Its body budget and deadline are its own; every other request keeps the 16 KB
+     * The one request that carries megabytes: the picture upload for the screensaver's
+     * playlists. Its body budget and deadline are its own; every other request keeps the 16 KB
      * and eight seconds that suit commands and settings. A browser sends every chosen file in
      * one request, so the whole-request cap is the working limit a person sees on the page.
      */
@@ -131,8 +131,9 @@ final class HttpAdminServer {
 
     private ServerSocket serverSocket;
     /**
-     * Null only when this device's Keystore could not make a certificate (see AdminCertificate);
-     * then the server speaks plain HTTP as it did before 2026-09-09, and says so. Otherwise every
+     * Null when the stored key cannot be read yet, before the first unlock, or HTTPS could not be
+     * set up at all (see AdminCertificate); then the server speaks plain HTTP as it did before
+     * 2026-09-09, and says so. Otherwise every
      * accepted connection is expected to start a TLS handshake, and one that does not is sent to
      * the https address without ever being asked for a password.
      */
@@ -1441,7 +1442,10 @@ final class HttpAdminServer {
 
     private String displaySummary() {
         String orientation = KioskConfig.orientationOf(context);
-        String method = KioskConfig.displayOffMethodOf(context);
+        // An ordinary install has one way to darken, the film, whatever is stored: it offers
+        // Black film alone, greyed (2026-09-24), and the summary must not say "automatic" beside it.
+        String method = KioskService.isDeviceOwner(context) ? KioskConfig.displayOffMethodOf(context)
+                : DisplayOffPolicy.FILM;
         return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
                 : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
                 + " · "
@@ -2370,18 +2374,15 @@ final class HttpAdminServer {
 
 
     /**
-     * One folder as a link rather than a button, with its glyph and its count as a badge.
+     * One folder as a row: the caret if it has folders under it, then the link that opens it,
+     * with its glyph, its name and its count. {@code branchOpen} and {@code shown} are the
+     * server's opening position; the script keeps its own from there. The caret is a span and
+     * not a button, since without scripting it does nothing and must not look as if it did.
      *
      * <p>A button is a thing that does something; a folder is a place you go, and a list of forty
      * buttons reads as forty decisions (Juri, 2026-09-10, C7). It is a real {@code href} so it
      * works with no scripting and can be opened in a second tab; the script intercepts it and
      * swaps the fragment instead of reloading.
-     */
-    /**
-     * One folder as a row: the caret if it has folders under it, then the link that opens it,
-     * with its glyph, its name and its count. {@code branchOpen} and {@code shown} are the
-     * server's opening position; the script keeps its own from there. The caret is a span and
-     * not a button, since without scripting it does nothing and must not look as if it did.
      */
     private static String folderLink(String path, String label, int count, int depth,
             String openPath, String playlistId, int size, boolean hasChildren,
@@ -3153,15 +3154,6 @@ final class HttpAdminServer {
     }
 
     /**
-     * A TCP port, or null when the caller sent something that is not one.
-     *
-     * <p>Null rather than the fallback so the caller can refuse with a reason. The tablet's
-     * equivalent clamps ({@code KioskActivity.parsePort}) because a stored value has to yield
-     * something usable whatever is in it; a form submission is somebody asking for a specific
-     * thing, and silently substituting 8080 for the 99999 they typed is the quiet substitution this
-     * project keeps deleting. An absent field means "not being set" and keeps the current value.
-     */
-    /**
      * The number a caller typed, or null when it is not a number at all. Range is deliberately
      * NOT judged here: validateAdminPort owns the admin port's range and says 1024-65535, and this
      * method conflating the two answered "must be a number" for 99999, which plainly is one.
@@ -3178,6 +3170,15 @@ final class HttpAdminServer {
         }
     }
 
+    /**
+     * A TCP port, or null when the caller sent something that is not one.
+     *
+     * <p>Null rather than the fallback so the caller can refuse with a reason. The tablet's
+     * equivalent clamps ({@code KioskActivity.parsePort}) because a stored value has to yield
+     * something usable whatever is in it; a form submission is somebody asking for a specific
+     * thing, and silently substituting 8080 for the 99999 they typed is the quiet substitution this
+     * project keeps deleting. An absent field means "not being set" and keeps the current value.
+     */
     private static Integer parsePort(String value, int fallback) {
         if (value == null) {
             return fallback;
@@ -3296,9 +3297,9 @@ final class HttpAdminServer {
      */
     private String certificateHint() {
         if (tlsFactory == null) {
-            return "<p class=\"hint bad\">Served over plain HTTP: this device could not create a "
-                    + "certificate, so the password travels unencrypted. Use it on a trusted "
-                    + "network only.</p>";
+            return "<p class=\"hint bad\">Served over plain HTTP: this panel cannot use its "
+                    + "certificate right now, so the password travels unencrypted. Use it on a "
+                    + "trusted network only.</p>";
         }
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
         // to break at, so inline in the sentence it wrapped mid-value (Juri, 2026-09-23).
