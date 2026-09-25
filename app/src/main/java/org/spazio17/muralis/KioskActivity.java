@@ -608,13 +608,10 @@ public final class KioskActivity extends Activity {
                 }
                 anythingToRepaint = true;
             }
-            // Dropped as soon as the screen holding it has gone, rather than waiting for something
-            // to remember to clear it: About and the legal pages replace the content view without
-            // touching this field, and repainting a detached view tree once a second is a leak
-            // that keeps the whole configuration screen alive behind the dashboard.
-            if (configStatsView != null && !configStatsView.isAttachedToWindow()) {
-                configStatsView = null;
-            }
+            // Dropped by the readout's own detach listener (see showConfiguration) as soon as the
+            // screen holding it has gone: About and the legal pages replace the content view
+            // without touching this field, and repainting a detached view tree once a second is a
+            // leak that keeps the whole configuration screen alive behind the dashboard.
             if (configStatsView != null) {
                 configStatsView.setText(renderOverlay(currentTheme().light));
                 anythingToRepaint = true;
@@ -2323,7 +2320,29 @@ public final class KioskActivity extends Activity {
         // Repainted by overlayTask on the same one-second tick as the dashboard overlay and the
         // status chip, and for the same reason: a stats block that was a snapshot taken when the
         // screen was built is a worse readout than none, because it looks live.
+        //
+        // Held until the readout leaves the window, and not judged by whether it has joined one:
+        // the tick used to drop any readout it found detached, and when this screen is the first
+        // one after a cold start (no dashboard stored) the first tick ran before the window had
+        // attached the tree just built, so the block kept the empty snapshot painted above for as
+        // long as nothing rebuilt the screen. Seen on the Pixel 9 Pro XL, Android 17, 2026-09-25:
+        // one empty row for a minute and a half, readings the moment the phone was turned; the
+        // Android 9 phone attached the tree first and never showed it. The detach listener keeps
+        // what the old check was for: About and the legal pages replace the content view without
+        // touching this field, and a dead tree must not be repainted once a second.
         configStatsView = statsReadout;
+        statsReadout.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View view) {
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View view) {
+                if (configStatsView == view) {
+                    configStatsView = null;
+                }
+            }
+        });
 
         // Applies the moment it is touched, and is deliberately absent from the "Open dashboard"
         // save below. It is a standalone setting read live by whoever uses it, exactly like its
