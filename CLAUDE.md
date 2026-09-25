@@ -368,6 +368,22 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
+- **The app's own log is a block under the system stats on both surfaces (2026-09-25),** the
+  lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
+  needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
+  the last 30 on the panel, which grows with them rather than scrolling inside the page. The panel
+  re-reads every three seconds on its own thread while the block is on screen, the web page every
+  five with the stats poll's refusals, and follows the end while the reader is at the end. Above
+  the block, on both surfaces, the row every log reader has (Home Assistant's log page, MatLog):
+  chips Muralis, E, W, All (Muralis, the app's own tags, by default, the way Android Studio's
+  Logcat opens on `package:mine`; `?level=` and `?own=1` on the endpoint, filtered before the
+  tail so errors reach back through an OEM's chatter), a count ("14 of 200"), a search box
+  (`?q=`), pause, copy to the clipboard, download as a file (web only), and clear, which hides
+  what was logged before the press. Lines are painted by level: errors in `bad`, warnings in
+  `warn`, info in `text`, the rest in `subtext`, the time and tag bold; the date and the pid are
+  dropped, the tag kept. Nothing is stored or sent; logd prunes the
+  buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
+  reshaped 2026-09-26 ("it looks poor"); the site's API page does not describe it yet.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
@@ -1148,6 +1164,19 @@ the playlist page was the case that set the rule.
   `WindowInsetsController`-family APIs arrived at 28/30; `scripts/test-host.sh` fails the build if
   such a call appears with no `SDK_INT` check nearby, specifically so this can't be forgotten
   silently.
+- **Three window worlds, and the phone that shows the third is Juri's Pixel, installed from Play.**
+  A device-owner panel is `FLAG_FULLSCREEN` with both bars hidden; an ordinary install below
+  Android 15 shows its bars and its window starts below them; from Android 15 an ordinary install
+  is laid out edge to edge, the bars are transparent over the page and `setDecorFitsSystemWindows`
+  is ignored, so nothing but the app's own padding keeps a page out from under the clock. Every
+  page of the app's own sits in `KioskActivity.PageScroll`, which turns the system-bar and cutout
+  insets (API 30 and up) into its padding and folds the keyboard's measured inset into the same
+  bottom, and `applyBarIconContrast` darkens the bar icons over a light-themed page from Android
+  15 only (below it the theme paints the bars black). Found 2026-09-25 on the Pixel 9 Pro XL
+  (Android 17), whose Muralis is the Play build, so a fix there is seen at the next Play upload,
+  never by installing a debug build over it. The two Huawei devices (Android 8 and 9) and the
+  Lenovo (10) cannot show any of this; a change to insets, immersive flags or the keyboard is not
+  done until it has been reasoned through for that third world.
 - **No privileged permissions are available at all.** `DEVICE_POWER`, `REBOOT`, `STATUS_BAR`,
   `WRITE_SECURE_SETTINGS` are all unobtainable outside a signature/platform build. Device-owner
   status (via `dpm set-device-owner` over adb, or QR provisioning during setup) is the ceiling of

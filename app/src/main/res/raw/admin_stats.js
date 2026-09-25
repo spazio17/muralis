@@ -181,3 +181,70 @@ ok();})
 bad('stats unavailable: '+((error&&error.message)||'no response'));});}
 poll();
 })();
+// The app's own log under the readout, the last lines logcat holds for this process, polled on
+// the same five-second cadence and with the same refusals as the stats: a 401, 403 or 429 stops
+// it rather than walking up the lockout ladder. The block follows its own end while the reader
+// is at the end, and holds still once they have scrolled up to read something. The row above it
+// is what every log reader has: what to show (Muralis's own lines by default, the way Android
+// Studio's Logcat opens on package:mine; errors, warnings, or everything under this pid), a
+// search, a count so an empty block reads as "no match", pause, copy, download (the whole
+// tail as a file, for a support mail), and clear, which hides everything logged before the
+// moment it was pressed. Each line's time and tag are bold in the level's colour, so the eye
+// scans the left edge.
+(function(){
+var target=document.getElementById('log'),bar=document.getElementById('logbar');
+if(!target||!bar){return;}
+var stopped=false,fails=0,level='V',own=true,query='',paused=false,since='',lines=[];
+var pause=document.getElementById('log-pause'),box=document.getElementById('log-q'),count=document.getElementById('log-count');
+function url(){return '/api/log?level='+level+(own?'&own=1':'');}
+function paint(){
+var atEnd=target.scrollHeight-target.scrollTop-target.clientHeight<24,q=query.toLowerCase();
+var frag=document.createDocumentFragment(),n=0;
+lines.forEach(function(l){
+if(l.time<=since){return;}
+if(q&&l.text.toLowerCase().indexOf(q)<0){return;}
+var s=document.createElement('span');s.className='lv-'+l.level;
+var head=document.createElement('b');head.textContent=l.text.slice(0,l.colon);
+s.appendChild(head);s.appendChild(document.createTextNode(l.text.slice(l.colon)+'\n'));
+frag.appendChild(s);n++;});
+target.textContent='';target.appendChild(frag);
+count.textContent=n+' of '+lines.length;
+if(atEnd){target.scrollTop=target.scrollHeight;}}
+// "HH:MM:SS L/Tag: message" per line; the time compared as text, which orders within a day.
+function parse(text){return text.split('\n').filter(Boolean).map(function(t){
+var colon=t.indexOf(': ',11);
+return {time:t.slice(0,8),level:t.charAt(10)==='/'&&'VDIWEF'.indexOf(t.charAt(9))>=0?t.charAt(9):'I',colon:colon<0?t.length:colon+1,text:t};});}
+function again(){if(stopped){return;}
+setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
+function poll(){fetch(url(),{credentials:'same-origin'})
+.then(function(r){
+if(r.status===401||r.status===403||r.status===429){stopped=true;return null;}
+if(!r.ok){throw new Error('HTTP '+r.status);}
+return r.text();})
+.then(function(text){if(text===null){return;}
+fails=0;
+if(!paused){lines=parse(text);paint();}
+again();})
+.catch(function(){fails++;again();});}
+bar.querySelectorAll('.lvl').forEach(function(b){b.addEventListener('click',function(){
+level=b.dataset.level;own=b.dataset.own==='1';
+bar.querySelectorAll('.lvl').forEach(function(o){o.setAttribute('aria-pressed',String(o===b));});
+poll();});});
+box.addEventListener('input',function(){query=box.value;paint();});
+pause.addEventListener('click',function(){paused=!paused;
+pause.setAttribute('aria-pressed',String(paused));pause.title=paused?'Follow':'Pause';pause.setAttribute('aria-label',pause.title);
+pause.classList.toggle('on',paused);if(!paused){poll();}});
+document.getElementById('log-copy').addEventListener('click',function(){
+var text=target.textContent;
+if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text);return;}
+var range=document.createRange();range.selectNodeContents(target);var sel=getSelection();sel.removeAllRanges();sel.addRange(range);document.execCommand('copy');sel.removeAllRanges();});
+// The whole tail under the current chip, unsearched and uncleared, as a file named by the panel.
+document.getElementById('log-download').addEventListener('click',function(){
+fetch(url(),{credentials:'same-origin'}).then(function(r){return r.ok?r.text():'';}).then(function(text){
+var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
+a.download='muralis-log-'+new Date().toISOString().slice(0,19).split(':').join('-')+'.txt';
+document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);});});
+document.getElementById('log-clear').addEventListener('click',function(){
+since=lines.length?lines[lines.length-1].time:since;paint();});
+poll();
+})();
