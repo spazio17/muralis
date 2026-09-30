@@ -50,7 +50,7 @@ final class HttpAdminServer {
      */
     private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
             new java.util.HashSet<>(java.util.Arrays.asList(
-                    "dashboard", "mqtt", "webadmin", "sequences")));
+                    "dashboard", "mqtt", "webadmin", "sequences", "panel")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
     private static final int HANDSHAKE_TIMEOUT_MS = 2_000;
     /** Long enough for a socket close to land, short enough that a reload never looks like a hang. */
@@ -612,6 +612,8 @@ final class HttpAdminServer {
             }
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
+        } else if (path.equals("/stats") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
         } else if (path.equals("/screensaver") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
@@ -914,8 +916,7 @@ final class HttpAdminServer {
             case "sequences":
                 return saveEscapeSequences(form, fresh);
             case "dashboard": {
-                String stale = staleFormRefusal(form,
-                        fresh.dashboardUrl + "|" + fresh.deviceId);
+                String stale = staleFormRefusal(form, fresh.dashboardUrl);
                 if (stale != null) {
                     return stale;
                 }
@@ -928,14 +929,8 @@ final class HttpAdminServer {
                 if (urlProblem != null) {
                     return "Not saved: " + urlProblem + ".";
                 }
-                String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
-                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
-                if (idProblem != null) {
-                    return "Not saved: " + idProblem + ".";
-                }
                 KioskConfig.edit(context)
                         .dashboardUrl(url)
-                        .deviceId(deviceId)
                         .apply();
                 if (!url.equals(fresh.dashboardUrl)) {
                     // Saving a new URL must also navigate to it; the form path used to only save,
@@ -944,6 +939,21 @@ final class HttpAdminServer {
                     // the dispatcher uses, so the two paths cannot disagree again.
                     kioskService.setDashboardUrl(url);
                 }
+                return null;
+            }
+            case "panel": {
+                // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
+                // box since 2026-09-27 (Juri: the id is the panel's identity, not the page's).
+                String stale = staleFormRefusal(form, fresh.deviceId);
+                if (stale != null) {
+                    return stale;
+                }
+                String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
+                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                if (idProblem != null) {
+                    return "Not saved: " + idProblem + ".";
+                }
+                KioskConfig.edit(context).deviceId(deviceId).apply();
                 return null;
             }
             case "mqtt": {
@@ -1012,8 +1022,8 @@ final class HttpAdminServer {
                 return null;
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
-            // POST /api/setting has always accepted. It now covers the stats-overlay switch alone,
-            // the publish interval having been removed. See settingScript.
+            // POST /api/setting has always accepted. It covers the stats-overlay switch and the
+            // display and screensaver keys. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1260,23 +1270,7 @@ final class HttpAdminServer {
                 + (backTo == null ? "" : iconLink(backTo, "back", "Back"))
                 + titles
                 + (chip ? statusChip() : "")
-                + themePicker()
                 + "</header>";
-    }
-
-    /**
-     * Auto, Light and Dark as a segmented button where the app bar has room, and one cycling icon
-     * button where it has not; the stylesheet shows one or the other, {@code admin_theme.js}
-     * drives both.
-     */
-    private static String themePicker() {
-        return "<div class=\"themepick\" role=\"group\" aria-label=\"Colour theme\">"
-                + "<button type=\"button\" data-theme=\"system\">Auto</button>"
-                + "<button type=\"button\" data-theme=\"light\">Light</button>"
-                + "<button type=\"button\" data-theme=\"dark\">Dark</button></div>"
-                + "<button type=\"button\" class=\"ib themecycle\" data-theme-cycle=\"1\""
-                + " title=\"Colour theme\" aria-label=\"Colour theme\">" + glyph("theme")
-                + "</button>";
     }
 
     /**
@@ -1303,6 +1297,7 @@ final class HttpAdminServer {
                 + "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M4 4l16 16\"/>");
         paths.put("prev", "<path d=\"M15 6l-6 6 6 6\"/>");
         paths.put("next", "<path d=\"M9 6l6 6-6 6\"/>");
+        paths.put("panel", "<rect x=\"4\" y=\"2\" width=\"16\" height=\"20\" rx=\"2\"/><path d=\"M9 18h6\"/>");
         paths.put("down", "<path d=\"M6 9l6 6 6-6\"/>");
         paths.put("list", "<path d=\"M4 6h16M4 12h16M4 18h16\"/>");
         paths.put("details", "<rect x=\"3\" y=\"4\" width=\"5\" height=\"5\" rx=\"1\"/>"
@@ -1363,6 +1358,8 @@ final class HttpAdminServer {
         // The Folders head's one button: chevrons closing on each other, or opening away.
         paths.put("unfold_less", "<path d=\"M7 4l5 5 5-5M7 20l5-5 5 5\"/>");
         paths.put("unfold_more", "<path d=\"M7 9l5-5 5 5M7 15l5 5 5-5\"/>");
+        paths.put("sun", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,7c-2.76,0 -5,2.24 -5,5s2.24,5 5,5 5,-2.24 5,-5 -2.24,-5 -5,-5zM2,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1L2,11c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM20,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1h-2c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM11,2v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1L13,2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM11,20v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1v-2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM5.99,4.58c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0s0.39,-1.03 0,-1.41L5.99,4.58zM18.36,16.95c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0 0.39,-0.39 0.39,-1.03 0,-1.41l-1.06,-1.06zM19.42,5.99c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06zM7.05,18.36c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06z\"/>");
+        paths.put("moon", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9 9,-4.03 9,-9c0,-0.46 -0.04,-0.92 -0.1,-1.36 -0.98,1.37 -2.58,2.26 -4.4,2.26 -2.98,0 -5.4,-2.42 -5.4,-5.4 0,-1.81 0.89,-3.42 2.26,-4.4C12.92,3.04 12.46,3 12,3z\"/>");
         paths.put("theme", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
                 + "<path d=\"M12 3a9 9 0 010 18z\" fill=\"currentColor\"/>");
         return Collections.unmodifiableMap(paths);
@@ -1427,12 +1424,10 @@ final class HttpAdminServer {
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
         sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
                 screensaverBody()});
-        sections.add(new String[] {"stats", "stats", "System stats", statsSummary(),
-                statsBody(config)});
-        sections.add(new String[] {"quick", "bolt", "Quick actions",
+        sections.add(new String[] {"quick", "reload", "Quick actions",
                 "Reboot · Reload · Restart", quickActionsBody()});
-        sections.add(new String[] {"about", "info", "About", "Muralis " + appVersionName(),
-                aboutBody()});
+        sections.add(new String[] {"panel", "panel", "This panel", config.deviceId,
+                panelBody(config, notice, noticeSection)});
 
         StringBuilder nav = new StringBuilder("<nav class=\"sections\" aria-label=\"Sections\">");
         StringBuilder boxes = new StringBuilder("<div class=\"boxes\">");
@@ -1442,13 +1437,20 @@ final class HttpAdminServer {
             nav.append("<a class=\"item\" href=\"#box-").append(key).append("\" data-box=\"box-")
                     .append(key).append("\">").append(summaryRow(section[1], section[2],
                             section[3], key)).append("</a>");
+            // The Display section carries the theme switch beside its name, as the panel does:
+            // in the accordion's row before the chevron, and in the open card at the right of
+            // the title (Juri, 2026-09-27, "copy the app 1:1").
+            String action = key.equals("display") ? themeButton() : "";
             boxes.append("<details class=\"box\" id=\"box-").append(key).append("\"")
                     .append(open ? " open" : "").append("><summary>")
                     .append(summaryRow(section[1], section[2], section[3], null))
+                    .append(action)
                     .append("<span class=\"chev\">").append(glyph("down")).append("</span>")
                     .append("</summary><div class=\"body\" data-title=\"")
-                    .append(escapeHtml(section[2])).append("\">").append(section[4])
-                    .append("</div></details>");
+                    .append(escapeHtml(section[2])).append("\">")
+                    .append(action.isEmpty() ? "" : action.replace("class=\"ib themecycle\"",
+                            "class=\"ib themecycle sectionaction\""))
+                    .append(section[4]).append("</div></details>");
         }
         nav.append("</nav>");
         boxes.append("</div>");
@@ -1507,30 +1509,48 @@ final class HttpAdminServer {
 
     private String screensaverSummary() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
-        String name = screensaverOptionsTitle(saver.mode);
-        name = name.substring(0, name.length() - " options".length());
         return ScreensaverPolicy.OFF.equals(saver.mode) ? "Off"
-                : name + " · after " + saver.idleSeconds + " s";
+                : ScreensaverPolicy.modeName(saver.mode) + " · after " + saver.idleSeconds + " s";
     }
 
-    /** Memory, load and uptime from the same document the poll reads; the script keeps it current. */
-    private String statsSummary() {
-        try {
-            org.json.JSONObject stats = kioskService.statsJson();
-            org.json.JSONObject system = stats.optJSONObject("system");
-            StringBuilder text = new StringBuilder();
-            if (system != null && system.optLong("mem_total_kb", 0) > 0) {
-                text.append(Math.round(100.0 * system.optLong("mem_used_kb", 0)
-                        / system.optLong("mem_total_kb", 1))).append("% memory");
-            }
-            if (system != null && system.has("cpu_busy_percent")) {
-                text.append(text.length() > 0 ? " · " : "")
-                        .append(Math.round(system.optDouble("cpu_busy_percent", 0))).append("% CPU");
-            }
-            return text.length() == 0 ? "Live readings" : text.toString();
-        } catch (RuntimeException unavailable) {
-            return "Live readings";
-        }
+    /** This panel: its name, then the stats and log, the version and the legal pages as rows. */
+    private String panelBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("panel", notice, noticeSection)
+                + baselineField(config.deviceId)
+                + field("text", "device_id", "Name", config.deviceId)
+                + sectionFormEnd("Save")
+                + "<ul class=\"list gap\">"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
+                + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
+                + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
+                + "\" target=\"_blank\" rel=\"noopener\"><span class=\"lead\">" + glyph("info")
+                + "</span><span class=\"text\"><span class=\"h\">"
+                + "Muralis " + escapeHtml(appVersionName()) + "</span><span class=\"s\">"
+                + REPOSITORY_URL.replaceFirst("^https://", "") + "</span></span></a>"
+                + "<span class=\"trail\">" + glyph("open") + "</span></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/privacy\"><span class=\"lead\">"
+                + glyph("open") + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.privacy_policy_title))
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/terms\"><span class=\"lead\">"
+                + glyph("open") + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "</ul>";
+    }
+
+    /** System stats and the log, on their own page under This panel. */
+    private String buildStatsPage() {
+        KioskConfig config = KioskConfig.load(context);
+        // Two panels, as the panel's page has them (Juri, 2026-09-28): side by side from 840 px,
+        // one under the other below, the way every page of several panels without a menu is.
+        return pageStart("System stats and log", null, "/")
+                + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
+                + statsBody(config) + "</section>"
+                + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
+                + pageEnd();
     }
 
     private String appVersionName() {
@@ -1550,10 +1570,8 @@ final class HttpAdminServer {
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
-                + baselineField(config.dashboardUrl + "|" + config.deviceId)
+                + baselineField(config.dashboardUrl)
                 + urlField("dashboard_url", "Dashboard URL", config.dashboardUrl)
-                + field("text", "device_id", "Device ID", config.deviceId, "",
-                        "Open once shows the address until the next kiosk restart and stores nothing.")
                 // Two buttons on one input, the shape the tablet's Dashboard card has had since
                 // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it until
                 // the next kiosk restart and stores nothing (kiosk.open_url, never set_url). Open
@@ -1612,7 +1630,17 @@ final class HttpAdminServer {
                 + sectionFormEnd("Save");
     }
 
+    /** The sun or the moon: the panel's yellow sun in the dark theme, its grey moon in the light. */
+    private static String themeButton() {
+        return "<button type=\"button\" class=\"ib themecycle\" data-theme-cycle=\"1\""
+                + " title=\"Colour theme\" aria-label=\"Colour theme\">"
+                + "<span class=\"sun\">" + glyph("sun") + "</span>"
+                + "<span class=\"moon\">" + glyph("moon") + "</span></button>";
+    }
+
     private String displayBody() {
+        // The theme switch stands beside the section's name (see the menu builder); the app
+        // bar's Auto/Light/Dark went (Juri, 2026-09-27).
         return "<div class=\"actions tight\">"
                 + quickAction("display.wake", "Display on", "tonal", null)
                 + quickAction("display.visual_off", "Display off", "tonal", null)
@@ -1637,24 +1665,32 @@ final class HttpAdminServer {
                 + "</p>"
                 // No "Back to the page" beside these: it ends a showing screensaver, which is what
                 // Display on already does to a lit panel (Juri, 2026-09-11, C16).
+                // Off has no page to lead to: the page holds a mode's options and Off has none
+                // (Juri, 2026-09-11), and since the page stopped carrying the chooser
+                // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
                 + "<div class=\"actions\">"
                 + quickAction("screensaver.start", "Preview", "tonal", null)
-                + "<a class=\"btn text\" href=\"/screensaver\">More screensaver settings"
+                + "<a class=\"btn text" + (ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
+                + "\" id=\"screensaver-more\" href=\"/screensaver\">More screensaver settings"
                 + glyph("next") + "</a></div>";
     }
 
     private String statsBody(KioskConfig config) {
         // The switch sits under the readout it governs. No form and no Save button: it stands
         // alone and applies itself, the way the brightness controls do; see settingScript.
-        // The log under the switch, the panel's settings screen has the same in the same order:
-        // the level chips (warnings and errors by default, the way Home Assistant's log page
-        // opens), a search box, pause, copy and clear-from-here, then the block admin_stats.js
-        // fills and colours. Empty until the first poll, since a "loading" word in a log would
-        // read as a log line.
         return "<pre id=\"stats\">loading...</pre>"
                 + switchRow("stats-overlay", "Show system stats on the dashboard",
-                        " data-setting=\"stats_overlay\"", config.statsOverlay)
-                + "<div class=\"logbar\" id=\"logbar\">"
+                        " data-setting=\"stats_overlay\"", config.statsOverlay);
+    }
+
+    /**
+     * The Log panel, the panel's own in the same order: the level chips (the app's own lines by
+     * default), a search box, pause, copy, download and clear-from-here, then the block
+     * admin_stats.js fills and colours. Empty until the first poll, since a "loading" word in a
+     * log would read as a log line.
+     */
+    private String logBody() {
+        return "<div class=\"logbar\" id=\"logbar\">"
                 + "<div class=\"levels\" role=\"group\" aria-label=\"What the log shows\">"
                 + "<button type=\"button\" class=\"lvl\" data-level=\"V\" data-own=\"1\""
                 + " aria-pressed=\"true\">Muralis</button>"
@@ -1689,24 +1725,6 @@ final class HttpAdminServer {
                 + "</div>";
     }
 
-    private String aboutBody() {
-        // The two legal pages and the version, which links to the repository (Juri, 2026-09-23).
-        // Rendered in-app rather than linked out, for the reason renderLegalPage gives.
-        return "<ul class=\"list\">"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/privacy\"><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.privacy_policy_title))
-                + "</span></span><span class=\"trail\">" + glyph("next") + "</span></a></li>"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/terms\"><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
-                + "</span></span><span class=\"trail\">" + glyph("next") + "</span></a></li>"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
-                + "\" target=\"_blank\" rel=\"noopener\"><span class=\"text\"><span class=\"h\">"
-                + "Muralis " + escapeHtml(appVersionName()) + "</span><span class=\"s\">"
-                + REPOSITORY_URL.replaceFirst("^https://", "") + "</span></span>"
-                + "<span class=\"trail\">" + glyph("open") + "</span></a></li>"
-                + "</ul>";
-    }
-
     private static final String REPOSITORY_URL = "https://github.com/spazio17/muralis";
 
 
@@ -1724,7 +1742,7 @@ final class HttpAdminServer {
      */
     private String renderLegalPage(String title, int rawRes) {
         StringBuilder html = new StringBuilder(pageStart(title, null, "/"));
-        html.append("<div class=\"doc\">");
+        html.append("<div class=\"doc one\">");
         for (String block : readRawText(rawRes).trim().split("\n\\s*\n")) {
             String content = block.trim();
             if (content.isEmpty()) {
@@ -2020,20 +2038,22 @@ final class HttpAdminServer {
         boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode)
                 && PictureSources.LOCAL.equals(saver.source);
         PictureLibrary library = PictureLibrary.get(context);
-        StringBuilder html = new StringBuilder("<section class=\"card")
-                .append(shown ? "" : " gone").append("\" id=\"screensaver-library\">")
-                .append("<h2>Playlist</h2>");
+        // The cell around the panel is what leaves for another mode, so the options keep
+        // the right-hand column of the grid whether or not the playlists are shown.
+        StringBuilder html = new StringBuilder("<div")
+                .append(shown ? "" : " class=\"gone\"").append(" id=\"screensaver-library\">")
+                .append("<section class=\"card\"><h2>Playlist</h2>");
         if (!library.browsesOwnStorage()) {
             return html.append("<p class=\"hint bad\">This panel may not read its own pictures ")
                     .append("yet. Allow it on the panel's Screensaver settings; Android will only ")
-                    .append("ask there.</p></section>").toString();
+                    .append("ask there.</p></section></div>").toString();
         }
         return html.append("<div id=\"playlist-table\">")
                 .append(playlistTable(library.playlists().load())).append("</div>")
                 .append("<p class=\"banner bad gone\" id=\"playlist-banner\" role=\"status\">")
                 .append("<span></span><button type=\"button\" class=\"dismiss\" ")
                 .append("aria-label=\"Close\">&times;</button></p>")
-                .append("</section>").toString();
+                .append("</section></div>").toString();
     }
 
 
@@ -2766,11 +2786,8 @@ final class HttpAdminServer {
 
 
     /**
-     * The mode as a menu, for the settings page's own Screensaver card.
-     *
-     * <p>A menu there and radios on the screensaver page, deliberately: the card is one of a dozen
-     * on a packed page and every other chooser on it is a menu, while the screensaver page's
-     * chooser decides what the rest of that page says and is worth seeing at once.
+     * The mode as a menu, for the settings page's own Screensaver card, the one place it is
+     * chosen: the screensaver page stopped repeating it on 2026-09-28.
      */
     private String screensaverModeOptions(ScreensaverPolicy.Settings saver) {
         return selectOption(ScreensaverPolicy.OFF, "Off", saver.mode)
@@ -2779,32 +2796,6 @@ final class HttpAdminServer {
                 + selectOption(ScreensaverPolicy.URL, "Web page", saver.mode)
                 + selectOption(ScreensaverPolicy.PICTURES, "Pictures", saver.mode);
     }
-
-    /**
-     * The mode as five radios rather than a menu, which is what the panel's own page shows.
-     *
-     * <p>Juri asked for the two surfaces to offer the same control here (2026-09-11). Five choices
-     * that decide what the rest of the page says are worth seeing at once, which is the case for
-     * radios and against a menu, and this is the only chooser on the page whose value changes what
-     * else is on it.
-     */
-    private String screensaverModeChoices(ScreensaverPolicy.Settings saver) {
-        return "<div id=\"screensaver-mode\" class=\"radios\" role=\"radiogroup\""
-                + " aria-label=\"Screensaver mode\">"
-                + modeRadio(ScreensaverPolicy.OFF, "Off", saver.mode)
-                + modeRadio(ScreensaverPolicy.DIM, "Dimmed page", saver.mode)
-                + modeRadio(ScreensaverPolicy.FILM, "Black film", saver.mode)
-                + modeRadio(ScreensaverPolicy.URL, "Web page", saver.mode)
-                + modeRadio(ScreensaverPolicy.PICTURES, "Pictures", saver.mode)
-                + "</div>";
-    }
-
-    private static String modeRadio(String value, String label, String current) {
-        return "<label class=\"radio\"><input type=\"radio\" name=\"screensaver_mode\""
-                + " data-setting=\"screensaver_mode\" value=\"" + escapeHtml(value) + "\""
-                + (value.equals(current) ? " checked" : "") + ">" + escapeHtml(label) + "</label>";
-    }
-
 
     private String buildScreensaverPage(String notice, String at) {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
@@ -2817,15 +2808,33 @@ final class HttpAdminServer {
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        html.append("<div class=\"two modes\">")
-                .append("<section class=\"card\" id=\"screensaver-mode-box\"><h2>Screensaver mode</h2>")
-                .append(screensaverModeChoices(saver))
-                .append("</section>")
-
-                .append("<section class=\"card")
+        // List and detail (Juri, 2026-09-28): the playlists at the left and the chosen mode's
+        // options at the right from 840 px, one under the other below. The mode itself
+        // is chosen on the settings page, whose Screensaver section leads here; the page's
+        // shell carries the mode and every title, so admin_setting.js can rename the options
+        // when the mode changes elsewhere, without a chooser of its own.
+        org.json.JSONObject titles = new org.json.JSONObject();
+        for (String mode : new String[] {ScreensaverPolicy.DIM, ScreensaverPolicy.FILM,
+                ScreensaverPolicy.URL, ScreensaverPolicy.PICTURES}) {
+            try {
+                titles.put(mode, ScreensaverPolicy.optionsTitle(mode));
+            } catch (org.json.JSONException ignored) {
+                // A string keyed by a string cannot fail.
+            }
+        }
+        // A mode without playlists leaves the options the page's only panel, centred at the
+        // legal pages' width (class one); admin_setting.js keeps the class with the mode.
+        boolean library = ScreensaverPolicy.PICTURES.equals(saver.mode)
+                && PictureSources.LOCAL.equals(saver.source);
+        html.append("<div class=\"ld").append(library ? "" : " one")
+                .append("\" id=\"screensaver-page\" data-mode=\"")
+                .append(escapeHtml(saver.mode)).append("\" data-titles=\"")
+                .append(escapeHtml(titles.toString())).append("\">")
+                .append(pictureLibraryBox())
+                .append("<div class=\"detail\"><section class=\"card")
                 .append(ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
                 .append("\" id=\"screensaver-options\"><h2 id=\"screensaver-options-title\">")
-                .append(escapeHtml(screensaverOptionsTitle(saver.mode))).append("</h2>")
+                .append(escapeHtml(ScreensaverPolicy.optionsTitle(saver.mode))).append("</h2>")
                 .append(fieldWithId("screensaver-idle", "number", null,
                         "Idle before the screensaver (seconds, 0 = off)",
                         String.valueOf(saver.idleSeconds),
@@ -2866,9 +2875,7 @@ final class HttpAdminServer {
                 .append("<div class=\"actions\">")
                 .append(quickAction("screensaver.start", "Preview", "tonal", null))
                 .append("</div>")
-                .append("</section>")
-
-                .append(pictureLibraryBox())
+                .append("</section></div>")
                 .append("</div>");
         html.append(commandScript);
         html.append(settingScript);
@@ -2878,21 +2885,6 @@ final class HttpAdminServer {
         html.append(themeScript);
         html.append("</main></body></html>");
         return html.toString();
-    }
-
-    /**
-     * "Dimmed page options", and so on: the mode named where its settings are.
-     *
-     * <p>Rendered here for the first paint and repeated in {@code admin_setting.js} for a mode
-     * changed without a reload, which reads the chooser's own label rather than a second copy of
-     * these names.
-     */
-    private static String screensaverOptionsTitle(String mode) {
-        String name = ScreensaverPolicy.DIM.equals(mode) ? "Dimmed page"
-                : ScreensaverPolicy.FILM.equals(mode) ? "Black film"
-                : ScreensaverPolicy.URL.equals(mode) ? "Web page"
-                : ScreensaverPolicy.PICTURES.equals(mode) ? "Pictures" : "Screensaver";
-        return name + " options";
     }
 
     /**
@@ -3014,8 +3006,9 @@ final class HttpAdminServer {
     }
 
     private static String selectOption(String value, String label, String current) {
-        return "<option value=\"" + value + "\"" + (value.equals(current) ? " selected" : "")
-                + ">" + label + "</option>";
+        return "<option value=\"" + escapeHtml(value) + "\""
+                + (value.equals(current) ? " selected" : "") + ">" + escapeHtml(label)
+                + "</option>";
     }
 
 
@@ -3040,9 +3033,10 @@ final class HttpAdminServer {
         }
         return selectField("display-off-method", null, "Display off",
                 deviceOwner ? "display_off_method" : null, options.toString(), null, !deviceOwner)
-                + "<p class=\"hint" + (KioskService.displayOffWarning(context) ? " bad" : "")
-                + "\" id=\"display-off-note\">"
-                + escapeHtml(KioskService.describeDisplayOff(context)) + "</p>";
+                + "<p class=\"hint bad\" id=\"display-off-note\""
+                + (KioskService.displayOffWarning(context) ? "" : " hidden") + ">"
+                + (KioskService.displayOffWarning(context)
+                        ? escapeHtml(KioskService.describeDisplayOff(context)) : "") + "</p>";
     }
 
 

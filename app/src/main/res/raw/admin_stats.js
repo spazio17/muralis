@@ -39,15 +39,6 @@ if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto
 // somebody changed the same setting on the tablet or from a second browser.
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.disabled||el.dataset.pending||value==null){return;}
-// A radio group is a div holding the radios, since the screensaver mode stopped being a menu
-// on 2026-09-11. Following it means ticking the one whose value matches, and the group carries
-// the pending flag for all of them so a poll landing on a fresh click cannot undo it.
-if(el.classList.contains('radios')){
-var radios=el.getElementsByTagName('input'),i;
-for(i=0;i<radios.length;i++){
-if(radios[i].value===String(value)&&!radios[i].checked){radios[i].checked=true;
-if(window.muralisScreensaverFields){window.muralisScreensaverFields();}}}
-return;}
 var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
 if(typing){return;}
 if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
@@ -58,9 +49,12 @@ follow('display-off-method',cfg.display_off_method);
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
-if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;dn.classList.toggle('bad',!!disp.off_method_warning);}
+if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_warning?disp.off_method_reason:'';dn.hidden=!disp.off_method_warning;}
 var ss=data.screensaver||{};
 follow('screensaver-mode',ss.mode);
+// The screensaver page has no chooser: its shell carries the mode for admin_setting.js.
+var sp=document.getElementById('screensaver-page');
+if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
 follow('screensaver-idle',ss.idle_s);
 follow('screensaver-off',ss.off_s);

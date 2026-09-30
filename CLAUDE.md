@@ -368,7 +368,7 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
-- **The app's own log is a block under the system stats on both surfaces (2026-09-25),** the
+- **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
   lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
   needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
   the last 30 on the panel, which grows with them rather than scrolling inside the page. The panel
@@ -384,6 +384,18 @@ the playlist page was the case that set the rule.
   dropped, the tag kept. Nothing is stored or sent; logd prunes the
   buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
   reshaped 2026-09-26 ("it looks poor"); the site's API page documents it with the sensors.
+- **This panel is the section that holds the panel's name (Juri, 2026-09-27)**: the device id,
+  out of the Dashboard card, stored when the box lets go of the focus or on Done (a refused name
+  stays in the box with the reason), "System stats and log" as a page of its own, the version
+  and Pro line and the legal rows; Close Muralis stands under Open dashboard, outlined, on an
+  ordinary install; the readings chip or subtitle is on the settings page alone, every
+  sub-page's app bar empty at the right. The Display section's "Display off turns the screen
+  off ..." sentence went from both surfaces, the note shows only as the red warning that a
+  sleep ended badly. On rotation a box that stores on blur stores before the page is rebuilt
+  (`redrawInPlace` clears the focus first). `applyOrientation` catches Android 8.0's "Only
+  fullscreen activities can request orientation", thrown while the keyboard is up over a
+  resized page, and applies the request on the next resume; it killed the process on the
+  MediaPad (2026-09-27).
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
@@ -771,7 +783,11 @@ the playlist page was the case that set the rule.
   and crowd out the name they belong to. And a pair of short labels stays side by side on a phone
   (`pairedButtonRow`, Select all/Select none and Cancel/Save), where `buttonRow` would stack them;
   above 600 dp it defers to `buttonRow`, because stretching two buttons across a 1200 px card is the
-  bar-shaped button that rule exists to prevent. On a phone the Selected rows put the path on its
+  bar-shaped button that rule exists to prevent. **The
+  first card of a `cardGrid` lane carries no top margin**: the grid is placed with its own 16 dp,
+  and two margins stacked was the gap over the first panels of the Screensaver, Escape sequences
+  and About pages (Juri, 2026-09-28). The Escape sequences page carries no paragraph explaining
+  what a combination is; its cards say it. On a phone the Selected rows put the path on its
   own line above its two buttons, since side by side it was ellipsized to `./Pictures.../pd_1.jpg`
   for two different pictures in different folders.
 - **The migration off document URIs is deliberately unable to lose a selection.** It matches each
@@ -806,9 +822,7 @@ the playlist page was the case that set the rule.
   table went with it: nobody renames a playlist often enough to spend a column on it. Unlike the
   panel the page applies as it goes rather than collecting a draft behind a Save, because every
   other control in this admin already works that way and a draft would need the whole selection
-  carried in the browser. The three panels are placed by hand rather than left to flow: the options
-  panel is much the tallest, so in document order the playlist list landed in a row that began below
-  it and left a hand's width of nothing under the mode chooser. **A folder is a link**, not a
+  carried in the browser. **A folder is a link**, not a
   form button, with a real `/playlist?id=<id>&at=<path>` address, so a folder can be reloaded,
   bookmarked or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
   folder. That is also what fixed a stale-address 404: a folder used to be a POST to
@@ -941,11 +955,13 @@ the playlist page was the case that set the rule.
   The privacy policy and the terms are rows of the About section and nowhere else: the panel's
   Version and device details page carried them a second time until 2026-09-23, and a legal page's
   back arrow returns to the settings. **Back is the arrow in the app
-  bar, once**; the "← Back" buttons at head and foot went. The theme control: the web's is the
-  app bar's (segmented on a wide page, one cycling icon button on a narrow one), because that bar
-  is on every page of it; **the panel's sun and moon is at the right of the Display section's
-  name** (Juri, 2026-09-23), which is the accordion's row or the open card's title, and it is the
-  only section that carries a control beside its name (`Section.action`). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
+  bar, once**; the "← Back" buttons at head and foot went. The theme control is a sun or a moon in
+  the Display section on both surfaces: **the panel's at the right of the section's name**
+  (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
+  that carries a control beside its name (`Section.action`); the web's at the right of the
+  section's Display on and off buttons, cycling automatic, light and dark, the glyph following
+  the theme in force. The web's app bar carried an Auto/Light/Dark picker until 2026-09-27
+  (Juri: it did not fit there). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
   folders under it opens and closes that branch and leaves the pictures alone, the head's one
   icon button opens or closes every branch, a tap on a folder opens it and its branch and a second tap closes the branch, and the tree
   starts on the top of the volume and the way down to the open folder (`PlaylistPage.expanded`
@@ -1010,39 +1026,43 @@ the playlist page was the case that set the rule.
   across the pictures and screensaver surfaces; everything else it names already followed it.
   Buttons on the web page also take the page's own font, not the browser's button font, which is
   what left the Browse label three pixels taller than the Upload button beside it.
-- **The screensaver page is three panels, on both surfaces, named after what is chosen.**
-  Juri's structure, 2026-09-11: **"Screensaver mode"** holds the mode chooser and nothing else;
-  the second panel is named after the mode (`Dimmed page options`, `Black film option` singular,
-  `Web page options`, `Pictures options`) and holds everything that mode uses, in the order idle,
-  display-off, the mode's own field, the wake choice, then the sentence it all adds up to, then
-  Preview; and **"Playlist"** appears only for the Pictures mode with this panel as the source.
-  **Off has no second panel at all**, his decision and his words: "it is Off so there is no
-  settings for it in any case". The times keep applying the moment a mode is picked. On the web
-  the legend is rewritten from the chooser's own option text (`admin_setting.js`), so a mode
-  changed without a reload renames its panel and the two surfaces cannot drift over a word. The
-  mode is **five radios on both surfaces** (2026-09-11): it is the only chooser on the page whose
-  value changes what else is on the page, so it is worth seeing at once. The settings page's own
-  Screensaver card keeps a menu, because it is one card among a dozen and every other chooser
-  there is a menu; `admin_setting.js` and `admin_stats.js` read and follow both shapes. Web radios
-  are drawn rather than given `accent-color`: Chrome derives an unchecked radio's ring from it and
-  against this purple on a dark scheme the ring came out khaki. **A mode with no wake choice shows
-  none**, rather than a disabled one with a note explaining it: the black film has nothing to look
-  at on waking, and a control that can never be enabled is clutter. This
-  also fixed a real bug he found: with any mode but Pictures the second web panel was still headed
-  "Pictures" and was **empty**, because it held the picture fields alone while the web page's
-  address and the dimmed brightness sat in the first panel.
+- **The screensaver page is two panels, on both surfaces, as list and detail.** The
+  mode is chosen in the settings page's Screensaver section alone, radios on the panel and a menu
+  on the web; the page stopped repeating the chooser on 2026-09-28 (Juri: "when the user changes
+  the screensaver mode from the previous page, this is enough"). The page holds **"Playlist"**,
+  at the left from 840 dp/px, and the options panel at the right, one to two
+  (`listDetailPair` on the panel, `.ld` on the web); below that width one under the other,
+  Playlist first. A mode without playlists leaves the options the page's only panel, and it
+  moves to the middle at the legal pages' width (`afterPlaylist` relays it, the web toggles
+  `.ld.one`), live when the mode changes under an open page. The options panel is named after the mode (`ScreensaverPolicy.optionsTitle`,
+  `Dimmed page options`, `Web page options`, `Pictures options`) and holds everything that mode
+  uses, in the order idle, display-off, the mode's own field, the wake choice, then the sentence
+  it all adds up to, then Preview; Playlist appears only for the Pictures mode with this panel as
+  the source. **Off has no options panel at all**, Juri's decision of 2026-09-11 ("it is Off so
+  there is no settings for it in any case"), and so **Off hides "More screensaver settings"** in
+  the section on both surfaces (`moreRow`, `#screensaver-more`): the page would be empty. The
+  times keep applying the moment a mode is picked. A mode changed elsewhere renames the panel
+  live: the panel's `sync` repaints the title, and the web page's shell (`#screensaver-page`)
+  carries `data-mode`, kept current by `admin_stats.js`, and `data-titles`, every mode's title
+  rendered once by the server, so `admin_setting.js` never holds a second copy of a word. **A
+  mode with no wake choice shows none**, rather than a disabled one with a note explaining it:
+  the black film has nothing to look at on waking, and a control that can never be enabled is
+  clutter.
 - **The web browser has the panel's "nothing opened yet" state.** It used to open the top of the
   volume on arrival, so it had no way to say "pick a folder"; the top of the volume is a folder
   like any other and is now reached by tapping it. Absent and empty are different answers for the
   `at` parameter, which is why `browseTarget` returns null rather than "" when it is missing.
-- **The screensaver page does not use the settings page's multicol.** `.saver` is an explicit grid
-  of `auto-fill` columns with a 30 rem floor and a 72 rem cap, so the page is two equal columns at
-  any desktop size and one on a phone, and the Playlist panel spans the pair rather than the
-  window. Multicol balances by height, and with two boxes in four columns it put one at the far
-  left and one at the far right with a hand's width of nothing between them, and moved the right
-  one every time a scrollbar changed the width by a pixel (Juri, 2026-09-11, with a screenshot).
-  The playlist table is sized to its content rather than stretched, for the same reason: at full
-  width the Rename cell took every spare pixel and pushed Delete to the far edge of the card.
+- **A page's only panel sits in the middle at the legal pages' width**, never at one side of a
+  grid with an empty column beside it (Juri, 2026-09-28): 640 dp centred from 720 dp on the panel
+  (`singlePanelWidth`, `singlePanelParams`), `max-width:640px` centred on the web (`.one`). The
+  privacy and terms pages and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
+- **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid,
+  explicit columns placed by hand. Multicol balances by
+  height, and with two boxes in four columns it put one at the far left and one at the far right
+  with a hand's width of nothing between them, and moved the right one every time a scrollbar
+  changed the width by a pixel (Juri, 2026-09-11, with a screenshot). The playlist table is
+  sized to its content rather than stretched, for the same reason: at full width the Rename cell
+  took every spare pixel and pushed Delete to the far edge of the card.
 - **Two things the screensaver page deliberately does not have.** There is no "Back to the page"
   button beside "Preview": it ends a showing screensaver, which is what Display on already does
   to a lit panel, and on a dark panel it ends one without lighting the panel, which nobody presses a

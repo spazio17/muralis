@@ -61,13 +61,16 @@ header.appbar .titlerow h1{overflow-wrap:anywhere;min-width:0}
 .chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:16px;height:16px;flex:none;color:var(--text)}
 /* Segmented button for the theme on wide screens; one cycling icon button where there is no room
    for three words beside the title. */
-.themepick{display:none;border:1px solid var(--outline);border-radius:999px;overflow:hidden;height:40px}
-.themepick button{margin:0;padding:0 16px;border:0;border-right:1px solid var(--outline);border-radius:0;background:transparent;color:var(--text);font-size:14px;font-weight:500;height:100%;box-shadow:none;display:inline-flex;align-items:center;gap:6px}
-.themepick button:last-child{border-right:0}
-.themepick button[aria-pressed=true]{background:var(--secondary-container);color:var(--on-secondary-container)}
-.themepick button[aria-pressed=true]::before{content:"\2713";font-size:13px}
 .themecycle{display:inline-flex}
-@media (min-width:840px){.chip{display:flex}.themepick{display:inline-flex}.ib.themecycle{display:none}}
+.themecycle svg{width:24px;height:24px;fill:currentColor;stroke:none}
+.themecycle .sun{color:var(--warn)}.themecycle .moon{color:var(--subtext)}
+details.box>.body{position:relative}
+.body>.themecycle.sectionaction{display:none;position:absolute;top:8px;right:8px}
+.themecycle .sun{display:none}.themecycle .moon{display:inline-flex}
+html[data-theme=dark] .themecycle .sun{display:inline-flex}html[data-theme=dark] .themecycle .moon{display:none}
+@media (prefers-color-scheme:dark){html:not([data-theme=light]) .themecycle .sun{display:inline-flex}html:not([data-theme=light]) .themecycle .moon{display:none}}
+.field select option{background:var(--card);color:var(--text)}
+@media (min-width:840px){.chip{display:flex}}
 /* ---- buttons: filled for a card's one main action, tonal for the second, outlined for a command
    that acts now and stores nothing, text for navigation, and a 40 px icon button for anything
    repeated in a row. Never red outside a confirmation. ---- */
@@ -77,7 +80,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:var(--o
 button.primary:hover{background:color-mix(in srgb,var(--accent) 92%,black)}
 button.tonal,label.filebutton{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
 button.tonal:hover,label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
-button.text{border-color:transparent;padding:0 12px}
+button.text,a.btn.text{border-color:transparent;padding:0 12px}
 button:disabled{opacity:.38;cursor:default}
 .field select:disabled,.field select:disabled+label{opacity:.38;cursor:default}
 button svg,.btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-left:-8px}
@@ -121,7 +124,7 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
    nor a helper line under it counts, which is why the button is placed from the top: 24 px for the
    field's own margin and 8 px for half the difference between the 56 px box and the 40 px button. */
 .beside{display:flex;align-items:flex-start;gap:8px;margin-top:8px;flex-wrap:wrap}
-.beside .field{flex:1 1 200px}
+.beside .field{flex:1 1 120px}
 .beside button{margin-top:32px}
 /* ---- selection controls ---- */
 label.check{display:flex;align-items:center;gap:12px;min-height:48px;color:var(--text);cursor:pointer;margin:0}
@@ -200,14 +203,14 @@ html.js details.box:not([open]){display:none}
 html.js details.box>summary{display:none}
 html.js details.box>.body{padding:16px 16px 20px}
 html.js details.box>.body::before{content:attr(data-title);display:block;font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0 0 4px}
+html.js .body>.themecycle.sectionaction{display:inline-flex}
 }
 /* ---- pages with two columns ---- */
 .two{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
 .two>*{min-width:0}
+.two>.card+.card{margin-top:0}
 @media (min-width:840px){
 .two{grid-template-columns:1fr 1fr}
-.two.modes{grid-template-rows:min-content 1fr}
-#screensaver-mode-box{grid-column:1;grid-row:1}#screensaver-options{grid-column:2;grid-row:1/span 2}#screensaver-library{grid-column:1;grid-row:2}
 .two.playlist{grid-template-rows:min-content 1fr}
 #playlist-folders{grid-column:1;grid-row:1}#playlist-content{grid-column:2;grid-row:1/span 2}#playlist-held{grid-column:1;grid-row:2}
 }
@@ -219,7 +222,7 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 #log .lv-W{color:var(--warn)}#log .lv-E,#log .lv-F{color:var(--bad)}#log .lv-I{color:var(--text)}
 #log b{font-weight:600}
 .logcount{font-size:12px;color:var(--subtext);white-space:nowrap}
-.logbar{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.logbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
 /* Paused, the button shows the play glyph and is named Follow, as on the panel. */
 #log-pause svg+svg,#log-pause.on svg:first-child{display:none}#log-pause.on svg+svg{display:block}
 .levels{display:inline-flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
@@ -341,7 +344,20 @@ input.offscreen:focus-visible+label.filebutton{outline:2px solid var(--accent-al
 .banner.bad{background:var(--error-container);color:var(--on-error-container)}
 .banner .dismiss{flex:none;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;font-size:18px;line-height:1}
 .banner .dismiss:hover{background:color-mix(in srgb,var(--text) 10%,transparent)}
+/* ---- a page's only panel: centred at the legal pages' width (2026-09-28) ---- */
+.one{max-width:640px;margin-left:auto;margin-right:auto}
 /* ---- the legal pages ---- */
-div.doc{max-width:640px;margin:0 auto}
 div.doc h2{color:var(--accent);font-size:13px;letter-spacing:.1em;margin:26px 0 6px;font-weight:500}
 p.doc{margin:8px 0}
+
+ul.list.gap{margin-top:16px}
+
+/* ---- list-detail pages: Screensaver (2026-09-28) ---- */
+.ld{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+@media (min-width:600px) and (max-width:839px){.ld{max-width:640px;margin:0 auto}}
+@media (min-width:840px){
+.ld{grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px}
+.ld .detail{grid-column:2}
+.ld.one{grid-template-columns:minmax(0,1fr)}.ld.one .detail{grid-column:1}
+}
+ul.list li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:12px}
