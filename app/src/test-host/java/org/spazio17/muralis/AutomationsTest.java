@@ -19,6 +19,7 @@ public final class AutomationsTest {
 
     public static void main(String[] args) {
         testStoreRoundTrip();
+        testChangeTimesAndMarkers();
         testValidateRefusals();
         testWindow();
         testEngineSeedsThenArms();
@@ -73,7 +74,42 @@ public final class AutomationsTest {
         require(Automations.parse("not json").isEmpty(), "a broken document gives no rules");
         require(Automations.find(back, "r1") == read && Automations.find(back, "zz") == null, "find by id");
         String fresh = Automations.newId(back);
-        require(fresh.length() == 6 && Automations.find(back, fresh) == null, "a new id is free");
+        require(fresh.length() == 12 && Automations.find(back, fresh) == null, "a new id is free");
+    }
+
+    /** The shape the fleet of 0.7 merges by: change times and deletion markers. */
+    private static void testChangeTimesAndMarkers() {
+        List<Automations.Rule> stored = Automations.defaults();
+        stored.get(0).changedAt = 1_000;
+        Automations.Rule added = rule("light", "darker", "say");
+        added.level = 5;
+        List<Automations.Rule> next = new java.util.ArrayList<>();
+        next.add(stored.get(0).copy());
+        next.add(added);
+        Automations.stamp(stored, next, 2_000);
+        require(next.get(0).changedAt == 1_000, "an unchanged rule keeps its time");
+        require(next.get(1).changedAt == 2_000, "a new rule takes the store's time");
+        List<Automations.Rule> edited = Automations.parse(Automations.store(next));
+        require(edited.get(1).changedAt == 2_000, "the time survives the round trip");
+        edited.get(1).name = "Renamed";
+        Automations.stamp(next, edited, 3_000);
+        require(edited.get(1).changedAt == 3_000, "an edited rule takes the new time");
+        require(edited.get(0).changedAt == 1_000, "the other rule keeps its time");
+        List<Automations.Rule> fewer = new java.util.ArrayList<>();
+        fewer.add(edited.get(1));
+        String markers = Automations.deleted("[]", edited, fewer, 4_000);
+        require(markers.contains("\"wake\"") && markers.contains("4000"),
+                "a deleted rule leaves a marker with its time");
+        String back = Automations.deleted(markers, fewer, edited, 5_000);
+        require(!back.contains("\"wake\""), "a rule that comes back loses its marker");
+        StringBuilder many = new StringBuilder("[");
+        for (int index = 0; index < Automations.MAX_DELETED + 10; index++) {
+            many.append(index == 0 ? "" : ",").append("{\"id\":\"d").append(index)
+                    .append("\",\"deleted_at\":").append(index).append('}');
+        }
+        String capped = Automations.deleted(many.append(']').toString(), fewer, fewer, 6_000);
+        require(!capped.contains("\"d0\"") && capped.contains("\"d" + (Automations.MAX_DELETED + 9)
+                + "\""), "only the newest markers are kept");
     }
 
     private static void testValidateRefusals() {

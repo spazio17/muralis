@@ -592,6 +592,20 @@ the playlist page was the case that set the rule.
   (`window.muralisBindEditors`). Measured on the tablet: a sensor switched remotely reaches the
   settings section about 1.5 s after the command lands, a web edit reaches the panel's pages
   within its one-second tick after the save.
+- **Automations and sensor settings are ready for the fleet of 0.7** (Juri, 2026-09-30: "prepare
+  automations and sensors now so that when we start with 0.7 we don't have to modify either
+  again"). Every rule carries `changed_at` and a 12-character random id, so rules made on two
+  panels never share one; a deleted rule leaves a marker (`automations_deleted`, the newest 100),
+  and every write goes through `KioskConfig.storeAutomations`, which stamps both, so nothing
+  writes the list any other way. Every sensor switch and setting keeps its change time
+  (`changed_sensor_*`). `SensorSettings` says which settings a fleet may share and which belong to
+  one panel's hardware (the camera's name, lens, size, orientation, mirror and flip, the beacon it
+  sends, calibrations, sleep tests, tags read); beacon names are a `NamedList` document with
+  change times and deletion markers (moved from `sensor_option_beacon_*` on first read). The
+  three documents are served and taken at `/api/automations`, `/api/sensors/settings` and
+  `/api/beacons/names` in the shape GET gives, checked in full before anything is written; the
+  panel writes the times itself and ignores a post's copies, and a key of this panel alone under
+  `shared` is refused. The site's API page documents them.
 - **A single choice among more than five items is a menu, five or fewer stay radios** (Juri,
   2026-09-28, from Google's radio-button guidance, "If available options can be collapsed,
   consider using a dropdown menu because it uses less space", and Nielsen Norman Group's

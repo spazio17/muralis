@@ -643,6 +643,19 @@ final class HttpAdminServer {
                         bytes(buildAutomationPage(rule == null ? new Automations.Rule() : rule,
                                 null)));
             }
+        } else if (path.equals("/api/automations") && method.equals("GET")) {
+            writeJson(output, 200, automationsDocument());
+        } else if (path.equals("/api/automations") && method.equals("POST")) {
+            replaceAutomations(headers, body, output);
+        } else if (path.equals("/api/sensors/settings") && method.equals("GET")) {
+            writeJson(output, 200, KioskConfig.sensorSettingsDocument(context));
+        } else if (path.equals("/api/sensors/settings") && method.equals("POST")) {
+            applySensorSettings(headers, body, output);
+        } else if (path.equals("/api/beacons/names") && method.equals("GET")) {
+            writeResponse(output, 200, "application/json",
+                    bytes(KioskConfig.beaconNames(context).store()));
+        } else if (path.equals("/api/beacons/names") && method.equals("POST")) {
+            applyBeaconNames(headers, body, output);
         } else if (path.equals("/api/automations/save") && method.equals("POST")) {
             saveAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/api/automations/delete") && method.equals("POST")) {
@@ -2113,8 +2126,9 @@ final class HttpAdminServer {
         }
         java.util.List<Beacons.Seen> reach = beacons.inReach();
         StringBuilder rows = new StringBuilder("<ul class=\"list gap\">");
+        NamedList names = KioskConfig.beaconNames(context);
         for (Beacons.Seen one : heard) {
-            String name = KioskConfig.sensorOption(context, "beacon_" + one.id, "");
+            String name = names.name(one.id);
             String state = reach.contains(one)
                     ? "In reach" + (Double.isNaN(one.distance()) ? "" : ", " + one.distance() + " m")
                     : "Out of reach";
@@ -2134,6 +2148,12 @@ final class HttpAdminServer {
         String problem = Sensors.checkOption(key, value);
         if (problem != null) {
             return problem;
+        }
+        if (key.startsWith("beacon_")) {
+            // A beacon's name lives in the beacons' named list, not a setting of its own.
+            KioskConfig.beaconName(context, key.substring("beacon_".length()), value);
+            KioskService.publishTelemetrySoon(context);
+            return null;
         }
         KioskConfig.edit(context).sensorOption(key, Sensors.cleanOption(key, value)).apply();
         KioskService.refreshSensorsSoon(context);
@@ -2387,6 +2407,204 @@ final class HttpAdminServer {
                 + "</ul>";
     }
 
+    // ---- The documents the fleet of 0.7 reads and replaces (2026-09-30): the automations, the
+    // sensor settings and the beacons' names, each whole, checked by the rules the pages use.
+
+    private void writeJson(OutputStream output, int status, JSONObject document)
+            throws IOException {
+        writeResponse(output, status, "application/json", bytes(document.toString()));
+    }
+
+    private void refuseJson(OutputStream output, String detail) throws IOException {
+        writeResponse(output, 400, "application/json", bytes("{\"status\":\"rejected\","
+                + "\"detail\":" + JSONObject.quote(detail) + "}"));
+    }
+
+    /** The body as a JSON object, or null after a refusal was written. */
+    private JSONObject jsonBody(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        if (!headers.getOrDefault("content-type", "").contains("application/json")) {
+            refuseJson(output, "send the document as application/json");
+            return null;
+        }
+        try {
+            return new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException malformed) {
+            refuseJson(output, "malformed json");
+            return null;
+        }
+    }
+
+    /** {"rules": [...], "deleted": [{"id", "deleted_at"}]}, each rule with its changed_at. */
+    private JSONObject automationsDocument() {
+        JSONObject document = new JSONObject();
+        try {
+            document.put("rules", Automations.toJson(KioskConfig.automationsOf(context), false));
+            document.put("deleted", new org.json.JSONArray(KioskConfig.automationsDeleted(context)));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return document;
+    }
+
+    /**
+     * Replaces every rule with {"rules": [...]}, the shape GET gives: each checked by the
+     * editor's rule book, a rule without an id (or with one used twice) given a new one, at most
+     * MAX_RULES; stored through the one path, so each rule's change time and the markers of the
+     * rules left out follow. changed_at and deleted are the panel's own and a post's copies are
+     * ignored. All or nothing.
+     */
+    private void replaceAutomations(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        JSONObject document = jsonBody(headers, body, output);
+        if (document == null) {
+            return;
+        }
+        org.json.JSONArray array = document.optJSONArray("rules");
+        if (array == null) {
+            refuseJson(output, "the document needs a rules array");
+            return;
+        }
+        if (array.length() > Automations.MAX_RULES) {
+            refuseJson(output, "at most " + Automations.MAX_RULES + " automations");
+            return;
+        }
+        java.util.List<Automations.Rule> rules = new java.util.ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject one = array.optJSONObject(index);
+            if (one == null) {
+                refuseJson(output, "rule " + (index + 1) + " is not an object");
+                return;
+            }
+            rules.add(Automations.parseRule(one));
+        }
+        synchronized (Automations.STORE) {
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            for (Automations.Rule rule : rules) {
+                if (rule.id.isEmpty() || !ids.add(rule.id)) {
+                    rule.id = Automations.newId(rules);
+                    ids.add(rule.id);
+                }
+                String problem = Automations.validate(rule, Sensors.names());
+                if (problem != null) {
+                    refuseJson(output, "\"" + rule.name + "\": " + problem);
+                    return;
+                }
+            }
+            KioskConfig.storeAutomations(context, rules);
+        }
+        KioskService.refreshSensorsSoon(context);
+        writeJson(output, 200, automationsDocument());
+    }
+
+    /**
+     * Applies {"switches": {"<id>": {"on": true}}, "shared": {"<key>": {"value": "..."}}}, the
+     * shape GET gives: each switch and shared setting checked as the pages check it, all before
+     * anything is written. A setting of this panel alone under shared is refused, the fleet never
+     * pushes one (SensorSettings); this_panel and changed_at are the panel's own and ignored.
+     */
+    private void applySensorSettings(Map<String, String> headers, byte[] body,
+            OutputStream output) throws IOException {
+        JSONObject document = jsonBody(headers, body, output);
+        if (document == null) {
+            return;
+        }
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        JSONObject shared = document.optJSONObject("shared");
+        java.util.Iterator<String> keys = shared == null ? null : shared.keys();
+        while (keys != null && keys.hasNext()) {
+            String key = keys.next();
+            if (!SensorSettings.shared(key)) {
+                refuseJson(output, key + " belongs to this panel alone");
+                return;
+            }
+            JSONObject one = shared.optJSONObject(key);
+            Object value = one == null ? null : one.opt("value");
+            if (!(value instanceof String)) {
+                refuseJson(output, key + " needs {\"value\": \"...\"}");
+                return;
+            }
+            String problem = Sensors.checkOption(key, (String) value);
+            if (problem != null) {
+                refuseJson(output, key + ": " + problem);
+                return;
+            }
+            values.put(key, Sensors.cleanOption(key, (String) value));
+        }
+        Map<String, Boolean> switchesWanted = new java.util.LinkedHashMap<>();
+        JSONObject switches = document.optJSONObject("switches");
+        java.util.Iterator<String> ids = switches == null ? null : switches.keys();
+        while (ids != null && ids.hasNext()) {
+            String id = ids.next();
+            JSONObject one = switches.optJSONObject(id);
+            Object on = one == null ? null : one.opt("on");
+            if (!(on instanceof Boolean)) {
+                refuseJson(output, id + " needs {\"on\": true} or {\"on\": false}");
+                return;
+            }
+            if ((Boolean) on == KioskConfig.sensorEnabled(context, id)
+                    && Sensors.byId(id) != null) {
+                continue;
+            }
+            String problem = kioskService.sensorSwitchProblem(id, (Boolean) on);
+            if (problem != null) {
+                refuseJson(output, problem);
+                return;
+            }
+            switchesWanted.put(id, (Boolean) on);
+        }
+        KioskConfig.Editor editor = KioskConfig.edit(context);
+        for (Map.Entry<String, String> value : values.entrySet()) {
+            editor.sensorOption(value.getKey(), value.getValue());
+        }
+        for (Map.Entry<String, Boolean> wanted : switchesWanted.entrySet()) {
+            editor.sensorEnabled(wanted.getKey(), wanted.getValue());
+        }
+        editor.apply();
+        KioskService.refreshSensorsSoon(context);
+        writeJson(output, 200, KioskConfig.sensorSettingsDocument(context));
+    }
+
+    /**
+     * Applies {"names": [{"id": "<uuid:major:minor>", "name": "..."}]}, the shape GET gives; a
+     * blank name takes it away, a beacon left out keeps its name. changed_at and deleted are
+     * the panel's own and ignored.
+     */
+    private void applyBeaconNames(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        JSONObject document = jsonBody(headers, body, output);
+        if (document == null) {
+            return;
+        }
+        org.json.JSONArray names = document.optJSONArray("names");
+        if (names == null) {
+            refuseJson(output, "the document needs a names array");
+            return;
+        }
+        Map<String, String> wanted = new java.util.LinkedHashMap<>();
+        for (int index = 0; index < names.length(); index++) {
+            JSONObject one = names.optJSONObject(index);
+            String id = one == null ? "" : one.optString("id", "");
+            if (id.isEmpty()) {
+                refuseJson(output, "name " + (index + 1) + " needs an id");
+                return;
+            }
+            String name = one.optString("name", "");
+            String problem = Sensors.checkBeaconName(id, name);
+            if (problem != null) {
+                refuseJson(output, id + ": " + problem);
+                return;
+            }
+            wanted.put(id, name);
+        }
+        for (Map.Entry<String, String> name : wanted.entrySet()) {
+            KioskConfig.beaconName(context, name.getKey(), name.getValue());
+        }
+        KioskService.publishTelemetrySoon(context);
+        writeResponse(output, 200, "application/json",
+                bytes(KioskConfig.beaconNames(context).store()));
+    }
+
     private void saveAutomation(Map<String, String> form, OutputStream output)
             throws IOException {
         java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
@@ -2458,7 +2676,7 @@ final class HttpAdminServer {
                 rule.enabled = existing.enabled;
                 rules.set(rules.indexOf(existing), rule);
             }
-            KioskConfig.edit(context).automations(Automations.store(rules)).apply();
+            KioskConfig.storeAutomations(context, rules);
         }
         KioskService.refreshSensorsSoon(context);
         writeResponse(output, 303, "text/plain", bytes("saved"),
@@ -2472,7 +2690,7 @@ final class HttpAdminServer {
             Automations.Rule rule = Automations.find(rules, form.getOrDefault("id", "").trim());
             if (rule != null) {
                 rules.remove(rule);
-                KioskConfig.edit(context).automations(Automations.store(rules)).apply();
+                KioskConfig.storeAutomations(context, rules);
                 KioskService.refreshSensorsSoon(context);
             }
         }

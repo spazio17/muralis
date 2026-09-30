@@ -2152,7 +2152,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 return "no automation is called " + id;
             }
             rule.enabled = enabled;
-            KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+            KioskConfig.storeAutomations(this, rules);
             automations.rules(rules);
         }
         publishStateSoon();
@@ -2416,6 +2416,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public String setSensorEnabled(String id, boolean enabled) {
+        String problem = sensorSwitchProblem(id, enabled);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
+        refreshSensors();
+        publishStateSoon();
+        return null;
+    }
+
+    /** Why a sensor's switch cannot be set so, or null when it can. */
+    String sensorSwitchProblem(String id, boolean enabled) {
         Sensors.Def def = Sensors.byId(id);
         if (def == null) {
             return "no sensor is called " + id;
@@ -2427,9 +2439,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (enabled && !hub.permitted(def)) {
             return "allow " + def.name + " on the panel first";
         }
-        KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
-        refreshSensors();
-        publishStateSoon();
         return null;
     }
 

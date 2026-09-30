@@ -259,26 +259,34 @@ final class KioskConfig {
         }
 
         /** One sensor's switch; see Sensors. Off until switched on, like the companion app. */
+        // Every sensor setting carries when it changed, under changed_<its key>, for the fleet
+        // of 0.7 to merge by (2026-09-30); see sensorSettingsDocument. Writing the value already
+        // stored is no change and keeps the time.
         Editor sensorEnabled(String id, boolean value) {
+            stampSensor("sensor_" + id, value);
             plain.putBoolean("sensor_" + id, value);
             return this;
         }
 
         /** One setting of a sensor's own page, a word or a number as text; see Sensors. */
         Editor sensorOption(String key, String value) {
+            stampSensor("sensor_option_" + key, value);
             plain.putString("sensor_option_" + key, value);
             return this;
         }
 
         Editor removeSensorOption(String key) {
+            stampSensor("sensor_option_" + key, null);
             plain.remove("sensor_option_" + key);
             return this;
         }
 
-        /** The whole list of automations as Automations.store writes it. */
-        Editor automations(String json) {
-            plain.putString(AUTOMATIONS, json);
-            return this;
+        private void stampSensor(String key, Object value) {
+            Object stored = storageContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getAll().get(key);
+            if (!java.util.Objects.equals(stored, value)) {
+                plain.putLong("changed_" + key, System.currentTimeMillis());
+            }
         }
 
         /** The ids discovery last announced as automation switches, for the withdrawals. */
@@ -488,11 +496,96 @@ final class KioskConfig {
 
     private static final String AUTOMATIONS = "automations";
     private static final String AUTOMATIONS_ANNOUNCED = "automations_announced";
+    /** The markers of the rules deleted lately; see Automations.deleted. */
+    private static final String AUTOMATIONS_DELETED = "automations_deleted";
 
     static String sensorOption(Context context, String key, String fallback) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString("sensor_option_" + key, fallback);
+    }
+
+    private static final String BEACON_NAMES = "beacon_names";
+    private static final Object BEACON_NAMES_LOCK = new Object();
+
+    /**
+     * The names given to beacons, one NamedList document (2026-09-30, the fleet's shape). The
+     * loose sensor_option_beacon_<id> keys an older build wrote are read into it, and go at
+     * the next change.
+     */
+    static NamedList beaconNames(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        NamedList names = NamedList.parse(prefs.getString(BEACON_NAMES, null));
+        for (java.util.Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+            if (entry.getKey().startsWith("sensor_option_beacon_")
+                    && entry.getValue() instanceof String) {
+                String id = entry.getKey().substring("sensor_option_beacon_".length());
+                if (names.name(id).isEmpty()) {
+                    names.set(id, (String) entry.getValue(), 0);
+                }
+            }
+        }
+        return names;
+    }
+
+    /** Names a beacon, or takes its name away when {@code name} is blank. */
+    static void beaconName(Context context, String id, String name) {
+        synchronized (BEACON_NAMES_LOCK) {
+            android.content.SharedPreferences prefs = storageContext(context)
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            NamedList names = beaconNames(context);
+            names.set(id, name, System.currentTimeMillis());
+            android.content.SharedPreferences.Editor editor = prefs.edit()
+                    .putString(BEACON_NAMES, names.store());
+            for (String key : prefs.getAll().keySet()) {
+                if (key.startsWith("sensor_option_beacon_")) {
+                    editor.remove(key);
+                }
+            }
+            editor.apply();
+        }
+    }
+
+    /**
+     * The sensor settings as one document, for the web API and the fleet of 0.7: the switches,
+     * the shared settings and this panel's own (SensorSettings), each with its value and when
+     * it changed, 0 when never since change times were kept.
+     */
+    static org.json.JSONObject sensorSettingsDocument(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        org.json.JSONObject switches = new org.json.JSONObject();
+        org.json.JSONObject shared = new org.json.JSONObject();
+        org.json.JSONObject thisPanel = new org.json.JSONObject();
+        try {
+            for (java.util.Map.Entry<String, ?> entry : new java.util.TreeMap<>(prefs.getAll())
+                    .entrySet()) {
+                String key = entry.getKey();
+                if (key.startsWith("sensor_option_")) {
+                    String option = key.substring("sensor_option_".length());
+                    if (option.startsWith("beacon_")) {
+                        continue;
+                    }
+                    org.json.JSONObject one = new org.json.JSONObject();
+                    one.put("value", String.valueOf(entry.getValue()));
+                    one.put("changed_at", prefs.getLong("changed_" + key, 0));
+                    (SensorSettings.shared(option) ? shared : thisPanel).put(option, one);
+                } else if (key.startsWith("sensor_") && entry.getValue() instanceof Boolean) {
+                    org.json.JSONObject one = new org.json.JSONObject();
+                    one.put("on", entry.getValue());
+                    one.put("changed_at", prefs.getLong("changed_" + key, 0));
+                    switches.put(key.substring("sensor_".length()), one);
+                }
+            }
+            org.json.JSONObject document = new org.json.JSONObject();
+            document.put("switches", switches);
+            document.put("shared", shared);
+            document.put("this_panel", thisPanel);
+            return document;
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     static int sensorOptionInt(Context context, String key, int fallback) {
@@ -601,6 +694,31 @@ final class KioskConfig {
         return ordered;
     }
 
+
+    /**
+     * Stores the whole list of automations, the one way every writer does it: each rule's
+     * change time set (Automations.stamp) and a deletion marker for each rule left out
+     * (Automations.deleted), so the fleet of 0.7 can merge copies and carry deletions. The
+     * caller holds Automations.STORE across its read and this write.
+     */
+    static void storeAutomations(Context context, java.util.List<Automations.Rule> rules) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        java.util.List<Automations.Rule> stored = automationsOf(context);
+        long now = System.currentTimeMillis();
+        Automations.stamp(stored, rules, now);
+        prefs.edit()
+                .putString(AUTOMATIONS, Automations.store(rules))
+                .putString(AUTOMATIONS_DELETED, Automations.deleted(
+                        prefs.getString(AUTOMATIONS_DELETED, "[]"), stored, rules, now))
+                .apply();
+    }
+
+    /** The deletion markers, a JSON array of {"id", "deleted_at"}. */
+    static String automationsDeleted(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(AUTOMATIONS_DELETED, "[]");
+    }
 
     /** The stored automations; the shipped default until something is stored. */
     static java.util.List<Automations.Rule> automationsOf(Context context) {
