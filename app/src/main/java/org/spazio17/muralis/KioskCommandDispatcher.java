@@ -194,6 +194,9 @@ final class KioskCommandDispatcher {
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
 
+        /** One step of the microphone calibration, quiet, loud or reset; see Microphone. */
+        String calibrateMicrophone(String step);
+
         /** Sleeps the panel for a moment and notes whether the sensor reported; see Sensors. */
         String sleepTest(String sensorId);
 
@@ -450,6 +453,10 @@ final class KioskCommandDispatcher {
             }
             case "proximity.calibrate": {
                 String problem = executor.calibrateProximity(args.value);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "microphone.calibrate": {
+                String problem = executor.calibrateMicrophone(args.value);
                 return problem == null ? accepted() : rejected(problem);
             }
             case "sensor.sleep_test": {

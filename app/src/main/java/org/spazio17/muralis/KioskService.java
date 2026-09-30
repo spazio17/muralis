@@ -291,7 +291,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
+        microphone = new Microphone(this);
         camera = new PanelCamera(this, this::onCameraMotion);
+        sensors.source(Sensors.MICROPHONE, microphone);
         sensors.source(Sensors.CAMERA, camera);
         sensors.onEdge(this::sensorEdge);
         sensors.onReading(this::sensorReading);
@@ -382,6 +384,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         stopTelemetry();
         if (sensors != null) {
             sensors.stop();
+        }
+        if (microphone != null) {
+            microphone.stop();
         }
         if (camera != null) {
             camera.stop();
@@ -2028,6 +2033,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
     private Automations.Engine automations;
+    private Microphone microphone;
     private PanelCamera camera;
 
     /** Runs one automation's action; the engine decided it is due. */
@@ -2210,6 +2216,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return values == null || values.length == 0 ? "none" : Float.toString(values[0]);
     }
 
+    @Override
+    public String calibrateMicrophone(String step) {
+        Sensors hub = sensors;
+        Microphone ears = microphone;
+        if (hub == null || ears == null || !hub.available(Sensors.MICROPHONE)) {
+            return "this device has no microphone";
+        }
+        if (!hub.on(Sensors.MICROPHONE) || !ears.running()) {
+            return "the microphone is off";
+        }
+        String problem = ears.calibrate(step);
+        if (problem == null) {
+            publishSensorBlock();
+            publishStateSoon();
+        }
+        return problem;
+    }
+
     /** Coalesces a burst of changes of state into one publish; a hand is slower than this. */
     private static final long SENSOR_EDGE_DELAY_MS = 100L;
 
@@ -2383,6 +2407,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
             mqtt.clearPicture();
         }
         picturesToBroker = pictures;
+        if (microphone != null) {
+            if (hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
+                microphone.start();
+            } else {
+                microphone.stop();
+            }
+        }
         if (camera != null) {
             camera.refresh(cameraOn);
         }
@@ -2401,12 +2432,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * Adds the camera foreground type while that sensor is on, and drops it when it goes off:
-     * from Android 11 a stopped activity may use the camera only through a foreground service
-     * of that type, so without this a panel whose screen is off loses its camera ("disabled by
-     * policy", the Pixel, 2026-09-27). Android refuses the type to an app in the background;
-     * the activity asks again when it comes to the front, which is where the switches are
-     * flipped anyway.
+     * Adds the camera and microphone foreground types while those sensors are on, and drops
+     * them when they go off: from Android 11 a stopped activity may use either only through a
+     * foreground service of that type, so without this a panel whose screen is off loses its
+     * camera ("disabled by policy", the Pixel, 2026-09-27) and hears silence. Android refuses
+     * the types to an app in the background; the activity asks again when it comes to the
+     * front, which is where the switches are flipped anyway.
      */
     private void refreshForegroundTypes() {
         if (android.os.Build.VERSION.SDK_INT < 29) {
@@ -2416,6 +2447,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         int wanted = baseForegroundType();
         if (hub != null && hub.available(Sensors.CAMERA) && hub.on(Sensors.CAMERA)) {
             wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        }
+        if (hub != null && hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
         }
         if (wanted == foregroundTypesNow) {
             return;

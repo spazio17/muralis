@@ -796,8 +796,8 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // In front: the camera foreground type a background start could not take is asked for
-        // again; see KioskService.refreshForegroundTypes.
+        // In front: the camera and microphone foreground types a background start could not
+        // take are asked for again; see KioskService.refreshForegroundTypes.
         KioskService.foregroundTypesSoon(this);
         if (orientationPending) {
             orientationPending = false;
@@ -3381,6 +3381,7 @@ public final class KioskActivity extends Activity {
             case "movement": return R.drawable.ic_sensor_movement;
             case "audio": return R.drawable.ic_sensor_audio;
             case "camera": return R.drawable.ic_sensor_camera;
+            case "microphone": return R.drawable.ic_sensor_microphone;
             case "pressure": return R.drawable.ic_sensor_pressure;
             case "temperature": return R.drawable.ic_sensor_temperature;
             case "humidity": return R.drawable.ic_sensor_humidity;
@@ -3887,6 +3888,45 @@ public final class KioskActivity extends Activity {
         return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
+    /** One step of the microphone calibration through the service; the reason when refused. */
+    private String microphoneStep(String step) {
+        KioskService service = KioskService.liveService();
+        return service == null ? "the service is not running" : service.calibrateMicrophone(step);
+    }
+
+    /**
+     * The two steps, each a screen of its own: the room quiet, then the loudest sound that
+     * should read 100. The panel averages the last three seconds when the button is tapped,
+     * so the room has to stay that way until then.
+     */
+    private void calibrateMicrophone() {
+        final Runnable screen = currentScreen;
+        Runnable back = () -> {
+            if (screen != null) {
+                screen.run();
+            }
+        };
+        showConfirm("Keep the room quiet", "Let the room be as quiet as it gets, for a few "
+                + "seconds, then tap Quiet.", "Quiet", false, () -> {
+                    String problem = microphoneStep("quiet");
+                    if (problem != null) {
+                        showNotice("Not done", capital(problem) + ".", back);
+                        return;
+                    }
+                    showConfirm("Make it loud", "Make the loudest sound that should read 100: "
+                            + "talk loudly or play music near the panel, and tap Loud while it "
+                            + "goes on.", "Loud", false, () -> {
+                                String done = microphoneStep("loud");
+                                if (done != null) {
+                                    showNotice("Not done", capital(done) + ".", back);
+                                    return;
+                                }
+                                back.run();
+                                redrawSoon();
+                            }, back);
+                }, back);
+    }
+
     /** One step of the proximity calibration through the service; the reason when refused. */
     private String proximityStep(String step) {
         KioskService service = KioskService.liveService();
@@ -4202,6 +4242,11 @@ public final class KioskActivity extends Activity {
             // guessing at a driver's values, a procedure the user runs). Until then Android's
             // distance rule reads it.
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
+        } else if (def == Sensors.MICROPHONE) {
+            // The room's quiet and loud, shown by the person, the proximity's procedure: a
+            // quiet room read about 30 of 100 before (Juri, 2026-09-28), and what counts as
+            // loud is the room's, not Android's.
+            cards.add(calibrationCard(theme, def, one, this::calibrateMicrophone));
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
                     false, true);

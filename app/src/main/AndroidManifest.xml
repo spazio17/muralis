@@ -32,11 +32,12 @@
     <!-- Required from API 34 in addition to FOREGROUND_SERVICE, matched to the
          android:foregroundServiceType on KioskService below. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- The camera sensor from a panel whose screen is off: from Android 11 a stopped activity
-         may use the camera only through a foreground service of that type, and the Pixel
-         refused it the moment its screen went dark (2026-09-27). The type is added to the
-         running service while the camera sensor is on. -->
+    <!-- The camera and microphone sensors from a panel whose screen is off: from Android 11 a
+         stopped activity may use either only through a foreground service of that type, and
+         the Pixel refused the camera the moment its screen went dark (2026-09-27). The types
+         are added to the running service while the camera or microphone sensor is on. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Runtime permission from API 33 for the notification KioskService must
          post to stay alive. Ask for it at runtime; a denial must not be fatal. -->
@@ -71,12 +72,14 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <!-- The sensors (Sensors.java), every one off until a person switches it on. Camera: the
-         IP-camera stream and motion detection. Each runtime permission is asked for once from
-         the Sensors page on an ordinary install and granted silently on a device-owner panel.
-         Play consequence: CAMERA needs its use described in the listing's Data safety form and
-         the camera foreground type a declaration with a video; see
+         IP-camera stream and motion detection. Microphone: a sound level, nothing recorded. Each
+         runtime permission is asked for once from the Sensors page on an ordinary install and
+         granted silently on a device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need
+         their use described in the listing's Data safety form, and the camera and microphone
+         foreground types a declaration with a video each; see
          ../media/google-play/PLAY-LISTING.md. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or
@@ -119,6 +122,7 @@
          PoE Ethernet is exactly such a device. The service copes with a missing WifiManager. -->
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
         android:name=".MuralisApplication"
@@ -210,7 +214,7 @@
             android:name=".KioskService"
             android:directBootAware="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse|camera">
+            android:foregroundServiceType="specialUse|camera|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persistent single-purpose kiosk launcher supervising a Home Assistant dashboard on wall-mounted hardware." />

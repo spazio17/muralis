@@ -85,6 +85,8 @@ final class Automations {
                 // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
                 // itself, and read "for for" (review, 2026-10-01).
                 new Event("no_motion", "Nothing moving", null, true)));
+        map.put("microphone", Collections.singletonList(
+                new Event("louder", "Louder than", "%", false)));
         map.put("display", Arrays.asList(
                 new Event("on", "Display switched on", null, false),
                 new Event("off", "Display switched off", null, false)));

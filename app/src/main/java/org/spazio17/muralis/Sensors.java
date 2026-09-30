@@ -46,8 +46,8 @@ import java.util.Map;
  * on change alone.
  *
  * <p>A hardware sensor registers its listener only while it is on, asking for the wake-up
- * variant so it answers under a real sleep. The camera lives in its own class and is asked
- * through {@link #source}.
+ * variant so it answers under a real sleep. The camera and the microphone live in their own
+ * classes and are asked through {@link #source}.
  */
 final class Sensors implements SensorEventListener {
     private static final String TAG = "MuralisSensors";
@@ -110,6 +110,8 @@ final class Sensors implements SensorEventListener {
             "measurement", Sensor.TYPE_LIGHT, Kind.SWITCH, true, "light");
     static final Def MEMORY = new Def("memory", "Memory", SENSOR, null, "%", "measurement", 0,
             Kind.PANEL, false, "memory");
+    static final Def MICROPHONE = new Def("microphone", "Microphone", SENSOR, null, "%",
+            "measurement", 0, Kind.PERMISSION, true, "microphone");
     static final Def MOVEMENT = new Def("movement", "Movement", BINARY, "moving", null, null,
             Sensor.TYPE_ACCELEROMETER, Kind.SWITCH, true, "movement");
     static final Def NETWORK = new Def("network", "Network", SENSOR, "enum", null, null, 0,
@@ -130,10 +132,10 @@ final class Sensors implements SensorEventListener {
 
     /** Every sensor this app knows, alphabetical by name, which is the order the pages use. */
     static final List<Def> ALL = Collections.unmodifiableList(Arrays.asList(
-            TEMPERATURE, AUDIO, BATTERY, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY, MOVEMENT,
-            NETWORK, POWER, PRESSURE, PROCESSOR, PROXIMITY, SCREENSAVER));
+            TEMPERATURE, AUDIO, BATTERY, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY, MICROPHONE,
+            MOVEMENT, NETWORK, POWER, PRESSURE, PROCESSOR, PROXIMITY, SCREENSAVER));
 
-    /** What the camera reports, asked when a document is built. */
+    /** What the camera and the microphone report, asked when a document is built. */
     interface Reading {
         /** Fills {@code one} with value and attributes; may leave value null. */
         void fill(JSONObject one) throws JSONException;
@@ -383,6 +385,9 @@ final class Sensors implements SensorEventListener {
         if (def == CAMERA) {
             return packages.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
         }
+        if (def == MICROPHONE) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_MICROPHONE);
+        }
         if (def == BATTERY) {
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             return facts == null || facts.batteryPresent;
@@ -394,6 +399,9 @@ final class Sensors implements SensorEventListener {
     static String[] permissionsFor(Def def) {
         if (def == CAMERA) {
             return new String[] {android.Manifest.permission.CAMERA};
+        }
+        if (def == MICROPHONE) {
+            return new String[] {android.Manifest.permission.RECORD_AUDIO};
         }
         return new String[0];
     }
@@ -1123,6 +1131,9 @@ final class Sensors implements SensorEventListener {
         }
         if (def == MEMORY) {
             return value + "% used";
+        }
+        if (def == MICROPHONE) {
+            return value + "%";
         }
         return value + (def.unit == null ? "" : " " + def.unit);
     }

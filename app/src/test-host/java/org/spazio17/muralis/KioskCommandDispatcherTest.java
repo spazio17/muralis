@@ -408,6 +408,10 @@ public final class KioskCommandDispatcherTest {
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
                 "proximity.calibrate did not carry its step");
+        r = KioskCommandDispatcher.dispatch("microphone.calibrate",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "quiet"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("calibrateMicrophone:quiet"),
+                "microphone.calibrate did not carry its step");
         r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "proximity"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("sleepTest:proximity"),
@@ -819,6 +823,12 @@ public final class KioskCommandDispatcherTest {
         @Override
         public String cameraSnapshot() {
             calls.add("cameraSnapshot");
+            return null;
+        }
+
+        @Override
+        public String calibrateMicrophone(String step) {
+            calls.add("calibrateMicrophone:" + step);
             return null;
         }
 

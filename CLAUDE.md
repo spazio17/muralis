@@ -390,10 +390,10 @@ the playlist page was the case that set the rule.
   same shape and only its right edge says what kind it is. A switch for the ones a person turns
   on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
   beside the switch for the ones with a page of their own (on the panel every hardware sensor,
-  for the test while asleep, plus the camera; on the web only where the page says more than the
-  row, since the calibration and the test are the panel's); Allow while the camera's permission
-  is missing (asked once from the Sensors page on an ordinary install and granted silently on a
-  device owner); every row has a switch, and the panel's own
+  for the test while asleep, plus the camera and the microphone; on the web only where the page
+  says more than the row, since the calibration and the test are the panel's); Allow while a
+  permission is missing (camera, microphone, asked once from the Sensors page on an ordinary
+  install and granted silently on a device owner); every row has a switch, and the panel's own
   values (display, screensaver, battery, power, network, processor, memory: their Home
   Assistant entities predate this list and are not announced twice) start on where the rest
   start off; greyed at the end for what this device lacks. Every row's reading is worded once, by the service
@@ -437,7 +437,8 @@ the playlist page was the case that set the rule.
   and crashed a fresh install on Android 14+. The notification says "Camera on" while the type
   is held. On the panel the camera's Stream card is greyed with "Needs the local web admin"
   while the admin is not listening, and Allow, once Android will not ask again, opens the app's
-  page in Android's settings and says so. **This panel** is the section that holds the panel's name
+  page in Android's settings and says so. **The microphone** is a sound
+  level, 0 to 100, nothing recorded. **This panel** is the section that holds the panel's name
   (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
   Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
   Open dashboard, outlined, on an ordinary install; the readings are on the
@@ -461,13 +462,13 @@ the playlist page was the case that set the rule.
   both need a hand at the glass and stay the panel's; the Display section's "Display off turns
   the screen off ..." sentence went from both surfaces, the note shows only as the red warning
   that a sleep ended badly; the proximity's events read Near and Far, Android's own words, the same as the row (Juri, 2026-09-30; Home Assistant has no binary class for a proximity sensor); **the service takes
-  the camera foreground type while that sensor is on** (`KioskService.refreshForegroundTypes`,
-  manifest `specialUse|camera` with FOREGROUND_SERVICE_CAMERA): from Android 11 a stopped
-  activity may use the camera only through a foreground service of that type, and the Pixel
-  (Android 17) refused it with "disabled by policy" the moment its screen went dark
-  (2026-09-27). Android refuses the type to an app in the background, so the activity asks
-  again on every resume; the Play console's foreground-service declaration must name it
-  before the next upload;
+  the camera and microphone foreground types while those sensors are on**
+  (`KioskService.refreshForegroundTypes`, manifest `specialUse|camera|microphone` with the two
+  FOREGROUND_SERVICE_* permissions): from Android 11 a stopped activity may use either only
+  through a foreground service of that type, and the Pixel (Android 17) refused the camera
+  with "disabled by policy" the moment its screen went dark (2026-09-27). Android refuses the
+  types to an app in the background, so the activity asks again on every resume; the Play
+  console's foreground-service declaration must name the two types before the next upload;
   every writer of the rules JSON, the service, both web handlers, the panel's switch, Save and
   Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
   beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
@@ -583,20 +584,31 @@ the playlist page was the case that set the rule.
   portrait or landscape, the middle of the picture in that shape when the panel is the other
   way (the sensor is fixed, so a tall picture from a wide panel is a crop); mirror and upside
   down apply to the upright picture.
-- **Lists and changes of state (Juri, 2026-09-28).** A list of rows on the
+- **Lists, the microphone and changes of state (Juri, 2026-09-28).** A list of rows on the
   panel is the web's `ul.list`: the rows touch with a 1 dp divider between (`addListRow`, the
   settings page's Sensors and Automations sections and the narrow Sensors and Automations
   pages), a row is 56 dp with a name alone and 72 dp with a second line (`glyphRow`, Material's
   list item heights, the web's `li` and `li.two`), and a button under a card's row sits 8 dp
   below it (`tightParams`); the wide pages' lists keep the settings menu's pills. The proximity
-  glyph is Material's sensor_occupied, on both surfaces. **A change of state reaches everyone
+  glyph is Material's sensor_occupied, on both surfaces. **The microphone hears through the
+  voice-recognition source** at 44.1 kHz: CDD 5.4.2 makes every device capture it with noise
+  reduction and automatic gain control off, and the plain source's gain control lifted an empty
+  room to about 30 of 100. The rules get each half second as it is, so a knock reaches "louder
+  than" at once; the reading on the rows and in the state document is smoothed over about five
+  seconds and moves by 3 dB steps, so it does not flicker and a broker is not sent a new number
+  every breath. The 0 to 100 spans 16-bit audio's whole range until the person calibrates it on
+  the Microphone page (now a page of its own), the proximity's procedure: the room quiet, then
+  the loudest sound that should read 100, each the last three seconds averaged as power,
+  refused under 10 dB apart (`microphone.calibrate` quiet, loud or reset; `microphone_quiet_db`,
+  `microphone_loud_db`); `calibrated` rides in its block. **A change of state reaches everyone
   at once** (`Sensors.onEdge`, `KioskService.sensorEdge`): proximity near or not, movement
   started or ended publish the block, repaint the panel's readings and send the state document
   within 100 ms, where they waited up to three seconds on the panel and a telemetry interval on
   MQTT; readings that move all the time (light, pressure) repaint the panel's rows within a
   quarter of a second while a settings screen is up (`Sensors.onReading`,
   `KioskService.sensorReading`: finding where a panel keeps its light sensor was a guess
-  against a reading three seconds late) and stay on the periodic publish for MQTT.
+  against a reading three seconds late) and stay on the periodic publish for MQTT, as sound
+  does.
   The rules were never late, they are fed on the event. Android gives an app no setting of a
   sensor beyond the sampling rate and batching (proximity is on-change, so neither applies);
   thresholds and gain live in the driver, so what Muralis can offer is a calibration the person
