@@ -36,6 +36,10 @@ If you use the Pictures screensaver, the app also stores the playlists you make,
 
 Muralis reads the photos on the device only if you turn on the Pictures screensaver with the panel's own pictures as the source, and only after you grant the permission Android asks for at that moment; it reads them to list the folders, draw the previews and show the pictures you picked, and for nothing else. It does not read your contacts, location, messages, call history or microphone, and requests no permission that would allow it to.
 
+SENSORS
+
+Every sensor is off until you switch it on in the app's Sensors page. When a sensor is on, its reading is part of the status message and is shown in the web admin.
+
 DELETION
 
 Uninstalling the app, or clearing its data, removes everything it has stored, including the encrypted credentials, the uploads, the previews and the cached pictures. The one copy outside its reach is the retained snapshot on your broker, which you clear there.
@@ -60,4 +64,4 @@ Juri Calleri, Vienna, Austria. spazio17@protonmail.com.
 
 A postal address is published on the imprint at muralis.spazio17.org, as Austrian law requires of it. It is kept in that one place rather than repeated here, so that changing it does not need a new release of the app.
 
-This policy was last updated on 23 September 2026.
+This policy was last updated on 30 September 2026.

@@ -258,6 +258,23 @@ final class KioskConfig {
             return this;
         }
 
+        /** One sensor's switch; see Sensors. Off until switched on, like the companion app. */
+        Editor sensorEnabled(String id, boolean value) {
+            plain.putBoolean("sensor_" + id, value);
+            return this;
+        }
+
+        /** One setting of a sensor's own page, a word or a number as text; see Sensors. */
+        Editor sensorOption(String key, String value) {
+            plain.putString("sensor_option_" + key, value);
+            return this;
+        }
+
+        Editor removeSensorOption(String key) {
+            plain.remove("sensor_option_" + key);
+            return this;
+        }
+
         Editor orientation(String value) {
             plain.putString(ORIENTATION, value);
             // Completes the 2026-08-29 migration: the retired boolean stays readable until the
@@ -445,6 +462,35 @@ final class KioskConfig {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    /** Whether the sensor with this id is switched on; every sensor starts off. */
+    static boolean sensorEnabled(Context context, String id) {
+        return sensorEnabled(context, id, false);
+    }
+
+    static boolean sensorEnabled(Context context, String id, boolean fallback) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean("sensor_" + id, fallback);
+    }
+
+    static String sensorOption(Context context, String key, String fallback) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString("sensor_option_" + key, fallback);
+    }
+
+    static int sensorOptionInt(Context context, String key, int fallback) {
+        try {
+            return Integer.parseInt(sensorOption(context, key, Integer.toString(fallback)).trim());
+        } catch (NumberFormatException notANumber) {
+            return fallback;
+        }
+    }
+
+    static boolean sensorOptionOn(Context context, String key, boolean fallback) {
+        return "true".equals(sensorOption(context, key, Boolean.toString(fallback)));
     }
 
     /**

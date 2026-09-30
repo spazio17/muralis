@@ -127,6 +127,7 @@ final class HttpAdminServer {
     private final String settingScript;
     private final String checkScript;
     private final String statsScript;
+    private final String listDetailScript;
     private final String themeScript;
     private final String pictureScript;
     private final String playlistScript;
@@ -188,6 +189,7 @@ final class HttpAdminServer {
         settingScript = script(R.raw.admin_setting);
         checkScript = script(R.raw.admin_check);
         statsScript = script(R.raw.admin_stats);
+        listDetailScript = script(R.raw.admin_listdetail);
         themeScript = script(R.raw.admin_theme);
         pictureScript = script(R.raw.admin_pictures);
         playlistScript = script(R.raw.admin_playlists);
@@ -612,6 +614,12 @@ final class HttpAdminServer {
             }
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
+        } else if (path.equals("/sensors") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSensorsPage(queryValue(query, "id"), false)));
+        } else if (path.equals("/sensor") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSensorPage(queryValue(query, "id"))));
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
         } else if (path.equals("/screensaver") && method.equals("GET")) {
@@ -1023,8 +1031,9 @@ final class HttpAdminServer {
                 return null;
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
-            // POST /api/setting has always accepted. It covers the stats-overlay switch and the
-            // display and screensaver keys. See settingScript.
+            // POST /api/setting has always accepted. It covers the stats-overlay switch, the
+            // display and screensaver keys, and since the sensors the sensor switches, their
+            // options. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1035,6 +1044,31 @@ final class HttpAdminServer {
                 // applies on its own, in this order: a hand-built request carrying several keys
                 // gets the earlier ones applied and the first refusal reported. The screensaver
                 // keys are the exception, checked as a set before any of them is stored.
+                for (String key : form.keySet()) {
+                    if (key.startsWith("sensor_") && !key.startsWith("sensor_option_")
+                            && Sensors.byId(key.substring("sensor_".length())) == null) {
+                        return "no sensor is called " + key.substring("sensor_".length());
+                    }
+                }
+                for (Sensors.Def def : Sensors.ALL) {
+                    String key = "sensor_" + def.id;
+                    if (form.containsKey(key)) {
+                        String problem = kioskService.setSensorEnabled(def.id, isTrue(form.get(key)));
+                        if (problem != null) {
+                            return problem;
+                        }
+                    }
+                }
+                for (Map.Entry<String, String> entry : form.entrySet()) {
+                    if (entry.getKey().startsWith("sensor_option_")) {
+                        String problem = saveSensorOption(
+                                entry.getKey().substring("sensor_option_".length()),
+                                entry.getValue());
+                        if (problem != null) {
+                            return problem;
+                        }
+                    }
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
@@ -1312,7 +1346,23 @@ final class HttpAdminServer {
                 + "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M4 4l16 16\"/>");
         paths.put("prev", "<path d=\"M15 6l-6 6 6 6\"/>");
         paths.put("next", "<path d=\"M9 6l6 6-6 6\"/>");
+        paths.put("sensors", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14\"/>");
         paths.put("panel", "<rect x=\"4\" y=\"2\" width=\"16\" height=\"20\" rx=\"2\"/><path d=\"M9 18h6\"/>");
+        // The sensors' glyphs, the same paths the panel's drawables carry.
+        paths.put("proximity", "<circle cx=\"12\" cy=\"10\" r=\"2.5\"/><path d=\"M7.5 17.5a4.5 3.5 0 019 0M3.13 8.6A9.5 9.5 0 018.6 3.13M15.4 3.13A9.5 9.5 0 0120.87 8.6M20.87 15.4A9.5 9.5 0 0115.4 20.87M8.6 20.87A9.5 9.5 0 013.13 15.4\"/>");
+        paths.put("light", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
+        paths.put("movement", "<path d=\"M3 12h3l3-7 4 14 3-7h5\"/>");
+        paths.put("audio", "<path d=\"M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11\"/>");
+        paths.put("pressure", "<circle cx=\"12\" cy=\"13\" r=\"8\"/><path d=\"M12 13l4-4M12 5V3\"/>");
+        paths.put("temperature", "<path d=\"M10 4a2 2 0 014 0v9.5a4 4 0 11-4 0z\"/>");
+        paths.put("humidity", "<path d=\"M12 3s6 7 6 11a6 6 0 01-12 0c0-4 6-11 6-11z\"/>");
+        paths.put("display", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M8 21h8\"/>");
+        paths.put("screensaver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
+        paths.put("battery", "<rect x=\"3\" y=\"7\" width=\"16\" height=\"10\" rx=\"2\"/><path d=\"M21 11v2M6 10v4M9 10v4\"/>");
+        paths.put("power", "<path d=\"M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0zM12 18v3\"/>");
+        paths.put("network", "<path d=\"M2 9a15 15 0 0120 0M5.5 12.5a10 10 0 0113 0M9 16a5 5 0 016 0\"/><circle cx=\"12\" cy=\"19\" r=\"1\"/>");
+        paths.put("memory", "<rect x=\"5\" y=\"5\" width=\"14\" height=\"14\" rx=\"2\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\"/><path d=\"M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3\"/>");
+        paths.put("processor", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
         paths.put("down", "<path d=\"M6 9l6 6 6-6\"/>");
         paths.put("list", "<path d=\"M4 6h16M4 12h16M4 18h16\"/>");
         paths.put("details", "<rect x=\"3\" y=\"4\" width=\"5\" height=\"5\" rx=\"1\"/>"
@@ -1439,6 +1489,8 @@ final class HttpAdminServer {
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
         sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
                 screensaverBody()});
+        sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
+                sensorsSectionBody()});
         sections.add(new String[] {"quick", "reload", "Quick actions",
                 "Reboot · Reload · Restart", quickActionsBody()});
         sections.add(new String[] {"panel", "panel", "This panel", config.deviceId,
@@ -1528,6 +1580,100 @@ final class HttpAdminServer {
                 : ScreensaverPolicy.modeName(saver.mode) + " · after " + saver.idleSeconds + " s";
     }
 
+    /** "n of m on" for the Sensors section and page; admin_stats.js keeps it current. */
+    private String sensorsSummary() {
+        return Sensors.summary(KioskRuntimeState.sensors());
+    }
+
+    /** One list row: a glyph, two lines, and whatever stands at the right. */
+    private static String listRow(String glyphName, String head, String headId, String sub,
+            String subId, String trail, boolean dim) {
+        return "<li class=\"two" + (dim ? " dim" : "") + "\"><span class=\"lead\">"
+                + glyph(glyphName) + "</span><span class=\"text\"><span class=\"h\""
+                + (headId == null ? "" : " id=\"" + headId + "\"") + ">" + escapeHtml(head)
+                + "</span><span class=\"s\"" + (subId == null ? "" : " id=\"" + subId + "\"")
+                + ">" + escapeHtml(sub) + "</span></span>"
+                + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
+    }
+
+    /** The same row with its text a link to the page it names. */
+    private static String linkRow(String href, String glyphName, String head, String sub,
+            String subId, String trail) {
+        return "<li class=\"two\"><a class=\"rowlink plain\" href=\"" + href + "\">"
+                + "<span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(head) + "</span><span class=\"s\""
+                + (subId == null ? "" : " id=\"" + subId + "\"") + ">" + escapeHtml(sub)
+                + "</span></span></a>"
+                + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
+    }
+
+    private static String sensorSwitch(Sensors.Def def, boolean on) {
+        return sensorSwitch(def, on, "");
+    }
+
+    /** The same switch under another id, for the detail's own row beside the list's. */
+    private static String sensorSwitch(Sensors.Def def, boolean on, String suffix) {
+        return "<input type=\"checkbox\" class=\"sw\" id=\"sensor-" + def.id + suffix
+                + "\" data-setting=\"sensor_" + def.id + "\" aria-label=\"" + escapeHtml(def.name)
+                + "\"" + (on ? " checked" : "") + ">";
+    }
+
+    /** A list row as a row of the list beside a detail: its id on it, and marked when chosen. */
+    private static String navRow(String li, String id, boolean on) {
+        java.util.regex.Matcher tag = java.util.regex.Pattern.compile("<li( class=\"([^\"]*)\")?")
+                .matcher(li);
+        if (!tag.find()) {
+            return li;
+        }
+        String classes = (tag.group(2) == null ? "" : tag.group(2)) + (on ? " on" : "");
+        return li.substring(0, tag.start()) + "<li data-id=\"" + escapeHtml(id) + "\" class=\""
+                + classes.trim() + "\"" + li.substring(tag.end());
+    }
+
+    /**
+     * The list-detail shell of the Sensors page, the settings page's own shape from 840 px:
+     * the list at the left, the chosen item's page at the right. Below that
+     * one of the two shows, which one {@code detailPage} says, and from 600 px the column is
+     * no wider than 640 px (Juri, 2026-09-27).
+     */
+    private String listDetail(String kind, boolean detailPage, String nav, String detail) {
+        return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
+                + (detailPage ? "detail" : "list") + "\"" + listsAttributes(kind + "_page") + ">"
+                + nav + "<div class=\"detail\">" + detail + "</div></div>" + listDetailScript;
+    }
+
+    /**
+     * The key a list was drawn from, for admin_stats.js: when the stats carry another, the list
+     * is fetched again and swapped in place, unless something in it is being edited. See
+     * Sensors.listKeys.
+     */
+    private String listsAttributes(String kind) {
+        String key = Sensors.listKeys(KioskRuntimeState.sensors()).optString(kind, "");
+        return " data-lists-kind=\"" + kind + "\" data-lists=\"" + escapeHtml(key) + "\"";
+    }
+
+    /** The settings page's Sensors section: only what is on, and the way to the rest. */
+    private String sensorsSectionBody() {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        StringBuilder rows = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null || !one.optBoolean("active")) {
+                continue;
+            }
+            // The switch on the row too (Juri, 2026-09-27): switched off, admin_stats.js takes
+            // the row out at the next poll; the Sensors page switches it on again.
+            rows.append(navRow(listRow(def.glyph, def.name, null, one.optString("reading", ""),
+                    "sensor-" + def.id + "-value", sensorSwitch(def, true, "-home"), false),
+                    def.id, false));
+        }
+        return "<div id=\"sensors-body\"" + listsAttributes("sensors_home") + ">"
+                + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"sensors-home\">" + rows + "</ul>")
+                + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                + "<a class=\"btn text\" href=\"/sensors\">More sensor settings" + glyph("next")
+                + "</a></div></div>";
+    }
+
     /** This panel: its name, then the stats and log, the version and the legal pages as rows. */
     private String panelBody(KioskConfig config, String notice, String noticeSection) {
         return sectionFormStart("panel", notice, noticeSection)
@@ -1557,6 +1703,160 @@ final class HttpAdminServer {
                 + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
                 + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + "</ul>";
+    }
+
+    /**
+     * The Sensors page: the one flat list, alphabetical, every row the same shape (see Sensors),
+     * and beside it from 840 px the chosen sensor's cards.
+     */
+    private String buildSensorsPage(String selectedId, boolean detailPage) {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        Sensors.Def chosen = null;
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            if (def.id.equals(selectedId)) {
+                chosen = def;
+                break;
+            }
+            if (chosen == null && one.optBoolean("available")) {
+                chosen = def;
+            }
+        }
+        StringBuilder rows = new StringBuilder();
+        StringBuilder absent = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            String reading = one.optString("reading", "");
+            String readingId = "sensor-" + def.id + "-value";
+            boolean on = def == chosen;
+            if (!one.optBoolean("available")) {
+                absent.append(navRow(listRow(def.glyph, def.name, null, reading, null,
+                        "<input type=\"checkbox\" class=\"sw\" disabled>", true), def.id, on));
+                continue;
+            }
+            String row;
+            if (def.page) {
+                row = linkRow("/sensor?id=" + def.id, def.glyph, def.name, reading, readingId,
+                        "<span class=\"chev\">" + glyph("next") + "</span><span class=\"divider\"></span>"
+                                + sensorSwitch(def, one.optBoolean("enabled")));
+            } else {
+                row = listRow(def.glyph, def.name, null, reading, readingId,
+                        sensorSwitch(def, one.optBoolean("enabled")), false);
+            }
+            rows.append(navRow(row, def.id, on));
+        }
+        String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Sensors</h2>"
+                + "<span class=\"count\" id=\"sum-sensors\">" + escapeHtml(sensorsSummary())
+                + "</span></div><ul class=\"list\">" + rows + absent + "</ul></section>";
+        // Every sensor's cards are on the page, one pane each, so choosing one at the left is
+        // a switch of panes and not a page load, the way the settings menu opens a section.
+        StringBuilder detail = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            detail.append("<div class=\"pane\" data-id=\"").append(def.id).append("\"")
+                    .append(def == chosen ? "" : " hidden").append(">")
+                    .append(sensorCards(def, one)).append("</div>");
+        }
+        return pageStart(detailPage && chosen != null ? chosen.name : "Sensors", null,
+                detailPage ? "/sensors" : "/")
+                + listDetail("sensors", detailPage, nav, detail.toString()) + pageEnd();
+    }
+
+    private static String optionSelect(String key, String label, String current,
+            String... valuesAndLabels) {
+        StringBuilder options = new StringBuilder();
+        for (int index = 0; index + 1 < valuesAndLabels.length; index += 2) {
+            options.append(selectOption(valuesAndLabels[index], valuesAndLabels[index + 1],
+                    current));
+        }
+        return selectField("opt-" + key, null, label, "sensor_option_" + key, options.toString(),
+                null);
+    }
+
+    private static String optionField(String key, String label, String current, String type) {
+        return fieldWithId("opt-" + key, type, null, label, current,
+                " data-setting=\"sensor_option_" + key + "\"", null);
+    }
+
+    private static String optionSwitch(String key, String label, boolean on) {
+        return switchRow("opt-" + key, label, " data-setting=\"sensor_option_" + key + "\"", on);
+    }
+
+    /** A sensor's own page: its switch, then what it can be told; the list beside it when wide. */
+    private String buildSensorPage(String id) {
+        Sensors.Def def = Sensors.byId(id == null ? "" : id);
+        if (def == null || KioskRuntimeState.sensors().optJSONObject(def.id) == null) {
+            return pageStart("Sensors", null, "/sensors")
+                    + "<p class=\"hint bad\">No sensor page is called that.</p>" + pageEnd();
+        }
+        return buildSensorsPage(def.id, true);
+    }
+
+    /**
+     * The cards of a sensor's page: its own row first, with what its kind allows at the right,
+     * then what it can be told. Its row carries ids of its own, so the list beside it keeps
+     * the ids the stats poll follows.
+     */
+    private String sensorCards(Sensors.Def def, org.json.JSONObject one) {
+        boolean on = one.optBoolean("enabled");
+        StringBuilder html = new StringBuilder();
+        String reading = one.optString("reading", "");
+        String trailing;
+        String label = switchLabel(def);
+        if (!one.optBoolean("available")) {
+            trailing = "<input type=\"checkbox\" class=\"sw\" disabled>";
+            label = def.name;
+        } else {
+            trailing = sensorSwitch(def, on, "-page").replace("class=\"sw\"", "class=\"sw pageswitch\"");
+        }
+        String head = "<section class=\"card\"><h2>" + escapeHtml(def.name) + "</h2><ul class=\"list\">"
+                + listRow(def.glyph, label, null, reading, "sensor-" + def.id + "-page-value",
+                        trailing, !one.optBoolean("available")) + "</ul>";
+        // The calibration and the test while asleep are the panel's alone: both need a hand
+        // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
+            html.append(head).append("</section>");
+        } else if (def == Sensors.PROXIMITY) {
+            html.append(head).append("</section>");
+        } else if (def == Sensors.MOVEMENT) {
+            html.append(head)
+                    .append(optionSelect("movement_sensitivity", "Sensitivity",
+                            KioskConfig.sensorOption(context, "movement_sensitivity", "normal"),
+                            "light", "Light", "normal", "Normal", "heavy", "Heavy"))
+                    .append(optionField("movement_still_s", "Still after, seconds",
+                            KioskConfig.sensorOption(context, "movement_still_s", "5"), "number"))
+                    .append("</section>");
+        } else {
+            html.append(head).append("</section>");
+        }
+        return html.toString();
+    }
+
+    private static String switchLabel(Sensors.Def def) {
+        if (def == Sensors.MOVEMENT) {
+            return "Report movement";
+        }
+        return def.name;
+    }
+
+    /** Stores one setting of a sensor's page, checked by key; the rules are Sensors.checkOption. */
+    private String saveSensorOption(String key, String value) {
+        String problem = Sensors.checkOption(key, value);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(context).sensorOption(key, Sensors.cleanOption(key, value)).apply();
+        KioskService.refreshSensorsSoon(context);
+        return null;
     }
 
     /** System stats and the log, on their own page under This panel. */
@@ -2826,8 +3126,8 @@ final class HttpAdminServer {
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        // List and detail (Juri, 2026-09-28): the playlists at the left and the chosen mode's
-        // options at the right from 840 px, one under the other below. The mode itself
+        // The Sensors page's shape (Juri, 2026-09-28): the playlists at the left and the chosen
+        // mode's options at the right from 840 px, one under the other below. The mode itself
         // is chosen on the settings page, whose Screensaver section leads here; the page's
         // shell carries the mode and every title, so admin_setting.js can rename the options
         // when the mode changes elsewhere, without a chooser of its own.

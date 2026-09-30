@@ -368,7 +368,7 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
-- **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
+- **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since the sensors, 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
   lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
   needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
   the last 30 on the panel, which grows with them rather than scrolling inside the page. The panel
@@ -384,20 +384,137 @@ the playlist page was the case that set the rule.
   dropped, the tag kept. Nothing is stored or sent; logd prunes the
   buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
   reshaped 2026-09-26 ("it looks poor"); the site's API page documents it with the sensors.
-- **This panel is the section that holds the panel's name (Juri, 2026-09-27)**: the device id,
-  out of the Dashboard card, stored when the box lets go of the focus or on Done (a refused name
-  stays in the box with the reason), "System stats and log" as a page of its own, the version
-  and Pro line and the legal rows; Close Muralis stands under Open dashboard, outlined, on an
-  ordinary install; the readings are on the settings page alone, every
-  sub-page's app bar empty at the right. That page's top row is the same on every width and on
-  both surfaces (Juri, 2026-10-01): Muralis with the id under it at 16 sp (Title medium) on the
-  left, the readings at 14 sp on the right, centred on one line; a long id wraps under Muralis. The Display section's "Display off turns the screen
-  off ..." sentence went from both surfaces, the note shows only as the red warning that a
-  sleep ended badly. On rotation a box that stores on blur stores before the page is rebuilt
-  (`redrawInPlace` clears the focus first). `applyOrientation` catches Android 8.0's "Only
-  fullscreen activities can request orientation", thrown while the keyboard is up over a
-  resized page, and applies the request on the next resume; it killed the process on the
-  MediaPad (2026-09-27).
+- **Sensors: one flat list (2026-09-26, reshaped 2026-09-27 on three rounds of sketches in
+  `../media/drafts/sensors/`).** `Sensors` lists every sensor this
+  app knows, alphabetical, the companion app's "Manage sensors" with no groups: every row is the
+  same shape and only its right edge says what kind it is. A switch for the ones a person turns
+  on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
+  beside the switch for the ones with a page of their own (every hardware sensor since the
+  test while asleep); the reading alone
+  for what the panel always reports (display, screensaver, battery, power, network, processor,
+  memory: their Home Assistant entities predate this list and are not announced twice); greyed at
+  the end for what this device lacks. Every row's reading is worded once, by the service
+  (`Sensors.describe`, the `reading` field of the `sensors` block), and both surfaces copy it.
+  The settings page's Sensors section lists only what is on, with "More sensor settings" to the
+  page, the Screensaver section's shape. The audio sensor reports playing or idle with the media
+  volume, never the ringer mode, and is the one that also receives: `audio.volume`, `audio.play`,
+  `audio.stop`, `audio.say`. **This panel** is the section that holds the panel's name
+  (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
+  Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
+  Open dashboard, outlined, on an ordinary install; the readings are on the
+  settings page alone, every sub-page's app bar empty at the right, and the arrow of a page
+  below Sensors leads one level up, not to the settings (Juri, 2026-09-27). That page's top row
+  is the same on every width and on both surfaces (Juri, 2026-10-01): Muralis with the id under
+  it at 16 sp (Title medium) on the left, the readings at 14 sp on the right, centred on one
+  line; a long id wraps under Muralis.
+  **Kept alive by the service's two-second tick** (review of 2026-09-27): `refreshSensors()`
+  runs on every tick, a no-op while the state matches; the sensor block is published to
+  `KioskRuntimeState` on the tick with or without MQTT, so the panel's rows never depend on a
+  broker or an open browser; discovery goes again when the set of active sensors changes
+  (`MqttController.sensorsKey`). `Sensors.checkOption` is the one rule
+  book for a sensor's settings, applied by both surfaces;
+  every sensor has a switch, the panel's own values (display, screensaver, battery, power,
+  network, memory, processor) starting on since they were always reported before, the rest off
+  (Juri, 2026-09-27); the web admin shows neither the calibration nor the test while asleep,
+  both need a hand at the glass and stay the panel's; the Display section's "Display off turns
+  the screen off ..." sentence went from both surfaces, the note shows only as the red warning
+  that a sleep ended badly; the proximity row reads Near and Far, Android's own words (Juri,
+  2026-09-30; Home Assistant has no binary class for a proximity sensor); the dispatcher test
+  covers every sensor and audio command. The readings on the panel's
+  sensor pages follow the one-second tick; on rotation a box that stores on blur stores before
+  the page is rebuilt (`redrawInPlace` clears the focus first). **Three width classes for the
+  Sensors page, both surfaces** (Juri, 2026-09-27, the tablet in landscape
+  was one column too wide): compact, under 600 dp, one column as the phone has it; medium, 600
+  to 839 dp, the same column no wider than 640 dp and centred (`paneOf`, the web's `.ld`
+  max-width), for a tablet in portrait and the small tablets; expanded, from 840 dp, list-detail
+  like the settings page: the list at the left (`navPanel`, the web's `section.card.nav`), the
+  chosen sensor's cards at the right, the text chooses and the switch stays on the row, no
+  chevron, the chosen row a pill (`markChosen`, `li.on`). The cards of a sensor's page are
+  built once for both shapes (`sensorCards` on both surfaces), the web page holds list and
+  detail in one `.ld[data-page]` and the stylesheet shows one or both, `admin_listdetail.js`
+  points the rows at `/sensors?id=` on a wide screen, and the detail's own row has `-page` ids
+  so the stats poll follows both. **Proximity is
+  calibrated by the person, never guessed** (Juri, 2026-09-27, the Huawei MediaPad's driver
+  keeps Android's distance at the range and moves undocumented slots instead; "no guesses and
+  no hardcoding. If some sensors need calibration ... the user can be warned to calibrate the
+  sensor and a procedure inside chooses how to handle it"): Android's rule (distance under the
+  range is near) applies until the Proximity page's Calibrate runs, two steps, the sensor
+  covered then clear (`proximity.calibrate` with covered, clear or reset; the panel's two
+  confirm screens, the web's three buttons). `Sensors.Calibration.derive` picks the event value
+  that moved the most between the two, relative to its size, the line halfway and near on the
+  covered side, and refuses when nothing moved by a fifth; stored as `proximity_slot`,
+  `proximity_threshold`, `proximity_near_high`, read on the tick. An on-change sensor sends
+  nothing while a hand holds still, so a step reads the last event when nothing arrived in the
+  last four seconds. The row says Calibrated or Not calibrated on both surfaces. **Whether a
+  sensor reports while the panel sleeps is measured, never assumed** (2026-09-27: the Huawei
+  MediaPad delivers no proximity, light or accelerometer event to an app while asleep, drops
+  the registrations, and turns its Wi-Fi off after a few minutes; the phone reports; on
+  2026-09-28 its light sensor was seen sending events while asleep after all, with an unchanged
+  value, so only the test says): every
+  hardware sensor's page has a "While the display is off" card with "Test"
+  (`sensor.sleep_test`, the panel sleeps 20 s by `displayVisualOff`, then notes whether
+  `Sensors.lastEventAt` moved and wakes itself; refused where Display off is the film, since the
+  film keeps sensors awake; every hardware sensor has a page for the card, so it is reachable
+  on a phone too). The verdict, `sensor_option_<id>_asleep` reports or silent, rides
+  in the block as `asleep`, and the sensor's page says it with a glyph and one word, nothing
+  more (Juri: "It works / It doesn't work"): Running, Not running or Not tested, Home
+  Assistant's words for a binary sensor of the running class ("Disabled" read like a switch
+  somebody set, Juri, 2026-09-28), with Material's sensors glyph, the same with a slash, and a
+  question in a circle (`ic_asleep_*`). A panel whose Display off is the film never sleeps, so
+  the card says Running and nothing more, with no test: "The film keeps the display awake" under
+  it told a person nothing to act on, and "sleeps" is Android's word, not the person's (Juri,
+  2026-10-01). **No text names where
+  a sensor sits**: Android does not say, every model differs, and the MediaPad's light sensor is
+  nowhere near its camera; the person finds it (Juri, 2026-09-28). Test and Calibrate are greyed out while their
+  sensor is switched off and come back the moment it is switched on (`sensorActions`), and the
+  confirm screen says what to do to that sensor, five seconds into the dark (`asleepAction`:
+  "Use the sensor" told nobody what to do with a light sensor). The test
+  ends without a verdict when the screen comes on before its 20 s (a hand, a command), counts
+  only a real sleep (the film is refused), registers the sensor again three seconds in, takes
+  the reading 1.5 s later as the one to beat, and counts a sensor as reporting only when an
+  event arrived after that whose reading, the first value Android defines or the calibrated
+  one, differs from it (`Sensors.readingMovedSince`; a light sensor answers a registration
+  with a fresh sample a lux or two off, which read Active with nobody touching it, 2026-09-28;
+  the log line gives both readings and when they came): the MediaPad answers a registration with the reading it
+  already had, with a different raw count in an undefined slot, and reports no change while
+  asleep, so a repeated reading proves nothing, and an on-change sensor needs the hand the
+  screen asks for. `applyOrientation` catches Android 8.0's "Only fullscreen activities can
+  request orientation", thrown while the keyboard is up over a resized page, and applies the
+  request on the next resume; it killed the process on the MediaPad (2026-09-27). Which Display off method to use stays the person's choice. **The settings
+  page's Sensors section carries the switches** (Juri, 2026-09-27): a row switched off leaves
+  the section (panel: a redraw; web: the poll removes it, `#sensors-home`) and is switched on
+  again on the More page. **The wide web page switches panes in place**: every sensor's cards
+  stand on the page (`.pane[data-id]`), `admin_listdetail.js` shows the chosen pane and
+  rewrites the address, no page load, the settings menu's own speed; rows that lead somewhere and the list beside a detail
+  highlight under the mouse like the settings menu's rows, and the panel's rows carry the same
+  ripple. On the two-column pages the grid's gap is the only spacing between cards.
+- **A list follows a change made on another surface (2026-09-28, Juri: "the sort of things a
+  review process should find").** `Sensors.listKeys` hashes what each list is drawn from: the
+  settings page's Sensors section (sensors on) and the Sensors page (every sensor, and whether
+  this device has it). The panel compares on its one-second tick (`watchLists`, `checkLists`)
+  and draws the page again, never while a box has the focus. The web page carries the key on
+  each list (`data-lists-kind`, `data-lists`), `/api/stats` carries the current ones under
+  `lists`, and `admin_stats.js` fetches the page and swaps the stale list in place, never
+  while something in it is focused or edited; switches apply through a listener on the
+  document (`admin_setting.js`). Measured on the tablet: a sensor switched remotely reaches the
+  settings section about 1.5 s after the command lands.
+- **Lists and changes of state (Juri, 2026-09-28).** A list of rows on the
+  panel is the web's `ul.list`: the rows touch with a 1 dp divider between (`addListRow`, the
+  settings page's Sensors section and the narrow Sensors page), a row is 56 dp with a name alone and 72 dp with a second line (`glyphRow`, Material's
+  list item heights, the web's `li` and `li.two`), and a button under a card's row sits 8 dp
+  below it (`tightParams`); the wide pages' lists keep the settings menu's pills. The proximity
+  glyph is Material's sensor_occupied, on both surfaces. **A change of state reaches everyone
+  at once** (`Sensors.onEdge`, `KioskService.sensorEdge`): proximity near or not, movement
+  started or ended publish the block, repaint the panel's readings and send the state document
+  within 100 ms, where they waited up to three seconds on the panel and a telemetry interval on
+  MQTT; readings that move all the time (light, pressure) repaint the panel's rows within a
+  quarter of a second while a settings screen is up (`Sensors.onReading`,
+  `KioskService.sensorReading`: finding where a panel keeps its light sensor was a guess
+  against a reading three seconds late) and stay on the periodic publish for MQTT.
+  Android gives an app no setting of a
+  sensor beyond the sampling rate and batching (proximity is on-change, so neither applies);
+  thresholds and gain live in the driver, so what Muralis can offer is a calibration the person
+  runs.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
@@ -1029,11 +1146,11 @@ the playlist page was the case that set the rule.
   across the pictures and screensaver surfaces; everything else it names already followed it.
   Buttons on the web page also take the page's own font, not the browser's button font, which is
   what left the Browse label three pixels taller than the Upload button beside it.
-- **The screensaver page is two panels, on both surfaces, as list and detail.** The
+- **The screensaver page is two panels, on both surfaces, in the Sensors page's shape.** The
   mode is chosen in the settings page's Screensaver section alone, radios on the panel and a menu
   on the web; the page stopped repeating the chooser on 2026-09-28 (Juri: "when the user changes
   the screensaver mode from the previous page, this is enough"). The page holds **"Playlist"**,
-  at the left from 840 dp/px, and the options panel at the right, one to two
+  at the left from 840 dp/px like a sensors list, and the options panel at the right, one to two
   (`listDetailPair` on the panel, `.ld` on the web); below that width one under the other,
   Playlist first. A mode without playlists leaves the options the page's only panel, and it
   moves to the middle at the legal pages' width (`afterPlaylist` relays it, the web toggles
@@ -1059,8 +1176,8 @@ the playlist page was the case that set the rule.
   grid with an empty column beside it (Juri, 2026-09-28): 640 dp centred from 720 dp on the panel
   (`singlePanelWidth`, `singlePanelParams`), `max-width:640px` centred on the web (`.one`). The
   privacy and terms pages, every confirm screen (`showConfirm`, its buttons in the same column) and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
-- **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid,
-  explicit columns placed by hand. Multicol balances by
+- **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid the
+  Sensors page uses, explicit columns placed by hand. Multicol balances by
   height, and with two boxes in four columns it put one at the far left and one at the far right
   with a hand's width of nothing between them, and moved the right one every time a scrollbar
   changed the width by a pixel (Juri, 2026-09-11, with a screenshot). The playlist table is

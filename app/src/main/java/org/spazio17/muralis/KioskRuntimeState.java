@@ -238,6 +238,17 @@ final class KioskRuntimeState {
         operatorOnScreen = onScreen;
     }
 
+    /** The sensors block of the last status document built; see Sensors.snapshot. */
+    private static volatile org.json.JSONObject sensors = new org.json.JSONObject();
+
+    static void publishSensors(org.json.JSONObject block) {
+        sensors = block == null ? new org.json.JSONObject() : block;
+    }
+
+    static org.json.JSONObject sensors() {
+        return sensors;
+    }
+
     /**
      * Whether a {@code KioskActivity} instance exists in this process, resumed or paused. Written
      * by its onCreate and onDestroy; read by {@code KioskService}, which relaunches the dashboard

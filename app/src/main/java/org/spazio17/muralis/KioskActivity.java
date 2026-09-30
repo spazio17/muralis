@@ -620,6 +620,12 @@ public final class KioskActivity extends Activity {
             if (updateStatusChip()) {
                 anythingToRepaint = true;
             }
+            if (repaintSensors()) {
+                anythingToRepaint = true;
+            }
+            if (checkLists()) {
+                anythingToRepaint = true;
+            }
             if (anythingToRepaint) {
                 mainHandler.postDelayed(this, OVERLAY_REFRESH_MS);
             }
@@ -2315,6 +2321,30 @@ public final class KioskActivity extends Activity {
         screensaverControls.moreRow = screensaverMoreRow;
         screensaverControls.applyMode(KioskConfig.screensaverOf(this).mode);
 
+        // The Sensors section lists only what is on, one row per sensor with its reading, and the
+        // way to the rest: the page where every sensor is switched on and set up (Juri,
+        // 2026-09-27, the Screensaver section's shape). The readings follow the status document
+        // on the one-second tick (see overlayTask).
+        LinearLayout sensorsCard = sectionBody(theme);
+        sensorReadouts.clear();
+        sensorSwitches.clear();
+        sensorActions.clear();
+        org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
+            if (one == null || !one.optBoolean("active")) {
+                continue;
+            }
+            // The switch on the row too (Juri, 2026-09-27): switched off, the row leaves this
+            // section on the redraw and the sensor is switched on again on the Sensors page.
+            CompoundButton toggle = sensorSwitch(theme, def, one, this::redrawSettingsSoon);
+            addListRow(sensorsCard, theme, sensorRow(theme, def, one, toggle, null),
+                    sensorsCard.getChildCount() == 0);
+        }
+        Button sensorsMore = textButtonOnward(theme, "More sensor settings");
+        sensorsMore.setOnClickListener(view -> showSensorsPage());
+        sensorsCard.addView(buttonRow(sensorsMore), matchWrap());
+
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
         // done this from the start via its five-second /api/stats poll; this is the tablet's
@@ -2356,6 +2386,9 @@ public final class KioskActivity extends Activity {
             }
         };
         mainHandler.postDelayed(liveSettingSyncTask, LIVE_SETTING_SYNC_INTERVAL_MS);
+        // The Sensors section follows a change made on another surface; the redraw is the one a
+        // switch flipped here uses, which keeps what the boxes hold.
+        watchLists("home", page, this::redrawSettingsSoon);
 
         // The Pro gate's face. The shape decided on 2026-08-27: the paid cards stay visible and
         // complete but inert, each carrying one line and its own Buy button, because a feature
@@ -2404,9 +2437,9 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams nameProblemParams = matchWrapClose();
         nameProblemParams.leftMargin = dp(16);
         aboutCard.addView(nameProblem, nameProblemParams);
-        // Stored when the box lets go of the focus or on Done; the Save button under it went on
-        // 2026-09-27 (Juri). A refused name stays in the box with the reason, so it can be
-        // corrected rather than retyped.
+        // Stored when the box lets go of the focus or on Done, like every other field of the
+        // sensor pages; the Save button under it went on 2026-09-27 (Juri). A refused name stays
+        // in the box with the reason, so it can be corrected rather than retyped.
         Runnable storeName = () -> {
             String deviceId = deviceIdInput.getText().toString().trim();
             if (deviceId.equals(KioskConfig.load(this).deviceId)) {
@@ -2529,6 +2562,7 @@ public final class KioskActivity extends Activity {
                         themeToggle(theme)),
                 new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
                         screensaverCard),
+                new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
                 new Section(R.drawable.ic_sensor_panel, "This panel", config.deviceId, aboutCard));
 
         Runnable openDashboard = () -> {
@@ -3146,8 +3180,309 @@ public final class KioskActivity extends Activity {
                 : ScreensaverPolicy.modeName(saver.mode) + " · after " + saver.idleSeconds + " s";
     }
 
+    /** "2 of 7 on", the same line the web page's section shows. */
+    private String sensorsSummary() {
+        return Sensors.summary(KioskRuntimeState.sensors());
+    }
+
+    /** The Sensors section's reading lines and switches, repainted by overlayTask. */
+    private final java.util.Map<String, java.util.List<TextView>> sensorReadouts =
+            new java.util.HashMap<>();
     /**
-     * The prelude every page below the settings shares; see showScreensaverSettings.
+     * The buttons of each sensor that need it switched on (Test, Calibrate):
+     * greyed while it is off, and brought back the moment its switch is flipped, on this page
+     * or another surface (Juri, 2026-09-28: the Light's test looked broken).
+     */
+    private final java.util.Map<String, java.util.List<View>> sensorActions =
+            new java.util.HashMap<>();
+
+    /** Greys a sensor's action buttons out, or brings them back. */
+    private void paintSensorActions(String id, boolean on) {
+        java.util.List<View> buttons = sensorActions.get(id);
+        if (buttons == null) {
+            return;
+        }
+        for (View button : buttons) {
+            button.setEnabled(on);
+            button.setAlpha(on ? 1f : 0.38f);
+        }
+    }
+
+    /** Which list the page on screen shows, its key when drawn, the page, and how to redraw it. */
+    private String listsKind;
+    private String listsKey;
+    private View listsRoot;
+    private Runnable listsRefresh;
+
+    /**
+     * Watches a page that lists sensors: when another surface changes what it lists (a sensor
+     * switched on over MQTT), the page is drawn again on the next second's tick, never while a
+     * box has the focus. A sensor switched on the web stayed off the panel's settings page until
+     * it was reopened (Juri, 2026-09-28).
+     */
+    private void watchLists(String kind, View root, Runnable refresh) {
+        listsKind = kind;
+        listsRoot = root;
+        listsRefresh = refresh;
+        listsKey = currentListsKey(kind);
+    }
+
+    private String currentListsKey(String kind) {
+        org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors());
+        return keys.optString("home".equals(kind) ? "sensors_home" : kind + "_page");
+    }
+
+    /** One second's look at the watched page; true while it is on screen. */
+    private boolean checkLists() {
+        View root = listsRoot;
+        if (root == null || !root.isAttachedToWindow()) {
+            return false;
+        }
+        String now = currentListsKey(listsKind);
+        if (now.equals(listsKey) || getCurrentFocus() instanceof EditText) {
+            return true;
+        }
+        listsKey = now;
+        listsRefresh.run();
+        return true;
+    }
+
+    private final java.util.Map<String, java.util.List<CompoundButton>> sensorSwitches =
+            new java.util.HashMap<>();
+
+    /** The "n of m on" of the Sensors page, repainted with the rows. */
+    private TextView sensorCountView;
+
+    /** Repaints the readings on screen; true while any of them is still up, so the tick goes on. */
+    private boolean repaintSensors() {
+        if (sensorReadouts.isEmpty()) {
+            return false;
+        }
+        // Every row of a sensor, the list's and the detail's beside it. A detached row is left
+        // alone but not forgotten: on the wide settings page only the open section's body is in
+        // the window, and a Sensors section opened later must still follow the tick (review,
+        // 2026-09-27). Each page builder clears the maps when it starts.
+        boolean alive = false;
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        for (java.util.Map.Entry<String, java.util.List<TextView>> entry : sensorReadouts.entrySet()) {
+            org.json.JSONObject one = block.optJSONObject(entry.getKey());
+            String text = one == null ? "" : one.optString("reading", "");
+            for (TextView reading : entry.getValue()) {
+                if (!reading.isAttachedToWindow()) {
+                    continue;
+                }
+                alive = true;
+                if (!text.contentEquals(reading.getText())) {
+                    reading.setText(text);
+                }
+            }
+            // Against what is stored, not the block: the block follows a flip on this page
+            // by a tick or two, and a switch compared with it would snap back and forth.
+            Sensors.Def stored_def = Sensors.byId(entry.getKey());
+            boolean stored = stored_def != null && Sensors.enabled(this, stored_def);
+            paintSensorActions(entry.getKey(), stored);
+            java.util.List<CompoundButton> toggles = sensorSwitches.get(entry.getKey());
+            for (CompoundButton toggle : toggles == null ? java.util.Collections.<CompoundButton>emptyList() : toggles) {
+                if (toggle.isAttachedToWindow() && toggle.isChecked() != stored) {
+                    syncingLiveControls = true;
+                    try {
+                        toggle.setChecked(stored);
+                    } finally {
+                        syncingLiveControls = false;
+                    }
+                }
+            }
+        }
+        if (sensorCountView != null && sensorCountView.isAttachedToWindow()) {
+            String count = sensorsSummary();
+            if (!count.contentEquals(sensorCountView.getText())) {
+                sensorCountView.setText(count);
+            }
+        }
+        return alive;
+    }
+
+    private static int sensorGlyph(String glyph) {
+        switch (glyph) {
+            case "proximity": return R.drawable.ic_sensor_proximity;
+            case "light": return R.drawable.ic_sensor_light;
+            case "movement": return R.drawable.ic_sensor_movement;
+            case "audio": return R.drawable.ic_sensor_audio;
+            case "pressure": return R.drawable.ic_sensor_pressure;
+            case "temperature": return R.drawable.ic_sensor_temperature;
+            case "humidity": return R.drawable.ic_sensor_humidity;
+            case "display": return R.drawable.ic_sensor_display;
+            case "screensaver": return R.drawable.ic_sensor_screensaver;
+            case "battery": return R.drawable.ic_sensor_battery;
+            case "power": return R.drawable.ic_sensor_power;
+            case "network": return R.drawable.ic_sensor_network;
+            case "memory": return R.drawable.ic_sensor_memory;
+            case "processor": return R.drawable.ic_sensor_processor;
+            default: return R.drawable.ic_sensor_bolt;
+        }
+    }
+
+    /**
+     * One list row of the Material shape: a glyph, two lines, and what stands at the right. The
+     * text opens {@code onOpen} where there is one, the row's own page.
+     */
+    private LinearLayout glyphRow(KioskTheme theme, int glyph, String head, String sub,
+            View trailing, Runnable onOpen, boolean dim) {
+        return glyphRow(theme, glyph, head, sub, trailing, onOpen, dim, true);
+    }
+
+    /** The same; {@code chevron} false where the text chooses a detail beside the list. */
+    private LinearLayout glyphRow(KioskTheme theme, int glyph, String head, String sub,
+            View trailing, Runnable onOpen, boolean dim, boolean chevron) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        // Material's list item heights, the web's ul.list li and li.two: 56 dp for a name
+        // alone, 72 dp with a second line. A name alone in 72 dp left a wide band under it,
+        // the gap over the Test and Calibrate buttons (Juri, 2026-09-28).
+        row.setMinimumHeight(dp(sub == null || sub.isEmpty() ? 56 : 72));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(glyph);
+        icon.setImageTintList(ColorStateList.valueOf(theme.subtext));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        iconParams.rightMargin = dp(16);
+        row.addView(icon, iconParams);
+        LinearLayout words = new LinearLayout(this);
+        words.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new FlushText(this);
+        name.setText(head);
+        name.setTextColor(theme.text);
+        name.setTextSize(16);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        // No margin above the name: matchWrapClose's 6 dp pushed the text block down, so a
+        // name alone sat 5 dp under the glyph's middle (measured on the Pixel, 2026-09-27).
+        words.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView reading = new FlushText(this);
+        reading.setText(sub);
+        reading.setTextColor(theme.subtext);
+        reading.setTextSize(14);
+        reading.setSingleLine(true);
+        reading.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        // A row with a name alone centres it on the glyph rather than leaving an empty second
+        // line under it (Juri, 2026-09-27).
+        reading.setVisibility(sub == null || sub.isEmpty() ? View.GONE : View.VISIBLE);
+        words.addView(reading, matchWrapClose());
+        words.setTag(reading);
+        if (onOpen != null) {
+            words.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
+                    Color.TRANSPARENT), new android.graphics.drawable.ColorDrawable(Color.WHITE),
+                    theme.text));
+            words.setOnClickListener(view -> onOpen.run());
+            words.setMinimumHeight(dp(56));
+            words.setGravity(Gravity.CENTER_VERTICAL);
+        }
+        row.addView(words, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (onOpen != null && chevron) {
+            ImageView arrow = new ImageView(this);
+            arrow.setImageResource(R.drawable.ic_chevron_right);
+            arrow.setImageTintList(ColorStateList.valueOf(theme.subtext));
+            LinearLayout.LayoutParams chevronParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+            chevronParams.leftMargin = dp(8);
+            row.addView(arrow, chevronParams);
+            if (trailing != null) {
+                View divider = new View(this);
+                divider.setBackgroundColor(theme.outlineVariant);
+                LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(32));
+                dividerParams.leftMargin = dp(12);
+                dividerParams.rightMargin = dp(4);
+                row.addView(divider, dividerParams);
+            }
+        }
+        if (trailing != null) {
+            row.addView(trailing, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        if (dim) {
+            row.setAlpha(0.55f);
+        }
+        return row;
+    }
+
+    /** The reading line of a row built by glyphRow, for the tick to repaint. */
+    private static TextView readingOf(LinearLayout row) {
+        return (TextView) row.getChildAt(1).getTag();
+    }
+
+    /**
+     * A sensor's row: its glyph, name and reading, and at the right what its kind allows: a
+     * switch, a chevron beside the switch for one with a page, Allow while a permission is
+     * missing, nothing for what the panel always reports, greyed for what this device lacks.
+     */
+    private LinearLayout sensorRow(KioskTheme theme, Sensors.Def def, org.json.JSONObject one,
+            View trailing, Runnable onOpen) {
+        return sensorRow(theme, def, one, trailing, onOpen, true);
+    }
+
+    private LinearLayout sensorRow(KioskTheme theme, Sensors.Def def, org.json.JSONObject one,
+            View trailing, Runnable onOpen, boolean chevron) {
+        LinearLayout row = glyphRow(theme, sensorGlyph(def.glyph), def.name,
+                one.optString("reading", ""), trailing, onOpen, !one.optBoolean("available"),
+                chevron);
+        viewsOf(sensorReadouts, def.id).add(readingOf(row));
+        return row;
+    }
+
+    private CompoundButton sensorSwitch(KioskTheme theme, Sensors.Def def,
+            org.json.JSONObject one) {
+        return sensorSwitch(theme, def, one, null);
+    }
+
+    /** The same, with {@code after} run once a flip is stored, whether tapped or dragged. */
+    private CompoundButton sensorSwitch(KioskTheme theme, Sensors.Def def,
+            org.json.JSONObject one, Runnable after) {
+        CompoundButton toggle = themedSwitch(theme, "", Sensors.enabled(this, def));
+        toggle.setContentDescription(def.name);
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (syncingLiveControls) {
+                return;
+            }
+            KioskConfig.edit(this).sensorEnabled(def.id, checked).apply();
+            KioskService.refreshSensorsSoon(this);
+            paintSensorActions(def.id, checked);
+            if (after != null) {
+                after.run();
+            }
+        });
+        viewsOf(sensorSwitches, def.id).add(toggle);
+        return toggle;
+    }
+
+    /**
+     * The settings page again, through the lambda that carries its boxes, once the switch has
+     * finished its own change: a row switched off leaves its section, and nothing typed in the
+     * Dashboard or MQTT boxes is lost (review, 2026-09-27).
+     */
+    private void redrawSettingsSoon() {
+        mainHandler.post(() -> {
+            Runnable screen = currentScreen;
+            if (screen != null && configurationVisible) {
+                redrawInPlace(screen);
+            }
+        });
+    }
+
+    private static <V> java.util.List<V> viewsOf(java.util.Map<String, java.util.List<V>> map,
+            String id) {
+        java.util.List<V> list = map.get(id);
+        if (list == null) {
+            list = new java.util.ArrayList<>();
+            map.put(id, list);
+        }
+        return list;
+    }
+
+    /**
+     * The prelude every page below the settings shares; see showScreensaverSettings. The arrow
+     * leads one level up, not to the settings: a sensor's page to the Sensors list (Juri,
+     * 2026-09-27, found on the glass).
      */
     private LinearLayout subPage(String title, Runnable back) {
         destroyWebView();
@@ -3169,6 +3504,310 @@ public final class KioskActivity extends Activity {
         showConfiguration(KioskConfig.load(this));
     }
 
+    /** The sensor the wide Sensors page shows at the right; see showSensorsPage. */
+    private String selectedSensor = "";
+
+    /**
+     * The Sensors page: one flat list, alphabetical, every row the same shape. From 840 dp the
+     * list stands at the left and the chosen sensor's page at the right, the settings page's
+     * own shape; the text chooses, the switch stays on the row (Juri, 2026-09-27, the tablet in
+     * landscape).
+     */
+    private void showSensorsPage() {
+        currentScreen = this::showSensorsPage;
+        LinearLayout page = subPage("Sensors", this::showSettings);
+        KioskTheme theme = currentTheme();
+        boolean wide = widthClass() == 2;
+        sensorReadouts.clear();
+        sensorSwitches.clear();
+        sensorActions.clear();
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        Sensors.Def chosen = null;
+        if (wide) {
+            for (Sensors.Def def : Sensors.ALL) {
+                org.json.JSONObject one = block.optJSONObject(def.id);
+                if (one == null) {
+                    continue;
+                }
+                if (def.id.equals(selectedSensor)) {
+                    chosen = def;
+                    break;
+                }
+                if (chosen == null && one.optBoolean("available")) {
+                    chosen = def;
+                }
+            }
+        }
+        LinearLayout list = wide ? navPanel(theme) : card(theme, null);
+        if (!wide) {
+            LinearLayout head = new LinearLayout(this);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            head.addView(cardTitle(theme, "Sensors"), new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView count = new FlushText(this);
+            count.setText(sensorsSummary());
+            count.setTextColor(theme.subtext);
+            count.setTextSize(12);
+            sensorCountView = count;
+            head.addView(count, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            list.addView(head, matchWrap());
+        }
+        java.util.List<LinearLayout> absent = new java.util.ArrayList<>();
+        // The narrow list's rows touch with a divider between, the web's ul.list; the wide
+        // list is the settings menu's pills, which never had dividers.
+        final boolean[] firstRow = {true};
+        java.util.function.Consumer<LinearLayout> addRow = row -> {
+            if (wide) {
+                list.addView(row, navRowParams());
+            } else {
+                addListRow(list, theme, row, firstRow[0]);
+            }
+            firstRow[0] = false;
+        };
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            Runnable open = wide ? () -> {
+                selectedSensor = def.id;
+                hideKeyboardIfShown();
+                redrawInPlace(this::showSensorsPage);
+            } : def.page ? () -> showSensorPage(def) : null;
+            LinearLayout row;
+            if (!one.optBoolean("available")) {
+                CompoundButton off = themedSwitch(theme, "", false);
+                off.setEnabled(false);
+                row = sensorRow(theme, def, one, off, open, !wide);
+                absent.add(row);
+            } else {
+                row = sensorRow(theme, def, one, sensorSwitch(theme, def, one), open, !wide);
+                addRow.accept(row);
+            }
+            if (wide) {
+                markChosen(theme, row, def == chosen, open);
+            }
+        }
+        for (LinearLayout row : absent) {
+            addRow.accept(row);
+        }
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        if (wide) {
+            LinearLayout detail = new LinearLayout(this);
+            detail.setOrientation(LinearLayout.VERTICAL);
+            if (chosen != null) {
+                boolean first = true;
+                for (View one : sensorCards(theme, chosen, block.optJSONObject(chosen.id), true)) {
+                    LinearLayout.LayoutParams cardParams = matchWrap();
+                    cardParams.topMargin = first ? 0 : dp(16);
+                    first = false;
+                    detail.addView(one, cardParams);
+                }
+            }
+            page.addView(listDetailPair(list, detail), params);
+        } else {
+            page.addView(paneOf(list), params);
+        }
+        setContentView(scrollPage(theme, page));
+        watchLists("sensors", page, () -> redrawInPlace(this::showSensorsPage));
+    }
+
+    /**
+     * Whether the sensor reports while the panel sleeps, as the test found, and the test: some
+     * devices stop every sensor an app holds once the display is asleep, and a rule on such a
+     * sensor cannot wake the panel. Measured here, never assumed (Juri, 2026-09-27).
+     */
+    private LinearLayout asleepCard(KioskTheme theme, Sensors.Def def, org.json.JSONObject one) {
+        String asleep = one.optString("asleep", "");
+        boolean silent = "silent".equals(asleep);
+        boolean reports = "reports".equals(asleep);
+        // Named after what a person wants to know, whether the sensor works with the display
+        // off; "sleeps" is how Android does it (Juri, 2026-10-01).
+        LinearLayout card = card(theme, "While the display is off");
+        if (KioskService.chooseDisplayOff(this).method != DisplayOffPolicy.Method.SLEEP) {
+            // This panel darkens with the film and never sleeps, so its sensors keep running:
+            // Running, and nothing to test (the Pixel, an ordinary install, 2026-09-27). No
+            // sentence under it: "the film keeps the display awake" told a person nothing they
+            // could act on (Juri, 2026-10-01).
+            card.addView(glyphRow(theme, R.drawable.ic_asleep_active, "Running", "", null, null,
+                    false), matchWrapClose());
+            return card;
+        }
+        // One word and the glyph, nothing more (Juri, 2026-09-27: it works or it does not).
+        // The words are Home Assistant's for a binary sensor of the running class, Running and
+        // Not running, so the panel and a dashboard say the same (Juri, 2026-09-28: "Disabled"
+        // read like a switch somebody set). The glyph says the same: the sensor sending, the
+        // sensor with a slash, a question for a test not run yet.
+        card.addView(glyphRow(theme, silent ? R.drawable.ic_asleep_disabled
+                : reports ? R.drawable.ic_asleep_active : R.drawable.ic_asleep_untested,
+                silent ? "Not running" : reports ? "Running" : "Not tested", "", null, null,
+                false), matchWrapClose());
+        // "Test", as the Calibration card has "Calibrate": the card's title says what for.
+        Button test = tonalButton(theme, "Test");
+        // Greyed out while the sensor is off: the test needs it listening, and a button that
+        // can only answer "the light is off" is no button (Juri, 2026-09-28).
+        viewsOf(sensorActions, def.id).add(test);
+        paintSensorActions(def.id, Sensors.enabled(this, def));
+        test.setOnClickListener(view -> {
+            final Runnable screen = currentScreen;
+            Runnable back = () -> {
+                if (screen != null) {
+                    screen.run();
+                }
+            };
+            // Five seconds in: the sensor is asked again at three, and only a change after
+            // that counts (see KioskService.sleepTest).
+            showConfirm("Test with the display off", "The display goes off for 20 seconds. Five "
+                    + "seconds after it goes dark, " + asleepAction(def) + ". It comes back on by "
+                    + "itself and shows the result.", "Start", false, () -> {
+                        KioskService service = KioskService.liveService();
+                        String problem = service == null ? "the service is not running"
+                                : service.sleepTest(def.id);
+                        if (problem != null) {
+                            showNotice("Not done", capital(problem) + ".", back);
+                            return;
+                        }
+                        back.run();
+                    }, back);
+        });
+        card.addView(buttonRow(test), tightParams());
+        return card;
+    }
+
+    /**
+     * What to do to the sensor while the panel sleeps, so it has something to report: the test
+     * counts only a reading that changed, since some drivers repeat the last value when asked
+     * and watch nothing (the MediaPad, 2026-09-27). "Use the sensor" told nobody what to do
+     * with a light sensor (Juri, 2026-09-28). Never where the sensor is: Android does not say,
+     * every model puts it elsewhere, and the MediaPad's light sensor is nowhere near its camera
+     * (Juri, 2026-09-28: the person finds it on their own).
+     */
+    private static String asleepAction(Sensors.Def def) {
+        if (def == Sensors.PROXIMITY) {
+            return "hold your hand over the proximity sensor and take it away again";
+        }
+        if (def == Sensors.LIGHT) {
+            return "cover the light sensor with your hand, or switch a lamp on or off";
+        }
+        if (def == Sensors.MOVEMENT) {
+            return "tap or move the panel";
+        }
+        if (def == Sensors.TEMPERATURE || def == Sensors.HUMIDITY) {
+            return "breathe on the sensor";
+        }
+        if (def == Sensors.PRESSURE) {
+            return "carry the panel up or down a floor, or leave it: a pressure sensor changes by "
+                    + "itself";
+        }
+        return "change what the sensor measures";
+    }
+
+    /**
+     * A sensor's Calibration card: the tune glyph with Calibrated or Not calibrated, and
+     * Calibrate alone under it: a new calibration replaces the old, so nothing to reset (Juri,
+     * 2026-09-27); the reset step stays in the command for scripts.
+     */
+    private LinearLayout calibrationCard(KioskTheme theme, Sensors.Def def,
+            org.json.JSONObject one, Runnable procedure) {
+        boolean calibrated = one.optBoolean("calibrated");
+        LinearLayout calibration = card(theme, "Calibration");
+        calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune,
+                calibrated ? "Calibrated" : "Not calibrated", "", null, null, false),
+                matchWrapClose());
+        Button calibrate = tonalButton(theme, "Calibrate");
+        calibrate.setOnClickListener(view -> procedure.run());
+        viewsOf(sensorActions, def.id).add(calibrate);
+        paintSensorActions(def.id, Sensors.enabled(this, def));
+        calibration.addView(buttonRow(calibrate), tightParams());
+        return calibration;
+    }
+
+    /** The params of a button row directly under a row of its card: 8 dp, from the button. */
+    private LinearLayout.LayoutParams tightParams() {
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = 0;
+        return params;
+    }
+
+    /**
+     * A refusal on a screen of its own, with the reason and one button back: a toast was too
+     * quick to read and cut the reason short (Juri, 2026-09-27, the Pixel).
+     */
+    private void showNotice(String title, String message, Runnable back) {
+        KioskTheme theme = currentTheme();
+        enterImmersiveMode();
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, title, ""), matchWrap());
+        LinearLayout box = card(theme, null);
+        TextView text = new FlushText(this);
+        text.setTextColor(theme.text);
+        text.setTextSize(15);
+        text.setText(message);
+        box.addView(text, matchWrapClose());
+        page.addView(box, matchWrap());
+        Button ok = primaryButton(theme, "OK");
+        ok.setOnClickListener(view -> back.run());
+        page.addView(buttonRow(ok), matchWrap());
+        setContentView(scrollPage(theme, page));
+        currentScreen = () -> showNotice(title, message, back);
+    }
+
+    private static String capital(String text) {
+        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
+    }
+
+    /** One step of the proximity calibration through the service; the reason when refused. */
+    private String proximityStep(String step) {
+        KioskService service = KioskService.liveService();
+        return service == null ? "the service is not running" : service.calibrateProximity(step);
+    }
+
+    /** The screen again, once the service's next tick has the new state in the block. */
+    private void redrawSoon() {
+        mainHandler.postDelayed(() -> {
+            Runnable screen = currentScreen;
+            if (screen != null) {
+                redrawInPlace(screen);
+            }
+        }, 2_200);
+    }
+
+    /**
+     * The two steps, each a screen of its own: the sensor covered, then clear. The panel reads
+     * the sensor while the button is tapped, so the hand has to stay until then.
+     */
+    private void calibrateProximity() {
+        // Taken now: the confirm screens put themselves in currentScreen for a rotation.
+        final Runnable screen = currentScreen;
+        Runnable back = () -> {
+            if (screen != null) {
+                screen.run();
+            }
+        };
+        showConfirm("Cover the sensor", "Hold your hand over the proximity sensor and keep it "
+                + "there while you tap Covered.", "Covered", false,
+                () -> {
+                    String problem = proximityStep("covered");
+                    if (problem != null) {
+                        showNotice("Not done", capital(problem) + ".", back);
+                        return;
+                    }
+                    showConfirm("Take your hand away", "With nothing in front of the sensor, "
+                            + "tap Clear.", "Clear", false, () -> {
+                                String done = proximityStep("clear");
+                                if (done != null) {
+                                    showNotice("Not done", capital(done) + ".", back);
+                                    return;
+                                }
+                                back.run();
+                                redrawSoon();
+                            }, back);
+                }, back);
+    }
+
     /** Every text on the screen that carries {@code from} carries {@code to} instead. */
     private static void retitle(ViewGroup root, String from, String to) {
         if (from.isEmpty() || from.equals(to)) {
@@ -3188,6 +3827,163 @@ public final class KioskActivity extends Activity {
                 retitle((ViewGroup) child, from, to);
             }
         }
+    }
+
+    /** A field of a sensor's page, stored when the box lets go of the focus or on Done. */
+    private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
+            String fallback, boolean number) {
+        EditText input = themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
+        if (number) {
+            input.setInputType(InputType.TYPE_CLASS_NUMBER);
+        }
+        addField(card, theme, label, input);
+        Runnable store = () -> {
+            String value = input.getText().toString().trim();
+            if (value.isEmpty()) {
+                value = fallback;
+            }
+            String stored = KioskConfig.sensorOption(this, key, fallback);
+            if (value.equals(stored)) {
+                return;
+            }
+            // The same rule book as the web admin's form; a refused value is put back to what
+            // is stored, with the reason.
+            String problem = Sensors.checkOption(key, value);
+            if (problem != null) {
+                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                input.setText(stored);
+                return;
+            }
+            KioskConfig.edit(this).sensorOption(key, Sensors.cleanOption(key, value)).apply();
+            KioskService.refreshSensorsSoon(this);
+        };
+        input.setOnFocusChangeListener((view, focused) -> {
+            if (!focused) {
+                store.run();
+            }
+        });
+        input.setOnEditorActionListener((view, actionId, event) -> {
+            store.run();
+            hideKeyboard(view);
+            return true;
+        });
+    }
+
+    private void addOptionSwitch(LinearLayout card, KioskTheme theme, String label, String key,
+            boolean fallback) {
+        CompoundButton toggle = themedSwitch(theme, label,
+                KioskConfig.sensorOptionOn(this, key, fallback));
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            KioskConfig.edit(this).sensorOption(key, Boolean.toString(checked)).apply();
+            KioskService.refreshSensorsSoon(this);
+        });
+        card.addView(toggle, matchWrap());
+    }
+
+    private void addOptionRadios(LinearLayout card, KioskTheme theme, String label, String key,
+            String fallback, String... valuesAndLabels) {
+        addOptionRadios(card, theme, label, key, fallback, null, valuesAndLabels);
+    }
+
+    /** The same, with {@code after} run once a choice is stored. */
+    private void addOptionRadios(LinearLayout card, KioskTheme theme, String label, String key,
+            String fallback, Runnable after, String... valuesAndLabels) {
+        TextView caption = fieldCaption(theme, label);
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        captionParams.topMargin = dp(16);
+        card.addView(caption, captionParams);
+        RadioGroup group = new RadioGroup(this);
+        for (int index = 0; index + 1 < valuesAndLabels.length; index += 2) {
+            radioChoice(theme, group, valuesAndLabels[index + 1], valuesAndLabels[index]);
+        }
+        checkRadioIfChanged(group, KioskConfig.sensorOption(this, key, fallback));
+        group.setOnCheckedChangeListener((radios, checkedId) -> {
+            View checked = radios.findViewById(checkedId);
+            if (checked != null) {
+                KioskConfig.edit(this).sensorOption(key, (String) checked.getTag()).apply();
+                KioskService.refreshSensorsSoon(this);
+                if (after != null) {
+                    after.run();
+                }
+            }
+        });
+        card.addView(group, matchWrapClose());
+    }
+
+    /** A sensor's own page: its switch, then what it can be told. */
+    private void showSensorPage(Sensors.Def def) {
+        currentScreen = () -> showSensorPage(def);
+        LinearLayout page = subPage(def.name, this::showSensorsPage);
+        KioskTheme theme = currentTheme();
+        org.json.JSONObject one = KioskRuntimeState.sensors().optJSONObject(def.id);
+        sensorReadouts.clear();
+        sensorSwitches.clear();
+        sensorActions.clear();
+        LinearLayout.LayoutParams gridParams = matchWrap();
+        gridParams.topMargin = dp(16);
+        page.addView(paneOf(cardGrid(theme, sensorCards(theme, def, one))), gridParams);
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * The cards of a sensor's page: its own row first, with what its kind allows at the right
+     * (the switch, Allow, nothing for the panel's own values, a dead switch for a sensor this
+     * device lacks), then what it can be told. The page and the wide list's detail share them.
+     */
+    private java.util.List<View> sensorCards(KioskTheme theme, Sensors.Def def,
+            org.json.JSONObject one) {
+        return sensorCards(theme, def, one, false);
+    }
+
+    /**
+     * The same; {@code beside} true where the cards stand at the right of the list, whose row
+     * already carries the sensor's switch: the detail's own row then carries nothing at the
+     * right, one switch per sensor on a page (Juri, 2026-09-27).
+     */
+    private java.util.List<View> sensorCards(KioskTheme theme, Sensors.Def def,
+            org.json.JSONObject one, boolean beside) {
+        if (one == null) {
+            one = new org.json.JSONObject();
+        }
+        LinearLayout card = card(theme, def.name);
+        String switchLabel = def == Sensors.MOVEMENT ? "Report movement" : def.name;
+        View trailing;
+        if (!one.optBoolean("available")) {
+            CompoundButton off = themedSwitch(theme, "", false);
+            off.setEnabled(false);
+            trailing = off;
+            switchLabel = def.name;
+        } else {
+            trailing = sensorSwitch(theme, def, one);
+        }
+        if (beside) {
+            trailing = null;
+        }
+        card.addView(glyphRow(theme, sensorGlyph(def.glyph), switchLabel,
+                one.optString("reading", ""), trailing, null, !one.optBoolean("available")),
+                matchWrapClose());
+        viewsOf(sensorReadouts, def.id).add(readingOf((LinearLayout) card.getChildAt(card.getChildCount() - 1)));
+        java.util.List<View> cards = new java.util.ArrayList<>();
+        cards.add(card);
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
+            return cards;
+        }
+        if (def.androidType != 0) {
+            cards.add(asleepCard(theme, def, one));
+        }
+        if (def == Sensors.MOVEMENT) {
+            addOptionRadios(card, theme, "Sensitivity", "movement_sensitivity", "normal",
+                    "light", "Light", "normal", "Normal", "heavy", "Heavy");
+            addOptionField(card, theme, "Still after, seconds", "movement_still_s", "5", true);
+        } else if (def == Sensors.PROXIMITY) {
+            // Calibration: the person shows the panel the sensor covered and clear, and the
+            // panel learns how this device's driver reports the two (Juri, 2026-09-27: no
+            // guessing at a driver's values, a procedure the user runs). Until then Android's
+            // distance rule reads it.
+            cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
+        }
+        return cards;
     }
 
     /** System stats and the overlay switch, on their own page under This panel. */
@@ -3275,9 +4071,9 @@ public final class KioskActivity extends Activity {
 
         // The mode is chosen on the settings page, whose Screensaver section leads here, so this
         // page no longer repeats the chooser (Juri, 2026-09-28): it has the chosen mode's
-        // options and, for pictures from this panel, the playlists, as list and detail: the
-        // playlists at the left and the options at the right from 840 dp, one under the other
-        // below that.
+        // options and, for pictures from this panel, the playlists, in the Sensors page's shape,
+        // the playlists at the left and the options at the right from 840 dp, one under the
+        // other below that.
         LinearLayout optionsCard = card(theme, null);
         // The heading is added here rather than by card(), because it has to be repainted when the
         // mode changes: the whole point of the panel is that it says which mode its options
@@ -7676,6 +8472,15 @@ public final class KioskActivity extends Activity {
         return holder;
     }
 
+    /** The list at the left of a list-detail page: the settings menu's own panel. */
+    private LinearLayout navPanel(KioskTheme theme) {
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.VERTICAL);
+        nav.setBackground(theme.panel(theme.card, dp(12)));
+        nav.setPadding(dp(8), dp(8), dp(8), dp(8));
+        return nav;
+    }
+
     /** The list and the detail side by side, one to two, Material's 24 dp gutter between. */
     private LinearLayout listDetailPair(View nav, View detail) {
         LinearLayout pair = new LinearLayout(this);
@@ -7690,10 +8495,45 @@ public final class KioskActivity extends Activity {
         return pair;
     }
 
+    /**
+     * A row of a list the web draws as {@code ul.list}: the rows touch and a 1 dp divider
+     * stands between two, the web's border and the playlist panel's rule (Juri, 2026-09-28:
+     * the Sensors section's rows sat 16 dp apart with nothing between, and in landscape a name
+     * and its switch did not read as one row). Material's list, two-line items with dividers.
+     * The first row keeps a small gap to what is above it.
+     */
+    private void addListRow(LinearLayout list, KioskTheme theme, View row, boolean first) {
+        if (!first) {
+            View rule = new View(this);
+            rule.setBackgroundColor(theme.outlineVariant);
+            list.addView(rule, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        }
+        LinearLayout.LayoutParams params = navRowParams();
+        params.topMargin = first ? dp(8) : 0;
+        list.addView(row, params);
+    }
+
     /** A nav row's params: no margin, the rows of the settings menu touch. */
     private static LinearLayout.LayoutParams navRowParams() {
         return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    /** Marks a glyphRow as the chosen one of a list, the settings menu's pill. */
+    private void markChosen(KioskTheme theme, LinearLayout row, boolean on, Runnable open) {
+        // The settings menu's own row: 64 dp and 16 by 8 of padding (sectionRow), not the 72 dp
+        // list row, which read as a gap between the items (Juri, 2026-09-27, the tablet).
+        row.setMinimumHeight(dp(64));
+        row.setPadding(dp(16), dp(8), dp(16), dp(8));
+        row.getChildAt(1).setMinimumHeight(dp(48));
+        ((LinearLayout.LayoutParams) row.getChildAt(0).getLayoutParams()).rightMargin = dp(20);
+        row.setBackground(theme.ripple(theme.pill(on ? theme.secondaryContainer
+                : Color.TRANSPARENT), theme.pill(Color.WHITE), theme.text));
+        row.setOnClickListener(view -> open.run());
+        TextView name = (TextView) ((ViewGroup) row.getChildAt(1)).getChildAt(0);
+        name.setTextColor(on ? theme.onSecondaryContainer : theme.text);
+        name.setTypeface(on ? MEDIUM : Typeface.DEFAULT);
     }
 
     private LinearLayout pageHeading(KioskTheme theme, String title, String subtitle) {
@@ -8958,6 +9798,22 @@ public final class KioskActivity extends Activity {
             return;
         }
         switch (command) {
+            case "sensors.redraw":
+                // A test while asleep ended: the page that was up shows its verdict.
+                if (configurationVisible) {
+                    Runnable screen = currentScreen;
+                    if (screen != null) {
+                        redrawInPlace(screen);
+                    }
+                }
+                break;
+            case "sensors.readings":
+                // A sensor changed state (near, moving): the rows show it now, not on the next
+                // second's tick.
+                if (configurationVisible) {
+                    repaintSensors();
+                }
+                break;
             case "kiosk.start":
                 kioskStopped = false;
                 // Persisted (here and in kiosk.stop/set_url) because the flag used to be process

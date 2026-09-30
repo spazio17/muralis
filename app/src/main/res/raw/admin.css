@@ -358,12 +358,40 @@ p.doc{margin:8px 0}
 
 ul.list.gap{margin-top:16px}
 
-/* ---- list-detail pages: Screensaver (2026-09-28) ---- */
+/* ---- sensors (2026-09-27) ---- */
+ul.list li.dim{opacity:.55}
+ul.list .text .s:empty{display:none}
+a.rowlink.plain .h{color:var(--text)}
+.trail .divider{width:1px;height:32px;background:var(--outline-variant);margin:0 12px 0 4px}
+input.sw{appearance:none;-webkit-appearance:none;width:52px;height:32px;margin:0;flex:none;border-radius:16px;border:2px solid var(--outline);background:var(--surface-alt);position:relative;cursor:pointer;display:inline-block}
+input.sw::after{content:"";position:absolute;top:6px;left:6px;width:16px;height:16px;border-radius:50%;background:var(--outline);transition:left .12s,width .12s,height .12s,top .12s}
+input.sw:checked{background:var(--accent);border-color:var(--accent)}
+input.sw:checked::after{left:22px;top:4px;width:20px;height:20px;background:var(--on-accent)}
+input.sw:disabled{opacity:.38;cursor:default}
+.card .count{font-size:12px;color:var(--subtext)}
+.actions.top0{margin-top:8px}
+.actions .btn.text{flex:0 0 auto}
+
+/* ---- list-detail pages: Sensors (2026-09-27) and Screensaver (2026-09-28) ---- */
 .ld{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+.ld[data-page=list] .detail{display:none}
+.ld[data-page=detail] .nav{display:none}
 @media (min-width:600px) and (max-width:839px){.ld{max-width:640px;margin:0 auto}}
 @media (min-width:840px){
 .ld{grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px}
+.ld[data-page] .nav,.ld[data-page] .detail{display:block}
 .ld .detail{grid-column:2}
 .ld.one{grid-template-columns:minmax(0,1fr)}.ld.one .detail{grid-column:1}
+.ld .nav{padding:8px}
+.ld .nav .cardhead{display:none}
+.ld .nav .chev,.ld .nav .divider{display:none}
+.ld .nav ul.list li,.ld .nav ul.list li.two{min-height:64px;padding:4px 12px;border-bottom:0;border-radius:999px}
+.ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,transparent);cursor:pointer}
+.ld .nav ul.list li.on{background:var(--secondary-container)}
+.ld .nav ul.list li.on .h{color:var(--on-secondary-container);font-weight:500}
+.ld .nav .actions{padding:8px 12px 4px}
+.ld .detail .pageswitch{display:none}
+.ld .detail>.pane>section.card:first-child,.ld .detail>.pane>form>.field:first-of-type{margin-top:0}
+.pane[hidden]{display:none}
 }
 ul.list li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:12px}
