@@ -142,7 +142,7 @@ the playlist page was the case that set the rule.
   the hardware signed every handshake at about 0.4 s on the Huawei tablet (a full handshake
   0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response closes its connection, and
   a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
-  deadline: `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
+  deadline (8 s since 2026-09-30, when a lossy Wi-Fi link lost one request in seven to it): `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
   Nineteen parallel curls against the tablet all failed, seven refused at the per-host cap and
   twelve cut at 2.05 s. A software key signs in under a millisecond. The old Keystore alias is
   deleted the first time the new code runs, so a panel updated across that date shows a new

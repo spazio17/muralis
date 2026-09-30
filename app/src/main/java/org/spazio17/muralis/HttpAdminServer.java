@@ -52,7 +52,13 @@ final class HttpAdminServer {
             new java.util.HashSet<>(java.util.Arrays.asList(
                     "dashboard", "mqtt", "webadmin", "sequences")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
-    private static final int HANDSHAKE_TIMEOUT_MS = 2_000;
+    /**
+     * From the accept to the request line, TLS handshake included. Two seconds cut off one
+     * request in seven from a laptop to the tablet over a Wi-Fi link that resent 7% of its
+     * segments (2026-09-30): a lost segment waits a second or more for its resend. Eight, like
+     * {@link #REQUEST_DEADLINE_MS}, still frees a worker held by a silent client quickly.
+     */
+    private static final int HANDSHAKE_TIMEOUT_MS = 8_000;
     /** Long enough for a socket close to land, short enough that a reload never looks like a hang. */
     private static final int SHUTDOWN_WAIT_MS = 1_000;
     private static final int MAX_REQUEST_LINE_LENGTH = 4_096;
