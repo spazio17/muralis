@@ -377,6 +377,7 @@ input.sw::after{content:"";position:absolute;top:6px;left:6px;width:16px;height:
 input.sw:checked{background:var(--accent);border-color:var(--accent)}
 input.sw:checked::after{left:22px;top:4px;width:20px;height:20px;background:var(--on-accent)}
 input.sw:disabled{opacity:.38;cursor:default}
+.trail .allow{font-size:13px;color:var(--subtext);white-space:nowrap}
 .card .count{font-size:12px;color:var(--subtext)}
 .actions.tight{margin-top:8px}
 /* A refused switch: the border red, and the reason on a line under its row for a few seconds,

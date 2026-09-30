@@ -110,6 +110,8 @@ final class HttpAdminServer {
      * cost of being wrong is one refused request from a client on a genuinely awful link.
      */
     private static final int REQUEST_DEADLINE_MS = 8_000;
+    /** How long the camera stream waits for a frame before it ends; see serveStream. */
+    private static final long STREAM_STALL_MS = 15_000;
     /** Backoff after a failed {@code accept()}; see the comment at that call site. */
     private static final long ACCEPT_RETRY_DELAY_MS = 250L;
 
@@ -513,6 +515,11 @@ final class HttpAdminServer {
                 }
             }
             String requestPath = target.split("\\?", 2)[0];
+            if (method.equals("GET") && requestPath.equals("/camera/stream")) {
+                // The stream lasts as long as the viewer does; the request deadline that
+                // closes a slow connection would cut it at eight seconds.
+                deadline.cancel(false);
+            }
             boolean upload = method.equals("POST") && requestPath.equals("/api/pictures");
             if (upload) {
                 uploadHeld = uploadSlot.tryAcquire();
@@ -642,6 +649,10 @@ final class HttpAdminServer {
             deleteAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
+        } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
+            serveSnapshot(output);
+        } else if (path.equals("/camera/stream") && method.equals("GET")) {
+            serveStream(output);
         } else if (path.equals("/screensaver") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
@@ -1381,6 +1392,7 @@ final class HttpAdminServer {
         paths.put("light", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
         paths.put("movement", "<path d=\"M3 12h3l3-7 4 14 3-7h5\"/>");
         paths.put("audio", "<path d=\"M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11\"/>");
+        paths.put("camera", "<path d=\"M4 8h4l2-3h4l2 3h4v11H4z\"/><circle cx=\"12\" cy=\"13\" r=\"3.5\"/>");
         paths.put("pressure", "<circle cx=\"12\" cy=\"13\" r=\"8\"/><path d=\"M12 13l4-4M12 5V3\"/>");
         paths.put("temperature", "<path d=\"M10 4a2 2 0 014 0v9.5a4 4 0 11-4 0z\"/>");
         paths.put("humidity", "<path d=\"M12 3s6 7 6 11a6 6 0 01-12 0c0-4 6-11 6-11z\"/>");
@@ -1839,7 +1851,10 @@ final class HttpAdminServer {
                 continue;
             }
             String row;
-            if (webPage(def)) {
+            if (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted")) {
+                row = listRow(def.glyph, def.name, null, reading, readingId,
+                        "<span class=\"allow\">Allow on the panel</span>", false);
+            } else if (webPage(def)) {
                 row = linkRow("/sensor?id=" + def.id, def.glyph, def.name, reading, readingId,
                         "<span class=\"chev\">" + glyph("next") + "</span><span class=\"divider\"></span>"
                                 + sensorSwitch(def, one.optBoolean("enabled")));
@@ -1944,6 +1959,8 @@ final class HttpAdminServer {
             trailing = "<input type=\"checkbox\" class=\"sw\" disabled aria-label=\""
                     + escapeHtml(def.name) + "\">";
             label = def.name;
+        } else if (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted")) {
+            trailing = "<span class=\"allow\">Allow on the panel</span>";
         } else {
             trailing = sensorSwitch(def, on, "-page").replace("class=\"sw\"", "class=\"sw pageswitch\"");
         }
@@ -1960,7 +1977,8 @@ final class HttpAdminServer {
                                 java.util.regex.Matcher.quoteReplacement("<span class=\"h\">" + words)) + "</ul>";
         // The calibration and the test while asleep are the panel's alone: both need a hand
         // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
-        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
+                || (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted"))) {
             html.append(head).append("</section>");
         } else if (def == Sensors.PROXIMITY) {
             html.append(head).append("</section>");
@@ -1973,6 +1991,60 @@ final class HttpAdminServer {
                     .append(optionField("movement_still_s", "Still after (seconds)",
                             KioskConfig.sensorOption(context, "movement_still_s", "5"), "number"))
                     .append("</section>");
+        } else if (def == Sensors.CAMERA) {
+            StringBuilder sizes = new StringBuilder();
+            for (String size : PanelCamera.SIZES) {
+                sizes.append(size).append(',').append(size.replace("x", " × ")).append(',');
+            }
+            StringBuilder rates = new StringBuilder();
+            for (int rate : PanelCamera.RATES) {
+                rates.append(rate).append(',').append(rate).append(',');
+            }
+            String address = KioskRuntimeState.httpAdminAddress();
+            html.append(head)
+                    .append(optionField("camera_name", "Name",
+                            KioskConfig.sensorOption(context, "camera_name",
+                                    PanelCamera.defaultName(context)), "text"))
+                    .append(optionSelect("camera_lens", "Lens",
+                            KioskConfig.sensorOption(context, "camera_lens", "front"),
+                            "front", "Front", "back", "Back"))
+                    .append(optionSelect("camera_size", "Size",
+                            KioskConfig.sensorOption(context, "camera_size", "640x480"),
+                            sizes.toString().split(",")))
+                    .append(optionSelect("camera_fps", "Frames per second",
+                            KioskConfig.sensorOption(context, "camera_fps", "5"),
+                            rates.toString().split(",")))
+                    .append(optionSelect("camera_orientation", "Orientation",
+                            KioskConfig.sensorOption(context, "camera_orientation", "device"),
+                            "device", "Follow the device", "portrait", "Portrait",
+                            "landscape", "Landscape"))
+                    .append("<div class=\"switches\">")
+                    .append(optionSwitch("camera_mirror", "Mirror",
+                            KioskConfig.sensorOptionOn(context, "camera_mirror", false)))
+                    .append(optionSwitch("camera_flip", "Upside down",
+                            KioskConfig.sensorOptionOn(context, "camera_flip", false)))
+                    .append(optionSwitch("camera_watermark", "Watermark, name and time",
+                            KioskConfig.sensorOptionOn(context, "camera_watermark", true)))
+                    .append("</div></section>")
+                    .append("<section class=\"card\"><h2>Motion</h2><div class=\"switches\">")
+                    .append(optionSwitch("camera_motion", "Detect motion",
+                            KioskConfig.sensorOptionOn(context, "camera_motion", true)))
+                    .append("</div>")
+                    .append(optionSelect("camera_sensitivity", "Sensitivity",
+                            KioskConfig.sensorOption(context, "camera_sensitivity", "normal"),
+                            "low", "Low", "normal", "Normal", "high", "High"))
+                    .append(optionField("camera_still_s", "Still after, seconds",
+                            KioskConfig.sensorOption(context, "camera_still_s", "30"), "number"))
+                    .append("<div class=\"switches\">")
+                    .append(optionSwitch("camera_mqtt", "Picture to MQTT on motion",
+                            KioskConfig.sensorOptionOn(context, "camera_mqtt", false)))
+                    .append("</div></section>")
+                    .append("<section class=\"card\"><h2>Stream</h2><ul class=\"list\">")
+                    .append(linkRow("/camera/stream", "open", "Live stream",
+                            address + "/camera/stream", null, ""))
+                    .append(linkRow("/camera/snapshot.jpg", "open", "Snapshot",
+                            address + "/camera/snapshot.jpg", null, ""))
+                    .append("</ul></section>");
         } else {
             html.append(head).append("</section>");
         }
@@ -1982,6 +2054,9 @@ final class HttpAdminServer {
     private static String switchLabel(Sensors.Def def) {
         if (def == Sensors.MOVEMENT) {
             return "Report movement";
+        }
+        if (def == Sensors.CAMERA) {
+            return "Camera on";
         }
         return def.name;
     }
@@ -2354,6 +2429,60 @@ final class HttpAdminServer {
                 + statsBody(config) + "</section>"
                 + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
                 + pageEnd();
+    }
+
+    private void serveSnapshot(OutputStream output) throws IOException {
+        PanelCamera camera = kioskService.camera();
+        byte[] jpeg = camera == null ? null : camera.snapshot();
+        if (jpeg == null) {
+            writeResponse(output, 503, "text/plain",
+                    bytes(camera != null && camera.open() ? "No picture yet." : "The camera is off."));
+            return;
+        }
+        writeResponse(output, 200, "image/jpeg", jpeg,
+                Collections.singletonMap("Cache-Control", "no-store"));
+    }
+
+    /** The live stream: MJPEG, one part per frame, until the viewer goes. */
+    private void serveStream(OutputStream output) throws IOException {
+        PanelCamera camera = kioskService.camera();
+        if (camera == null || !camera.open()) {
+            writeResponse(output, 503, "text/plain", bytes("The camera is off."));
+            return;
+        }
+        output.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; "
+                + "boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+        camera.viewerJoined();
+        long shown = -1;
+        try {
+            long waitingSinceMs = System.currentTimeMillis();
+            while (camera.open()) {
+                byte[] jpeg = camera.snapshot();
+                long at = camera.lastFrameAtMs();
+                if (jpeg == null || at == shown) {
+                    if (System.currentTimeMillis() - waitingSinceMs > STREAM_STALL_MS) {
+                        // No picture for this long is a camera that stopped, not a slow one;
+                        // the connection ends rather than holding a worker for a viewer who
+                        // may be long gone.
+                        break;
+                    }
+                    Thread.sleep(50);
+                    continue;
+                }
+                waitingSinceMs = System.currentTimeMillis();
+                shown = at;
+                output.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                        + jpeg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                output.write(jpeg);
+                output.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+                output.flush();
+            }
+        } catch (InterruptedException ended) {
+            Thread.currentThread().interrupt();
+        } finally {
+            camera.viewerLeft();
+        }
     }
 
     private String appVersionName() {

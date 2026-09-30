@@ -5,6 +5,7 @@
 package org.spazio17.muralis;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -32,8 +33,8 @@ import java.util.Map;
  * The panel's sensors: one flat list, alphabetical on the pages, the companion app's "Manage
  * sensors" (Juri, 2026-09-26 and 2026-09-27). Every row is the same shape and only its right
  * edge says what kind it is: a switch for the ones a person turns on, a chevron beside the
- * switch for the ones with a page of their own, the reading alone for what the panel always
- * reports (display, screensaver, battery, power, network,
+ * switch for the ones with a page of their own, Allow while a permission is missing, the reading
+ * alone for what the panel always reports (display, screensaver, battery, power, network,
  * processor, memory), greyed at the end for what this device lacks.
  *
  * <p>Every reading is a row on both surfaces, a field of the {@code sensors} block in the status
@@ -45,7 +46,8 @@ import java.util.Map;
  * on change alone.
  *
  * <p>A hardware sensor registers its listener only while it is on, asking for the wake-up
- * variant so it answers under a real sleep.
+ * variant so it answers under a real sleep. The camera lives in its own class and is asked
+ * through {@link #source}.
  */
 final class Sensors implements SensorEventListener {
     private static final String TAG = "MuralisSensors";
@@ -57,6 +59,8 @@ final class Sensors implements SensorEventListener {
     enum Kind {
         /** On or off by its switch. */
         SWITCH,
+        /** On or off by its switch, once its permission is granted. */
+        PERMISSION,
         /** What the panel always reports: no switch. */
         PANEL
     }
@@ -96,6 +100,8 @@ final class Sensors implements SensorEventListener {
             Kind.SWITCH, false, "audio");
     static final Def BATTERY = new Def("battery", "Battery", SENSOR, "battery", "%",
             "measurement", 0, Kind.PANEL, false, "battery");
+    static final Def CAMERA = new Def("camera", "Camera", BINARY, "motion", null, null, 0,
+            Kind.PERMISSION, true, "camera");
     static final Def DISPLAY = new Def("display", "Display", BINARY, null, null, null, 0,
             Kind.PANEL, false, "display");
     static final Def HUMIDITY = new Def("humidity", "Humidity", SENSOR, "humidity", "%",
@@ -124,8 +130,17 @@ final class Sensors implements SensorEventListener {
 
     /** Every sensor this app knows, alphabetical by name, which is the order the pages use. */
     static final List<Def> ALL = Collections.unmodifiableList(Arrays.asList(
-            TEMPERATURE, AUDIO, BATTERY, DISPLAY, HUMIDITY, LIGHT, MEMORY, MOVEMENT, NETWORK,
-            POWER, PRESSURE, PROCESSOR, PROXIMITY, SCREENSAVER));
+            TEMPERATURE, AUDIO, BATTERY, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY, MOVEMENT,
+            NETWORK, POWER, PRESSURE, PROCESSOR, PROXIMITY, SCREENSAVER));
+
+    /** What the camera reports, asked when a document is built. */
+    interface Reading {
+        /** Fills {@code one} with value and attributes; may leave value null. */
+        void fill(JSONObject one) throws JSONException;
+
+        /** The sample for the automations, or null when there is nothing to say yet. */
+        Automations.Sample sample();
+    }
 
     private final Context context;
     private final SensorManager manager;
@@ -257,6 +272,7 @@ final class Sensors implements SensorEventListener {
     // start at minus the hold read as "Moving" until the hold had passed (review, 2026-09-27).
     private volatile long movedAtMs = Long.MIN_VALUE / 2;
     private volatile boolean near;
+    private final Map<String, Reading> sources = new HashMap<>();
     /** Told when a sensor changes state (near, moving), so nobody waits for the next tick. */
     private volatile Runnable onEdge;
     /** Told when a reading that moves all the time moved (light, pressure), for the rows. */
@@ -323,6 +339,23 @@ final class Sensors implements SensorEventListener {
         this.engine = engine;
     }
 
+    /** Hands over the class that reads one of the sensors this one does not read itself. */
+    void source(Def def, Reading reading) {
+        synchronized (sources) {
+            if (reading == null) {
+                sources.remove(def.id);
+            } else {
+                sources.put(def.id, reading);
+            }
+        }
+    }
+
+    private Reading sourceOf(Def def) {
+        synchronized (sources) {
+            return sources.get(def.id);
+        }
+    }
+
     static Def byId(String id) {
         for (Def def : ALL) {
             if (def.id.equals(id)) {
@@ -346,11 +379,23 @@ final class Sensors implements SensorEventListener {
         if (def.androidType != 0) {
             return manager != null && manager.getDefaultSensor(def.androidType) != null;
         }
+        PackageManager packages = context.getPackageManager();
+        if (def == CAMERA) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+        }
         if (def == BATTERY) {
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             return facts == null || facts.batteryPresent;
         }
         return true;
+    }
+
+    /** The runtime permissions the sensor needs on this Android, none for most. */
+    static String[] permissionsFor(Def def) {
+        if (def == CAMERA) {
+            return new String[] {android.Manifest.permission.CAMERA};
+        }
+        return new String[0];
     }
 
     /**
@@ -365,10 +410,41 @@ final class Sensors implements SensorEventListener {
                     return "sensitivity must be light, normal or heavy";
                 }
                 return null;
-            case "movement_still_s":
+            case "camera_sensitivity":
+                if (!clean.equals("low") && !clean.equals("normal") && !clean.equals("high")) {
+                    return "sensitivity must be low, normal or high";
+                }
+                return null;
+            case "movement_still_s": case "camera_still_s":
                 if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) < 1) {
                     return "the seconds must be 1 or more";
                 }
+                return null;
+            case "camera_lens":
+                if (!clean.equals("front") && !clean.equals("back")) {
+                    return "the lens is front or back";
+                }
+                return null;
+            case "camera_size":
+                if (!PanelCamera.SIZES.contains(clean)) {
+                    return "that size is not offered";
+                }
+                return null;
+            case "camera_fps":
+                if (!clean.matches("\\d{1,2}")
+                        || !PanelCamera.RATES.contains(Integer.parseInt(clean))) {
+                    return "that frame rate is not offered";
+                }
+                return null;
+            case "camera_orientation":
+                if (!PanelCamera.ORIENTATIONS.contains(clean)) {
+                    return "the orientation is device, portrait or landscape";
+                }
+                return null;
+            case "camera_name":
+                return clean.length() > 40 ? "the name is too long" : null;
+            case "camera_mirror": case "camera_flip":
+            case "camera_watermark": case "camera_motion": case "camera_mqtt":
                 return null;
             default:
                 return "no sensor setting is called " + key;
@@ -377,7 +453,25 @@ final class Sensors implements SensorEventListener {
 
     /** The value as it is stored once {@link #checkOption} passed it. */
     static String cleanOption(String key, String value) {
-        return value == null ? "" : value.trim();
+        String clean = value == null ? "" : value.trim();
+        switch (key) {
+            case "camera_mirror": case "camera_flip":
+            case "camera_watermark": case "camera_motion": case "camera_mqtt":
+                return Boolean.toString(clean.equals("true") || clean.equals("on")
+                        || clean.equals("1"));
+            default:
+                return clean;
+        }
+    }
+
+    /** Whether every permission the sensor needs is granted. */
+    boolean permitted(Def def) {
+        for (String permission : permissionsFor(def)) {
+            if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -388,9 +482,9 @@ final class Sensors implements SensorEventListener {
         return KioskConfig.sensorEnabled(context, def.id, def.kind == Kind.PANEL);
     }
 
-    /** Whether the sensor is on: switched on. */
+    /** Whether the sensor is on: switched on and, where one is needed, permitted. */
     boolean on(Def def) {
-        return enabled(context, def);
+        return enabled(context, def) && permitted(def);
     }
 
     /** Which sensors were on at the last refresh, for the engine's reset on the off edge. */
@@ -766,7 +860,8 @@ final class Sensors implements SensorEventListener {
             return def == PROXIMITY ? Automations.Sample.of(value, near)
                     : Automations.Sample.of(value);
         }
-        return null;
+        Reading source = sourceOf(def);
+        return source == null ? null : source.sample();
     }
 
     /** "wifi", "ethernet", "mobile", or null while nothing is connected. */
@@ -809,6 +904,8 @@ final class Sensors implements SensorEventListener {
                 one.put("glyph", def.glyph);
                 boolean available = available(def);
                 one.put("available", available);
+                boolean permitted = available && permitted(def);
+                one.put("permitted", permitted);
                 boolean on = available && on(def);
                 one.put("enabled", enabled(context, def));
                 one.put("active", on);
@@ -928,6 +1025,11 @@ final class Sensors implements SensorEventListener {
             one.put("attributes", attributes);
             return;
         }
+        Reading source = sourceOf(def);
+        if (source != null) {
+            source.fill(one);
+            return;
+        }
         Float reading;
         synchronized (this) {
             reading = readings.get(def.id);
@@ -954,6 +1056,9 @@ final class Sensors implements SensorEventListener {
             return "Not on this device";
         }
         if (!one.optBoolean("active")) {
+            if (def.kind == Kind.PERMISSION && !one.optBoolean("permitted")) {
+                return "Needs permission";
+            }
             return "Off";
         }
         Object value = one.opt("value");
@@ -972,6 +1077,9 @@ final class Sensors implements SensorEventListener {
         }
         if (def == SCREENSAVER) {
             return (Boolean) value ? "Showing" : "Off";
+        }
+        if (def == CAMERA) {
+            return (Boolean) value ? "Motion" : "Nothing moving";
         }
         if (def == AUDIO) {
             int volume = attributes == null ? -1 : attributes.optInt("volume_music", -1);
@@ -1006,8 +1114,8 @@ final class Sensors implements SensorEventListener {
     /**
      * What each list of sensors and rules was drawn from, so a surface can tell that another
      * one changed what it shows, and draw it again: the settings page's two sections (the
-     * sensors on, the rules on), the Sensors page (every sensor, and whether this device has
-     * it) and the Automations page (every rule by name and sentence; its switches
+     * sensors on, the rules on), the Sensors page (every sensor, whether this device has it and
+     * may read it) and the Automations page (every rule by name and sentence; its switches
      * follow on their own). A rule added on the web stayed off the panel's pages until they
      * were reopened (Juri, 2026-09-28). Short hashes, compared, never read.
      */
@@ -1022,7 +1130,8 @@ final class Sensors implements SensorEventListener {
             if (one.optBoolean("active")) {
                 on.append(def.id).append(',');
             }
-            all.append(def.id).append(one.optBoolean("available") ? 'a' : '-').append(',');
+            all.append(def.id).append(one.optBoolean("available") ? 'a' : '-')
+                    .append(one.optBoolean("permitted") ? 'p' : '-').append(',');
         }
         StringBuilder rulesOn = new StringBuilder();
         StringBuilder rulesAll = new StringBuilder();

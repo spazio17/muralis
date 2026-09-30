@@ -390,8 +390,10 @@ the playlist page was the case that set the rule.
   same shape and only its right edge says what kind it is. A switch for the ones a person turns
   on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
   beside the switch for the ones with a page of their own (on the panel every hardware sensor,
-  for the test while asleep; on the web only where the page says more than the row, since
-  the calibration and the test are the panel's); every row has a switch, and the panel's own
+  for the test while asleep, plus the camera; on the web only where the page says more than the
+  row, since the calibration and the test are the panel's); Allow while the camera's permission
+  is missing (asked once from the Sensors page on an ordinary install and granted silently on a
+  device owner); every row has a switch, and the panel's own
   values (display, screensaver, battery, power, network, processor, memory: their Home
   Assistant entities predate this list and are not announced twice) start on where the rest
   start off; greyed at the end for what this device lacks. Every row's reading is worded once, by the service
@@ -419,7 +421,14 @@ the playlist page was the case that set the rule.
   a line of text, and a rule on a sensor this device lacks keeps that sensor in the menu, marked
   "(not on this device)". The one rule that ships,
   on, is "Wake by hand" (proximity near, then Display on); nothing else runs until a person makes
-  it. The rules are one JSON document in KioskConfig, published as the `automations` array. **This panel** is the section that holds the panel's name
+  it. The rules are one JSON document in KioskConfig, published as the `automations` array. **The
+  camera is an IP camera** (`PanelCamera`, Camera2): an MJPEG stream at `/camera/stream` and a
+  snapshot at `/camera/snapshot.jpg` behind the admin password, a name (the device id until
+  changed), lens, size, frame rate, mirror, upside down, a watermark of name and time, and motion
+  detection on a coarse grid of the brightness plane with a sensitivity and a still time; over
+  MQTT only what Frigate and Blue Iris publish: the motion sensor, a motion-detection switch, a
+  snapshot button and, when asked, the last picture on motion as raw JPEG on `<prefix>camera`
+  for a camera entity. **This panel** is the section that holds the panel's name
   (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
   Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
   Open dashboard, outlined, on an ordinary install; the readings are on the
@@ -429,10 +438,12 @@ the playlist page was the case that set the rule.
   it at 16 sp (Title medium) on the left, the readings at 14 sp on the right, centred on one
   line; a long id wraps under Muralis.
   **Kept alive by the service's two-second tick** (review of 2026-09-27): `refreshSensors()`
-  runs on every tick, a no-op while the state matches; the sensor block and the
+  runs on every tick, a no-op while the state matches, so a camera the platform took recovers
+  on its own (it waits 15 s after a failure and reopens after 20 s without a frame); the sensor block and the
   rules are published to `KioskRuntimeState` on the tick with or without MQTT, so the panel's
   rows never depend on a broker or an open browser; discovery goes again when the set of
-  active sensors or the rules change (`MqttController.sensorsKey`), and an automation's switch
+  active sensors, the camera or the rules change (`MqttController.sensorsKey`), the retained
+  picture is cleared when the camera or its MQTT pictures go off, and an automation's switch
   has its unique id from the rule's id, not its name. `Sensors.checkOption` is the one rule
   book for a sensor's settings, applied by both surfaces;
   every sensor has a switch, the panel's own values (display, screensaver, battery, power,
@@ -440,7 +451,14 @@ the playlist page was the case that set the rule.
   (Juri, 2026-09-27); the web admin shows neither the calibration nor the test while asleep,
   both need a hand at the glass and stay the panel's; the Display section's "Display off turns
   the screen off ..." sentence went from both surfaces, the note shows only as the red warning
-  that a sleep ended badly; the proximity's events read Near and Far, Android's own words, the same as the row (Juri, 2026-09-30; Home Assistant has no binary class for a proximity sensor); 
+  that a sleep ended badly; the proximity's events read Near and Far, Android's own words, the same as the row (Juri, 2026-09-30; Home Assistant has no binary class for a proximity sensor); **the service takes
+  the camera foreground type while that sensor is on** (`KioskService.refreshForegroundTypes`,
+  manifest `specialUse|camera` with FOREGROUND_SERVICE_CAMERA): from Android 11 a stopped
+  activity may use the camera only through a foreground service of that type, and the Pixel
+  (Android 17) refused it with "disabled by policy" the moment its screen went dark
+  (2026-09-27). Android refuses the type to an app in the background, so the activity asks
+  again on every resume; the Play console's foreground-service declaration must name it
+  before the next upload;
   every writer of the rules JSON, the service, both web handlers, the panel's switch, Save and
   Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
   beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
@@ -531,7 +549,7 @@ the playlist page was the case that set the rule.
   review process should find").** A rule added, renamed or deleted on the web stayed off the
   panel's Automations page until it was reopened, and the other way round. `Sensors.listKeys`
   hashes what each list is drawn from: the settings page's two sections (sensors on, rules on),
-  the Sensors page (every sensor, and whether this device has it) and the Automations page (every rule
+  the Sensors page (every sensor, available and permitted) and the Automations page (every rule
   by name, sensor and sentence; switches follow on their own). The panel compares on its
   one-second tick (`watchLists`, `checkLists`) and draws the page again, never while a box has
   the focus; the wide Automations page keeps what its editor holds when it was edited and
@@ -550,7 +568,12 @@ the playlist page was the case that set the rule.
   radios for five or fewer, a dropdown for five to fifteen). The panel's `MenuField` is
   Material's exposed dropdown menu: the outlined field showing the chosen item with a chevron,
   a menu anchored to it on a tap, opened on the chosen item; the automation editor's Sensor
-  and Action use it, as the web page's selects do.
+  and Action use it, as the web page's selects do. **The camera picture has an
+  orientation** (`camera_orientation`: `device`, `portrait`, `landscape`, Juri 2026-09-28):
+  turned upright for the display's rotation by Android's JPEG_ORIENTATION rule, then, for
+  portrait or landscape, the middle of the picture in that shape when the panel is the other
+  way (the sensor is fixed, so a tall picture from a wide panel is a crop); mirror and upside
+  down apply to the upright picture.
 - **Lists and changes of state (Juri, 2026-09-28).** A list of rows on the
   panel is the web's `ul.list`: the rows touch with a 1 dp divider between (`addListRow`, the
   settings page's Sensors and Automations sections and the narrow Sensors and Automations

@@ -179,8 +179,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             Sensors hub = sensors;
             if (hub != null) {
                 // Refreshed on every tick, not only from a settings surface: every branch is a
-                // no-op while the state matches. Then the block the panel's rows read, with or
-                // without MQTT.
+                // no-op while the state matches, and it is what brings back a camera the
+                // platform took. Then the block the panel's rows read, with or without MQTT.
                 refreshSensors();
                 hub.poll();
             }
@@ -265,6 +265,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, buildNotification());
+        foregroundTypesNow = baseForegroundType();
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
         android.os.UserManager users = getSystemService(android.os.UserManager.class);
@@ -280,6 +281,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
+        camera = new PanelCamera(this, this::onCameraMotion);
+        sensors.source(Sensors.CAMERA, camera);
         sensors.onEdge(this::sensorEdge);
         sensors.onReading(this::sensorReading);
         refreshSensors();
@@ -369,6 +372,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         stopTelemetry();
         if (sensors != null) {
             sensors.stop();
+        }
+        if (camera != null) {
+            camera.stop();
         }
         live = null;
         stopAudio();
@@ -575,6 +581,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
                         ? android.Manifest.permission.READ_MEDIA_IMAGES
                         : android.Manifest.permission.READ_EXTERNAL_STORAGE);
+        // The sensors' own permissions (Sensors.permissionsFor), so their rows show a switch on
+        // a panel nobody stands at; every one of them stays off until switched on.
+        for (Sensors.Def def : Sensors.ALL) {
+            for (String permission : Sensors.permissionsFor(def)) {
+                grantOwnPermission(policy, admin, permission);
+            }
+        }
     }
 
     /** Fail soft: KioskActivity still asks the user the ordinary way, and the service runs either way. */
@@ -1991,6 +2004,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
     private Automations.Engine automations;
+    private PanelCamera camera;
 
     /** Runs one automation's action; the engine decided it is due. */
     private void runAutomation(Automations.Rule rule) {
@@ -2016,6 +2030,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
     }
 
+    private void onCameraMotion() {
+        if (KioskConfig.sensorOptionOn(this, "camera_mqtt", false)) {
+            publishPictureSoon();
+        }
+        publishStateSoon();
+    }
+
+    /** A moment after motion, so the frame published is one with the movement in it. */
+    private void publishPictureSoon() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            MqttController mqtt = mqttController;
+            PanelCamera lens = camera;
+            if (mqtt != null && lens != null) {
+                mqtt.publishPicture(lens.snapshot());
+            }
+        }, 400);
+    }
+
     @Override
     public String setAutomationEnabled(String id, boolean enabled) {
         synchronized (Automations.STORE) {
@@ -2028,6 +2060,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
             KioskConfig.edit(this).automations(Automations.store(rules)).apply();
             automations.rules(rules);
         }
+        publishStateSoon();
+        return null;
+    }
+
+    @Override
+    public String setCameraMotion(boolean enabled) {
+        if (sensors == null || !sensors.available(Sensors.CAMERA)) {
+            return "this device has no camera";
+        }
+        KioskConfig.edit(this).sensorOption("camera_motion", Boolean.toString(enabled)).apply();
         publishStateSoon();
         return null;
     }
@@ -2207,6 +2249,32 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return problem;
     }
 
+    @Override
+    public String cameraSnapshot() {
+        PanelCamera lens = camera;
+        MqttController mqtt = mqttController;
+        if (lens == null || !lens.open()) {
+            return "the camera is off";
+        }
+        if (lens.snapshot() == null) {
+            return "the camera has not delivered a picture yet";
+        }
+        if (mqtt == null) {
+            return "MQTT is not configured";
+        }
+        String problem = mqtt.publishProblem();
+        if (problem != null) {
+            return problem;
+        }
+        mqtt.publishPicture(lens.snapshot());
+        return null;
+    }
+
+    /** The camera, for the web admin's stream and snapshot. */
+    PanelCamera camera() {
+        return camera;
+    }
+
     /** The live service, for a screen that needs what only the service holds. */
     private static volatile KioskService live;
 
@@ -2228,6 +2296,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         Sensors hub = sensors;
         if (hub == null || !hub.available(def)) {
             return "not on this device: " + def.name;
+        }
+        if (enabled && !hub.permitted(def)) {
+            return "the " + def.name.toLowerCase(java.util.Locale.ROOT)
+                    + " needs a permission first";
         }
         KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
         refreshSensors();
@@ -2275,8 +2347,76 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return;
         }
         hub.refresh();
+        boolean cameraOn = hub.available(Sensors.CAMERA) && hub.on(Sensors.CAMERA);
+        boolean pictures = cameraOn && KioskConfig.sensorOptionOn(this, "camera_mqtt", false);
+        MqttController mqtt = mqttController;
+        if (picturesToBroker && !pictures && mqtt != null) {
+            mqtt.clearPicture();
+        }
+        picturesToBroker = pictures;
+        if (camera != null) {
+            camera.refresh(cameraOn);
+        }
+        refreshForegroundTypes();
         publishSensorBlock();
     }
+
+    /** The foreground service types in force; see {@link #refreshForegroundTypes}. */
+    private int foregroundTypesNow;
+    /** Logged once per refusal, not on every tick. */
+    private boolean foregroundTypesRefused;
+
+    private static int baseForegroundType() {
+        return android.os.Build.VERSION.SDK_INT >= 34
+                ? android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+    }
+
+    /**
+     * Adds the camera foreground type while that sensor is on, and drops it when it goes off:
+     * from Android 11 a stopped activity may use the camera only through a foreground service
+     * of that type, so without this a panel whose screen is off loses its camera ("disabled by
+     * policy", the Pixel, 2026-09-27). Android refuses the type to an app in the background;
+     * the activity asks again when it comes to the front, which is where the switches are
+     * flipped anyway.
+     */
+    private void refreshForegroundTypes() {
+        if (android.os.Build.VERSION.SDK_INT < 29) {
+            return;
+        }
+        Sensors hub = sensors;
+        int wanted = baseForegroundType();
+        if (hub != null && hub.available(Sensors.CAMERA) && hub.on(Sensors.CAMERA)) {
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        }
+        if (wanted == foregroundTypesNow) {
+            return;
+        }
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification(), wanted);
+            foregroundTypesNow = wanted;
+            foregroundTypesRefused = false;
+            Log.i(TAG, "Foreground service types: " + wanted);
+        } catch (SecurityException | IllegalArgumentException | IllegalStateException refused) {
+            if (!foregroundTypesRefused) {
+                foregroundTypesRefused = true;
+                Log.w(TAG, "Foreground service types " + wanted + " refused for now: "
+                        + refused.getMessage());
+            }
+        }
+    }
+
+    /** The activity came to the front: the types Android refused in the background may pass now. */
+    static void foregroundTypesSoon(Context context) {
+        KioskService service = live;
+        if (service != null) {
+            service.foregroundTypesRefused = false;
+            service.foregroundTypesNow = -1;
+            new Handler(Looper.getMainLooper()).post(service::refreshForegroundTypes);
+        }
+    }
+
+    /** Whether the last refresh had the camera's pictures going to the broker; see clearPicture. */
+    private boolean picturesToBroker;
 
     @Override
     public void setMediaVolume(int percent) {

@@ -273,7 +273,7 @@ final class MqttController implements MqttCallbackExtended {
         if (names != null && !names.equals(announcedPlaylists)) {
             publishDiscovery();
         } else if (!sensorsKey().equals(announcedSensors)) {
-            // Same rule for the sensors and the automations: a sensor switched on
+            // Same rule for the sensors, the camera and the automations: a sensor switched on
             // has its entity at once, one switched off loses it, and a rule added, renamed or
             // deleted is announced or withdrawn before the state that mentions it.
             publishDiscovery();
@@ -284,7 +284,7 @@ final class MqttController implements MqttCallbackExtended {
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
     private volatile String announcedPlaylists = null;
 
-    /** The sensors and automations discovery last announced; see {@link #sensorsKey}. */
+    /** The sensors, camera and automations discovery last announced; see {@link #sensorsKey}. */
     private volatile String announcedSensors = null;
 
     /** What discovery would announce right now for the sensors and the rules, as one string. */
@@ -306,6 +306,35 @@ final class MqttController implements MqttCallbackExtended {
             }
         }
         return key.toString();
+    }
+
+    /** A picture from the camera, raw JPEG bytes, what an MQTT camera entity shows. */
+    void publishPicture(byte[] jpeg) {
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected() || jpeg == null) {
+            return;
+        }
+        try {
+            activeClient.publish(topicPrefix + "camera", jpeg, 0, true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "MQTT picture publish failed", exception);
+        }
+    }
+
+    /**
+     * Takes the retained picture off the broker: the camera went off, or its pictures are no
+     * longer wanted there, and a stale frame must not be what a fresh Home Assistant shows.
+     */
+    void clearPicture() {
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected()) {
+            return;
+        }
+        try {
+            activeClient.publish(topicPrefix + "camera", new byte[0], 0, true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "MQTT picture clear failed", exception);
+        }
     }
 
     void publishCommandResult(String id, String status, String detail) {
@@ -849,12 +878,36 @@ final class MqttController implements MqttCallbackExtended {
                 } else {
                     entity.put("value_template", "{{ value_json.sensors." + def.id + ".value }}");
                 }
-                if (def == Sensors.AUDIO) {
+                if (def == Sensors.AUDIO || def == Sensors.CAMERA) {
                     entity.put("json_attributes_topic", topicPrefix + "state");
                     entity.put("json_attributes_template",
                             "{{ value_json.sensors." + def.id + ".attributes | tojson }}");
                 }
                 components.put(key, entity);
+            }
+            // The camera's controls and its picture, the set Frigate and Blue Iris publish:
+            // motion detection as a switch, a snapshot button, and the last picture on motion
+            // as a camera entity, all only while the camera is on.
+            org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
+            boolean cameraOn = cameraState != null && cameraState.optBoolean("active");
+            if (cameraOn) {
+                components.put("camera_motion", toggle(
+                        "Camera motion detection",
+                        "{\"command\":\"camera.motion\",\"args\":{\"enabled\":true}}",
+                        "{\"command\":\"camera.motion\",\"args\":{\"enabled\":false}}",
+                        "{{ 'ON' if value_json.sensors.camera.attributes.detecting else 'OFF' }}"));
+                components.put("camera_snapshot", button("Camera snapshot", "camera.snapshot"));
+                JSONObject picture = new JSONObject();
+                picture.put("p", "camera");
+                picture.put("name", "Camera picture");
+                picture.put("unique_id", uniqueId("Camera picture"));
+                picture.put("topic", topicPrefix + "camera");
+                components.put("camera_picture", picture);
+            } else {
+                components.put("camera_motion", new JSONObject().put("p", "switch"));
+                components.put("camera_snapshot", new JSONObject().put("p", "button"));
+                components.put("camera_picture", new JSONObject().put("p", "camera"));
+                clearPicture();
             }
             // One switch per automation, so a rule can be paused from Home Assistant; a rule
             // that was deleted is withdrawn by the id discovery last announced.

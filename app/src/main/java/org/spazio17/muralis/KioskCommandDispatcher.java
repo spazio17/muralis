@@ -185,6 +185,12 @@ final class KioskCommandDispatcher {
         /** Switches one automation on or off by its id; null when done, else the refusal. */
         String setAutomationEnabled(String id, boolean enabled);
 
+        /** Switches the camera's motion detection; null when done, else the refusal. */
+        String setCameraMotion(boolean enabled);
+
+        /** Publishes the camera's last picture over MQTT now; null when done, else why not. */
+        String cameraSnapshot();
+
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
 
@@ -429,6 +435,17 @@ final class KioskCommandDispatcher {
                     return rejected("value must name an automation");
                 }
                 String problem = executor.setAutomationEnabled(args.value, args.enabled);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "camera.motion": {
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                String problem = executor.setCameraMotion(args.enabled);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "camera.snapshot": {
+                String problem = executor.cameraSnapshot();
                 return problem == null ? accepted() : rejected(problem);
             }
             case "proximity.calibrate": {

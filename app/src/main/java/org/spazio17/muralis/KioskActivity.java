@@ -796,6 +796,9 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // In front: the camera foreground type a background start could not take is asked for
+        // again; see KioskService.refreshForegroundTypes.
+        KioskService.foregroundTypesSoon(this);
         if (orientationPending) {
             orientationPending = false;
             applyOrientation();
@@ -3367,12 +3370,17 @@ public final class KioskActivity extends Activity {
         return alive;
     }
 
+    private static final int REQUEST_SENSOR_PERMISSION = 22;
+    /** The sensor whose permission was just asked for, redrawn when the answer arrives. */
+    private String permissionAskedFor;
+
     private static int sensorGlyph(String glyph) {
         switch (glyph) {
             case "proximity": return R.drawable.ic_sensor_proximity;
             case "light": return R.drawable.ic_sensor_light;
             case "movement": return R.drawable.ic_sensor_movement;
             case "audio": return R.drawable.ic_sensor_audio;
+            case "camera": return R.drawable.ic_sensor_camera;
             case "pressure": return R.drawable.ic_sensor_pressure;
             case "temperature": return R.drawable.ic_sensor_temperature;
             case "humidity": return R.drawable.ic_sensor_humidity;
@@ -3691,6 +3699,11 @@ public final class KioskActivity extends Activity {
                 off.setEnabled(false);
                 row = sensorRow(theme, def, one, off, open, !wide);
                 absent.add(row);
+            } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
+                Button allow = secondaryButton(theme, "Allow");
+                allow.setOnClickListener(view -> requestSensorPermission(def));
+                row = sensorRow(theme, def, one, allow, open, !wide);
+                addRow.accept(row);
             } else {
                 row = sensorRow(theme, def, one, sensorSwitch(theme, def, one), open, !wide);
                 addRow.accept(row);
@@ -3947,6 +3960,28 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Judged live rather than from the snapshot, which is rebuilt on the service's next tick. */
+    private boolean permittedNow(Sensors.Def def) {
+        for (String permission : Sensors.permissionsFor(def)) {
+            if (checkSelfPermission(permission)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void requestSensorPermission(Sensors.Def def) {
+        permissionAskedFor = def.id;
+        try {
+            requestPermissions(Sensors.permissionsFor(def), REQUEST_SENSOR_PERMISSION);
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Cannot ask for the permission", refused);
+            Toast.makeText(this, "This device would not show the permission request.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
     /** A field of a sensor's page, stored when the box lets go of the focus or on Done. */
     private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
             String fallback, boolean number) {
@@ -4081,13 +4116,20 @@ public final class KioskActivity extends Activity {
         // No title on the first card: the app bar and the row already name the sensor, and
         // three times in a column was two too many (review, 2026-10-01).
         LinearLayout card = card(theme, null);
-        String switchLabel = def == Sensors.MOVEMENT ? "Report movement" : def.name;
+        // "Use the camera": an action like the other switches' words, where "Camera on" read
+        // as a state (review, 2026-10-01).
+        String switchLabel = def == Sensors.MOVEMENT ? "Report movement"
+                : def == Sensors.CAMERA ? "Use the camera" : def.name;
         View trailing;
         if (!one.optBoolean("available")) {
             CompoundButton off = themedSwitch(theme, "", false);
             off.setEnabled(false);
             trailing = off;
             switchLabel = def.name;
+        } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
+            Button allow = secondaryButton(theme, "Allow");
+            allow.setOnClickListener(view -> requestSensorPermission(def));
+            trailing = allow;
         } else {
             trailing = sensorSwitch(theme, def, one);
         }
@@ -4102,7 +4144,8 @@ public final class KioskActivity extends Activity {
         viewsOf(sensorReadouts, def.id).add(readingOf((LinearLayout) card.getChildAt(card.getChildCount() - 1)));
         java.util.List<View> cards = new java.util.ArrayList<>();
         cards.add(card);
-        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
+                || (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def))) {
             return cards;
         }
         if (def.androidType != 0) {
@@ -4120,6 +4163,45 @@ public final class KioskActivity extends Activity {
             // guessing at a driver's values, a procedure the user runs). Until then Android's
             // distance rule reads it.
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
+        } else if (def == Sensors.CAMERA) {
+            addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
+                    false);
+            addOptionRadios(card, theme, "Lens", "camera_lens", "front",
+                    "front", "Front", "back", "Back");
+            java.util.List<String> sizes = new java.util.ArrayList<>();
+            for (String size : PanelCamera.SIZES) {
+                sizes.add(size);
+                sizes.add(size.replace("x", " × "));
+            }
+            addOptionRadios(card, theme, "Size", "camera_size", "640x480",
+                    sizes.toArray(new String[0]));
+            java.util.List<String> rates = new java.util.ArrayList<>();
+            for (int rate : PanelCamera.RATES) {
+                rates.add(Integer.toString(rate));
+                rates.add(Integer.toString(rate));
+            }
+            addOptionRadios(card, theme, "Frames per second", "camera_fps", "5",
+                    rates.toArray(new String[0]));
+            addOptionRadios(card, theme, "Orientation", "camera_orientation", "device",
+                    "device", "Follow the device", "portrait", "Portrait", "landscape",
+                    "Landscape");
+            addOptionSwitch(card, theme, "Mirror", "camera_mirror", false);
+            addOptionSwitch(card, theme, "Upside down", "camera_flip", false);
+            addOptionSwitch(card, theme, "Watermark, name and time", "camera_watermark", true);
+            LinearLayout motion = card(theme, "Motion");
+            addOptionSwitch(motion, theme, "Detect motion", "camera_motion", true);
+            addOptionRadios(motion, theme, "Sensitivity", "camera_sensitivity", "normal",
+                    "low", "Low", "normal", "Normal", "high", "High");
+            addOptionField(motion, theme, "Still after, seconds", "camera_still_s", "30", true);
+            addOptionSwitch(motion, theme, "Picture to MQTT on motion", "camera_mqtt", false);
+            cards.add(motion);
+            LinearLayout stream = card(theme, "Stream");
+            String address = KioskRuntimeState.httpAdminAddress();
+            stream.addView(glyphRow(theme, R.drawable.ic_web, "Live stream",
+                    address + "/camera/stream", null, null, false), matchWrap());
+            stream.addView(glyphRow(theme, R.drawable.ic_web, "Snapshot",
+                    address + "/camera/snapshot.jpg", null, null, false), matchWrap());
+            cards.add(stream);
         }
         return cards;
     }
@@ -5726,6 +5808,23 @@ public final class KioskActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] granted) {
         super.onRequestPermissionsResult(requestCode, permissions, granted);
+        if (requestCode == REQUEST_SENSOR_PERMISSION) {
+            Sensors.Def def = Sensors.byId(permissionAskedFor == null ? "" : permissionAskedFor);
+            permissionAskedFor = null;
+            boolean allowed = true;
+            for (int answer : granted) {
+                allowed &= answer == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            }
+            if (def != null && allowed && granted.length > 0) {
+                KioskConfig.edit(this).sensorEnabled(def.id, true).apply();
+            }
+            KioskService.refreshSensorsSoon(this);
+            if (currentScreen != null && configurationVisible) {
+                // The service rebuilds the sensors block on its next tick; the page reads it.
+                mainHandler.postDelayed(() -> redrawInPlace(currentScreen), 400);
+            }
+            return;
+        }
         if (requestCode != REQUEST_PICTURE_READ) {
             return;
         }
