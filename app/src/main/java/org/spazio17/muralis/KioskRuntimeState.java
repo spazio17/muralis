@@ -249,6 +249,17 @@ final class KioskRuntimeState {
         return sensors;
     }
 
+    /** The automations block of the last status document built; see Automations. */
+    private static volatile org.json.JSONArray automations = new org.json.JSONArray();
+
+    static void publishAutomations(org.json.JSONArray block) {
+        automations = block == null ? new org.json.JSONArray() : block;
+    }
+
+    static org.json.JSONArray automations() {
+        return automations;
+    }
+
     /**
      * Whether a {@code KioskActivity} instance exists in this process, resumed or paused. Written
      * by its onCreate and onDestroy; read by {@code KioskService}, which relaunches the dashboard

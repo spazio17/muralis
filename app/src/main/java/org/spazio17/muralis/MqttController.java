@@ -273,8 +273,9 @@ final class MqttController implements MqttCallbackExtended {
         if (names != null && !names.equals(announcedPlaylists)) {
             publishDiscovery();
         } else if (!sensorsKey().equals(announcedSensors)) {
-            // Same rule for the sensors: a sensor switched on has its entity at once, and one
-            // switched off loses it.
+            // Same rule for the sensors and the automations: a sensor switched on
+            // has its entity at once, one switched off loses it, and a rule added, renamed or
+            // deleted is announced or withdrawn before the state that mentions it.
             publishDiscovery();
         }
         publish(topicPrefix + "state", state.toString(), 0, true);
@@ -283,10 +284,10 @@ final class MqttController implements MqttCallbackExtended {
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
     private volatile String announcedPlaylists = null;
 
-    /** The sensors discovery last announced; see {@link #sensorsKey}. */
+    /** The sensors and automations discovery last announced; see {@link #sensorsKey}. */
     private volatile String announcedSensors = null;
 
-    /** What discovery would announce right now for the sensors, as one string. */
+    /** What discovery would announce right now for the sensors and the rules, as one string. */
     private static String sensorsKey() {
         StringBuilder key = new StringBuilder();
         org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
@@ -294,6 +295,14 @@ final class MqttController implements MqttCallbackExtended {
             org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
             if (one != null && one.optBoolean("active")) {
                 key.append(def.id).append(',');
+            }
+        }
+        org.json.JSONArray rules = KioskRuntimeState.automations();
+        for (int index = 0; index < rules.length(); index++) {
+            JSONObject rule = rules.optJSONObject(index);
+            if (rule != null) {
+                key.append(rule.optString("id", "")).append('=')
+                        .append(rule.optString("name", "")).append(',');
             }
         }
         return key.toString();
@@ -847,6 +856,37 @@ final class MqttController implements MqttCallbackExtended {
                 }
                 components.put(key, entity);
             }
+            // One switch per automation, so a rule can be paused from Home Assistant; a rule
+            // that was deleted is withdrawn by the id discovery last announced.
+            org.json.JSONArray rules = KioskRuntimeState.automations();
+            java.util.Set<String> current = new java.util.TreeSet<>();
+            for (int index = 0; index < rules.length(); index++) {
+                JSONObject rule = rules.optJSONObject(index);
+                if (rule == null) {
+                    continue;
+                }
+                String id = rule.optString("id", "");
+                current.add(id);
+                JSONObject ruleSwitch = toggle(
+                        rule.optString("name", id),
+                        "{\"command\":\"automation.enabled\",\"args\":{\"enabled\":true,\"value\":\""
+                                + id + "\"}}",
+                        "{\"command\":\"automation.enabled\",\"args\":{\"enabled\":false,\"value\":\""
+                                + id + "\"}}",
+                        "{{ 'ON' if (value_json.automations | selectattr('id', 'eq', '" + id
+                                + "') | map(attribute='enabled') | first) else 'OFF' }}");
+                // By the id, not the name: two rules may share a name, and a rename must keep
+                // the entity rather than strand one under the old unique id.
+                ruleSwitch.put("unique_id", uniqueId("automation " + id));
+                components.put("automation_" + id, ruleSwitch);
+            }
+            for (String old : KioskConfig.announcedAutomations(appContext).split(",")) {
+                if (!old.isEmpty() && !current.contains(old)) {
+                    components.put("automation_" + old, new JSONObject().put("p", "switch"));
+                }
+            }
+            KioskConfig.edit(appContext).announcedAutomations(
+                    android.text.TextUtils.join(",", current)).apply();
             announcedSensors = sensorsKey();
             components.put("web_admin", toggle(
                     "Web admin",

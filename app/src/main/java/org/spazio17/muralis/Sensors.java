@@ -17,6 +17,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -37,7 +38,11 @@ import java.util.Map;
  *
  * <p>Every reading is a row on both surfaces, a field of the {@code sensors} block in the status
  * document, a Home Assistant entity through discovery for the switchable ones (the panel's own
- * values have had their entities since before this class).
+ * values have had their entities since before this class), and a sample for the automations:
+ * {@link Automations.Engine} is fed from here, by the hardware listeners as readings arrive and
+ * by {@link #poll} on the service's two-second tick for everything read on demand and, again,
+ * for the last hardware reading, so a rule's "for N minutes" advances on a sensor that reports
+ * on change alone.
  *
  * <p>A hardware sensor registers its listener only while it is on, asking for the wake-up
  * variant so it answers under a real sleep.
@@ -124,6 +129,7 @@ final class Sensors implements SensorEventListener {
 
     private final Context context;
     private final SensorManager manager;
+    private final Automations.Engine engine;
     private final Map<String, Float> readings = new HashMap<>();
 
     /**
@@ -297,9 +303,10 @@ final class Sensors implements SensorEventListener {
         }
     }
 
-    Sensors(Context context) {
+    Sensors(Context context, Automations.Engine engine) {
         this.context = context;
         this.manager = context.getSystemService(SensorManager.class);
+        this.engine = engine;
     }
 
     static Def byId(String id) {
@@ -309,6 +316,15 @@ final class Sensors implements SensorEventListener {
             }
         }
         return null;
+    }
+
+    /** The names by id, for the automation editor's vocabulary. */
+    static Map<String, String> names() {
+        Map<String, String> names = new java.util.LinkedHashMap<>();
+        for (Def def : ALL) {
+            names.put(def.id, def.name);
+        }
+        return names;
     }
 
     /** Whether this device has the sensor at all; an absent one is greyed at the end of the list. */
@@ -363,9 +379,21 @@ final class Sensors implements SensorEventListener {
         return enabled(context, def);
     }
 
+    /** Which sensors were on at the last refresh, for the engine's reset on the off edge. */
+    private final Map<String, Boolean> wasOn = new HashMap<>();
+
     /** Registers the hardware listeners the stored switches ask for, and drops the others. */
     synchronized void refresh() {
         proximityCalibration = Calibration.of(context);
+        for (Def def : ALL) {
+            boolean now = available(def) && on(def);
+            if (Boolean.TRUE.equals(wasOn.get(def.id)) && !now && engine != null) {
+                // A rule waiting on its minutes must not carry the old start across an off
+                // and on: the sensor starts over, and so do its rules.
+                engine.reset(def.id);
+            }
+            wasOn.put(def.id, now);
+        }
         for (Def def : ALL) {
             if (def.androidType == 0 || !available(def)) {
                 continue;
@@ -454,6 +482,7 @@ final class Sensors implements SensorEventListener {
                         : value < event.sensor.getMaximumRange();
                 boolean flipped = nowNear != near;
                 near = nowNear;
+                feed(PROXIMITY, Automations.Sample.of(value, nowNear));
                 if (flipped) {
                     edge();
                 }
@@ -480,6 +509,7 @@ final class Sensors implements SensorEventListener {
                     synchronized (this) {
                         before = readings.put(def.id, value);
                     }
+                    feed(def, Automations.Sample.of(value));
                     Runnable listener = onReading;
                     if (listener != null && (before == null || before != value)) {
                         listener.run();
@@ -517,6 +547,18 @@ final class Sensors implements SensorEventListener {
             }
         }
         return null;
+    }
+
+    private void feed(Def def, Automations.Sample sample) {
+        if (engine == null || sample == null) {
+            return;
+        }
+        engine.sample(def.id, sample, SystemClock.elapsedRealtime(), minuteOfDay());
+    }
+
+    static int minuteOfDay() {
+        java.util.Calendar now = java.util.Calendar.getInstance();
+        return now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE);
     }
 
     /**
@@ -631,11 +673,72 @@ final class Sensors implements SensorEventListener {
         }
     }
 
-    /** Sees the end of a movement, when the still time has passed; on the service's two-second tick. */
+    /**
+     * Feeds the automations every reading that is not delivered by a listener: the panel's own
+     * values, the movement hold, what the other classes report, and the last reading of each
+     * hardware sensor once more (a steady room sends no light event, and "darker for 10 min"
+     * has to advance anyway). Called on the service's two-second tick.
+     */
     void poll() {
         if (available(MOVEMENT) && on(MOVEMENT)) {
             movingEdge();
         }
+        if (engine == null) {
+            return;
+        }
+        for (Def def : ALL) {
+            if (!available(def) || !on(def)) {
+                continue;
+            }
+            Automations.Sample sample = sampleOf(def);
+            if (sample != null) {
+                feed(def, sample);
+            }
+        }
+    }
+
+    private Automations.Sample sampleOf(Def def) {
+        if (def == MOVEMENT) {
+            return Automations.Sample.of(moving());
+        }
+        if (def == AUDIO) {
+            AudioManager audio = context.getSystemService(AudioManager.class);
+            return audio == null ? null : Automations.Sample.of(audio.isMusicActive());
+        }
+        if (def == DISPLAY) {
+            PowerManager power = context.getSystemService(PowerManager.class);
+            return Automations.Sample.of(power == null || power.isInteractive());
+        }
+        if (def == SCREENSAVER) {
+            return Automations.Sample.of(KioskRuntimeState.screensaverActive());
+        }
+        if (def == BATTERY) {
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            return facts == null || facts.batteryPercent < 0 ? null
+                    : Automations.Sample.of(facts.batteryPercent, facts.plugged);
+        }
+        if (def == NETWORK) {
+            return Automations.Sample.of(networkKind() != null);
+        }
+        if (def == PROCESSOR) {
+            SystemStats.Sample sample = KioskRuntimeState.lastSample();
+            return sample == null ? null : new Automations.Sample(sample.cpuBusyPercent, null,
+                    sample.cpuTemperatureC);
+        }
+        if (def.androidType != 0) {
+            // The last value again: a sensor that reports on change alone (light in a steady
+            // room) would otherwise never advance a rule's "for N minutes".
+            Float value;
+            synchronized (this) {
+                value = readings.get(def.id);
+            }
+            if (value == null) {
+                return null;
+            }
+            return def == PROXIMITY ? Automations.Sample.of(value, near)
+                    : Automations.Sample.of(value);
+        }
+        return null;
     }
 
     /** "wifi", "ethernet", "mobile", or null while nothing is connected. */
@@ -873,13 +976,14 @@ final class Sensors implements SensorEventListener {
     }
 
     /**
-     * What each list of sensors was drawn from, so a surface can tell that another one changed
-     * what it shows, and draw it again: the settings page's Sensors section (the sensors on) and
-     * the Sensors page (every sensor, and whether this device has it). A sensor switched on the
-     * web stayed off the panel's settings page until it was reopened (Juri, 2026-09-28). Short
-     * hashes, compared, never read.
+     * What each list of sensors and rules was drawn from, so a surface can tell that another
+     * one changed what it shows, and draw it again: the settings page's two sections (the
+     * sensors on, the rules on), the Sensors page (every sensor, and whether this device has
+     * it) and the Automations page (every rule by name and sentence; its switches
+     * follow on their own). A rule added on the web stayed off the panel's pages until they
+     * were reopened (Juri, 2026-09-28). Short hashes, compared, never read.
      */
-    static JSONObject listKeys(JSONObject sensors) {
+    static JSONObject listKeys(JSONObject sensors, JSONArray rules) {
         StringBuilder on = new StringBuilder();
         StringBuilder all = new StringBuilder();
         for (Def def : ALL) {
@@ -892,10 +996,26 @@ final class Sensors implements SensorEventListener {
             }
             all.append(def.id).append(one.optBoolean("available") ? 'a' : '-').append(',');
         }
+        StringBuilder rulesOn = new StringBuilder();
+        StringBuilder rulesAll = new StringBuilder();
+        for (int index = 0; rules != null && index < rules.length(); index++) {
+            JSONObject rule = rules.optJSONObject(index);
+            if (rule == null) {
+                continue;
+            }
+            String line = rule.optString("id", "") + '|' + rule.optString("name", "") + '|'
+                    + rule.optString("sensor", "") + '|' + rule.optString("sentence", "") + '\n';
+            rulesAll.append(line);
+            if (rule.optBoolean("enabled")) {
+                rulesOn.append(line);
+            }
+        }
         JSONObject keys = new JSONObject();
         try {
             keys.put("sensors_home", Integer.toHexString(on.toString().hashCode()));
             keys.put("sensors_page", Integer.toHexString(all.toString().hashCode()));
+            keys.put("automations_home", Integer.toHexString(rulesOn.toString().hashCode()));
+            keys.put("automations_page", Integer.toHexString(rulesAll.toString().hashCode()));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }

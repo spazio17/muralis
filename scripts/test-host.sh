@@ -9,7 +9,7 @@
 # compile and run these suites: dispatcher, provisioning, request origin, system
 # bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
 # retry, system stats, recycle policy, recovery policy, server probe policy,
-# escape sequence, relaunch policy and the self-signed certificate.
+# escape sequence, relaunch policy, the self-signed certificate and the automations.
 
 set -euo pipefail
 
@@ -123,6 +123,18 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
+
+# The automations: vocabulary, storage and engine, over a small org.json stand-in in the test
+# tree, since the class speaks Android's org.json and the host has none.
+javac -d "${test_dir}/automations" \
+    "${pure_java_dir}/Automations.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/HostJson.java" \
+    "${host_test_dir}/../../json/JSONException.java" \
+    "${host_test_dir}/../../json/JSONObject.java" \
+    "${host_test_dir}/../../json/JSONArray.java" \
+    "${host_test_dir}/AutomationsTest.java"
+java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
 
 mkdir -p "${test_dir}/provisioning"
 javac -d "${test_dir}/provisioning" \

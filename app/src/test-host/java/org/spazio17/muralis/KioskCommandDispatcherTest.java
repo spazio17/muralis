@@ -386,6 +386,13 @@ public final class KioskCommandDispatcherTest {
                 new KioskCommandDispatcher.CommandArgs(-1, null, true, "light"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("setSensorEnabled:light:true"),
                 "sensor.enabled did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("automation.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "wake"), executor);
+        require(r.status.equals("rejected"), "automation.enabled without enabled accepted");
+        r = KioskCommandDispatcher.dispatch("automation.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, false, "wake"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setAutomationEnabled:wake:false"),
+                "automation.enabled did not reach the executor");
         r = KioskCommandDispatcher.dispatch("proximity.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
@@ -784,6 +791,11 @@ public final class KioskCommandDispatcherTest {
 
         public String playAudio(String url) {
             calls.add("playAudio:" + url);
+            return null;
+        }
+
+        public String setAutomationEnabled(String id, boolean enabled) {
+            calls.add("setAutomationEnabled:" + id + ":" + enabled);
             return null;
         }
 

@@ -182,6 +182,9 @@ final class KioskCommandDispatcher {
         /** Speaks a sentence through the device's text-to-speech. Null when accepted. */
         String say(String text);
 
+        /** Switches one automation on or off by its id; null when done, else the refusal. */
+        String setAutomationEnabled(String id, boolean enabled);
+
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
 
@@ -416,6 +419,16 @@ final class KioskCommandDispatcher {
                     return rejected("value must name a sensor");
                 }
                 String problem = executor.setSensorEnabled(args.value, args.enabled);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "automation.enabled": {
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                if (args.value == null || args.value.isEmpty()) {
+                    return rejected("value must name an automation");
+                }
+                String problem = executor.setAutomationEnabled(args.value, args.enabled);
                 return problem == null ? accepted() : rejected(problem);
             }
             case "proximity.calibrate": {

@@ -384,8 +384,8 @@ the playlist page was the case that set the rule.
   dropped, the tag kept. Nothing is stored or sent; logd prunes the
   buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
   reshaped 2026-09-26 ("it looks poor"); the site's API page documents it with the sensors.
-- **Sensors: one flat list (2026-09-26, reshaped 2026-09-27 on three rounds of sketches in
-  `../media/drafts/sensors/`).** `Sensors` lists every sensor this
+- **Sensors: one flat list, and a tiny automation controller (2026-09-26, reshaped 2026-09-27
+  on three rounds of sketches in `../media/drafts/sensors/`).** `Sensors` lists every sensor this
   app knows, alphabetical, the companion app's "Manage sensors" with no groups: every row is the
   same shape and only its right edge says what kind it is. A switch for the ones a person turns
   on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
@@ -399,42 +399,59 @@ the playlist page was the case that set the rule.
   The settings page's Sensors section lists only what is on, with "More sensor settings" to the
   page, the Screensaver section's shape. The audio sensor reports playing or idle with the media
   volume, never the ringer mode, and is the one that also receives: `audio.volume`, `audio.play`,
-  `audio.stop`, `audio.say`. **This panel** is the section that holds the panel's name
+  `audio.stop`, `audio.say`. **Automations** (`Automations`, pure) are "When a sensor says this,
+  then do that": one row per rule with a name and a sentence, a switch each (`automation_<id>`
+  switches in discovery, `automation.enabled` with `value=<id>`), an editor of When (the sensor,
+  its event, a level and minutes where the event has them), Then (Display on
+  or off, Show the dashboard, Start the screensaver, Play a sound, Say a sentence, Reload the
+  page: each a command the panel already had) and Only (a window of the day). `Automations.Engine`
+  is fed every reading, fires a rule once when its condition becomes true after its minutes, and
+  arms it again when it ends; the first reading after the rules load only seeds the state, so a
+  rule made while its condition already holds does not fire on the spot. The one rule that ships,
+  on, is "Wake by hand" (proximity near, then Display on); nothing else runs until a person makes
+  it. The rules are one JSON document in KioskConfig, published as the `automations` array. **This panel** is the section that holds the panel's name
   (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
   Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
   Open dashboard, outlined, on an ordinary install; the readings are on the
   settings page alone, every sub-page's app bar empty at the right, and the arrow of a page
-  below Sensors leads one level up, not to the settings (Juri, 2026-09-27). That page's top row
+  below Sensors or Automations leads one level up, not to the settings (Juri, 2026-09-27). That page's top row
   is the same on every width and on both surfaces (Juri, 2026-10-01): Muralis with the id under
   it at 16 sp (Title medium) on the left, the readings at 14 sp on the right, centred on one
   line; a long id wraps under Muralis.
   **Kept alive by the service's two-second tick** (review of 2026-09-27): `refreshSensors()`
-  runs on every tick, a no-op while the state matches; the sensor block is published to
-  `KioskRuntimeState` on the tick with or without MQTT, so the panel's rows never depend on a
-  broker or an open browser; discovery goes again when the set of active sensors changes
-  (`MqttController.sensorsKey`). `Sensors.checkOption` is the one rule
+  runs on every tick, a no-op while the state matches; the sensor block and the
+  rules are published to `KioskRuntimeState` on the tick with or without MQTT, so the panel's
+  rows never depend on a broker or an open browser; discovery goes again when the set of
+  active sensors or the rules change (`MqttController.sensorsKey`), and an automation's switch
+  has its unique id from the rule's id, not its name. `Sensors.checkOption` is the one rule
   book for a sensor's settings, applied by both surfaces;
   every sensor has a switch, the panel's own values (display, screensaver, battery, power,
   network, memory, processor) starting on since they were always reported before, the rest off
   (Juri, 2026-09-27); the web admin shows neither the calibration nor the test while asleep,
   both need a hand at the glass and stay the panel's; the Display section's "Display off turns
   the screen off ..." sentence went from both surfaces, the note shows only as the red warning
-  that a sleep ended badly; the proximity row reads Near and Far, Android's own words (Juri,
-  2026-09-30; Home Assistant has no binary class for a proximity sensor); the dispatcher test
-  covers every sensor and audio command. The readings on the panel's
+  that a sleep ended badly; the proximity's events read Near and Far, Android's own words, the same as the row (Juri, 2026-09-30; Home Assistant has no binary class for a proximity sensor); 
+  every writer of the rules JSON, the service, both web handlers, the panel's switch, Save and
+  Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
+  beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
+  stand-in in the test tree) covers the storage round trip, the rule book, the window and the
+  engine's seed-then-arm, hold-for-minutes and reset; the dispatcher test covers
+  every sensor and audio command. The readings on the panel's
   sensor pages follow the one-second tick; on rotation a box that stores on blur stores before
   the page is rebuilt (`redrawInPlace` clears the focus first). **Three width classes for the
-  Sensors page, both surfaces** (Juri, 2026-09-27, the tablet in landscape
+  Sensors and Automations pages, both surfaces** (Juri, 2026-09-27, the tablet in landscape
   was one column too wide): compact, under 600 dp, one column as the phone has it; medium, 600
   to 839 dp, the same column no wider than 640 dp and centred (`paneOf`, the web's `.ld`
   max-width), for a tablet in portrait and the small tablets; expanded, from 840 dp, list-detail
   like the settings page: the list at the left (`navPanel`, the web's `section.card.nav`), the
-  chosen sensor's cards at the right, the text chooses and the switch stays on the row, no
-  chevron, the chosen row a pill (`markChosen`, `li.on`). The cards of a sensor's page are
-  built once for both shapes (`sensorCards` on both surfaces), the web page holds list and
-  detail in one `.ld[data-page]` and the stylesheet shows one or both, `admin_listdetail.js`
-  points the rows at `/sensors?id=` on a wide screen, and the detail's own row has `-page` ids
-  so the stats poll follows both. **Proximity is
+  chosen sensor's cards or the chosen rule's editor at the right, the text chooses and the
+  switch stays on the row, no chevron, the chosen row a pill (`markChosen`, `li.on`), and Add
+  under the rules opens a blank editor at the right. The cards of a sensor's page and the editor
+  are built once for both shapes (`sensorCards`, `automationEditor`; web `sensorCards`,
+  `automationEditor`), the web page holds list and detail in one `.ld[data-page]` and the
+  stylesheet shows one or both, `admin_listdetail.js` points the rows at `/sensors?id=` and
+  `/automations?id=` on a wide screen, and the detail's own row has `-page` ids so the stats
+  poll follows both. A save lands on `/automations?id=<the rule>`. **Proximity is
   calibrated by the person, never guessed** (Juri, 2026-09-27, the Huawei MediaPad's driver
   keeps Android's distance at the range and moves undocumented slots instead; "no guesses and
   no hardcoding. If some sensors need calibration ... the user can be warned to calibrate the
@@ -464,7 +481,12 @@ the playlist page was the case that set the rule.
   question in a circle (`ic_asleep_*`). A panel whose Display off is the film never sleeps, so
   the card says Running and nothing more, with no test: "The film keeps the display awake" under
   it told a person nothing to act on, and "sleeps" is Android's word, not the person's (Juri,
-  2026-10-01). **No text names where
+  2026-10-01). **Where it matters, the rules say it too**
+  (`KioskService.stopsWhileAsleep`: the test found the sensor not running and Display off
+  sleeps rather than showing the film): the sentence of a rule on such a sensor starts with the
+  slashed glyph in the warning colour on every list of rules, both surfaces, and the editor
+  says "Not running while the display is off" under the sensor, with "The black film keeps it
+  running"; "Wake by hand" on the MediaPad failed without a word before. **No text names where
   a sensor sits**: Android does not say, every model differs, and the MediaPad's light sensor is
   nowhere near its camera; the person finds it (Juri, 2026-09-28). Test and Calibrate are greyed out while their
   sensor is switched off and come back the moment it is switched on (`sensorActions`), and the
@@ -482,26 +504,47 @@ the playlist page was the case that set the rule.
   screen asks for. `applyOrientation` catches Android 8.0's "Only fullscreen activities can
   request orientation", thrown while the keyboard is up over a resized page, and applies the
   request on the next resume; it killed the process on the MediaPad (2026-09-27). Which Display off method to use stays the person's choice. **The settings
-  page's Sensors section carries the switches** (Juri, 2026-09-27): a row switched off leaves
-  the section (panel: a redraw; web: the poll removes it, `#sensors-home`) and is switched on
-  again on the More page. **The wide web page switches panes in place**: every sensor's cards
-  stand on the page (`.pane[data-id]`), `admin_listdetail.js` shows the chosen pane and
-  rewrites the address, no page load, the settings menu's own speed; rows that lead somewhere and the list beside a detail
+  page's Sensors and Automations sections carry the switches** (Juri, 2026-09-27): a row
+  switched off leaves the section (panel: a redraw; web: the poll removes it, `#sensors-home`,
+  `#automations-home`) and is switched on again on the More page. **The wide web pages switch
+  panes in place**: every sensor's cards and one editor per rule plus a blank one stand on the
+  page (`.pane[data-id]`, editor ids suffixed `-<rule id>` or `-new`, `admin_automation.js`
+  binds per form; Save is the form's first submit button so Enter saves, Delete asks first and
+  comes last in the DOM, ordered by the stylesheet; every editor carries the stored rule's JSON
+  as its baseline, a stale page is refused like the settings boxes, and a rule deleted elsewhere
+  is not brought back), `admin_listdetail.js` shows the chosen pane and rewrites the address (the
+  shell says whether it is the sensors' or the automations' page), no page
+  load, the settings menu's own speed; rows that lead somewhere and the list beside a detail
   highlight under the mouse like the settings menu's rows, and the panel's rows carry the same
   ripple. On the two-column pages the grid's gap is the only spacing between cards.
 - **A list follows a change made on another surface (2026-09-28, Juri: "the sort of things a
-  review process should find").** `Sensors.listKeys` hashes what each list is drawn from: the
-  settings page's Sensors section (sensors on) and the Sensors page (every sensor, and whether
-  this device has it). The panel compares on its one-second tick (`watchLists`, `checkLists`)
-  and draws the page again, never while a box has the focus. The web page carries the key on
-  each list (`data-lists-kind`, `data-lists`), `/api/stats` carries the current ones under
-  `lists`, and `admin_stats.js` fetches the page and swaps the stale list in place, never
-  while something in it is focused or edited; switches apply through a listener on the
-  document (`admin_setting.js`). Measured on the tablet: a sensor switched remotely reaches the
-  settings section about 1.5 s after the command lands.
+  review process should find").** A rule added, renamed or deleted on the web stayed off the
+  panel's Automations page until it was reopened, and the other way round. `Sensors.listKeys`
+  hashes what each list is drawn from: the settings page's two sections (sensors on, rules on),
+  the Sensors page (every sensor, and whether this device has it) and the Automations page (every rule
+  by name, sensor and sentence; switches follow on their own). The panel compares on its
+  one-second tick (`watchLists`, `checkLists`) and draws the page again, never while a box has
+  the focus; the wide Automations page keeps what its editor holds when it was edited and
+  takes the stored rule when it was not; rule switches follow what is stored
+  (`automationSwitches`). The web page carries the key on each list (`data-lists-kind`,
+  `data-lists`; the rules drawn from storage, like the key), `/api/stats` carries the current
+  ones under `lists`, and `admin_stats.js` fetches the page and swaps the stale list in place,
+  never while something in it is focused or edited; switches apply through a listener on the
+  document (`admin_setting.js`) and swapped editors are bound again
+  (`window.muralisBindEditors`). Measured on the tablet: a sensor switched remotely reaches the
+  settings section about 1.5 s after the command lands, a web edit reaches the panel's pages
+  within its one-second tick after the save.
+- **A single choice among more than five items is a menu, five or fewer stay radios** (Juri,
+  2026-09-28, from Google's radio-button guidance, "If available options can be collapsed,
+  consider using a dropdown menu because it uses less space", and Nielsen Norman Group's
+  radios for five or fewer, a dropdown for five to fifteen). The panel's `MenuField` is
+  Material's exposed dropdown menu: the outlined field showing the chosen item with a chevron,
+  a menu anchored to it on a tap, opened on the chosen item; the automation editor's Sensor
+  and Action use it, as the web page's selects do.
 - **Lists and changes of state (Juri, 2026-09-28).** A list of rows on the
   panel is the web's `ul.list`: the rows touch with a 1 dp divider between (`addListRow`, the
-  settings page's Sensors section and the narrow Sensors page), a row is 56 dp with a name alone and 72 dp with a second line (`glyphRow`, Material's
+  settings page's Sensors and Automations sections and the narrow Sensors and Automations
+  pages), a row is 56 dp with a name alone and 72 dp with a second line (`glyphRow`, Material's
   list item heights, the web's `li` and `li.two`), and a button under a card's row sits 8 dp
   below it (`tightParams`); the wide pages' lists keep the settings menu's pills. The proximity
   glyph is Material's sensor_occupied, on both surfaces. **A change of state reaches everyone
@@ -512,7 +555,7 @@ the playlist page was the case that set the rule.
   quarter of a second while a settings screen is up (`Sensors.onReading`,
   `KioskService.sensorReading`: finding where a panel keeps its light sensor was a guess
   against a reading three seconds late) and stay on the periodic publish for MQTT.
-  Android gives an app no setting of a
+  The rules were never late, they are fed on the event. Android gives an app no setting of a
   sensor beyond the sampling rate and batching (proximity is on-change, so neither applies);
   thresholds and gain live in the driver, so what Muralis can offer is a calibration the person
   runs.
@@ -903,7 +946,10 @@ the playlist page was the case that set the rule.
   and crowd out the name they belong to. And a pair of short labels stays side by side on a phone
   (`pairedButtonRow`, Select all/Select none and Cancel/Save), where `buttonRow` would stack them;
   above 600 dp it defers to `buttonRow`, because stretching two buttons across a 1200 px card is the
-  bar-shaped button that rule exists to prevent. **The
+  bar-shaped button that rule exists to prevent. **An editor that can also delete puts its three
+  buttons on one row** (`editorButtonRow`, the web `.actions.editor`, 2026-09-28): Delete at the
+  start, apart from the pair it must not be taken for, Cancel then Save at the end, the confirming
+  action last, Material's placement; on the web Save stays first in the DOM so Enter saves. **The
   first card of a `cardGrid` lane carries no top margin**: the grid is placed with its own 16 dp,
   and two margins stacked was the gap over the first panels of the Screensaver, Escape sequences
   and About pages (Juri, 2026-09-28). The Escape sequences page carries no paragraph explaining
@@ -1178,7 +1224,7 @@ the playlist page was the case that set the rule.
   (`singlePanelWidth`, `singlePanelParams`), `max-width:640px` centred on the web (`.one`). The
   privacy and terms pages, every confirm screen (`showConfirm`, its buttons in the same column) and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
 - **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid the
-  Sensors page uses, explicit columns placed by hand. Multicol balances by
+  Sensors and Automations pages use, explicit columns placed by hand. Multicol balances by
   height, and with two boxes in four columns it put one at the far left and one at the far right
   with a hand's width of nothing between them, and moved the right one every time a scrollbar
   changed the width by a pixel (Juri, 2026-09-11, with a screenshot). The playlist table is

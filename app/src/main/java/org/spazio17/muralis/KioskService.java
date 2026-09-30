@@ -275,9 +275,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         applyResourceGuarantees();
         acquireRuntimeLocks();
         // The sensors before the controllers and the telemetry: the first discovery a fast
-        // broker asks for, and the first status document, must see the stored switches, not an
-        // empty hub (review, 2026-09-27).
-        sensors = new Sensors(this);
+        // broker asks for, and the first status document, must see the stored switches and
+        // rules, not an empty hub (review, 2026-09-27).
+        automations = new Automations.Engine(this::runAutomation);
+        automations.rules(KioskConfig.automationsOf(this));
+        sensors = new Sensors(this, automations);
         sensors.onEdge(this::sensorEdge);
         sensors.onReading(this::sensorReading);
         refreshSensors();
@@ -340,6 +342,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
             publishStateSoon();
         } else if (intent != null && ACTION_REFRESH_SENSORS.equals(intent.getAction())) {
+            automations.rules(KioskConfig.automationsOf(this));
             refreshSensors();
             publishStateSoon();
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
@@ -1030,10 +1033,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // is kept where the panel's rows and discovery can read it without the service.
             publishSensorBlock();
             stats.put("sensors", KioskRuntimeState.sensors());
+            stats.put("automations", KioskRuntimeState.automations());
             if (includeAdminDetail) {
                 // For the web page, which draws a list again when its key moves: see
-                // Sensors.listKeys.
-                stats.put("lists", Sensors.listKeys(KioskRuntimeState.sensors()));
+                // Sensors.listKeys. The rules as stored, the same the page is drawn from.
+                stats.put("lists", Sensors.listKeys(KioskRuntimeState.sensors(),
+                        Automations.toJson(KioskConfig.automationsOf(this), true)));
             }
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
@@ -1741,6 +1746,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
+     * Whether a rule on this sensor cannot run while the panel sleeps: its test found it not
+     * running, and this panel sleeps rather than darkening with the film, which keeps sensors
+     * running. Said on the rule's row and in its editor, where it matters: "Wake by hand" on
+     * such a panel fails without a word otherwise (Juri, 2026-09-28).
+     */
+    static boolean stopsWhileAsleep(Context context, String sensorId) {
+        Sensors.Def def = Sensors.byId(sensorId == null ? "" : sensorId);
+        return def != null && def.androidType != 0
+                && "silent".equals(KioskConfig.sensorOption(context, def.id + "_asleep", ""))
+                && chooseDisplayOff(context).method == DisplayOffPolicy.Method.SLEEP;
+    }
+
+    /**
      * What {@code display.visual_off} would do right now, from the stored method and the facts
      * {@link DisplayOffPolicy} asks for, all read live: the cable and the allowlist can change
      * between one press and the next.
@@ -1972,6 +1990,47 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
+    private Automations.Engine automations;
+
+    /** Runs one automation's action; the engine decided it is due. */
+    private void runAutomation(Automations.Rule rule) {
+        if (KioskRuntimeState.wizardOnScreen() || KioskConfig.kioskStopped(this)) {
+            Log.i(TAG, "Automation \"" + rule.name + "\" not run: the panel is being set up "
+                    + "or the kiosk is stopped");
+            return;
+        }
+        Log.i(TAG, "Automation \"" + rule.name + "\": " + rule.action);
+        String problem = null;
+        switch (rule.action) {
+            case "display_on": displayWake(); break;
+            case "display_off": displayVisualOff(); break;
+            case "dashboard": showMainDashboard(); break;
+            case "screensaver": problem = screensaverStart(); break;
+            case "play_sound": problem = playAudio(rule.argument); break;
+            case "say": problem = say(rule.argument); break;
+            case "reload": kioskReload(); break;
+            default: problem = "no action is called " + rule.action;
+        }
+        if (problem != null) {
+            Log.w(TAG, "Automation \"" + rule.name + "\" not done: " + problem);
+        }
+    }
+
+    @Override
+    public String setAutomationEnabled(String id, boolean enabled) {
+        synchronized (Automations.STORE) {
+            java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+            Automations.Rule rule = Automations.find(rules, id);
+            if (rule == null) {
+                return "no automation is called " + id;
+            }
+            rule.enabled = enabled;
+            KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+            automations.rules(rules);
+        }
+        publishStateSoon();
+        return null;
+    }
 
     /** How long the test while asleep keeps the panel asleep. */
     private static final long SLEEP_TEST_MS = 20_000;
@@ -2185,10 +2244,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     static final String ACTION_REFRESH_SENSORS = "org.spazio17.muralis.REFRESH_SENSORS";
 
-    /** The sensors' readings, where the panel, the web page and discovery read them. */
+    /** The sensors' readings and the rules, where the panel, the web page and discovery read them. */
     private void publishSensorBlock() {
         Sensors hub = sensors;
         KioskRuntimeState.publishSensors(hub == null ? new org.json.JSONObject() : hub.snapshot());
+        KioskRuntimeState.publishAutomations(Automations.toJson(
+                automations == null ? Automations.defaults() : automations.rules(), true));
     }
 
     /**

@@ -127,6 +127,7 @@ final class HttpAdminServer {
     private final String settingScript;
     private final String checkScript;
     private final String statsScript;
+    private final String automationScript;
     private final String listDetailScript;
     private final String themeScript;
     private final String pictureScript;
@@ -189,6 +190,7 @@ final class HttpAdminServer {
         settingScript = script(R.raw.admin_setting);
         checkScript = script(R.raw.admin_check);
         statsScript = script(R.raw.admin_stats);
+        automationScript = script(R.raw.admin_automation);
         listDetailScript = script(R.raw.admin_listdetail);
         themeScript = script(R.raw.admin_theme);
         pictureScript = script(R.raw.admin_pictures);
@@ -620,6 +622,24 @@ final class HttpAdminServer {
         } else if (path.equals("/sensor") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildSensorPage(queryValue(query, "id"))));
+        } else if (path.equals("/automations") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildAutomationsPage(null, queryValue(query, "id"), null, false)));
+        } else if (path.equals("/automation") && method.equals("GET")) {
+            String wanted = queryValue(query, "id");
+            Automations.Rule rule = Automations.find(KioskConfig.automationsOf(context), wanted);
+            if (rule == null && wanted != null && !wanted.isEmpty()) {
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationsPage("No automation is called that.")));
+            } else {
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationPage(rule == null ? new Automations.Rule() : rule,
+                                null)));
+            }
+        } else if (path.equals("/api/automations/save") && method.equals("POST")) {
+            saveAutomation(parseFormBody(headers, body), output);
+        } else if (path.equals("/api/automations/delete") && method.equals("POST")) {
+            deleteAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
         } else if (path.equals("/screensaver") && method.equals("GET")) {
@@ -1033,7 +1053,7 @@ final class HttpAdminServer {
             // Named after a box that no longer exists, and kept anyway: it is the wire name
             // POST /api/setting has always accepted. It covers the stats-overlay switch, the
             // display and screensaver keys, and since the sensors the sensor switches, their
-            // options. See settingScript.
+            // options and the automation switches. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1064,6 +1084,13 @@ final class HttpAdminServer {
                         String problem = saveSensorOption(
                                 entry.getKey().substring("sensor_option_".length()),
                                 entry.getValue());
+                        if (problem != null) {
+                            return problem;
+                        }
+                    } else if (entry.getKey().startsWith("automation_")) {
+                        String problem = kioskService.setAutomationEnabled(
+                                entry.getKey().substring("automation_".length()),
+                                isTrue(entry.getValue()));
                         if (problem != null) {
                             return problem;
                         }
@@ -1346,6 +1373,7 @@ final class HttpAdminServer {
                 + "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M4 4l16 16\"/>");
         paths.put("prev", "<path d=\"M15 6l-6 6 6 6\"/>");
         paths.put("next", "<path d=\"M9 6l6 6-6 6\"/>");
+        paths.put("plus", "<path d=\"M12 5v14M5 12h14\"/>");
         paths.put("sensors", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14\"/>");
         paths.put("panel", "<rect x=\"4\" y=\"2\" width=\"16\" height=\"20\" rx=\"2\"/><path d=\"M9 18h6\"/>");
         // The sensors' glyphs, the same paths the panel's drawables carry.
@@ -1357,6 +1385,8 @@ final class HttpAdminServer {
         paths.put("temperature", "<path d=\"M10 4a2 2 0 014 0v9.5a4 4 0 11-4 0z\"/>");
         paths.put("humidity", "<path d=\"M12 3s6 7 6 11a6 6 0 01-12 0c0-4 6-11 6-11z\"/>");
         paths.put("display", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M8 21h8\"/>");
+        paths.put("automations", "<path d=\"M17 21H7a3 3 0 01-3-3v-1h10v1a3 3 0 006 0V5a2 2 0 00-2-2H9a2 2 0 00-2 2v12M11 8h5M11 12h5\"/>");
+        paths.put("asleep_off", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14M3 3l18 18\"/>");
         paths.put("screensaver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
         paths.put("battery", "<rect x=\"3\" y=\"7\" width=\"16\" height=\"10\" rx=\"2\"/><path d=\"M21 11v2M6 10v4M9 10v4\"/>");
         paths.put("power", "<path d=\"M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0zM12 18v3\"/>");
@@ -1491,6 +1521,8 @@ final class HttpAdminServer {
                 screensaverBody()});
         sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
                 sensorsSectionBody()});
+        sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
+                automationsSectionBody()});
         sections.add(new String[] {"quick", "reload", "Quick actions",
                 "Reboot · Reload · Restart", quickActionsBody()});
         sections.add(new String[] {"panel", "panel", "This panel", config.deviceId,
@@ -1585,26 +1617,60 @@ final class HttpAdminServer {
         return Sensors.summary(KioskRuntimeState.sensors());
     }
 
+    private String automationsSummary() {
+        org.json.JSONArray rules = KioskRuntimeState.automations();
+        int on = 0;
+        for (int index = 0; index < rules.length(); index++) {
+            org.json.JSONObject rule = rules.optJSONObject(index);
+            if (rule != null && rule.optBoolean("enabled")) {
+                on++;
+            }
+        }
+        return rules.length() == 0 ? "None yet" : on + " of " + rules.length() + " on";
+    }
+
     /** One list row: a glyph, two lines, and whatever stands at the right. */
     private static String listRow(String glyphName, String head, String headId, String sub,
             String subId, String trail, boolean dim) {
+        return listRow(glyphName, head, headId, sub, subId, trail, dim, "");
+    }
+
+    /** The same, with {@code mark}, markup, before the second line: see stopsMark. */
+    private static String listRow(String glyphName, String head, String headId, String sub,
+            String subId, String trail, boolean dim, String mark) {
         return "<li class=\"two" + (dim ? " dim" : "") + "\"><span class=\"lead\">"
                 + glyph(glyphName) + "</span><span class=\"text\"><span class=\"h\""
                 + (headId == null ? "" : " id=\"" + headId + "\"") + ">" + escapeHtml(head)
                 + "</span><span class=\"s\"" + (subId == null ? "" : " id=\"" + subId + "\"")
-                + ">" + escapeHtml(sub) + "</span></span>"
+                + ">" + mark + escapeHtml(sub) + "</span></span>"
                 + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
     }
 
     /** The same row with its text a link to the page it names. */
     private static String linkRow(String href, String glyphName, String head, String sub,
             String subId, String trail) {
+        return linkRow(href, glyphName, head, sub, subId, trail, "");
+    }
+
+    private static String linkRow(String href, String glyphName, String head, String sub,
+            String subId, String trail, String mark) {
         return "<li class=\"two\"><a class=\"rowlink plain\" href=\"" + href + "\">"
                 + "<span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
                 + "<span class=\"h\">" + escapeHtml(head) + "</span><span class=\"s\""
-                + (subId == null ? "" : " id=\"" + subId + "\"") + ">" + escapeHtml(sub)
+                + (subId == null ? "" : " id=\"" + subId + "\"") + ">" + mark + escapeHtml(sub)
                 + "</span></span></a>"
                 + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
+    }
+
+    /**
+     * The mark before a rule's sentence when its sensor is not running while the display
+     * sleeps, the panel's own: the sensor with a slash, small, in the warning colour.
+     */
+    private String stopsMark(String sensorId) {
+        return KioskService.stopsWhileAsleep(context, sensorId)
+                ? "<span class=\"stops\" title=\"Not running while the display is off\">"
+                        + glyph("asleep_off") + "</span>"
+                : "";
     }
 
     private static String sensorSwitch(Sensors.Def def, boolean on) {
@@ -1631,8 +1697,8 @@ final class HttpAdminServer {
     }
 
     /**
-     * The list-detail shell of the Sensors page, the settings page's own shape from 840 px:
-     * the list at the left, the chosen item's page at the right. Below that
+     * The list-detail shell the Sensors and Automations pages share, the settings page's own
+     * shape from 840 px: the list at the left, the chosen item's page at the right. Below that
      * one of the two shows, which one {@code detailPage} says, and from 600 px the column is
      * no wider than 640 px (Juri, 2026-09-27).
      */
@@ -1647,10 +1713,11 @@ final class HttpAdminServer {
     /**
      * The key a list was drawn from, for admin_stats.js: when the stats carry another, the list
      * is fetched again and swapped in place, unless something in it is being edited. See
-     * Sensors.listKeys.
+     * Sensors.listKeys; the rules as stored, as the pages draw them.
      */
     private String listsAttributes(String kind) {
-        String key = Sensors.listKeys(KioskRuntimeState.sensors()).optString(kind, "");
+        String key = Sensors.listKeys(KioskRuntimeState.sensors(),
+                Automations.toJson(KioskConfig.automationsOf(context), true)).optString(kind, "");
         return " data-lists-kind=\"" + kind + "\" data-lists=\"" + escapeHtml(key) + "\"";
     }
 
@@ -1674,6 +1741,32 @@ final class HttpAdminServer {
                 + "<div class=\"actions" + (rows.length() == 0 ? " tight" : "") + "\">"
                 + "<a class=\"btn text\" href=\"/sensors\">More sensor settings" + glyph("next")
                 + "</a></div></div>";
+    }
+
+    private String automationsSectionBody() {
+        // As stored, not the status document's copy, which follows a change by a tick: the
+        // list's key is taken from what is stored, and the two must agree.
+        org.json.JSONArray rules = Automations.toJson(KioskConfig.automationsOf(context), true);
+        StringBuilder rows = new StringBuilder();
+        for (int index = 0; index < rules.length(); index++) {
+            org.json.JSONObject rule = rules.optJSONObject(index);
+            if (rule == null || !rule.optBoolean("enabled")) {
+                continue;
+            }
+            String id = rule.optString("id", "");
+            rows.append(navRow(listRow("automations", rule.optString("name", ""),
+                    null, rule.optString("sentence", ""), null,
+                    "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
+                            + "-home\" data-setting=\"automation_" + id + "\" aria-label=\""
+                            + escapeHtml(rule.optString("name", "")) + "\" checked>", false,
+                    stopsMark(rule.optString("sensor", ""))),
+                    id, false));
+        }
+        return "<div id=\"automations-body\"" + listsAttributes("automations_home") + ">"
+                + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"automations-home\">" + rows + "</ul>")
+                + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                + "<a class=\"btn text\" href=\"/automations\">More automation settings"
+                + glyph("next") + "</a></div></div>";
     }
 
     /** This panel: its name, then the stats and log, the version and the legal pages as rows. */
@@ -1900,6 +1993,301 @@ final class HttpAdminServer {
         KioskConfig.edit(context).sensorOption(key, Sensors.cleanOption(key, value)).apply();
         KioskService.refreshSensorsSoon(context);
         return null;
+    }
+
+    private String buildAutomationsPage(String notice) {
+        return buildAutomationsPage(notice, null, null, false);
+    }
+
+    /**
+     * The Automations page: the rules with Add under them, and beside them from 840 px the
+     * editor of the chosen rule, of {@code editing} when a save came back refused, or of a new
+     * one. As a detail page it is the editor alone below 840 px.
+     */
+    private String buildAutomationsPage(String notice, String selectedId,
+            Automations.Rule editing, boolean detailPage) {
+        return buildAutomationsPage(notice, selectedId, editing, detailPage, null, null);
+    }
+
+    private String buildAutomationsPage(String notice, String selectedId,
+            Automations.Rule editing, boolean detailPage, String typedFrom, String typedTo) {
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
+        Automations.Rule rule = editing;
+        if (rule == null) {
+            Automations.Rule stored = Automations.find(rules, selectedId);
+            rule = stored != null ? stored : rules.isEmpty() ? new Automations.Rule() : rules.get(0);
+        }
+        StringBuilder rows = new StringBuilder();
+        for (Automations.Rule each : rules) {
+            rows.append(navRow(linkRow("/automation?id=" + each.id, "automations",
+                    each.name, Automations.sentence(each), null,
+                    "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + each.id
+                            + "\" data-setting=\"automation_" + each.id + "\" aria-label=\""
+                            + escapeHtml(each.name) + "\"" + (each.enabled ? " checked" : "") + ">",
+                    stopsMark(each.sensor)),
+                    each.id, each.id.equals(rule.id)));
+        }
+        String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Automations</h2>"
+                + "<span class=\"count\" id=\"sum-automations\">" + escapeHtml(automationsSummary())
+                + "</span></div>"
+                + (rows.length() == 0 ? "<p class=\"hint\">No automations yet.</p>"
+                        : "<ul class=\"list\">" + rows + "</ul>")
+                + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/automation\">" + glyph("plus")
+                + "Add</a></div></section>";
+        boolean fresh = rule.id.isEmpty();
+        // One editor per rule and one for a new rule, each in its pane, so choosing at the left
+        // is a switch of panes; the rule being edited stands in for its stored twin.
+        StringBuilder detail = new StringBuilder();
+        for (Automations.Rule each : rules) {
+            boolean shown = each.id.equals(rule.id);
+            detail.append("<div class=\"pane\" data-id=\"").append(escapeHtml(each.id)).append("\"")
+                    .append(shown ? "" : " hidden").append(">")
+                    .append(shown ? automationEditor(rule, typedFrom, typedTo) : automationEditor(each))
+                    .append("</div>");
+        }
+        detail.append("<div class=\"pane\" data-id=\"\"").append(fresh ? "" : " hidden").append(">")
+                .append(fresh ? automationEditor(rule, typedFrom, typedTo)
+                        : automationEditor(new Automations.Rule())).append("</div>");
+        return pageStart(!detailPage ? "Automations" : fresh ? "New automation" : "Edit automation",
+                null, detailPage ? "/automations" : "/")
+                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + listDetail("automations", detailPage, nav, detail.toString()) + pageEnd();
+    }
+
+    /** The editor as a page of its own, the list beside it when wide. */
+    private String buildAutomationPage(Automations.Rule rule, String notice) {
+        return buildAutomationsPage(notice, rule.id, rule, true, null, null);
+    }
+
+    private String buildAutomationPage(Automations.Rule rule, String notice, String typedFrom,
+            String typedTo) {
+        return buildAutomationsPage(notice, rule.id, rule, true, typedFrom, typedTo);
+    }
+
+    /** The editor: Name, When, Then, Only, as the products it copies write an automation. */
+    private String automationEditor(Automations.Rule rule) {
+        return automationEditor(rule, null, null);
+    }
+
+    /**
+     * The same, with the times as they were typed where a refused save is shown again: the
+     * rule holds no window then, and the boxes must not fall back to 07:00 and 22:00.
+     */
+    private String automationEditor(Automations.Rule rule, String typedFrom, String typedTo) {
+        boolean fresh = rule.id.isEmpty();
+        // The stored rule as the baseline, so a page left open cannot overwrite a change made
+        // on the panel or in Home Assistant meanwhile: the Save-button forms' rule.
+        Automations.Rule stored = Automations.find(KioskConfig.automationsOf(context), rule.id);
+        String baseline = stored == null ? "" : Automations.toJson(
+                Collections.singletonList(stored), false).toString();
+        // Ids of its own per editor: several stand on one page, one per rule.
+        String sfx = "-" + (fresh ? "new" : rule.id);
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        StringBuilder sensorOptions = new StringBuilder();
+        StringBuilder events = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            java.util.List<Automations.Event> list = Automations.EVENTS.get(def.id);
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (list == null || one == null || !one.optBoolean("available")) {
+                continue;
+            }
+            sensorOptions.append(selectOption(def.id, def.name, rule.sensor));
+            events.append("<div class=\"radios events\" data-sensor=\"").append(def.id)
+                    .append("\" role=\"radiogroup\">");
+            for (Automations.Event event : list) {
+                boolean checked = def.id.equals(rule.sensor) && event.id.equals(rule.event);
+                events.append("<label class=\"radio\"><input type=\"radio\" name=\"event_")
+                        .append(def.id).append("\" value=\"").append(event.id).append("\"")
+                        .append(checked ? " checked" : "")
+                        .append(" data-level=\"").append(event.levelUnit == null ? "" : event.levelUnit)
+                        .append("\" data-holds=\"").append(event.holds ? "1" : "").append("\">")
+                        .append(escapeHtml(event.label)).append("</label>");
+            }
+            events.append("</div>");
+        }
+        StringBuilder actionOptions = new StringBuilder();
+        for (Automations.Action action : Automations.ACTIONS) {
+            actionOptions.append("<option value=\"").append(action.id).append("\"")
+                    .append(action.id.equals(rule.action) ? " selected" : "")
+                    .append(" data-argument=\"")
+                    .append(action.argumentLabel == null ? "" : escapeHtml(action.argumentLabel))
+                    .append("\">").append(escapeHtml(action.label)).append("</option>");
+        }
+        return "<form method=\"post\" action=\"/api/automations/save\" class=\"automation\" id=\"editor"
+                + sfx + "\">"
+                + "<input type=\"hidden\" name=\"id\" value=\"" + escapeHtml(rule.id) + "\">"
+                + baselineField(baseline)
+                + "<section class=\"card\">"
+                + fieldWithId("a-name" + sfx, "text", "name", "Name", rule.name, "", null)
+                + "</section>"
+                + "<section class=\"card gap\"><h2>When</h2>"
+                + selectField("a-sensor" + sfx, "sensor", "Sensor", null, sensorOptions.toString(), null)
+                + stopsNote(rule.sensor)
+                + events
+                + fieldWithId("a-level" + sfx, "number", "level", "Level",
+                        Double.isNaN(rule.level) ? "" : Automations.number(rule.level),
+                        " step=\"any\" min=\"0\"", null)
+                + fieldWithId("a-minutes" + sfx, "number", "minutes", "For, minutes",
+                        rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
+                        " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
+                + "</section>"
+                + "<section class=\"card\"><h2>Then</h2>"
+                + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
+                + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence", rule.argument, "", null)
+                + "</section>"
+                + "<section class=\"card\"><h2>Only</h2>"
+                + switchRow("a-only" + sfx, "Between these times", " name=\"only\" value=\"1\"",
+                        rule.windowed())
+                + "<div class=\"two\">"
+                + fieldWithId("a-from" + sfx, "time", "only_from", "From",
+                        typedFrom != null ? typedFrom
+                                : rule.windowed() ? Automations.clock(rule.onlyFrom) : "07:00", "", null)
+                + fieldWithId("a-to" + sfx, "time", "only_to", "To",
+                        typedTo != null ? typedTo
+                                : rule.windowed() ? Automations.clock(rule.onlyTo) : "22:00", "", null)
+                + "</div></section>"
+                // One row, as the panel lays it out (Juri, 2026-09-28): Delete at the start,
+                // Cancel then Save at the end, ordered by the stylesheet. Save is the form's
+                // first submit button in the DOM, so Enter in a box saves (review of
+                // 2026-09-27: Enter in the Name box used to post to Delete). Delete asks first.
+                + "<div class=\"actions editor\">"
+                + "<button type=\"submit\" class=\"primary\">Save</button>"
+                + "<a class=\"btn text\" href=\"/automations\">Cancel</a>"
+                + (fresh ? "" : "<button type=\"submit\" class=\"danger\""
+                        + " formaction=\"/api/automations/delete\""
+                        + " data-confirm=\"Delete this automation?\">Delete</button>")
+                + "</div></form>";
+    }
+
+    /**
+     * Under the editor's sensor, for a sensor whose test found it not running while the
+     * display sleeps, the panel's own note; admin_automation.js follows the menu by the ids
+     * the list carries.
+     */
+    private String stopsNote(String chosen) {
+        StringBuilder silent = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            if (KioskService.stopsWhileAsleep(context, def.id)) {
+                silent.append(silent.length() == 0 ? "" : ",").append(def.id);
+            }
+        }
+        return "<ul class=\"list stopsnote" + (KioskService.stopsWhileAsleep(context, chosen)
+                ? "" : " gone") + "\" data-silent=\"" + silent + "\">"
+                + listRow("asleep_off", "Not running while the display is off", null,
+                        "The black film keeps it running", null, "", false)
+                + "</ul>";
+    }
+
+    private void saveAutomation(Map<String, String> form, OutputStream output)
+            throws IOException {
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
+        String id = form.getOrDefault("id", "").trim();
+        Automations.Rule existing = Automations.find(rules, id);
+        if (!id.isEmpty() && existing == null) {
+            // Saved from a page whose rule was deleted meanwhile: not brought back under a
+            // new id.
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(
+                    buildAutomationsPage("Not saved: that automation was deleted.")));
+            return;
+        }
+        Automations.Rule rule = existing == null ? new Automations.Rule() : existing.copy();
+        if (existing != null) {
+            String stale = staleFormRefusal(form, Automations.toJson(
+                    Collections.singletonList(existing), false).toString());
+            if (stale != null) {
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationPage(existing, stale)));
+                return;
+            }
+        }
+        rule.name = form.getOrDefault("name", "");
+        rule.sensor = form.getOrDefault("sensor", "");
+        rule.event = form.getOrDefault("event_" + rule.sensor, "");
+        rule.level = parseLevel(form.get("level"));
+        rule.minutes = parseMinutes(form.get("minutes"));
+        rule.action = form.getOrDefault("action", "");
+        rule.argument = form.getOrDefault("argument", "");
+        boolean only = isTrue(form.getOrDefault("only", "0"));
+        String typedFrom = form.getOrDefault("only_from", "");
+        String typedTo = form.getOrDefault("only_to", "");
+        rule.onlyFrom = only ? Automations.minutesOf(typedFrom) : -1;
+        rule.onlyTo = only ? Automations.minutesOf(typedTo) : -1;
+        if (only && (rule.onlyFrom < 0 || rule.onlyTo < 0)) {
+            // Shown again with the times as typed and the window switch on, so the page can be
+            // corrected rather than filled in again.
+            rule.onlyFrom = Math.max(rule.onlyFrom, 0);
+            rule.onlyTo = rule.onlyTo < 0 ? 24 * 60 - 1 : rule.onlyTo;
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(
+                    buildAutomationPage(rule, "Not saved: the times must be like 07:00.",
+                            typedFrom, typedTo)));
+            return;
+        }
+        String problem = Automations.validate(rule, Sensors.names());
+        if (problem != null) {
+            // Still without an id when it is new, so the page it goes back to is the one for
+            // a new rule, without a Delete for a rule that was never stored.
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildAutomationPage(rule, "Not saved: " + problem + ".")));
+            return;
+        }
+        synchronized (Automations.STORE) {
+            rules = KioskConfig.automationsOf(context);
+            existing = Automations.find(rules, id);
+            if (existing == null) {
+                // The cap judged under the lock, so two adds at once cannot pass it together.
+                if (rules.size() >= Automations.MAX_RULES) {
+                    writeResponse(output, 200, "text/html; charset=utf-8", bytes(
+                            buildAutomationPage(rule, "Not saved: there are already "
+                                    + Automations.MAX_RULES + " automations.")));
+                    return;
+                }
+                rule.id = Automations.newId(rules);
+                rules.add(rule);
+            } else {
+                // The switch beside the editor may have been flipped while it was open, on any
+                // surface: the stored state stands, the editor never carried it.
+                rule.enabled = existing.enabled;
+                rules.set(rules.indexOf(existing), rule);
+            }
+            KioskConfig.edit(context).automations(Automations.store(rules)).apply();
+        }
+        KioskService.refreshSensorsSoon(context);
+        writeResponse(output, 303, "text/plain", bytes("saved"),
+                Collections.singletonMap("Location", "/automations?id=" + rule.id));
+    }
+
+    private void deleteAutomation(Map<String, String> form, OutputStream output)
+            throws IOException {
+        synchronized (Automations.STORE) {
+            java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
+            Automations.Rule rule = Automations.find(rules, form.getOrDefault("id", "").trim());
+            if (rule != null) {
+                rules.remove(rule);
+                KioskConfig.edit(context).automations(Automations.store(rules)).apply();
+                KioskService.refreshSensorsSoon(context);
+            }
+        }
+        writeResponse(output, 303, "text/plain", bytes("deleted"),
+                Collections.singletonMap("Location", "/automations"));
+    }
+
+    private static double parseLevel(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return Double.NaN;
+        }
+        try {
+            return Double.parseDouble(text.trim());
+        } catch (NumberFormatException notANumber) {
+            return Double.NaN;
+        }
+    }
+
+    /** The minutes as typed: empty is none, anything that is not a small number is refused. */
+    private static int parseMinutes(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return 0;
+        }
+        return text.trim().matches("\\d{1,4}") ? Integer.parseInt(text.trim()) : -1;
     }
 
     /** System stats and the log, on their own page under This panel. */
@@ -2623,8 +3011,8 @@ final class HttpAdminServer {
 
     /** The scripts and the closing tags every page of this server ends with. */
     private String pageEnd() {
-        return commandScript + settingScript + pictureScript + statsScript + themeScript
-                + "</main></body></html>";
+        return commandScript + settingScript + pictureScript + statsScript + automationScript
+                + themeScript + "</main></body></html>";
     }
 
     /** The browse token is {@code offset|location}, or a bare location for the first page. */
@@ -3923,6 +4311,8 @@ final class HttpAdminServer {
                 return "Unauthorized";
             case 403:
                 return "Forbidden";
+            case 303:
+                return "See Other";
             case 404:
                 return "Not Found";
             case 405:

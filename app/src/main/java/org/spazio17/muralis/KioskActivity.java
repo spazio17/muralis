@@ -2329,6 +2329,7 @@ public final class KioskActivity extends Activity {
         sensorReadouts.clear();
         sensorSwitches.clear();
         sensorActions.clear();
+        automationSwitches.clear();
         org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
         for (Sensors.Def def : Sensors.ALL) {
             org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
@@ -2344,6 +2345,18 @@ public final class KioskActivity extends Activity {
         Button sensorsMore = textButtonOnward(theme, "More sensor settings");
         sensorsMore.setOnClickListener(view -> showSensorsPage());
         sensorsCard.addView(buttonRow(sensorsMore), matchWrap());
+
+        LinearLayout automationsCard = sectionBody(theme);
+        for (Automations.Rule rule : KioskConfig.automationsOf(this)) {
+            if (rule.enabled) {
+                CompoundButton toggle = automationSwitch(theme, rule, this::redrawSettingsSoon);
+                addListRow(automationsCard, theme, automationRow(theme, rule, toggle, null, true),
+                        automationsCard.getChildCount() == 0);
+            }
+        }
+        Button automationsMore = textButtonOnward(theme, "More automation settings");
+        automationsMore.setOnClickListener(view -> showAutomationsPage());
+        automationsCard.addView(buttonRow(automationsMore), matchWrap());
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -2386,8 +2399,8 @@ public final class KioskActivity extends Activity {
             }
         };
         mainHandler.postDelayed(liveSettingSyncTask, LIVE_SETTING_SYNC_INTERVAL_MS);
-        // The Sensors section follows a change made on another surface; the redraw is the one a
-        // switch flipped here uses, which keeps what the boxes hold.
+        // The Sensors and Automations sections follow a change made on another surface; the
+        // redraw is the one a switch flipped here uses, which keeps what the boxes hold.
         watchLists("home", page, this::redrawSettingsSoon);
 
         // The Pro gate's face. The shape decided on 2026-08-27: the paid cards stay visible and
@@ -2566,6 +2579,8 @@ public final class KioskActivity extends Activity {
                 new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
                         screensaverCard),
                 new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
+                new Section(R.drawable.ic_automations, "Automations", automationsSummary(),
+                        automationsCard),
                 new Section(R.drawable.ic_sensor_panel, "This panel", config.deviceId, aboutCard));
 
         Runnable openDashboard = () -> {
@@ -3188,6 +3203,17 @@ public final class KioskActivity extends Activity {
         return Sensors.summary(KioskRuntimeState.sensors());
     }
 
+    private String automationsSummary() {
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+        int on = 0;
+        for (Automations.Rule rule : rules) {
+            if (rule.enabled) {
+                on++;
+            }
+        }
+        return rules.isEmpty() ? "None yet" : on + " of " + rules.size() + " on";
+    }
+
     /** The Sensors section's reading lines and switches, repainted by overlayTask. */
     private final java.util.Map<String, java.util.List<TextView>> sensorReadouts =
             new java.util.HashMap<>();
@@ -3211,6 +3237,10 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Each rule's switches on the page, followed from what is stored, as the sensors' are. */
+    private final java.util.Map<String, java.util.List<CompoundButton>> automationSwitches =
+            new java.util.HashMap<>();
+
     /** Which list the page on screen shows, its key when drawn, the page, and how to redraw it. */
     private String listsKind;
     private String listsKey;
@@ -3218,10 +3248,10 @@ public final class KioskActivity extends Activity {
     private Runnable listsRefresh;
 
     /**
-     * Watches a page that lists sensors: when another surface changes what it lists (a sensor
-     * switched on over MQTT), the page is drawn again on the next second's tick, never while a
-     * box has the focus. A sensor switched on the web stayed off the panel's settings page until
-     * it was reopened (Juri, 2026-09-28).
+     * Watches a page that lists sensors or rules: when another surface changes what it lists
+     * (a rule added or renamed on the web, a sensor switched on over MQTT), the page is drawn
+     * again on the next second's tick, never while a box has the focus. A rule added on the
+     * web stayed off the panel's Automations page until it was reopened (Juri, 2026-09-28).
      */
     private void watchLists(String kind, View root, Runnable refresh) {
         listsKind = kind;
@@ -3231,8 +3261,11 @@ public final class KioskActivity extends Activity {
     }
 
     private String currentListsKey(String kind) {
-        org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors());
-        return keys.optString("home".equals(kind) ? "sensors_home" : kind + "_page");
+        org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors(),
+                Automations.toJson(KioskConfig.automationsOf(this), true));
+        return "home".equals(kind)
+                ? keys.optString("sensors_home") + keys.optString("automations_home")
+                : keys.optString(kind + "_page");
     }
 
     /** One second's look at the watched page; true while it is on screen. */
@@ -3241,6 +3274,7 @@ public final class KioskActivity extends Activity {
         if (root == null || !root.isAttachedToWindow()) {
             return false;
         }
+        repaintAutomationSwitches();
         String now = currentListsKey(listsKind);
         if (now.equals(listsKey) || getCurrentFocus() instanceof EditText) {
             return true;
@@ -3248,6 +3282,34 @@ public final class KioskActivity extends Activity {
         listsKey = now;
         listsRefresh.run();
         return true;
+    }
+
+    /** The rules' switches against what is stored: a flip on the web shows here too. */
+    private void repaintAutomationSwitches() {
+        if (automationSwitches.isEmpty()) {
+            return;
+        }
+        java.util.Map<String, Boolean> stored = new java.util.HashMap<>();
+        for (Automations.Rule rule : KioskConfig.automationsOf(this)) {
+            stored.put(rule.id, rule.enabled);
+        }
+        for (java.util.Map.Entry<String, java.util.List<CompoundButton>> entry
+                : automationSwitches.entrySet()) {
+            Boolean on = stored.get(entry.getKey());
+            if (on == null) {
+                continue;
+            }
+            for (CompoundButton toggle : entry.getValue()) {
+                if (toggle.isAttachedToWindow() && toggle.isChecked() != on) {
+                    syncingLiveControls = true;
+                    try {
+                        toggle.setChecked(on);
+                    } finally {
+                        syncingLiveControls = false;
+                    }
+                }
+            }
+        }
     }
 
     private final java.util.Map<String, java.util.List<CompoundButton>> sensorSwitches =
@@ -3458,6 +3520,36 @@ public final class KioskActivity extends Activity {
         return toggle;
     }
 
+    /** A rule's switch: stored at once, under the lock every writer of the rules holds. */
+    private CompoundButton automationSwitch(KioskTheme theme, Automations.Rule rule) {
+        return automationSwitch(theme, rule, null);
+    }
+
+    private CompoundButton automationSwitch(KioskTheme theme, Automations.Rule rule,
+            Runnable after) {
+        CompoundButton toggle = themedSwitch(theme, "", rule.enabled);
+        toggle.setContentDescription(rule.name);
+        viewsOf(automationSwitches, rule.id).add(toggle);
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (syncingLiveControls) {
+                return;
+            }
+            synchronized (Automations.STORE) {
+                java.util.List<Automations.Rule> fresh = KioskConfig.automationsOf(this);
+                Automations.Rule stored = Automations.find(fresh, rule.id);
+                if (stored != null) {
+                    stored.enabled = checked;
+                    KioskConfig.edit(this).automations(Automations.store(fresh)).apply();
+                }
+            }
+            KioskService.refreshSensorsSoon(this);
+            if (after != null) {
+                after.run();
+            }
+        });
+        return toggle;
+    }
+
     /**
      * The settings page again, through the lambda that carries its boxes, once the switch has
      * finished its own change: a row switched off leaves its section, and nothing typed in the
@@ -3482,10 +3574,32 @@ public final class KioskActivity extends Activity {
         return list;
     }
 
+    private LinearLayout automationRow(KioskTheme theme, Automations.Rule rule, View trailing,
+            Runnable onOpen, boolean chevron) {
+        // The Automations section's own glyph on every rule, the paper scroll (Juri, 2026-09-30);
+        // the sentence says which sensor it waits for.
+        LinearLayout row = glyphRow(theme, R.drawable.ic_automations,
+                rule.name, Automations.sentence(rule), trailing, onOpen, false, chevron);
+        if (KioskService.stopsWhileAsleep(this, rule.sensor)) {
+            // The sensor-with-a-slash of the sensor's own card, small and in the warning colour,
+            // before the sentence: this rule does not run while the display sleeps.
+            TextView sentence = readingOf(row);
+            android.graphics.drawable.Drawable mark =
+                    getDrawable(R.drawable.ic_asleep_disabled).mutate();
+            mark.setTint(theme.warn);
+            mark.setBounds(0, 0, dp(16), dp(16));
+            sentence.setCompoundDrawablesRelative(mark, null, null, null);
+            sentence.setCompoundDrawablePadding(dp(6));
+            sentence.setContentDescription("Not running while the display is off. "
+                    + sentence.getText());
+        }
+        return row;
+    }
+
     /**
      * The prelude every page below the settings shares; see showScreensaverSettings. The arrow
-     * leads one level up, not to the settings: a sensor's page to the Sensors list (Juri,
-     * 2026-09-27, found on the glass).
+     * leads one level up, not to the settings: a sensor's page to the Sensors list, the editor to
+     * the Automations list (Juri, 2026-09-27, found on the glass).
      */
     private LinearLayout subPage(String title, Runnable back) {
         destroyWebView();
@@ -3524,6 +3638,7 @@ public final class KioskActivity extends Activity {
         sensorReadouts.clear();
         sensorSwitches.clear();
         sensorActions.clear();
+        automationSwitches.clear();
         org.json.JSONObject block = KioskRuntimeState.sensors();
         Sensors.Def chosen = null;
         if (wide) {
@@ -3936,6 +4051,7 @@ public final class KioskActivity extends Activity {
         sensorReadouts.clear();
         sensorSwitches.clear();
         sensorActions.clear();
+        automationSwitches.clear();
         LinearLayout.LayoutParams gridParams = matchWrap();
         gridParams.topMargin = dp(16);
         page.addView(paneOf(cardGrid(theme, sensorCards(theme, def, one))), gridParams);
@@ -4006,6 +4122,513 @@ public final class KioskActivity extends Activity {
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
         }
         return cards;
+    }
+
+    /** The rule the wide Automations page shows in its editor; see showAutomationsPage. */
+    private String selectedAutomation = "";
+
+    private void showAutomationsPage() {
+        showAutomationsPage(null);
+    }
+
+    /**
+     * The Automations page. From 840 dp the rules stand at the left with Add under them and
+     * the editor at the right, the chosen rule's or the one being made ({@code editing}, kept
+     * across a rotation); below that one list, and the editor is a page of its own.
+     */
+    private void showAutomationsPage(Automations.Rule editing) {
+        boolean wide = widthClass() == 2;
+        if (!wide && editing != null) {
+            // Typed on the wide page, turned to a narrow one: the editor of its own carries on.
+            showAutomationEditor(editing);
+            return;
+        }
+        currentScreen = this::showAutomationsPage;
+        LinearLayout page = subPage("Automations", this::showSettings);
+        automationSwitches.clear();
+        KioskTheme theme = currentTheme();
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+        Automations.Rule draft = null;
+        if (wide) {
+            if (editing != null) {
+                draft = editing;
+            } else {
+                Automations.Rule stored = Automations.find(rules, selectedAutomation);
+                draft = stored != null ? stored.copy()
+                        : rules.isEmpty() ? new Automations.Rule() : rules.get(0).copy();
+            }
+            selectedAutomation = draft.id;
+        }
+        LinearLayout list = wide ? navPanel(theme) : card(theme, null);
+        if (!wide) {
+            LinearLayout head = new LinearLayout(this);
+            head.setOrientation(LinearLayout.HORIZONTAL);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            head.addView(cardTitle(theme, "Automations"), new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView count = new FlushText(this);
+            count.setText(automationsSummary());
+            count.setTextColor(theme.subtext);
+            count.setTextSize(12);
+            head.addView(count, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            list.addView(head, matchWrap());
+        }
+        if (rules.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setText("No automations yet.");
+            none.setTextColor(theme.subtext);
+            none.setTextSize(14);
+            if (wide) {
+                none.setPadding(dp(12), dp(12), dp(12), dp(12));
+            }
+            list.addView(none, matchWrap());
+        }
+        for (Automations.Rule rule : rules) {
+            CompoundButton toggle = automationSwitch(theme, rule);
+            Runnable open = wide ? () -> {
+                selectedAutomation = rule.id;
+                hideKeyboardIfShown();
+                redrawInPlace(() -> showAutomationsPage(null));
+            } : () -> showAutomationEditor(rule);
+            LinearLayout row = automationRow(theme, rule, toggle, open, !wide);
+            if (wide) {
+                markChosen(theme, row, rule.id.equals(draft.id), open);
+                list.addView(row, navRowParams());
+            } else {
+                addListRow(list, theme, row, rule == rules.get(0));
+            }
+        }
+        Button add = tonalButton(theme, "Add");
+        if (wide) {
+            add.setOnClickListener(view -> {
+                hideKeyboardIfShown();
+                redrawInPlace(() -> showAutomationsPage(new Automations.Rule()));
+            });
+            LinearLayout addRow = buttonRow(add);
+            addRow.setPadding(dp(12), dp(8), dp(12), dp(4));
+            list.addView(addRow, matchWrap());
+        } else {
+            add.setOnClickListener(view -> showAutomationEditor(new Automations.Rule()));
+            list.addView(buttonRow(add), matchWrap());
+        }
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        if (wide) {
+            LinearLayout detail = new LinearLayout(this);
+            detail.setOrientation(LinearLayout.VERTICAL);
+            final Automations.Rule editingNow = draft;
+            final Runnable[] again = new Runnable[1];
+            Runnable collect = automationEditor(detail, theme, editingNow, true,
+                    () -> showAutomationsPage(null), () -> again[0].run());
+            again[0] = () -> {
+                collect.run();
+                showAutomationsPage(editingNow);
+            };
+            currentScreen = again[0];
+            page.addView(listDetailPair(list, detail), params);
+            setContentView(scrollPage(theme, page));
+            // Drawn again for a change elsewhere: what the editor holds stays when it was
+            // edited, and the stored rule comes back when it was not, so a rename on the web
+            // reaches an editor nobody touched.
+            final String untouched = Automations.store(
+                    java.util.Collections.singletonList(editingNow));
+            watchLists("automations", page, () -> redrawInPlace(() -> {
+                collect.run();
+                boolean edited = !untouched.equals(Automations.store(
+                        java.util.Collections.singletonList(editingNow)));
+                showAutomationsPage(edited ? editingNow : null);
+            }));
+            return;
+        } else {
+            page.addView(paneOf(list), params);
+        }
+        setContentView(scrollPage(theme, page));
+        watchLists("automations", page, () -> redrawInPlace(() -> showAutomationsPage(null)));
+    }
+
+    /** The editor as a page of its own: Name, When, Then, Only; nothing is stored until Save. */
+    private void showAutomationEditor(Automations.Rule original) {
+        if (widthClass() == 2) {
+            // Turned back to a wide screen mid-edit: the editor belongs beside the list there.
+            showAutomationsPage(original);
+            return;
+        }
+        final Automations.Rule draft = original.copy();
+        currentScreen = () -> showAutomationEditor(draft);
+        boolean fresh = draft.id.isEmpty();
+        LinearLayout page = subPage(fresh ? "New automation" : "Edit automation",
+                this::showAutomationsPage);
+        KioskTheme theme = currentTheme();
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        final Runnable[] again = new Runnable[1];
+        Runnable collect = automationEditor(body, theme, draft, false,
+                this::showAutomationsPage, () -> again[0].run());
+        // What is typed rides across a rotation and a Delete backed out of: both rebuild this
+        // page from the draft, so the draft is read from the boxes first.
+        again[0] = () -> {
+            collect.run();
+            showAutomationEditor(draft);
+        };
+        currentScreen = again[0];
+        page.addView(paneOf(body), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * Builds the editor into {@code into} and returns what reads the boxes back into the draft.
+     * {@code done} follows Save, Cancel and Delete; {@code reopen} rebuilds the editor from the
+     * draft when a Delete is backed out of; {@code stacked} lays the cards in one column, for
+     * the detail pane beside a list.
+     */
+    private Runnable automationEditor(LinearLayout into, KioskTheme theme,
+            final Automations.Rule draft, boolean stacked, Runnable done, Runnable reopen) {
+        boolean fresh = draft.id.isEmpty();
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+
+        LinearLayout nameCard = card(theme, null);
+        EditText nameInput = themedInput(theme, draft.name, false);
+        nameInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        addField(nameCard, theme, "Name", nameInput);
+
+        LinearLayout whenCard = card(theme, "When");
+        // A menu, like the web page's: up to fourteen sensors, see MenuField.
+        MenuField sensorMenu = new MenuField(whenCard, theme, "Sensor");
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (!Automations.EVENTS.containsKey(def.id) || one == null
+                    || !one.optBoolean("available")) {
+                continue;
+            }
+            sensorMenu.add(def.name, def.id);
+        }
+        // Under the sensors, for a sensor whose test found it not running while the display
+        // sleeps: the rule cannot run then, and the black film is what keeps it running.
+        LinearLayout stopsNote = glyphRow(theme, R.drawable.ic_asleep_disabled,
+                "Not running while the display is off", "The black film keeps it running", null,
+                null, false);
+        ((ImageView) stopsNote.getChildAt(0)).setImageTintList(ColorStateList.valueOf(theme.warn));
+        whenCard.addView(stopsNote, matchWrapClose());
+        TextView eventCaption = fieldCaption(theme, "Notices");
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        captionParams.topMargin = dp(16);
+        whenCard.addView(eventCaption, captionParams);
+        RadioGroup eventGroup = new RadioGroup(this);
+        whenCard.addView(eventGroup, matchWrapClose());
+        EditText levelInput = themedInput(theme,
+                Double.isNaN(draft.level) ? "" : Automations.number(draft.level), false);
+        levelInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        TextView levelCaption = addField(whenCard, theme, "Level", levelInput);
+        View levelBox = (View) levelInput.getParent();
+        EditText minutesInput = themedInput(theme,
+                draft.minutes == 0 ? "" : Integer.toString(draft.minutes), false);
+        minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(whenCard, theme, "For, minutes", minutesInput);
+        View minutesBox = (View) minutesInput.getParent();
+
+        Runnable paintEvent = () -> {
+            View checked = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
+            String sensor = sensorMenu.value();
+            Automations.Event event = checked == null ? null
+                    : Automations.event(sensor, (String) checked.getTag());
+            boolean level = event != null && event.levelUnit != null;
+            levelBox.setVisibility(level ? View.VISIBLE : View.GONE);
+            if (level) {
+                levelCaption.setText("Level, " + event.levelUnit);
+            }
+            minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
+        };
+        Runnable paintSensor = () -> {
+            String sensor = sensorMenu.value();
+            stopsNote.setVisibility(KioskService.stopsWhileAsleep(this, sensor)
+                    ? View.VISIBLE : View.GONE);
+            eventGroup.removeAllViews();
+            java.util.List<Automations.Event> events = Automations.EVENTS.get(sensor);
+            if (events != null) {
+                for (Automations.Event event : events) {
+                    radioChoice(theme, eventGroup, event.label, event.id);
+                }
+                checkRadioIfChanged(eventGroup, sensor.equals(draft.sensor) ? draft.event
+                        : events.get(0).id);
+            }
+            paintEvent.run();
+        };
+        sensorMenu.onChange = paintSensor;
+        eventGroup.setOnCheckedChangeListener((group, id) -> paintEvent.run());
+        sensorMenu.select(draft.sensor.isEmpty() ? "proximity" : draft.sensor);
+        paintSensor.run();
+
+        LinearLayout thenCard = card(theme, "Then");
+        // A menu, like the web page's: seven actions, see MenuField.
+        MenuField actionMenu = new MenuField(thenCard, theme, "Action");
+        for (Automations.Action action : Automations.ACTIONS) {
+            actionMenu.add(action.label, action.id);
+        }
+        actionMenu.select(draft.action.isEmpty() ? "display_on" : draft.action);
+        EditText argumentInput = themedInput(theme, draft.argument, false);
+        argumentInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        TextView argumentCaption = addField(thenCard, theme, "Sentence", argumentInput);
+        View argumentBox = (View) argumentInput.getParent();
+        Runnable paintAction = () -> {
+            Automations.Action action = Automations.action(actionMenu.value());
+            boolean argument = action != null && action.argumentLabel != null;
+            argumentBox.setVisibility(argument ? View.VISIBLE : View.GONE);
+            if (argument) {
+                argumentCaption.setText(action.argumentLabel);
+                argumentInput.setInputType(action.id.equals("play_sound")
+                        ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                        : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            }
+        };
+        actionMenu.onChange = paintAction;
+        paintAction.run();
+
+        LinearLayout onlyCard = card(theme, "Only");
+        CompoundButton onlySwitch = themedSwitch(theme, "Between these times", draft.windowed());
+        onlyCard.addView(onlySwitch, matchWrap());
+        EditText fromInput = themedInput(theme,
+                draft.windowed() ? Automations.clock(draft.onlyFrom) : "07:00", false);
+        addField(onlyCard, theme, "From", fromInput);
+        View fromBox = (View) fromInput.getParent();
+        EditText toInput = themedInput(theme,
+                draft.windowed() ? Automations.clock(draft.onlyTo) : "22:00", false);
+        addField(onlyCard, theme, "To", toInput);
+        View toBox = (View) toInput.getParent();
+        Runnable paintOnly = () -> {
+            fromBox.setVisibility(onlySwitch.isChecked() ? View.VISIBLE : View.GONE);
+            toBox.setVisibility(onlySwitch.isChecked() ? View.VISIBLE : View.GONE);
+        };
+        onlySwitch.setOnCheckedChangeListener((button, checked) -> paintOnly.run());
+        paintOnly.run();
+
+        LinearLayout.LayoutParams gridParams = matchWrap();
+        gridParams.topMargin = stacked ? 0 : dp(16);
+        java.util.List<View> cards = java.util.Arrays.<View>asList(
+                nameCard, whenCard, thenCard, onlyCard);
+        if (stacked) {
+            // The first card level with the top of the list beside it, the rest 16 dp apart.
+            LinearLayout column = new LinearLayout(this);
+            column.setOrientation(LinearLayout.VERTICAL);
+            for (View card : cards) {
+                column.addView(card, column.getChildCount() == 0 ? navRowParams() : matchWrap());
+            }
+            into.addView(column, gridParams);
+        } else {
+            into.addView(cardGrid(theme, cards), gridParams);
+        }
+
+        Runnable collect = () -> {
+            draft.name = nameInput.getText().toString();
+            draft.sensor = sensorMenu.value();
+            View event = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
+            draft.event = event == null ? "" : (String) event.getTag();
+            String level = levelInput.getText().toString().trim();
+            try {
+                // A German keyboard offers the comma on a number box.
+                draft.level = level.isEmpty() ? Double.NaN
+                        : Double.parseDouble(level.replace(',', '.'));
+            } catch (NumberFormatException notANumber) {
+                draft.level = Double.NaN;
+            }
+            String minutes = minutesInput.getText().toString().trim();
+            draft.minutes = minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : 0;
+            draft.action = actionMenu.value();
+            draft.argument = argumentInput.getText().toString();
+            boolean only = onlySwitch.isChecked();
+            draft.onlyFrom = only ? Automations.minutesOf(fromInput.getText().toString()) : -1;
+            draft.onlyTo = only ? Automations.minutesOf(toInput.getText().toString()) : -1;
+        };
+        Button cancel = textButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> done.run());
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            collect.run();
+            if (onlySwitch.isChecked() && (draft.onlyFrom < 0 || draft.onlyTo < 0)) {
+                Toast.makeText(this, "Not saved: the times must be like 07:00.",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            String problem = Automations.validate(draft, Sensors.names());
+            if (problem != null) {
+                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            synchronized (Automations.STORE) {
+                java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                Automations.Rule stored = Automations.find(rules, draft.id);
+                if (stored == null) {
+                    if (!draft.id.isEmpty()) {
+                        Toast.makeText(this, "Not saved: that automation was deleted.",
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    if (rules.size() >= Automations.MAX_RULES) {
+                        Toast.makeText(this, "Not saved: there are already " + Automations.MAX_RULES
+                                + " automations.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    draft.id = Automations.newId(rules);
+                    rules.add(draft);
+                } else {
+                    // The switch beside the editor may have been flipped while it was open, on
+                    // any surface: the stored state stands, the editor never carried it.
+                    draft.enabled = stored.enabled;
+                    rules.set(rules.indexOf(stored), draft);
+                }
+                KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+            }
+            selectedAutomation = draft.id;
+            KioskService.refreshSensorsSoon(this);
+            done.run();
+        });
+        Button delete = null;
+        if (!fresh) {
+            delete = dangerButton(theme, "Delete");
+            delete.setOnClickListener(view -> showConfirm("Delete this automation?",
+                    "\"" + draft.name + "\" will be gone.", "Delete", true, () -> {
+                        synchronized (Automations.STORE) {
+                            java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                            Automations.Rule stored = Automations.find(rules, draft.id);
+                            if (stored != null) {
+                                rules.remove(stored);
+                                KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+                            }
+                        }
+                        KioskService.refreshSensorsSoon(this);
+                        done.run();
+                    }, reopen));
+        }
+        into.addView(editorButtonRow(delete, cancel, save), matchWrap());
+        return collect;
+    }
+
+    /**
+     * Material's exposed dropdown menu: an outlined field that shows the chosen item, a
+     * chevron at its end, and the items in a menu under it on a tap; the web page's select
+     * for the same fields. For a single choice among more than five items, where radios filled
+     * a card with a column of fourteen sensors: Google's guidance for radio buttons is "If
+     * available options can be collapsed, consider using a dropdown menu because it uses less
+     * space" (Material Components for Android, radio buttons), and Nielsen Norman Group's is
+     * radio buttons for five or fewer, a dropdown for five to fifteen (Listboxes vs. Dropdown
+     * Lists). Five or fewer stay radios, the house rule (Juri, 2026-09-28).
+     */
+    private final class MenuField {
+        final EditText box;
+        final TextView caption;
+        final java.util.List<String> labels = new java.util.ArrayList<>();
+        final java.util.List<String> values = new java.util.ArrayList<>();
+        private final KioskTheme theme;
+        private String value = "";
+        Runnable onChange;
+
+        MenuField(LinearLayout parent, KioskTheme theme, String label) {
+            this.theme = theme;
+            box = themedInput(theme, "", false);
+            // A field that shows, never takes typing: no keyboard, no cursor, the tap opens.
+            box.setFocusable(false);
+            box.setFocusableInTouchMode(false);
+            box.setCursorVisible(false);
+            box.setKeyListener(null);
+            box.setLongClickable(false);
+            // Not the machine-value boxes' visible-password type, which draws in monospace.
+            box.setInputType(InputType.TYPE_NULL);
+            box.setTypeface(Typeface.DEFAULT);
+            android.graphics.drawable.Drawable chevron =
+                    getDrawable(R.drawable.ic_expand_more).mutate();
+            chevron.setTint(theme.subtext);
+            box.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, chevron, null);
+            box.setContentDescription(label);
+            box.setOnClickListener(view -> open());
+            caption = addField(parent, theme, label, box);
+        }
+
+        void add(String label, String itemValue) {
+            labels.add(label);
+            values.add(itemValue);
+        }
+
+        /** The item with this value, or the first when there is none. */
+        void select(String wanted) {
+            int index = values.indexOf(wanted);
+            if (index < 0) {
+                index = values.isEmpty() ? -1 : 0;
+            }
+            value = index < 0 ? "" : values.get(index);
+            box.setText(index < 0 ? "" : labels.get(index));
+        }
+
+        String value() {
+            return value;
+        }
+
+        private void open() {
+            android.widget.ListPopupWindow menu = new android.widget.ListPopupWindow(
+                    KioskActivity.this);
+            menu.setAnchorView(box);
+            menu.setModal(true);
+            menu.setBackgroundDrawable(theme.panel(theme.cardHigh, dp(4)));
+            menu.setVerticalOffset(dp(4));
+            menu.setAdapter(new android.widget.BaseAdapter() {
+                @Override
+                public int getCount() {
+                    return labels.size();
+                }
+
+                @Override
+                public Object getItem(int position) {
+                    return labels.get(position);
+                }
+
+                @Override
+                public long getItemId(int position) {
+                    return position;
+                }
+
+                @Override
+                public View getView(int position, View reuse, ViewGroup parentGroup) {
+                    TextView item = reuse instanceof TextView ? (TextView) reuse
+                            : new FlushText(KioskActivity.this);
+                    boolean chosen = values.get(position).equals(value);
+                    item.setText(labels.get(position));
+                    item.setTextSize(16);
+                    item.setSingleLine(true);
+                    item.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    item.setGravity(Gravity.CENTER_VERTICAL);
+                    item.setMinHeight(dp(48));
+                    item.setPadding(dp(16), 0, dp(16), 0);
+                    // The chosen item in the selected colours, Material's menu with a selection.
+                    item.setTextColor(chosen ? theme.onSecondaryContainer : theme.text);
+                    item.setBackgroundColor(chosen ? theme.secondaryContainer : Color.TRANSPARENT);
+                    return item;
+                }
+            });
+            menu.setOnItemClickListener((list, item, position, id) -> {
+                menu.dismiss();
+                String chosen = values.get(position);
+                if (!chosen.equals(value)) {
+                    select(chosen);
+                    if (onChange != null) {
+                        onChange.run();
+                    }
+                }
+            });
+            menu.show();
+            // Opened on the chosen item, so a long menu does not hide what is chosen.
+            int chosenIndex = values.indexOf(value);
+            if (chosenIndex > 0) {
+                menu.setSelection(chosenIndex);
+            }
+            android.widget.ListView list = menu.getListView();
+            if (list != null) {
+                list.setDivider(null);
+                list.setSelector(theme.ripple(new android.graphics.drawable.ColorDrawable(
+                        Color.TRANSPARENT), new android.graphics.drawable.ColorDrawable(
+                                Color.WHITE), theme.text));
+            }
+        }
     }
 
     /** System stats and the overlay switch, on their own page under This panel. */
@@ -11587,6 +12210,35 @@ public final class KioskActivity extends Activity {
     private LinearLayout centeredButtonRow(Button... buttons) {
         LinearLayout row = buttonRow(buttons);
         row.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+        return row;
+    }
+
+    /**
+     * An editor's buttons on one row, Material's placement for a form that can also destroy
+     * what it edits: the destructive action at the start, apart from the pair it must not be
+     * taken for, and the dismissive then the confirming action at the end, Save last. One row at
+     * every width, the three labels are short (Juri, 2026-09-28).
+     */
+    private LinearLayout editorButtonRow(Button delete, Button cancel, Button save) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setBaselineAligned(false);
+        row.setGravity(Gravity.START | Gravity.TOP);
+        if (delete != null) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.topMargin = dp(8);
+            row.addView(delete, params);
+        }
+        row.addView(new View(this), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        for (Button button : new Button[] {cancel, save}) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.leftMargin = dp(8);
+            params.topMargin = dp(8);
+            row.addView(button, params);
+        }
         return row;
     }
 

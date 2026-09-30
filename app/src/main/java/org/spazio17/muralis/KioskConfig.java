@@ -275,6 +275,18 @@ final class KioskConfig {
             return this;
         }
 
+        /** The whole list of automations as Automations.store writes it. */
+        Editor automations(String json) {
+            plain.putString(AUTOMATIONS, json);
+            return this;
+        }
+
+        /** The ids discovery last announced as automation switches, for the withdrawals. */
+        Editor announcedAutomations(String ids) {
+            plain.putString(AUTOMATIONS_ANNOUNCED, ids);
+            return this;
+        }
+
         Editor orientation(String value) {
             plain.putString(ORIENTATION, value);
             // Completes the 2026-08-29 migration: the retired boolean stays readable until the
@@ -474,6 +486,9 @@ final class KioskConfig {
                 .getBoolean("sensor_" + id, fallback);
     }
 
+    private static final String AUTOMATIONS = "automations";
+    private static final String AUTOMATIONS_ANNOUNCED = "automations_announced";
+
     static String sensorOption(Context context, String key, String fallback) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -490,6 +505,19 @@ final class KioskConfig {
 
     static boolean sensorOptionOn(Context context, String key, boolean fallback) {
         return "true".equals(sensorOption(context, key, Boolean.toString(fallback)));
+    }
+
+    /** The stored automations; the shipped default until something is stored. */
+    static java.util.List<Automations.Rule> automationsOf(Context context) {
+        return Automations.parse(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(AUTOMATIONS, null));
+    }
+
+    static String announcedAutomations(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(AUTOMATIONS_ANNOUNCED, "");
     }
 
     /**
