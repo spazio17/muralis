@@ -400,6 +400,8 @@ ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16p
 html.js .events{display:none}html.js .events.on{display:block}
 label.radio.one input{position:absolute;opacity:0;pointer-events:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.text .field{margin-top:8px}
+.text .field .support{margin-top:2px}
 
 /* ---- list-detail pages: Sensors, Automations (2026-09-27) and Screensaver (2026-09-28) ---- */
 .ld{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}

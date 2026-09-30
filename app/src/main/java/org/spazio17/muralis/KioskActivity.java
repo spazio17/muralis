@@ -829,6 +829,7 @@ public final class KioskActivity extends Activity {
         if (proBilling != null) {
             proBilling.refresh();
         }
+        applyNfcReader();
         // Back from the Settings screen that "Grant it now" opened, whether the watcher brought
         // the activity back or the operator did: the card was drawn with the grant missing and the
         // grant is there now, so redraw before the red line is read again. Here rather than in the
@@ -854,6 +855,7 @@ public final class KioskActivity extends Activity {
     protected void onPause() {
         inFront = false;
         KioskRuntimeState.publishActivityInFront(false);
+        applyNfcReader();
         // Belt and braces for the same invariant: a bar disabled while nothing is pinned is a
         // tablet nobody can use.
         disableStatusBarIfPinned();
@@ -3379,6 +3381,8 @@ public final class KioskActivity extends Activity {
             case "proximity": return R.drawable.ic_sensor_proximity;
             case "light": return R.drawable.ic_sensor_light;
             case "movement": return R.drawable.ic_sensor_movement;
+            case "bluetooth": return R.drawable.ic_sensor_bluetooth;
+            case "nfc": return R.drawable.ic_sensor_nfc;
             case "audio": return R.drawable.ic_sensor_audio;
             case "camera": return R.drawable.ic_sensor_camera;
             case "microphone": return R.drawable.ic_sensor_microphone;
@@ -3392,6 +3396,7 @@ public final class KioskActivity extends Activity {
             case "network": return R.drawable.ic_sensor_network;
             case "memory": return R.drawable.ic_sensor_memory;
             case "processor": return R.drawable.ic_sensor_processor;
+            case "tag": return R.drawable.ic_sensor_tag;
             default: return R.drawable.ic_sensor_bolt;
         }
     }
@@ -3521,6 +3526,9 @@ public final class KioskActivity extends Activity {
             KioskConfig.edit(this).sensorEnabled(def.id, checked).apply();
             KioskService.refreshSensorsSoon(this);
             paintSensorActions(def.id, checked);
+            if (def == Sensors.NFC) {
+                applyNfcReader();
+            }
             if (after != null) {
                 after.run();
             }
@@ -4198,6 +4206,8 @@ public final class KioskActivity extends Activity {
         // "Use the camera": an action like the other switches' words, where "Camera on" read
         // as a state (review, 2026-10-01).
         String switchLabel = def == Sensors.MOVEMENT ? "Report movement"
+                : def == Sensors.NFC ? "Read tags"
+                : def == Sensors.BLUETOOTH ? "Listen for beacons"
                 : def == Sensors.CAMERA ? "Use the camera" : def.name;
         View trailing;
         if (!one.optBoolean("available")) {
@@ -4247,6 +4257,80 @@ public final class KioskActivity extends Activity {
             // quiet room read about 30 of 100 before (Juri, 2026-09-28), and what counts as
             // loud is the room's, not Android's.
             cards.add(calibrationCard(theme, def, one, this::calibrateMicrophone));
+        } else if (def == Sensors.NFC) {
+            // The tags read lately, newest first, by their id and when: a tag is named and
+            // used in Home Assistant, which gets each read as a tag scanned, the way its
+            // companion app hands one over (Juri, 2026-09-30: "copy what Home Assistant does").
+            // The automations here offer the same tags by id.
+            LinearLayout tags = card(theme, "Tags");
+            java.util.Map<String, Long> seen = KioskConfig.seenTags(this);
+            if (seen.isEmpty()) {
+                TextView none = new FlushText(this);
+                none.setText("No tag has been held to the panel yet.");
+                none.setTextColor(theme.subtext);
+                none.setTextSize(14);
+                tags.addView(none, matchWrap());
+            }
+            boolean firstTag = true;
+            for (java.util.Map.Entry<String, Long> tag : seen.entrySet()) {
+                addListRow(tags, theme, glyphRow(theme, R.drawable.ic_sensor_tag, tag.getKey(),
+                        "Read " + android.text.format.DateUtils.getRelativeTimeSpanString(
+                                tag.getValue()), null, null, false), firstTag);
+                firstTag = false;
+            }
+            cards.add(tags);
+        } else if (def == Sensors.BLUETOOTH) {
+            addOptionField(card, theme, "Out of reach after, seconds", "beacons_reach_s", "30",
+                    true);
+            Beacons beacons = KioskService.beaconsOf(this);
+            java.util.List<Beacons.Seen> heard = beacons == null
+                    ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+            if (heard.isEmpty()) {
+                TextView none = new FlushText(this);
+                none.setText("No beacon has been heard yet.");
+                none.setTextColor(theme.subtext);
+                none.setTextSize(14);
+                LinearLayout.LayoutParams noneParams = matchWrap();
+                noneParams.topMargin = dp(16);
+                card.addView(none, noneParams);
+            } else {
+                java.util.List<Beacons.Seen> reach = beacons.inReach();
+                for (Beacons.Seen seen : heard) {
+                    EditText name = themedInput(theme,
+                            KioskConfig.sensorOption(this, "beacon_" + seen.id, ""), false);
+                    addField(card, theme, "Name", name, seen.id + ", " + (reach.contains(seen)
+                            ? "in reach" + (Double.isNaN(seen.distance()) ? ""
+                                    : ", " + seen.distance() + " m")
+                            : "out of reach"));
+                    Runnable store = () -> {
+                        String typed = name.getText().toString().trim();
+                        String problem = Sensors.checkBeaconName(seen.id, typed);
+                        if (problem != null) {
+                            Toast.makeText(this, "Not saved: " + problem + ".",
+                                    Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        KioskConfig.edit(this).sensorOption("beacon_" + seen.id, typed).apply();
+                        KioskService.publishTelemetrySoon(this);
+                    };
+                    name.setOnFocusChangeListener((view, focused) -> {
+                        if (!focused) {
+                            store.run();
+                        }
+                    });
+                    name.setOnEditorActionListener((view, actionId, event) -> {
+                        store.run();
+                        hideKeyboard(view);
+                        return true;
+                    });
+                }
+            }
+            LinearLayout send = card(theme, "Send a beacon");
+            addOptionSwitch(send, theme, "Transmit", "beacons_transmit", false);
+            addOptionField(send, theme, "UUID", "beacons_uuid", "", false);
+            addOptionField(send, theme, "Major", "beacons_major", "1", true);
+            addOptionField(send, theme, "Minor", "beacons_minor", "1", true);
+            cards.add(send);
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
                     false, true);
@@ -4508,6 +4592,19 @@ public final class KioskActivity extends Activity {
         minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(whenCard, theme, "For (minutes)", minutesInput);
         View minutesBox = (View) minutesInput.getParent();
+        // A menu too: the tags read here have no upper bound. Every one read lately is
+        // offered by its id, newest first.
+        MenuField tagMenu = new MenuField(whenCard, theme, "Tag");
+        tagMenu.add("Any tag", "");
+        java.util.Set<String> tagsRead = KioskConfig.seenTags(this).keySet();
+        for (String tag : tagsRead) {
+            tagMenu.add(tag, tag);
+        }
+        if (!draft.tag.isEmpty() && !tagsRead.contains(draft.tag)) {
+            tagMenu.add(draft.tag, draft.tag);
+        }
+        tagMenu.select(draft.tag);
+        View tagBox = (View) tagMenu.box.getParent();
 
         Runnable paintEvent = () -> {
             View checked = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
@@ -4520,6 +4617,8 @@ public final class KioskActivity extends Activity {
                 levelCaption.setText("Level (" + event.levelUnit + ")");
             }
             minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
+            boolean tag = event != null && event.tag;
+            tagBox.setVisibility(tag ? View.VISIBLE : View.GONE);
         };
         Runnable paintSensor = () -> {
             String sensor = sensorMenu.value();
@@ -4630,6 +4729,7 @@ public final class KioskActivity extends Activity {
             // as the web refuses it, rather than quietly meaning 0.
             draft.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
+            draft.tag = tagMenu.value();
             draft.action = actionMenu.value();
             draft.argument = argumentInput.getText().toString();
             boolean only = onlySwitch.isChecked();
@@ -4906,6 +5006,85 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
+    }
+
+    /**
+     * What a tag carries, as a person would read it: its text records and its addresses, one
+     * after the other; a record of another kind by its type. The NDEF message Android read
+     * when it found the tag; empty for a tag with none, or one it could not read.
+     */
+    private static String tagContent(android.nfc.Tag tag) {
+        android.nfc.tech.Ndef ndef = android.nfc.tech.Ndef.get(tag);
+        android.nfc.NdefMessage message = ndef == null ? null : ndef.getCachedNdefMessage();
+        if (message == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (android.nfc.NdefRecord record : message.getRecords()) {
+            String part = null;
+            byte[] payload = record.getPayload();
+            if (record.getTnf() == android.nfc.NdefRecord.TNF_WELL_KNOWN
+                    && java.util.Arrays.equals(record.getType(), android.nfc.NdefRecord.RTD_TEXT)
+                    && payload.length > 0) {
+                // NFC Forum text record: a status byte (the encoding, the language's length),
+                // the language, then the text.
+                int language = payload[0] & 0x3f;
+                if (1 + language <= payload.length) {
+                    part = new String(payload, 1 + language, payload.length - 1 - language,
+                            (payload[0] & 0x80) != 0 ? java.nio.charset.StandardCharsets.UTF_16
+                                    : java.nio.charset.StandardCharsets.UTF_8);
+                }
+            } else if (record.toUri() != null) {
+                part = record.toUri().toString();
+            } else if (record.getTnf() == android.nfc.NdefRecord.TNF_MIME_MEDIA) {
+                part = new String(record.getType(), java.nio.charset.StandardCharsets.US_ASCII)
+                        + ", " + payload.length + " bytes";
+            }
+            if (part != null && !part.isEmpty()) {
+                text.append(text.length() == 0 ? "" : " | ").append(part);
+            }
+        }
+        return text.length() > 200 ? text.substring(0, 200) : text.toString();
+    }
+
+    /** A tag's id as hex, the reading and the name a tag is stored under. */
+    private static String tagHex(android.nfc.Tag tag) {
+        StringBuilder hex = new StringBuilder();
+        for (byte b : tag.getId()) {
+            hex.append(String.format(java.util.Locale.ROOT, "%02X", b));
+        }
+        return hex.toString();
+    }
+
+    /**
+     * Reader mode while the NFC sensor is on: a tag held to the panel is read for its id and its
+     * content, handed to the service, and Android's own tag handling stays out of the way.
+     */
+    private void applyNfcReader() {
+        android.nfc.NfcAdapter nfc = android.nfc.NfcAdapter.getDefaultAdapter(this);
+        if (nfc == null) {
+            return;
+        }
+        boolean wanted = inFront && KioskConfig.sensorEnabled(this, Sensors.NFC.id);
+        Log.i(TAG, "NFC reader mode " + (wanted ? "on" : "off") + (nfc.isEnabled() ? "" : ", adapter off"));
+        // The contents are read too, for the Home Assistant tag id a tag written by Home
+        // Assistant carries; a password-protected tag still gives its chip's id (a LEGO
+        // Dimensions figure, 2026-09-30).
+        try {
+            if (wanted) {
+                nfc.enableReaderMode(this, tag -> KioskService.tagReadSoon(this, tagHex(tag),
+                                tagContent(tag)),
+                        android.nfc.NfcAdapter.FLAG_READER_NFC_A
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_B
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_F
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_V
+                        | android.nfc.NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS, null);
+            } else {
+                nfc.disableReaderMode(this);
+            }
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "NFC reader mode refused", refused);
+        }
     }
 
     /**
@@ -10744,6 +10923,10 @@ public final class KioskActivity extends Activity {
                 if (configurationVisible) {
                     repaintSensors();
                 }
+                break;
+            case "sensors.nfc":
+                // The NFC switch was flipped on another surface; reader mode is the activity's.
+                applyNfcReader();
                 break;
             case "kiosk.start":
                 kioskStopped = false;

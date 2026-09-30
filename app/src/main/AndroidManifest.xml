@@ -71,13 +71,23 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- The sensors (Sensors.java), every one off until a person switches it on. Camera: the
-         IP-camera stream and motion detection. Microphone: a sound level, nothing recorded. Each
-         runtime permission is asked for once from the Sensors page on an ordinary install and
-         granted silently on a device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need
-         their use described in the listing's Data safety form, and the camera and microphone
-         foreground types a declaration with a video each; see
-         ../media/google-play/PLAY-LISTING.md. -->
+    <!-- The sensors (Sensors.java), every one off until a person switches it on. Bluetooth
+         beacons: the scan and the transmitter, declared as never for location from Android 12
+         and needing the location permission before it, as the companion app does. NFC: tags
+         read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
+         motion detection. Microphone: a sound level, nothing recorded. Each runtime permission
+         is asked for once from the Sensors page on an ordinary install and granted silently on a
+         device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need their use described
+         in the listing's Data safety form, and the camera and microphone foreground types a
+         declaration with a video each; see ../media/google-play/PLAY-LISTING.md. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -121,8 +131,11 @@
          as required and hide the app from any device without a Wi-Fi radio. A wall panel on
          PoE Ethernet is exactly such a device. The service copes with a missing WifiManager. -->
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <application
         android:name=".MuralisApplication"

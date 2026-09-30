@@ -46,8 +46,9 @@ import java.util.Map;
  * on change alone.
  *
  * <p>A hardware sensor registers its listener only while it is on, asking for the wake-up
- * variant so it answers under a real sleep. The camera and the microphone live in their own
- * classes and are asked through {@link #source}.
+ * variant so it answers under a real sleep. The camera, the microphone and the beacons live in
+ * their own classes and are asked through {@link #camera}, {@link #microphone} and
+ * {@link #beacons}; NFC tags arrive from the activity's reader mode through {@link #tagRead}.
  */
 final class Sensors implements SensorEventListener {
     private static final String TAG = "MuralisSensors";
@@ -100,6 +101,8 @@ final class Sensors implements SensorEventListener {
             Kind.SWITCH, false, "audio");
     static final Def BATTERY = new Def("battery", "Battery", SENSOR, "battery", "%",
             "measurement", 0, Kind.PANEL, false, "battery");
+    static final Def BLUETOOTH = new Def("bluetooth", "Bluetooth beacons", SENSOR, null, null,
+            "measurement", 0, Kind.PERMISSION, true, "bluetooth");
     static final Def CAMERA = new Def("camera", "Camera", BINARY, "motion", null, null, 0,
             Kind.PERMISSION, true, "camera");
     static final Def DISPLAY = new Def("display", "Display", BINARY, null, null, null, 0,
@@ -116,6 +119,8 @@ final class Sensors implements SensorEventListener {
             Sensor.TYPE_ACCELEROMETER, Kind.SWITCH, true, "movement");
     static final Def NETWORK = new Def("network", "Network", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "network");
+    static final Def NFC = new Def("nfc", "NFC", SENSOR, null, null, null, 0, Kind.SWITCH, true,
+            "nfc");
     static final Def POWER = new Def("power", "Power", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "power");
     static final Def PRESSURE = new Def("pressure", "Pressure", SENSOR, "atmospheric_pressure",
@@ -132,10 +137,11 @@ final class Sensors implements SensorEventListener {
 
     /** Every sensor this app knows, alphabetical by name, which is the order the pages use. */
     static final List<Def> ALL = Collections.unmodifiableList(Arrays.asList(
-            TEMPERATURE, AUDIO, BATTERY, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY, MICROPHONE,
-            MOVEMENT, NETWORK, POWER, PRESSURE, PROCESSOR, PROXIMITY, SCREENSAVER));
+            TEMPERATURE, AUDIO, BATTERY, BLUETOOTH, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY,
+            MICROPHONE, MOVEMENT, NETWORK, NFC, POWER, PRESSURE, PROCESSOR, PROXIMITY,
+            SCREENSAVER));
 
-    /** What the camera and the microphone report, asked when a document is built. */
+    /** What the beacons, the camera and the microphone report, asked when a document is built. */
     interface Reading {
         /** Fills {@code one} with value and attributes; may leave value null. */
         void fill(JSONObject one) throws JSONException;
@@ -287,6 +293,27 @@ final class Sensors implements SensorEventListener {
     // start at minus the hold read as "Moving" until the hold had passed (review, 2026-09-27).
     private volatile long movedAtMs = Long.MIN_VALUE / 2;
     private volatile boolean near;
+    private String lastTag = "";
+    private String lastTagContent = "";
+    private long lastTagAtMs;
+
+    /**
+     * The tag id in a tag written by Home Assistant, whose content is the address
+     * https://www.home-assistant.io/tag/<tag id> (the companion app's documentation, "Universal
+     * links"). The companion app reports that id, and so does the panel, so a tag works the
+     * same held to a phone or to the panel. The app refuses a tag without it
+     * (TagReaderViewModel: "Tag intent had no tag id"); the panel reports such a tag by its
+     * chip's id instead, so any tag works (Juri, 2026-09-30: always as Home Assistant does).
+     */
+    static String homeAssistantTagId(String content) {
+        if (content == null) {
+            return null;
+        }
+        java.util.regex.Matcher found = java.util.regex.Pattern
+                .compile("https?://www\\.home-assistant\\.io/tag/([0-9A-Za-z_-]{1,64})")
+                .matcher(content);
+        return found.find() ? found.group(1) : null;
+    }
     private final Map<String, Reading> sources = new HashMap<>();
     /** Told when a sensor changes state (near, moving), so nobody waits for the next tick. */
     private volatile Runnable onEdge;
@@ -411,6 +438,12 @@ final class Sensors implements SensorEventListener {
             return manager != null && manager.getDefaultSensor(def.androidType) != null;
         }
         PackageManager packages = context.getPackageManager();
+        if (def == BLUETOOTH) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE);
+        }
+        if (def == NFC) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_NFC);
+        }
         if (def == CAMERA) {
             return packages.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
         }
@@ -432,6 +465,16 @@ final class Sensors implements SensorEventListener {
         if (def == MICROPHONE) {
             return new String[] {android.Manifest.permission.RECORD_AUDIO};
         }
+        if (def == BLUETOOTH) {
+            // Scan results are a location signal, so before Android 12 a scan needs the
+            // location permission; from 12 the two Bluetooth permissions, declared as never
+            // for location, replace it. The companion app asks for the same.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                return new String[] {android.Manifest.permission.BLUETOOTH_SCAN,
+                        android.Manifest.permission.BLUETOOTH_ADVERTISE};
+            }
+            return new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION};
+        }
         return new String[0];
     }
 
@@ -452,9 +495,19 @@ final class Sensors implements SensorEventListener {
                     return "sensitivity must be low, normal or high";
                 }
                 return null;
-            case "movement_still_s": case "camera_still_s":
+            case "movement_still_s": case "camera_still_s": case "beacons_reach_s":
                 if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) < 1) {
                     return "the seconds must be 1 or more";
+                }
+                return null;
+            case "beacons_major": case "beacons_minor":
+                if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) > 65535) {
+                    return "major and minor are numbers from 0 to 65535";
+                }
+                return null;
+            case "beacons_uuid":
+                if (!clean.isEmpty() && Beacons.uuidOf(clean) == null) {
+                    return "that is not a UUID";
                 }
                 return null;
             case "camera_lens":
@@ -480,12 +533,15 @@ final class Sensors implements SensorEventListener {
                 return null;
             case "camera_name":
                 return clean.length() > 40 ? "the name is too long" : null;
-            case "camera_mirror": case "camera_flip":
+            case "beacons_transmit": case "camera_mirror": case "camera_flip":
             case "camera_watermark": case "camera_motion": case "camera_mqtt":
                 // true or false in the forms every surface sends; "yes" used to mean off
                 // without a word (review, 2026-10-01).
                 return isSwitchWord(clean) ? null : key + " must be true or false";
             default:
+                if (key.startsWith("beacon_")) {
+                    return checkBeaconName(key.substring("beacon_".length()), clean);
+                }
                 return "no sensor setting is called " + key;
         }
     }
@@ -503,13 +559,24 @@ final class Sensors implements SensorEventListener {
     static String cleanOption(String key, String value) {
         String clean = value == null ? "" : value.trim();
         switch (key) {
-            case "camera_mirror": case "camera_flip":
+            case "beacons_transmit": case "camera_mirror": case "camera_flip":
             case "camera_watermark": case "camera_motion": case "camera_mqtt":
                 return Boolean.toString(clean.equalsIgnoreCase("true") || clean.equalsIgnoreCase("on")
                         || clean.equals("1"));
             default:
                 return clean;
         }
+    }
+
+    /** A beacon's name: the id has the shape the scan writes, uuid:major:minor, and the name is short. */
+    static String checkBeaconName(String id, String name) {
+        if (!id.matches("[0-9a-fA-F-]{36}:\\d{1,5}:\\d{1,5}")) {
+            return "no beacon has that id";
+        }
+        if (name != null && name.trim().length() > 40) {
+            return "the name is too long";
+        }
+        return null;
     }
 
     /** Whether every permission the sensor needs is granted. */
@@ -835,6 +902,21 @@ final class Sensors implements SensorEventListener {
     }
 
     /**
+     * A tag held to the panel: the reading, and the one-shot event for the automations. The id
+     * is empty for a tag that reports its content alone, which only "any tag" rules match.
+     */
+    void tagRead(String id, String content) {
+        synchronized (this) {
+            lastTag = id == null ? "" : id;
+            lastTagContent = content == null ? "" : content;
+            lastTagAtMs = System.currentTimeMillis();
+        }
+        if (engine != null) {
+            engine.event(NFC.id, id, minuteOfDay());
+        }
+    }
+
+    /**
      * Feeds the automations every reading that is not delivered by a listener: the panel's own
      * values, the movement hold, what the other classes report, and the last reading of each
      * hardware sensor once more (a steady room sends no light event, and "darker for 10 min"
@@ -1001,6 +1083,27 @@ final class Sensors implements SensorEventListener {
             one.put("attributes", attributes);
             return;
         }
+        if (def == NFC) {
+            String tag;
+            String content;
+            long at;
+            synchronized (this) {
+                tag = lastTag;
+                content = lastTagContent;
+                at = lastTagAtMs;
+            }
+            one.put("value", !tag.isEmpty() ? tag : !content.isEmpty() ? content
+                    : JSONObject.NULL);
+            if (!tag.isEmpty() || !content.isEmpty()) {
+                JSONObject attributes = new JSONObject();
+                if (!content.isEmpty()) {
+                    attributes.put("content", content);
+                }
+                attributes.put("read_at_ms", at);
+                one.put("attributes", attributes);
+            }
+            return;
+        }
         if (def == DISPLAY) {
             PowerManager power = context.getSystemService(PowerManager.class);
             one.put("value", power == null || power.isInteractive());
@@ -1160,6 +1263,20 @@ final class Sensors implements SensorEventListener {
         }
         if (def == MEMORY) {
             return value + "% used";
+        }
+        if (def == NFC) {
+            String content = attributes == null ? "" : attributes.optString("content", "");
+            // A tag reporting its content alone has no id, and its content is the reading;
+            // with both, the content follows the id.
+            if (value.equals(content)) {
+                return "Last tag \u201c" + content + "\u201d";
+            }
+            return "Last tag " + value
+                    + (content.isEmpty() ? "" : ": \u201c" + content + "\u201d");
+        }
+        if (def == BLUETOOTH) {
+            int count = one.optInt("value", 0);
+            return count == 0 ? "None in reach" : count + " in reach";
         }
         if (def == MICROPHONE) {
             return value + "%";

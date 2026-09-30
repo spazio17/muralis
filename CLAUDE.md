@@ -390,10 +390,11 @@ the playlist page was the case that set the rule.
   same shape and only its right edge says what kind it is. A switch for the ones a person turns
   on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
   beside the switch for the ones with a page of their own (on the panel every hardware sensor,
-  for the test while asleep, plus the camera and the microphone; on the web only where the page
-  says more than the row, since the calibration and the test are the panel's); Allow while a
-  permission is missing (camera, microphone, asked once from the Sensors page on an ordinary
-  install and granted silently on a device owner); every row has a switch, and the panel's own
+  for the test while asleep, plus the camera, the microphone, Bluetooth beacons and NFC; on
+  the web only where the page says more than the row, since the calibration and the test are
+  the panel's); Allow while a permission is missing (camera, microphone, and for the beacons the
+  location permission before Android 12 and the Bluetooth scan one from it, asked once from the
+  Sensors page on an ordinary install and granted silently on a device owner); every row has a switch, and the panel's own
   values (display, screensaver, battery, power, network, processor, memory: their Home
   Assistant entities predate this list and are not announced twice) start on where the rest
   start off; greyed at the end for what this device lacks. Every row's reading is worded once, by the service
@@ -404,7 +405,7 @@ the playlist page was the case that set the rule.
   `audio.stop`, `audio.say`. **Automations** (`Automations`, pure) are "When a sensor says this,
   then do that": one row per rule with a name and a sentence, a switch each (`automation_<id>`
   switches in discovery, `automation.enabled` with `value=<id>`), an editor of When (the sensor,
-  its event, a level and minutes where the event has them), Then (Display on
+  its event, a level and minutes where the event has them, the tag for NFC), Then (Display on
   or off, Show the dashboard, Start the screensaver, Play a sound, Say a sentence, Reload the
   page: each a command the panel already had) and Only (a window of the day). `Automations.Engine`
   is fed each sensor's reading once, from the sensor's own callback (movement on its edge, the
@@ -437,7 +438,16 @@ the playlist page was the case that set the rule.
   and crashed a fresh install on Android 14+. The notification says "Camera on" while the type
   is held. On the panel the camera's Stream card is greyed with "Needs the local web admin"
   while the admin is not listening, and Allow, once Android will not ask again, opens the app's
-  page in Android's settings and says so. **The microphone** is a sound
+  page in Android's settings and says so. **Beacons** (`Beacons`) are the companion app's Beacon Monitor and BLE
+  Transmitter: iBeacons heard within the reach time, named on the page, and the panel's own
+  iBeacon. **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
+  the reading, a one-shot event for the automations and a Home Assistant tag event through
+  `homeassistant/tag/<id>/config`; the NFC page lists the tags read lately by id and when, and the automations' Tag menu offers them by id; a tag is named in Home Assistant, which gets each read as a tag scanned, the way the companion app hands one over (Juri, 2026-09-30: names on the panel meant nothing to someone who never used NFC, and one could not be deleted); a tag is reported as Home Assistant's app reports it, always: a tag written by Home Assistant by the id in its address, https://www.home-assistant.io/tag/<id>, any other tag by its chip's id (where the app refuses it), and its text and addresses ride in the attributes and on the row (Juri, 2026-09-30: a choice of what to read went, since doing what Home Assistant does covers it) (reader mode for all four tag
+  types, so a password-protected tag reads like any other;
+  verified on the Pixel with a LEGO Dimensions figure, 2026-09-30, once the phone's NFC spot
+  was found: a tag reads only on the coil, a centimetre or two). **Beacons verified** the same
+  day on the Huawei tablet and phone against the Pixel's Home Assistant transmitter; the
+  Lenovo's Lineage build hears none. **The microphone** is a sound
   level, 0 to 100, nothing recorded. **This panel** is the section that holds the panel's name
   (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
   Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
@@ -448,14 +458,15 @@ the playlist page was the case that set the rule.
   it at 16 sp (Title medium) on the left, the readings at 14 sp on the right, centred on one
   line; a long id wraps under Muralis.
   **Kept alive by the service's two-second tick** (review of 2026-09-27): `refreshSensors()`
-  runs on every tick, a no-op while the state matches, so a camera the platform took recovers
-  on its own (it waits 15 s after a failure and reopens after 20 s without a frame); the sensor block and the
+  runs on every tick, a no-op while the state matches, so a camera the platform took, a scan
+  that failed or beacons switched on before the radio was recover on their own (the camera
+  waits 15 s after a failure and reopens after 20 s without a frame); the sensor block and the
   rules are published to `KioskRuntimeState` on the tick with or without MQTT, so the panel's
   rows never depend on a broker or an open browser; discovery goes again when the set of
   active sensors, the camera or the rules change (`MqttController.sensorsKey`), the retained
   picture is cleared when the camera or its MQTT pictures go off, and an automation's switch
-  has its unique id from the rule's id, not its name. `Sensors.checkOption` is the one rule
-  book for a sensor's settings, applied by both surfaces;
+  has its unique id from the rule's id, not its name. `Sensors.checkOption`/`checkBeaconName`
+  is the one rule book for a sensor's settings and beacon names, applied by both surfaces;
   every sensor has a switch, the panel's own values (display, screensaver, battery, power,
   network, memory, processor) starting on since they were always reported before, the rest off
   (Juri, 2026-09-27); the web admin shows neither the calibration nor the test while asleep,
@@ -473,7 +484,7 @@ the playlist page was the case that set the rule.
   Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
   beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
   stand-in in the test tree) covers the storage round trip, the rule book, the window and the
-  engine's seed-then-arm, hold-for-minutes and reset; the dispatcher test covers
+  engine's seed-then-arm, hold-for-minutes, reset and tag events; the dispatcher test covers
   every sensor and audio command. The readings on the panel's
   sensor pages follow the one-second tick; on rotation a box that stores on blur stores before
   the page is rebuilt (`redrawInPlace` clears the focus first). **Three width classes for the
@@ -577,8 +588,8 @@ the playlist page was the case that set the rule.
   consider using a dropdown menu because it uses less space", and Nielsen Norman Group's
   radios for five or fewer, a dropdown for five to fifteen). The panel's `MenuField` is
   Material's exposed dropdown menu: the outlined field showing the chosen item with a chevron,
-  a menu anchored to it on a tap, opened on the chosen item; the automation editor's Sensor
-  and Action use it, as the web page's selects do. **The camera picture has an
+  a menu anchored to it on a tap, opened on the chosen item; the automation editor's Sensor,
+  Action and Tag use it, as the web page's selects do. **The camera picture has an
   orientation** (`camera_orientation`: `device`, `portrait`, `landscape`, Juri 2026-09-28):
   turned upright for the display's rotation by Android's JPEG_ORIENTATION rule, then, for
   portrait or landscape, the middle of the picture in that shape when the panel is the other

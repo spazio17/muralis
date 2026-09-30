@@ -38,12 +38,15 @@ final class Automations {
         final String levelUnit;
         /** Whether "for N minutes" applies: the condition must hold that long before it fires. */
         final boolean holds;
+        /** Whether the event names a tag (NFC): one-shot, matched by id. */
+        final boolean tag;
 
-        Event(String id, String label, String levelUnit, boolean holds) {
+        Event(String id, String label, String levelUnit, boolean holds, boolean tag) {
             this.id = id;
             this.label = label;
             this.levelUnit = levelUnit;
             this.holds = holds;
+            this.tag = tag;
         }
     }
 
@@ -69,39 +72,44 @@ final class Automations {
         map.put("proximity", Arrays.asList(
                 // Android's own words for the sensor (SensorManager: "near/far"); Home
                 // Assistant has no binary class for it, its nearest, occupancy, is about a room.
-                new Event("near", "Near", null, false),
-                new Event("far", "Far", null, false)));
+                new Event("near", "Near", null, false, false),
+                new Event("far", "Far", null, false, false)));
         map.put("light", Arrays.asList(
-                new Event("darker", "Darker than", "lx", true),
-                new Event("brighter", "Brighter than", "lx", false)));
+                new Event("darker", "Darker than", "lx", true, false),
+                new Event("brighter", "Brighter than", "lx", false, false)));
         map.put("movement", Arrays.asList(
-                new Event("picked_up", "Picked up", null, false),
-                new Event("still", "Still again", null, false)));
+                new Event("picked_up", "Picked up", null, false, false),
+                new Event("still", "Still again", null, false, false)));
+        map.put("bluetooth", Arrays.asList(
+                new Event("in_reach", "A beacon comes in reach", null, false, false),
+                new Event("out_of_reach", "The last beacon goes out of reach", null, false, false)));
+        map.put("nfc", Collections.singletonList(
+                new Event("tag", "A tag is read", null, false, true)));
         map.put("audio", Arrays.asList(
-                new Event("playing", "Sound starts playing", null, false),
-                new Event("stopped", "Sound stops", null, false)));
+                new Event("playing", "Sound starts playing", null, false, false),
+                new Event("stopped", "Sound stops", null, false, false)));
         map.put("camera", Arrays.asList(
-                new Event("motion", "Motion in front of the panel", null, false),
+                new Event("motion", "Motion in front of the panel", null, false, false),
                 // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
                 // itself, and read "for for" (review, 2026-10-01).
-                new Event("no_motion", "Nothing moving", null, true)));
+                new Event("no_motion", "Nothing moving", null, true, false)));
         map.put("microphone", Collections.singletonList(
-                new Event("louder", "Louder than", "%", false)));
+                new Event("louder", "Louder than", "%", false, false)));
         map.put("display", Arrays.asList(
-                new Event("on", "Display switched on", null, false),
-                new Event("off", "Display switched off", null, false)));
+                new Event("on", "Display switched on", null, false, false),
+                new Event("off", "Display switched off", null, false, false)));
         map.put("screensaver", Arrays.asList(
-                new Event("started", "Screensaver started", null, false),
-                new Event("ended", "Screensaver ended", null, false)));
+                new Event("started", "Screensaver started", null, false, false),
+                new Event("ended", "Screensaver ended", null, false, false)));
         map.put("battery", Arrays.asList(
-                new Event("below", "Battery below", "%", false),
-                new Event("plugged", "Charger plugged in", null, false),
-                new Event("unplugged", "Charger unplugged", null, false)));
+                new Event("below", "Battery below", "%", false, false),
+                new Event("plugged", "Charger plugged in", null, false, false),
+                new Event("unplugged", "Charger unplugged", null, false, false)));
         map.put("network", Arrays.asList(
-                new Event("connected", "Network connected", null, false),
-                new Event("lost", "Network lost", null, false)));
+                new Event("connected", "Network connected", null, false, false),
+                new Event("lost", "Network lost", null, false, false)));
         map.put("processor", Collections.singletonList(
-                new Event("hotter", "Hotter than", "°C", false)));
+                new Event("hotter", "Hotter than", "°C", false, false)));
         return Collections.unmodifiableMap(map);
     }
 
@@ -146,6 +154,8 @@ final class Automations {
         double level = Double.NaN;
         /** Minutes the condition must hold, 0 for at once. */
         int minutes;
+        /** The tag id an NFC rule waits for, empty for any tag. */
+        String tag = "";
         String action = "";
         String argument = "";
         boolean enabled = true;
@@ -161,6 +171,7 @@ final class Automations {
             other.event = event;
             other.level = level;
             other.minutes = minutes;
+            other.tag = tag;
             other.action = action;
             other.argument = argument;
             other.enabled = enabled;
@@ -226,6 +237,7 @@ final class Automations {
                 rule.event = one.optString("event", "");
                 rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
                 rule.minutes = one.optInt("minutes", 0);
+                rule.tag = one.optString("tag", "");
                 rule.action = one.optString("action", "");
                 rule.argument = one.optString("argument", "");
                 rule.enabled = one.optBoolean("enabled", true);
@@ -259,6 +271,7 @@ final class Automations {
                     one.put("level", rule.level);
                 }
                 one.put("minutes", rule.minutes);
+                one.put("tag", rule.tag);
                 one.put("action", rule.action);
                 one.put("argument", rule.argument);
                 one.put("enabled", rule.enabled);
@@ -300,6 +313,9 @@ final class Automations {
             rule.minutes = 0;
         } else if (rule.minutes < 0 || rule.minutes > MAX_MINUTES) {
             return "the minutes must be between 0 and " + MAX_MINUTES;
+        }
+        if (!event.tag) {
+            rule.tag = "";
         }
         Action action = action(rule.action);
         if (action == null) {
@@ -365,6 +381,9 @@ final class Automations {
             }
             if (event.holds && rule.minutes > 0) {
                 text.append(" for ").append(rule.minutes).append(" min");
+            }
+            if (event.tag && !rule.tag.isEmpty()) {
+                text.append(": ").append(rule.tag);
             }
         }
         text.append(", then ");
@@ -465,7 +484,7 @@ final class Automations {
     /** Whether the state the event names holds in this sample; null when the sample cannot say. */
     static Boolean holds(Rule rule, Sample sample) {
         Event event = event(rule.sensor, rule.event);
-        if (event == null) {
+        if (event == null || event.tag) {
             return null;
         }
         boolean flag = Boolean.TRUE.equals(sample.flag);
@@ -661,6 +680,31 @@ final class Automations {
                 }
                 state.fired = true;
                 if (rule.enabled && inWindow(rule, minuteOfDay)) {
+                    due.add(rule);
+                }
+            }
+            return due;
+        }
+
+        /** A one-shot event with an id: a tag read. */
+        void event(String sensor, String id, int minuteOfDay) {
+            for (Rule rule : dueFor(sensor, id, minuteOfDay)) {
+                runner.run(rule);
+            }
+        }
+
+        private synchronized List<Rule> dueFor(String sensor, String id, int minuteOfDay) {
+            List<Rule> due = new ArrayList<>();
+            for (Rule rule : rules) {
+                if (!rule.sensor.equals(sensor) || !rule.enabled) {
+                    continue;
+                }
+                Event event = Automations.event(rule.sensor, rule.event);
+                if (event == null || !event.tag) {
+                    continue;
+                }
+                if ((rule.tag.isEmpty() || rule.tag.equalsIgnoreCase(id))
+                        && inWindow(rule, minuteOfDay)) {
                     due.add(rule);
                 }
             }

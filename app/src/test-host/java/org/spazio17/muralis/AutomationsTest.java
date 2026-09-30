@@ -28,6 +28,7 @@ public final class AutomationsTest {
         testEngineTickAdvancesTheMinutes();
         testEngineSeedLetsTheFirstEventFire();
         testIdShape();
+        testTagEvents();
         System.out.println("AutomationsTest passed");
     }
 
@@ -35,6 +36,7 @@ public final class AutomationsTest {
         Map<String, String> names = new java.util.LinkedHashMap<>();
         names.put("proximity", "Proximity");
         names.put("light", "Light");
+        names.put("nfc", "NFC");
         names.put("battery", "Battery");
         return names;
     }
@@ -259,6 +261,20 @@ public final class AutomationsTest {
         engine.sample("proximity", Automations.Sample.of(0, true), T0 + 4000, 23 * 60);
         require(runs.ran.size() == 3 && runs.ran.contains("r2") && !runs.ran.contains("r3"),
                 "at night the windowed rule runs too, the disabled one never");
+    }
+
+    private static void testTagEvents() {
+        Runs runs = new Runs();
+        Automations.Engine engine = new Automations.Engine(runs);
+        Automations.Rule any = rule("nfc", "tag", "display_on");
+        Automations.Rule one = rule("nfc", "tag", "reload");
+        one.id = "r2";
+        one.tag = "04A32B9C";
+        engine.rules(java.util.Arrays.asList(any, one));
+        engine.event("nfc", "FFFF", 600);
+        require(runs.ran.equals(Collections.singletonList("r1")), "any tag runs the open rule alone");
+        engine.event("nfc", "04a32b9c", 600);
+        require(runs.ran.size() == 3 && runs.ran.get(2).equals("r2"), "the named tag runs both, id case-blind");
     }
 
     private static void require(boolean condition, String message) {

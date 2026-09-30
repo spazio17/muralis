@@ -507,6 +507,75 @@ final class KioskConfig {
         return "true".equals(sensorOption(context, key, Boolean.toString(fallback)));
     }
 
+    /**
+     * Keeps the tags seen down to the newest {@code keep}: a panel in a public place reads tags
+     * all day, and each one is a line in the settings file otherwise. The names a person could
+     * give a tag went on 2026-09-30 (a tag is named in Home Assistant, as the companion app
+     * leaves it), and what an older build stored for them goes here too.
+     */
+    static void pruneSeenTags(Context context, int keep) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        java.util.List<String[]> unnamed = new java.util.ArrayList<>();
+        android.content.SharedPreferences.Editor leftovers = prefs.edit();
+        boolean stale = false;
+        for (java.util.Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+            if (entry.getKey().startsWith("nfc_tag_")) {
+                leftovers.remove(entry.getKey());
+                stale = true;
+                continue;
+            }
+            if (!entry.getKey().startsWith("sensor_option_tag_seen_")) {
+                continue;
+            }
+            String id = entry.getKey().substring("sensor_option_tag_seen_".length());
+            long at;
+            try {
+                at = Long.parseLong(String.valueOf(entry.getValue()));
+            } catch (NumberFormatException notATime) {
+                at = 0;
+            }
+            unnamed.add(new String[] {String.format(java.util.Locale.ROOT, "%020d", at), id});
+        }
+        if (stale) {
+            leftovers.apply();
+        }
+        if (unnamed.size() <= keep) {
+            return;
+        }
+        // Oldest first; two tags read in the same millisecond stay two (review, 2026-09-27).
+        java.util.Collections.sort(unnamed, (a, b) -> a[0].compareTo(b[0]));
+        android.content.SharedPreferences.Editor editor = prefs.edit();
+        for (int index = 0; index < unnamed.size() - keep; index++) {
+            editor.remove("sensor_option_tag_seen_" + unnamed.get(index)[1]);
+        }
+        editor.apply();
+    }
+
+    /** The tags this panel has read, newest first, id to when (milliseconds). */
+    static java.util.LinkedHashMap<String, Long> seenTags(Context context) {
+        java.util.List<java.util.Map.Entry<String, Long>> seen = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, ?> entry : storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE).getAll().entrySet()) {
+            if (entry.getKey().startsWith("sensor_option_tag_seen_")) {
+                try {
+                    seen.add(new java.util.AbstractMap.SimpleEntry<>(
+                            entry.getKey().substring("sensor_option_tag_seen_".length()),
+                            Long.parseLong(String.valueOf(entry.getValue()))));
+                } catch (NumberFormatException notATime) {
+                    // A value this build did not write.
+                }
+            }
+        }
+        java.util.Collections.sort(seen, (a, b) -> Long.compare(b.getValue(), a.getValue()));
+        java.util.LinkedHashMap<String, Long> ordered = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<String, Long> one : seen) {
+            ordered.put(one.getKey(), one.getValue());
+        }
+        return ordered;
+    }
+
+
     /** The stored automations; the shipped default until something is stored. */
     static java.util.List<Automations.Rule> automationsOf(Context context) {
         return Automations.parse(storageContext(context)

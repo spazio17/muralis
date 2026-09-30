@@ -180,7 +180,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (hub != null) {
                 // Refreshed on every tick, not only from a settings surface: every branch is a
                 // no-op while the state matches, and it is what brings back a camera the
-                // platform took. Then the block the panel's rows read, with or without MQTT.
+                // platform took, a scan that failed, or beacons switched on while the radio
+                // was still off. Then the block the panel's rows read, with or without MQTT.
                 refreshSensors();
                 hub.poll();
             }
@@ -291,8 +292,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
+        beacons = new Beacons(this);
         microphone = new Microphone(this);
         camera = new PanelCamera(this, this::onCameraMotion);
+        sensors.source(Sensors.BLUETOOTH, beacons);
         sensors.source(Sensors.MICROPHONE, microphone);
         sensors.source(Sensors.CAMERA, camera);
         sensors.onEdge(this::sensorEdge);
@@ -360,6 +363,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             automations.rules(KioskConfig.automationsOf(this));
             refreshSensors();
             publishStateSoon();
+        } else if (intent != null && ACTION_TAG_READ.equals(intent.getAction())) {
+            tagRead(intent.getStringExtra(EXTRA_TAG_ID), intent.getStringExtra(EXTRA_TAG_CONTENT));
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
             displayVisualOff();
             // Not a dispatched command, so nothing else republishes: without this the Screensaver
@@ -384,6 +389,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         stopTelemetry();
         if (sensors != null) {
             sensors.stop();
+        }
+        if (beacons != null) {
+            beacons.stop();
         }
         if (microphone != null) {
             microphone.stop();
@@ -2037,8 +2045,55 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
     private Automations.Engine automations;
+    private Beacons beacons;
     private Microphone microphone;
     private PanelCamera camera;
+    static final String ACTION_TAG_READ = "org.spazio17.muralis.TAG_READ";
+    static final String EXTRA_TAG_ID = "tag_id";
+    static final String EXTRA_TAG_CONTENT = "tag_content";
+
+    /**
+     * The activity's reader mode saw a tag: the chip's id, and the tag's text and addresses.
+     * The reading, the automations, Home Assistant.
+     */
+    static void tagReadSoon(Context context, String chipId, String content) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_TAG_READ);
+        intent.putExtra(EXTRA_TAG_ID, chipId);
+        intent.putExtra(EXTRA_TAG_CONTENT, content);
+        context.startService(intent);
+    }
+
+    /**
+     * One tag, as Home Assistant's app reports it: the Home Assistant tag id a tag written by
+     * Home Assistant carries, else the chip's id; the tag's text and addresses ride along.
+     */
+    private void tagRead(String chipId, String content) {
+        if (sensors == null || !sensors.on(Sensors.NFC)) {
+            return;
+        }
+        String read = content == null ? "" : content;
+        String homeAssistant = Sensors.homeAssistantTagId(read);
+        String tagId = homeAssistant != null ? homeAssistant : chipId == null ? "" : chipId;
+        if (tagId.isEmpty() && read.isEmpty()) {
+            Log.i(TAG, "Tag read, with nothing to report: no content on it");
+            return;
+        }
+        // The id, and the content's length only: a tag can carry anything.
+        Log.i(TAG, "Tag read: " + (tagId.isEmpty() ? "no id" : tagId)
+                + (read.isEmpty() ? "" : ", content of " + read.length() + " characters"));
+        if (!tagId.isEmpty()) {
+            KioskConfig.edit(this).sensorOption("tag_seen_" + tagId,
+                    Long.toString(System.currentTimeMillis())).apply();
+            KioskConfig.pruneSeenTags(this, 20);
+        }
+        sensors.tagRead(tagId, read);
+        MqttController mqtt = mqttController;
+        if (mqtt != null && !tagId.isEmpty()) {
+            mqtt.publishTagRead(tagId);
+        }
+        publishStateSoon();
+    }
 
     /** Runs one automation's action; the engine decided it is due. */
     private void runAutomation(Automations.Rule rule) {
@@ -2333,7 +2388,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return camera;
     }
 
-    /** The live service, for a screen that needs what only the service holds. */
+    Beacons beacons() {
+        return beacons;
+    }
+
+    /** The live service, for a screen that needs what only the service holds (the beacons). */
     private static volatile KioskService live;
 
     /** The live service, for the panel's calibration steps; null while it is not running. */
@@ -2341,6 +2400,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return live;
     }
 
+    static Beacons beaconsOf(Context context) {
+        KioskService service = live;
+        return service == null ? null : service.beacons;
+    }
     private android.media.MediaPlayer player;
     private android.speech.tts.TextToSpeech speech;
     private boolean speechReady;
@@ -2411,6 +2474,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             mqtt.clearPicture();
         }
         picturesToBroker = pictures;
+        if (beacons != null) {
+            beacons.refresh(hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH));
+        }
         if (microphone != null) {
             if (hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
                 microphone.start();
@@ -2422,8 +2488,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
             camera.refresh(cameraOn);
         }
         refreshForegroundTypes();
+        boolean nfcOn = hub.available(Sensors.NFC) && hub.on(Sensors.NFC);
+        if (nfcApplied == null || nfcApplied != nfcOn) {
+            // Reader mode belongs to the activity; told once per change, whichever surface
+            // flipped the switch.
+            nfcApplied = nfcOn;
+            sendUiCommand("sensors.nfc", -1, null);
+        }
         publishSensorBlock();
     }
+
+    /** The NFC switch as last told to the activity; see refreshSensors. */
+    private Boolean nfcApplied;
 
     /** The foreground service types in force; see {@link #refreshForegroundTypes}. */
     private int foregroundTypesNow;

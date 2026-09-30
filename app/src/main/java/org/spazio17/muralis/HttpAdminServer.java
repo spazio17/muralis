@@ -1064,7 +1064,7 @@ final class HttpAdminServer {
             // Named after a box that no longer exists, and kept anyway: it is the wire name
             // POST /api/setting has always accepted. It covers the stats-overlay switch, the
             // display and screensaver keys, and since the sensors the sensor switches, their
-            // options and the automation switches. See settingScript.
+            // options, the automation switches and the beacon names. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1387,10 +1387,13 @@ final class HttpAdminServer {
         paths.put("plus", "<path d=\"M12 5v14M5 12h14\"/>");
         paths.put("sensors", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14\"/>");
         paths.put("panel", "<rect x=\"4\" y=\"2\" width=\"16\" height=\"20\" rx=\"2\"/><path d=\"M9 18h6\"/>");
+        paths.put("tag", "<path d=\"M3 12V4h8l10 10-8 8z\"/><circle cx=\"7.5\" cy=\"8.5\" r=\"1.5\"/>");
         // The sensors' glyphs, the same paths the panel's drawables carry.
         paths.put("proximity", "<circle cx=\"12\" cy=\"10\" r=\"2.5\"/><path d=\"M7.5 17.5a4.5 3.5 0 019 0M3.13 8.6A9.5 9.5 0 018.6 3.13M15.4 3.13A9.5 9.5 0 0120.87 8.6M20.87 15.4A9.5 9.5 0 0115.4 20.87M8.6 20.87A9.5 9.5 0 013.13 15.4\"/>");
         paths.put("light", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
         paths.put("movement", "<path d=\"M3 12h3l3-7 4 14 3-7h5\"/>");
+        paths.put("bluetooth", "<path d=\"M7 7l10 10-5 5V2l5 5L7 17\"/>");
+        paths.put("nfc", "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/><path d=\"M8 8v8M12 8v8M16 8v8\"/>");
         paths.put("audio", "<path d=\"M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11\"/>");
         paths.put("camera", "<path d=\"M4 8h4l2-3h4l2 3h4v11H4z\"/><circle cx=\"12\" cy=\"13\" r=\"3.5\"/>");
         paths.put("microphone", "<rect x=\"9\" y=\"3\" width=\"6\" height=\"11\" rx=\"3\"/><path d=\"M5 11a7 7 0 0014 0M12 18v3M9 21h6\"/>");
@@ -1992,6 +1995,25 @@ final class HttpAdminServer {
                     .append(optionField("movement_still_s", "Still after (seconds)",
                             KioskConfig.sensorOption(context, "movement_still_s", "5"), "number"))
                     .append("</section>");
+        } else if (def == Sensors.NFC) {
+            html.append(head).append("</section>")
+                    .append("<section class=\"card\"><h2>Tags</h2>").append(tagRows())
+                    .append("</section>");
+        } else if (def == Sensors.BLUETOOTH) {
+            html.append(head)
+                    .append(optionField("beacons_reach_s", "Out of reach after, seconds",
+                            KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
+                    .append(beaconRows()).append("</section>")
+                    .append("<section class=\"card\"><h2>Send a beacon</h2>")
+                    .append(optionSwitch("beacons_transmit", "Transmit",
+                            KioskConfig.sensorOptionOn(context, "beacons_transmit", false)))
+                    .append(optionField("beacons_uuid", "UUID",
+                            KioskConfig.sensorOption(context, "beacons_uuid", ""), "text"))
+                    .append(optionField("beacons_major", "Major",
+                            KioskConfig.sensorOption(context, "beacons_major", "1"), "number"))
+                    .append(optionField("beacons_minor", "Minor",
+                            KioskConfig.sensorOption(context, "beacons_minor", "1"), "number"))
+                    .append("</section>");
         } else if (def == Sensors.CAMERA) {
             StringBuilder sizes = new StringBuilder();
             for (String size : PanelCamera.SIZES) {
@@ -2060,10 +2082,60 @@ final class HttpAdminServer {
         if (def == Sensors.MOVEMENT) {
             return "Report movement";
         }
+        if (def == Sensors.NFC) {
+            return "Read tags";
+        }
+        if (def == Sensors.BLUETOOTH) {
+            return "Listen for beacons";
+        }
         if (def == Sensors.CAMERA) {
             return "Use the camera";
         }
         return def.name;
+    }
+
+    /**
+     * The tags read lately, newest first, by their id and when; a tag is named and used in
+     * Home Assistant, as the panel's own page has it.
+     */
+    private String tagRows() {
+        Map<String, Long> seen = KioskConfig.seenTags(context);
+        if (seen.isEmpty()) {
+            return "<p class=\"hint\">No tag has been held to the panel yet.</p>";
+        }
+        StringBuilder rows = new StringBuilder("<ul class=\"list\">");
+        for (Map.Entry<String, Long> tag : seen.entrySet()) {
+            rows.append(listRow("tag", tag.getKey(), null, "Read "
+                    + android.text.format.DateUtils.getRelativeTimeSpanString(tag.getValue()),
+                    null, "", false));
+        }
+        return rows.append("</ul>").toString();
+    }
+
+    /** The beacons heard, each with a box for its name. */
+    private String beaconRows() {
+        Beacons beacons = kioskService.beacons();
+        java.util.List<Beacons.Seen> heard = beacons == null
+                ? Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+        if (heard.isEmpty()) {
+            return "<p class=\"hint\">No beacon has been heard yet.</p>";
+        }
+        java.util.List<Beacons.Seen> reach = beacons.inReach();
+        StringBuilder rows = new StringBuilder("<ul class=\"list gap\">");
+        for (Beacons.Seen one : heard) {
+            String name = KioskConfig.sensorOption(context, "beacon_" + one.id, "");
+            String state = reach.contains(one)
+                    ? "In reach" + (Double.isNaN(one.distance()) ? "" : ", " + one.distance() + " m")
+                    : "Out of reach";
+            rows.append("<li class=\"two\"><span class=\"lead\">").append(glyph("bluetooth"))
+                    .append("</span><span class=\"text\">")
+                    .append(fieldWithId("beacon-" + one.id.hashCode(), "text", null, "Name", name,
+                            " data-setting=\"sensor_option_beacon_" + escapeHtml(one.id) + "\"",
+                            one.id + ", " + state.substring(0, 1).toLowerCase(Locale.ROOT)
+                                    + state.substring(1)))
+                    .append("</span></li>");
+        }
+        return rows.append("</ul>").toString();
     }
 
     /** Stores one setting of a sensor's page, checked by key; the rules are Sensors.checkOption. */
@@ -2210,7 +2282,8 @@ final class HttpAdminServer {
                         .append(def.id).append("\" value=\"").append(event.id).append("\"")
                         .append(checked ? " checked" : "")
                         .append(" data-level=\"").append(event.levelUnit == null ? "" : event.levelUnit)
-                        .append("\" data-holds=\"").append(event.holds ? "1" : "").append("\">")
+                        .append("\" data-holds=\"").append(event.holds ? "1" : "")
+                        .append("\" data-tag=\"").append(event.tag ? "1" : "").append("\">")
                         .append(escapeHtml(event.label)).append("</label>");
             }
             events.append("</div>");
@@ -2232,6 +2305,15 @@ final class HttpAdminServer {
                     .append(action.argumentLabel == null ? "" : escapeHtml(action.argumentLabel))
                     .append("\">").append(escapeHtml(action.label)).append("</option>");
         }
+        // Every tag read lately, by its id, newest first, as the panel's own editor has it.
+        StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.tag));
+        java.util.Set<String> tagsRead = KioskConfig.seenTags(context).keySet();
+        for (String tag : tagsRead) {
+            tags.append(selectOption(tag, tag, rule.tag));
+        }
+        if (!rule.tag.isEmpty() && !tagsRead.contains(rule.tag)) {
+            tags.append(selectOption(rule.tag, rule.tag, rule.tag));
+        }
         return "<form method=\"post\" action=\"/api/automations/save\" class=\"automation\" id=\"editor"
                 + sfx + "\">"
                 + "<input type=\"hidden\" name=\"id\" value=\"" + escapeHtml(rule.id) + "\">"
@@ -2251,6 +2333,7 @@ final class HttpAdminServer {
                 + fieldWithId("a-minutes" + sfx, "number", "minutes", "For (minutes)",
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
+                + selectField("a-tag" + sfx, "tag", "Tag", null, tags.toString(), null)
                 + "</section>"
                 + "<section class=\"card\"><h2>Then</h2>"
                 + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
@@ -2339,6 +2422,7 @@ final class HttpAdminServer {
         rule.event = form.getOrDefault("event_" + rule.sensor, "");
         rule.level = parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
+        rule.tag = form.getOrDefault("tag", "").trim();
         rule.action = form.getOrDefault("action", "");
         rule.argument = form.getOrDefault("argument", "");
         boolean only = isTrue(form.getOrDefault("only", "0"));
