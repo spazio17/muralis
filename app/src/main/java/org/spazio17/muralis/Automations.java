@@ -192,7 +192,7 @@ final class Automations {
         boolean sameCondition(Rule other) {
             return sensor.equals(other.sensor) && event.equals(other.event)
                     && (Double.isNaN(level) ? Double.isNaN(other.level) : level == other.level)
-                    && minutes == other.minutes;
+                    && minutes == other.minutes && tag.equals(other.tag);
         }
     }
 
