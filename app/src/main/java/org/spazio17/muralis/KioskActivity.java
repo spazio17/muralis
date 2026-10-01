@@ -796,6 +796,9 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // In front: the camera and microphone foreground types a background start could not
+        // take are asked for again; see KioskService.refreshForegroundTypes.
+        KioskService.foregroundTypesSoon(this);
         if (orientationPending) {
             orientationPending = false;
             applyOrientation();
@@ -826,6 +829,7 @@ public final class KioskActivity extends Activity {
         if (proBilling != null) {
             proBilling.refresh();
         }
+        applyNfcReader();
         // Back from the Settings screen that "Grant it now" opened, whether the watcher brought
         // the activity back or the operator did: the card was drawn with the grant missing and the
         // grant is there now, so redraw before the red line is read again. Here rather than in the
@@ -851,6 +855,7 @@ public final class KioskActivity extends Activity {
     protected void onPause() {
         inFront = false;
         KioskRuntimeState.publishActivityInFront(false);
+        applyNfcReader();
         // Belt and braces for the same invariant: a bar disabled while nothing is pinned is a
         // tablet nobody can use.
         disableStatusBarIfPinned();
@@ -2329,6 +2334,7 @@ public final class KioskActivity extends Activity {
         sensorReadouts.clear();
         sensorSwitches.clear();
         sensorActions.clear();
+        automationSwitches.clear();
         org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
         for (Sensors.Def def : Sensors.ALL) {
             org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
@@ -2344,6 +2350,18 @@ public final class KioskActivity extends Activity {
         Button sensorsMore = textButtonOnward(theme, "More sensor settings");
         sensorsMore.setOnClickListener(view -> showSensorsPage());
         sensorsCard.addView(buttonRow(sensorsMore), matchWrap());
+
+        LinearLayout automationsCard = sectionBody(theme);
+        for (Automations.Rule rule : KioskConfig.automationsOf(this)) {
+            if (rule.enabled) {
+                CompoundButton toggle = automationSwitch(theme, rule, this::redrawSettingsSoon);
+                addListRow(automationsCard, theme, automationRow(theme, rule, toggle, null, true),
+                        automationsCard.getChildCount() == 0);
+            }
+        }
+        Button automationsMore = textButtonOnward(theme, "More automation settings");
+        automationsMore.setOnClickListener(view -> showAutomationsPage());
+        automationsCard.addView(buttonRow(automationsMore), matchWrap());
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -2386,8 +2404,8 @@ public final class KioskActivity extends Activity {
             }
         };
         mainHandler.postDelayed(liveSettingSyncTask, LIVE_SETTING_SYNC_INTERVAL_MS);
-        // The Sensors section follows a change made on another surface; the redraw is the one a
-        // switch flipped here uses, which keeps what the boxes hold.
+        // The Sensors and Automations sections follow a change made on another surface; the
+        // redraw is the one a switch flipped here uses, which keeps what the boxes hold.
         watchLists("home", page, this::redrawSettingsSoon);
 
         // The Pro gate's face. The shape decided on 2026-08-27: the paid cards stay visible and
@@ -2566,6 +2584,8 @@ public final class KioskActivity extends Activity {
                 new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
                         screensaverCard),
                 new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
+                new Section(R.drawable.ic_automations, "Automations", automationsSummary(),
+                        automationsCard),
                 new Section(R.drawable.ic_sensor_panel, "This panel", config.deviceId, aboutCard));
 
         Runnable openDashboard = () -> {
@@ -3188,6 +3208,17 @@ public final class KioskActivity extends Activity {
         return Sensors.summary(KioskRuntimeState.sensors());
     }
 
+    private String automationsSummary() {
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+        int on = 0;
+        for (Automations.Rule rule : rules) {
+            if (rule.enabled) {
+                on++;
+            }
+        }
+        return rules.isEmpty() ? "None yet" : on + " of " + rules.size() + " on";
+    }
+
     /** The Sensors section's reading lines and switches, repainted by overlayTask. */
     private final java.util.Map<String, java.util.List<TextView>> sensorReadouts =
             new java.util.HashMap<>();
@@ -3211,6 +3242,10 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Each rule's switches on the page, followed from what is stored, as the sensors' are. */
+    private final java.util.Map<String, java.util.List<CompoundButton>> automationSwitches =
+            new java.util.HashMap<>();
+
     /** Which list the page on screen shows, its key when drawn, the page, and how to redraw it. */
     private String listsKind;
     private String listsKey;
@@ -3218,10 +3253,10 @@ public final class KioskActivity extends Activity {
     private Runnable listsRefresh;
 
     /**
-     * Watches a page that lists sensors: when another surface changes what it lists (a sensor
-     * switched on over MQTT), the page is drawn again on the next second's tick, never while a
-     * box has the focus. A sensor switched on the web stayed off the panel's settings page until
-     * it was reopened (Juri, 2026-09-28).
+     * Watches a page that lists sensors or rules: when another surface changes what it lists
+     * (a rule added or renamed on the web, a sensor switched on over MQTT), the page is drawn
+     * again on the next second's tick, never while a box has the focus. A rule added on the
+     * web stayed off the panel's Automations page until it was reopened (Juri, 2026-09-28).
      */
     private void watchLists(String kind, View root, Runnable refresh) {
         listsKind = kind;
@@ -3231,8 +3266,11 @@ public final class KioskActivity extends Activity {
     }
 
     private String currentListsKey(String kind) {
-        org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors());
-        return keys.optString("home".equals(kind) ? "sensors_home" : kind + "_page");
+        org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors(),
+                Automations.toJson(KioskConfig.automationsOf(this), true));
+        return "home".equals(kind)
+                ? keys.optString("sensors_home") + keys.optString("automations_home")
+                : keys.optString(kind + "_page");
     }
 
     /** One second's look at the watched page; true while it is on screen. */
@@ -3241,6 +3279,7 @@ public final class KioskActivity extends Activity {
         if (root == null || !root.isAttachedToWindow()) {
             return false;
         }
+        repaintAutomationSwitches();
         String now = currentListsKey(listsKind);
         if (now.equals(listsKey) || getCurrentFocus() instanceof EditText) {
             return true;
@@ -3248,6 +3287,34 @@ public final class KioskActivity extends Activity {
         listsKey = now;
         listsRefresh.run();
         return true;
+    }
+
+    /** The rules' switches against what is stored: a flip on the web shows here too. */
+    private void repaintAutomationSwitches() {
+        if (automationSwitches.isEmpty()) {
+            return;
+        }
+        java.util.Map<String, Boolean> stored = new java.util.HashMap<>();
+        for (Automations.Rule rule : KioskConfig.automationsOf(this)) {
+            stored.put(rule.id, rule.enabled);
+        }
+        for (java.util.Map.Entry<String, java.util.List<CompoundButton>> entry
+                : automationSwitches.entrySet()) {
+            Boolean on = stored.get(entry.getKey());
+            if (on == null) {
+                continue;
+            }
+            for (CompoundButton toggle : entry.getValue()) {
+                if (toggle.isAttachedToWindow() && toggle.isChecked() != on) {
+                    syncingLiveControls = true;
+                    try {
+                        toggle.setChecked(on);
+                    } finally {
+                        syncingLiveControls = false;
+                    }
+                }
+            }
+        }
     }
 
     private final java.util.Map<String, java.util.List<CompoundButton>> sensorSwitches =
@@ -3305,12 +3372,20 @@ public final class KioskActivity extends Activity {
         return alive;
     }
 
+    private static final int REQUEST_SENSOR_PERMISSION = 22;
+    /** The sensor whose permission was just asked for, redrawn when the answer arrives. */
+    private String permissionAskedFor;
+
     private static int sensorGlyph(String glyph) {
         switch (glyph) {
             case "proximity": return R.drawable.ic_sensor_proximity;
             case "light": return R.drawable.ic_sensor_light;
             case "movement": return R.drawable.ic_sensor_movement;
+            case "bluetooth": return R.drawable.ic_sensor_bluetooth;
+            case "nfc": return R.drawable.ic_sensor_nfc;
             case "audio": return R.drawable.ic_sensor_audio;
+            case "camera": return R.drawable.ic_sensor_camera;
+            case "microphone": return R.drawable.ic_sensor_microphone;
             case "pressure": return R.drawable.ic_sensor_pressure;
             case "temperature": return R.drawable.ic_sensor_temperature;
             case "humidity": return R.drawable.ic_sensor_humidity;
@@ -3321,6 +3396,7 @@ public final class KioskActivity extends Activity {
             case "network": return R.drawable.ic_sensor_network;
             case "memory": return R.drawable.ic_sensor_memory;
             case "processor": return R.drawable.ic_sensor_processor;
+            case "tag": return R.drawable.ic_sensor_tag;
             default: return R.drawable.ic_sensor_bolt;
         }
     }
@@ -3450,11 +3526,44 @@ public final class KioskActivity extends Activity {
             KioskConfig.edit(this).sensorEnabled(def.id, checked).apply();
             KioskService.refreshSensorsSoon(this);
             paintSensorActions(def.id, checked);
+            if (def == Sensors.NFC) {
+                applyNfcReader();
+            }
             if (after != null) {
                 after.run();
             }
         });
         viewsOf(sensorSwitches, def.id).add(toggle);
+        return toggle;
+    }
+
+    /** A rule's switch: stored at once, under the lock every writer of the rules holds. */
+    private CompoundButton automationSwitch(KioskTheme theme, Automations.Rule rule) {
+        return automationSwitch(theme, rule, null);
+    }
+
+    private CompoundButton automationSwitch(KioskTheme theme, Automations.Rule rule,
+            Runnable after) {
+        CompoundButton toggle = themedSwitch(theme, "", rule.enabled);
+        toggle.setContentDescription(rule.name);
+        viewsOf(automationSwitches, rule.id).add(toggle);
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (syncingLiveControls) {
+                return;
+            }
+            synchronized (Automations.STORE) {
+                java.util.List<Automations.Rule> fresh = KioskConfig.automationsOf(this);
+                Automations.Rule stored = Automations.find(fresh, rule.id);
+                if (stored != null) {
+                    stored.enabled = checked;
+                    KioskConfig.storeAutomations(this, fresh);
+                }
+            }
+            KioskService.refreshSensorsSoon(this);
+            if (after != null) {
+                after.run();
+            }
+        });
         return toggle;
     }
 
@@ -3482,10 +3591,32 @@ public final class KioskActivity extends Activity {
         return list;
     }
 
+    private LinearLayout automationRow(KioskTheme theme, Automations.Rule rule, View trailing,
+            Runnable onOpen, boolean chevron) {
+        // The Automations section's own glyph on every rule, the paper scroll (Juri, 2026-09-30);
+        // the sentence says which sensor it waits for.
+        LinearLayout row = glyphRow(theme, R.drawable.ic_automations,
+                rule.name, Automations.sentence(rule), trailing, onOpen, false, chevron);
+        if (KioskService.stopsWhileAsleep(this, rule.sensor)) {
+            // The sensor-with-a-slash of the sensor's own card, small and in the warning colour,
+            // before the sentence: this rule does not run while the display sleeps.
+            TextView sentence = readingOf(row);
+            android.graphics.drawable.Drawable mark =
+                    getDrawable(R.drawable.ic_asleep_disabled).mutate();
+            mark.setTint(theme.warn);
+            mark.setBounds(0, 0, dp(16), dp(16));
+            sentence.setCompoundDrawablesRelative(mark, null, null, null);
+            sentence.setCompoundDrawablePadding(dp(8));
+            sentence.setContentDescription("Not running while the display is off. "
+                    + sentence.getText());
+        }
+        return row;
+    }
+
     /**
      * The prelude every page below the settings shares; see showScreensaverSettings. The arrow
-     * leads one level up, not to the settings: a sensor's page to the Sensors list (Juri,
-     * 2026-09-27, found on the glass).
+     * leads one level up, not to the settings: a sensor's page to the Sensors list, the editor to
+     * the Automations list (Juri, 2026-09-27, found on the glass).
      */
     private LinearLayout subPage(String title, Runnable back) {
         destroyWebView();
@@ -3524,6 +3655,7 @@ public final class KioskActivity extends Activity {
         sensorReadouts.clear();
         sensorSwitches.clear();
         sensorActions.clear();
+        automationSwitches.clear();
         org.json.JSONObject block = KioskRuntimeState.sensors();
         Sensors.Def chosen = null;
         if (wide) {
@@ -3576,6 +3708,11 @@ public final class KioskActivity extends Activity {
                 off.setEnabled(false);
                 row = sensorRow(theme, def, one, off, open, !wide);
                 absent.add(row);
+            } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
+                Button allow = secondaryButton(theme, "Allow");
+                allow.setOnClickListener(view -> requestSensorPermission(def));
+                row = sensorRow(theme, def, one, allow, open, !wide);
+                addRow.accept(row);
             } else {
                 row = sensorRow(theme, def, one, sensorSwitch(theme, def, one), open, !wide);
                 addRow.accept(row);
@@ -3759,6 +3896,45 @@ public final class KioskActivity extends Activity {
         return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
+    /** One step of the microphone calibration through the service; the reason when refused. */
+    private String microphoneStep(String step) {
+        KioskService service = KioskService.liveService();
+        return service == null ? "the service is not running" : service.calibrateMicrophone(step);
+    }
+
+    /**
+     * The two steps, each a screen of its own: the room quiet, then the loudest sound that
+     * should read 100. The panel averages the last three seconds when the button is tapped,
+     * so the room has to stay that way until then.
+     */
+    private void calibrateMicrophone() {
+        final Runnable screen = currentScreen;
+        Runnable back = () -> {
+            if (screen != null) {
+                screen.run();
+            }
+        };
+        showConfirm("Keep the room quiet", "Let the room be as quiet as it gets, for a few "
+                + "seconds, then tap Quiet.", "Quiet", false, () -> {
+                    String problem = microphoneStep("quiet");
+                    if (problem != null) {
+                        showNotice("Not done", capital(problem) + ".", back);
+                        return;
+                    }
+                    showConfirm("Make it loud", "Make the loudest sound that should read 100: "
+                            + "talk loudly or play music near the panel, and tap Loud while it "
+                            + "goes on.", "Loud", false, () -> {
+                                String done = microphoneStep("loud");
+                                if (done != null) {
+                                    showNotice("Not done", capital(done) + ".", back);
+                                    return;
+                                }
+                                back.run();
+                                redrawSoon();
+                            }, back);
+                }, back);
+    }
+
     /** One step of the proximity calibration through the service; the reason when refused. */
     private String proximityStep(String step) {
         KioskService service = KioskService.liveService();
@@ -3832,10 +4008,71 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Judged live rather than from the snapshot, which is rebuilt on the service's next tick. */
+    private boolean permittedNow(Sensors.Def def) {
+        boolean permitted = Sensors.permitted(this, def);
+        if (permitted) {
+            // Granted, in Android's settings or here: a later refusal is judged afresh, so
+            // Allow asks Android again before it sends anyone to settings (review, 2026-10-01).
+            android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                    .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+            if (ui.getBoolean("permission_blocked_" + def.id, false)) {
+                ui.edit().remove("permission_blocked_" + def.id).apply();
+            }
+        }
+        return permitted;
+    }
+
+    /**
+     * Asks Android for the sensor's permissions. Once a permission has been refused for good
+     * ("Don't ask again", or twice on Android 11 and later) Android shows no dialog, and Allow
+     * looked dead (review, 2026-10-01): the press after such a refusal opens this app's page in
+     * Android's settings, where the permission is a switch, and says so. Refused for good is
+     * judged from the answer itself (onRequestPermissionsResult), not from a guess before
+     * asking, which a dialog closed with Back also matched.
+     */
+    private void requestSensorPermission(Sensors.Def def) {
+        android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+        if (ui.getBoolean("permission_blocked_" + def.id, false) && !permittedNow(def)) {
+            Runnable screen = currentScreen;
+            showNotice("Blocked in Android settings", "Android will not ask for this permission "
+                    + "again. OK opens Muralis's page in Android's settings, where it is under "
+                    + "Permissions.", () -> {
+                        try {
+                            startActivity(new Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:" + getPackageName())));
+                        } catch (android.content.ActivityNotFoundException noSettings) {
+                            Log.w(TAG, "No settings page to open", noSettings);
+                        }
+                        if (screen != null) {
+                            screen.run();
+                        }
+                    });
+            return;
+        }
+        permissionAskedFor = def.id;
+        try {
+            requestPermissions(Sensors.permissionsFor(def), REQUEST_SENSOR_PERMISSION);
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Cannot ask for the permission", refused);
+            Toast.makeText(this, "This device would not show the permission request.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
     /** A field of a sensor's page, stored when the box lets go of the focus or on Done. */
     private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
             String fallback, boolean number) {
-        EditText input = themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
+        addOptionField(card, theme, label, key, fallback, number, false);
+    }
+
+    /** The same; {@code words} for a name a person writes, in the prose box, not monospace. */
+    private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
+            String fallback, boolean number, boolean words) {
+        EditText input = words ? proseInput(theme, KioskConfig.sensorOption(this, key, fallback))
+                : themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
         if (number) {
             input.setInputType(InputType.TYPE_CLASS_NUMBER);
         }
@@ -3936,6 +4173,7 @@ public final class KioskActivity extends Activity {
         sensorReadouts.clear();
         sensorSwitches.clear();
         sensorActions.clear();
+        automationSwitches.clear();
         LinearLayout.LayoutParams gridParams = matchWrap();
         gridParams.topMargin = dp(16);
         page.addView(paneOf(cardGrid(theme, sensorCards(theme, def, one))), gridParams);
@@ -3965,13 +4203,22 @@ public final class KioskActivity extends Activity {
         // No title on the first card: the app bar and the row already name the sensor, and
         // three times in a column was two too many (review, 2026-10-01).
         LinearLayout card = card(theme, null);
-        String switchLabel = def == Sensors.MOVEMENT ? "Report movement" : def.name;
+        // "Use the camera": an action like the other switches' words, where "Camera on" read
+        // as a state (review, 2026-10-01).
+        String switchLabel = def == Sensors.MOVEMENT ? "Report movement"
+                : def == Sensors.NFC ? "Read tags"
+                : def == Sensors.BLUETOOTH ? "Listen for beacons"
+                : def == Sensors.CAMERA ? "Use the camera" : def.name;
         View trailing;
         if (!one.optBoolean("available")) {
             CompoundButton off = themedSwitch(theme, "", false);
             off.setEnabled(false);
             trailing = off;
             switchLabel = def.name;
+        } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
+            Button allow = secondaryButton(theme, "Allow");
+            allow.setOnClickListener(view -> requestSensorPermission(def));
+            trailing = allow;
         } else {
             trailing = sensorSwitch(theme, def, one);
         }
@@ -3986,7 +4233,8 @@ public final class KioskActivity extends Activity {
         viewsOf(sensorReadouts, def.id).add(readingOf((LinearLayout) card.getChildAt(card.getChildCount() - 1)));
         java.util.List<View> cards = new java.util.ArrayList<>();
         cards.add(card);
-        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
+                || (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def))) {
             return cards;
         }
         if (def.androidType != 0) {
@@ -4004,8 +4252,705 @@ public final class KioskActivity extends Activity {
             // guessing at a driver's values, a procedure the user runs). Until then Android's
             // distance rule reads it.
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
+        } else if (def == Sensors.MICROPHONE) {
+            // The room's quiet and loud, shown by the person, the proximity's procedure: a
+            // quiet room read about 30 of 100 before (Juri, 2026-09-28), and what counts as
+            // loud is the room's, not Android's.
+            cards.add(calibrationCard(theme, def, one, this::calibrateMicrophone));
+        } else if (def == Sensors.NFC) {
+            // The tags read lately, newest first, by their id and when: a tag is named and
+            // used in Home Assistant, which gets each read as a tag scanned, the way its
+            // companion app hands one over (Juri, 2026-09-30: "copy what Home Assistant does").
+            // The automations here offer the same tags by id.
+            LinearLayout tags = card(theme, "Tags");
+            java.util.Map<String, Long> seen = KioskConfig.seenTags(this);
+            if (seen.isEmpty()) {
+                TextView none = new FlushText(this);
+                none.setText("No tag has been held to the panel yet.");
+                none.setTextColor(theme.subtext);
+                none.setTextSize(14);
+                tags.addView(none, matchWrap());
+            }
+            boolean firstTag = true;
+            for (java.util.Map.Entry<String, Long> tag : seen.entrySet()) {
+                addListRow(tags, theme, glyphRow(theme, R.drawable.ic_sensor_tag, tag.getKey(),
+                        "Read " + android.text.format.DateUtils.getRelativeTimeSpanString(
+                                tag.getValue()), null, null, false), firstTag);
+                firstTag = false;
+            }
+            cards.add(tags);
+        } else if (def == Sensors.BLUETOOTH) {
+            addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_s", "30",
+                    true);
+            Beacons beacons = KioskService.beaconsOf(this);
+            java.util.List<Beacons.Seen> heard = beacons == null
+                    ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+            if (heard.isEmpty()) {
+                TextView none = new FlushText(this);
+                none.setText("No beacon has been heard yet.");
+                none.setTextColor(theme.subtext);
+                none.setTextSize(14);
+                LinearLayout.LayoutParams noneParams = matchWrap();
+                noneParams.topMargin = dp(16);
+                card.addView(none, noneParams);
+            } else {
+                java.util.List<Beacons.Seen> reach = beacons.inReach();
+                NamedList beaconNames = KioskConfig.beaconNames(this);
+                for (Beacons.Seen seen : heard) {
+                    // Words, not a machine value: the prose box (review, 2026-10-01).
+                    EditText name = proseInput(theme, beaconNames.name(seen.id));
+                    addField(card, theme, "Name", name, seen.id + ", " + (reach.contains(seen)
+                            ? "in reach" + (Double.isNaN(seen.distance()) ? ""
+                                    : ", " + seen.distance() + " m")
+                            : "out of reach"));
+                    // Why a name is refused, in red under its box, as on the other fields.
+                    TextView nameProblem = new FlushText(this);
+                    nameProblem.setTextColor(theme.bad);
+                    nameProblem.setTextSize(12);
+                    nameProblem.setVisibility(View.GONE);
+                    LinearLayout.LayoutParams nameProblemParams = matchWrapClose();
+                    nameProblemParams.leftMargin = dp(16);
+                    card.addView(nameProblem, nameProblemParams);
+                    Runnable store = () -> {
+                        String typed = name.getText().toString().trim();
+                        String problem = Sensors.checkBeaconName(seen.id, typed);
+                        if (problem != null) {
+                            nameProblem.setText("Not saved: " + problem + ".");
+                            nameProblem.setVisibility(View.VISIBLE);
+                            return;
+                        }
+                        nameProblem.setVisibility(View.GONE);
+                        KioskConfig.beaconName(this, seen.id, typed);
+                        KioskService.publishTelemetrySoon(this);
+                    };
+                    name.setOnFocusChangeListener((view, focused) -> {
+                        if (!focused) {
+                            store.run();
+                        }
+                    });
+                    name.setOnEditorActionListener((view, actionId, event) -> {
+                        // hideKeyboard clears the focus, and the focus listener stores.
+                        hideKeyboard(view);
+                        return true;
+                    });
+                }
+            }
+        } else if (def == Sensors.CAMERA) {
+            addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
+                    false, true);
+            addOptionRadios(card, theme, "Lens", "camera_lens", "front",
+                    "front", "Front", "back", "Back");
+            java.util.List<String> sizes = new java.util.ArrayList<>();
+            for (String size : PanelCamera.SIZES) {
+                sizes.add(size);
+                sizes.add(size.replace("x", " × "));
+            }
+            addOptionRadios(card, theme, "Size", "camera_size", "640x480",
+                    sizes.toArray(new String[0]));
+            java.util.List<String> rates = new java.util.ArrayList<>();
+            for (int rate : PanelCamera.RATES) {
+                rates.add(Integer.toString(rate));
+                rates.add(Integer.toString(rate));
+            }
+            addOptionRadios(card, theme, "Frames per second", "camera_fps", "5",
+                    rates.toArray(new String[0]));
+            addOptionRadios(card, theme, "Orientation", "camera_orientation", "device",
+                    "device", "Follow the device", "portrait", "Portrait", "landscape",
+                    "Landscape");
+            addOptionSwitch(card, theme, "Mirror", "camera_mirror", false);
+            addOptionSwitch(card, theme, "Upside down", "camera_flip", false);
+            addOptionSwitch(card, theme, "Watermark, name and time", "camera_watermark", true);
+            LinearLayout motion = card(theme, "Motion");
+            addOptionSwitch(motion, theme, "Detect motion", "camera_motion", true);
+            addOptionRadios(motion, theme, "Sensitivity", "camera_sensitivity", "normal",
+                    "low", "Low", "normal", "Normal", "high", "High");
+            addOptionField(motion, theme, "Still after (seconds)", "camera_still_s", "30", true);
+            addOptionSwitch(motion, theme, "Picture to MQTT", "camera_mqtt", false);
+            cards.add(motion);
+            // The addresses only while the web admin listens: greyed, with the reason, where it
+            // does not (a free panel, the admin off), since an address that leads nowhere is
+            // worse than none; and the address wraps rather than ending in dots on a phone
+            // (review, 2026-10-01).
+            LinearLayout stream = card(theme, "Stream");
+            boolean serving = KioskRuntimeState.httpAdminListening();
+            String address = KioskRuntimeState.httpAdminAddress();
+            for (String[] link : new String[][] {{"Live stream", "/camera/stream"},
+                    {"Snapshot", "/camera/snapshot.jpg"}}) {
+                LinearLayout row = glyphRow(theme, R.drawable.ic_web, link[0],
+                        serving ? address + link[1] : "Needs the local web admin", null, null,
+                        !serving);
+                TextView sub = readingOf(row);
+                sub.setSingleLine(false);
+                sub.setEllipsize(null);
+                sub.setMaxLines(3);
+                stream.addView(row, matchWrap());
+            }
+            cards.add(stream);
         }
         return cards;
+    }
+
+    /** The rule the wide Automations page shows in its editor; see showAutomationsPage. */
+    private String selectedAutomation = "";
+
+    private void showAutomationsPage() {
+        showAutomationsPage(null);
+    }
+
+    /**
+     * The Automations page. From 840 dp the rules stand at the left with Add under them and
+     * the editor at the right, the chosen rule's or the one being made ({@code editing}, kept
+     * across a rotation); below that one list, and the editor is a page of its own.
+     */
+    private void showAutomationsPage(Automations.Rule editing) {
+        boolean wide = widthClass() == 2;
+        if (!wide && editing != null) {
+            // Typed on the wide page, turned to a narrow one: the editor of its own carries on.
+            showAutomationEditor(editing);
+            return;
+        }
+        currentScreen = this::showAutomationsPage;
+        LinearLayout page = subPage("Automations", this::showSettings);
+        automationSwitches.clear();
+        KioskTheme theme = currentTheme();
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+        Automations.Rule draft = null;
+        if (wide) {
+            if (editing != null) {
+                draft = editing;
+            } else {
+                Automations.Rule stored = Automations.find(rules, selectedAutomation);
+                draft = stored != null ? stored.copy()
+                        : rules.isEmpty() ? new Automations.Rule() : rules.get(0).copy();
+            }
+            selectedAutomation = draft.id;
+        }
+        LinearLayout list = wide ? navPanel(theme) : card(theme, null);
+        TextView count = new FlushText(this);
+        count.setText(automationsSummary());
+        list.addView(listHead(theme, "Automations", count), listHeadParams(wide));
+        if (rules.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setText("No automations yet.");
+            none.setTextColor(theme.subtext);
+            none.setTextSize(14);
+            if (wide) {
+                none.setPadding(dp(12), dp(12), dp(12), dp(12));
+            }
+            list.addView(none, matchWrap());
+        }
+        for (Automations.Rule rule : rules) {
+            CompoundButton toggle = automationSwitch(theme, rule);
+            Runnable open = wide ? () -> {
+                selectedAutomation = rule.id;
+                hideKeyboardIfShown();
+                redrawInPlace(() -> showAutomationsPage(null));
+            } : () -> showAutomationEditor(rule);
+            LinearLayout row = automationRow(theme, rule, toggle, open, !wide);
+            if (wide) {
+                markChosen(theme, row, rule.id.equals(draft.id), open);
+                list.addView(row, navRowParams());
+            } else {
+                addListRow(list, theme, row, rule == rules.get(0));
+            }
+        }
+        Button add = tonalButton(theme, "Add");
+        if (wide) {
+            add.setOnClickListener(view -> {
+                hideKeyboardIfShown();
+                redrawInPlace(() -> showAutomationsPage(new Automations.Rule()));
+            });
+            LinearLayout addRow = buttonRow(add);
+            addRow.setPadding(dp(12), dp(8), dp(12), dp(4));
+            list.addView(addRow, matchWrap());
+        } else {
+            add.setOnClickListener(view -> showAutomationEditor(new Automations.Rule()));
+            list.addView(buttonRow(add), matchWrap());
+        }
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        if (wide) {
+            LinearLayout detail = new LinearLayout(this);
+            detail.setOrientation(LinearLayout.VERTICAL);
+            final Automations.Rule editingNow = draft;
+            final Runnable[] again = new Runnable[1];
+            Runnable collect = automationEditor(detail, theme, editingNow, true,
+                    () -> showAutomationsPage(null), () -> again[0].run());
+            again[0] = () -> {
+                collect.run();
+                showAutomationsPage(editingNow);
+            };
+            currentScreen = again[0];
+            page.addView(listDetailPair(list, detail), params);
+            setContentView(scrollPage(theme, page));
+            // Drawn again for a change elsewhere: what the editor holds stays when it was
+            // edited, and the stored rule comes back when it was not, so a rename on the web
+            // reaches an editor nobody touched.
+            final String untouched = Automations.store(
+                    java.util.Collections.singletonList(editingNow));
+            watchLists("automations", page, () -> redrawInPlace(() -> {
+                collect.run();
+                boolean edited = !untouched.equals(Automations.store(
+                        java.util.Collections.singletonList(editingNow)));
+                showAutomationsPage(edited ? editingNow : null);
+            }));
+            return;
+        } else {
+            page.addView(paneOf(list), params);
+        }
+        setContentView(scrollPage(theme, page));
+        watchLists("automations", page, () -> redrawInPlace(() -> showAutomationsPage(null)));
+    }
+
+    /** The editor as a page of its own: Name, When, Then, Only; nothing is stored until Save. */
+    private void showAutomationEditor(Automations.Rule original) {
+        if (widthClass() == 2) {
+            // Turned back to a wide screen mid-edit: the editor belongs beside the list there.
+            showAutomationsPage(original);
+            return;
+        }
+        final Automations.Rule draft = original.copy();
+        currentScreen = () -> showAutomationEditor(draft);
+        boolean fresh = draft.id.isEmpty();
+        LinearLayout page = subPage(fresh ? "New automation" : "Edit automation",
+                this::showAutomationsPage);
+        KioskTheme theme = currentTheme();
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        final Runnable[] again = new Runnable[1];
+        Runnable collect = automationEditor(body, theme, draft, false,
+                this::showAutomationsPage, () -> again[0].run());
+        // What is typed rides across a rotation and a Delete backed out of: both rebuild this
+        // page from the draft, so the draft is read from the boxes first.
+        again[0] = () -> {
+            collect.run();
+            showAutomationEditor(draft);
+        };
+        currentScreen = again[0];
+        page.addView(paneOf(body), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * Builds the editor into {@code into} and returns what reads the boxes back into the draft.
+     * {@code done} follows Save, Cancel and Delete; {@code reopen} rebuilds the editor from the
+     * draft when a Delete is backed out of; {@code stacked} lays the cards in one column, for
+     * the detail pane beside a list.
+     */
+    private Runnable automationEditor(LinearLayout into, KioskTheme theme,
+            final Automations.Rule draft, boolean stacked, Runnable done, Runnable reopen) {
+        boolean fresh = draft.id.isEmpty();
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+
+        LinearLayout nameCard = card(theme, null);
+        EditText nameInput = themedInput(theme, draft.name, false);
+        nameInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        addField(nameCard, theme, "Name", nameInput);
+
+        LinearLayout whenCard = card(theme, "When");
+        // A menu, like the web page's: up to fourteen sensors, see MenuField.
+        MenuField sensorMenu = new MenuField(whenCard, theme, "Sensor");
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (!Automations.EVENTS.containsKey(def.id) || one == null
+                    || !one.optBoolean("available")) {
+                continue;
+            }
+            sensorMenu.add(def.name, def.id);
+        }
+        if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
+            // A rule on a sensor this device lacks keeps it: opening and saving the rule for
+            // its name must not move it to the first sensor in the menu (review, 2026-10-01).
+            Sensors.Def missing = Sensors.byId(draft.sensor);
+            sensorMenu.add((missing == null ? draft.sensor : missing.name)
+                    + " (not on this device)", draft.sensor);
+        }
+        // Under the sensors, for a sensor whose test found it not running while the display
+        // sleeps: the rule cannot run then, and the black film is what keeps it running.
+        LinearLayout stopsNote = glyphRow(theme, R.drawable.ic_asleep_disabled,
+                "Not running while the display is off", "The black film keeps it running", null,
+                null, false);
+        ((ImageView) stopsNote.getChildAt(0)).setImageTintList(ColorStateList.valueOf(theme.warn));
+        whenCard.addView(stopsNote, matchWrapClose());
+        // The events follow the menu with no caption over them, as on the web ("Notices" was
+        // a word nobody says, review of 2026-10-01); a sensor with one event shows it as a
+        // line of text, since a choice of one is no choice.
+        RadioGroup eventGroup = new RadioGroup(this);
+        LinearLayout.LayoutParams eventParams = matchWrapClose();
+        eventParams.topMargin = dp(8);
+        whenCard.addView(eventGroup, eventParams);
+        TextView onlyEvent = new FlushText(this);
+        onlyEvent.setTextColor(theme.text);
+        onlyEvent.setTextSize(16);
+        onlyEvent.setMinHeight(dp(48));
+        onlyEvent.setGravity(Gravity.CENTER_VERTICAL);
+        onlyEvent.setVisibility(View.GONE);
+        whenCard.addView(onlyEvent, matchWrapClose());
+        EditText levelInput = themedInput(theme,
+                Double.isNaN(draft.level) ? "" : Automations.number(draft.level), false);
+        levelInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        TextView levelCaption = addField(whenCard, theme, "Level", levelInput);
+        View levelBox = (View) levelInput.getParent();
+        EditText minutesInput = themedInput(theme,
+                draft.minutes == 0 ? "" : Integer.toString(draft.minutes), false);
+        minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(whenCard, theme, "For (minutes)", minutesInput);
+        View minutesBox = (View) minutesInput.getParent();
+        // A menu too: the tags read here have no upper bound. Every one read lately is
+        // offered by its id, newest first.
+        MenuField tagMenu = new MenuField(whenCard, theme, "Tag");
+        tagMenu.add("Any tag", "");
+        java.util.Set<String> tagsRead = KioskConfig.seenTags(this).keySet();
+        for (String tag : tagsRead) {
+            tagMenu.add(tag, tag);
+        }
+        if (!draft.tag.isEmpty() && !tagsRead.contains(draft.tag)) {
+            tagMenu.add(draft.tag, draft.tag);
+        }
+        tagMenu.select(draft.tag);
+        View tagBox = (View) tagMenu.box.getParent();
+
+        Runnable paintEvent = () -> {
+            View checked = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
+            String sensor = sensorMenu.value();
+            Automations.Event event = checked == null ? null
+                    : Automations.event(sensor, (String) checked.getTag());
+            boolean level = event != null && event.levelUnit != null;
+            levelBox.setVisibility(level ? View.VISIBLE : View.GONE);
+            if (level) {
+                levelCaption.setText("Level (" + event.levelUnit + ")");
+            }
+            minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
+            boolean tag = event != null && event.tag;
+            tagBox.setVisibility(tag ? View.VISIBLE : View.GONE);
+        };
+        Runnable paintSensor = () -> {
+            String sensor = sensorMenu.value();
+            stopsNote.setVisibility(KioskService.stopsWhileAsleep(this, sensor)
+                    ? View.VISIBLE : View.GONE);
+            eventGroup.removeAllViews();
+            java.util.List<Automations.Event> events = Automations.EVENTS.get(sensor);
+            if (events != null) {
+                for (Automations.Event event : events) {
+                    radioChoice(theme, eventGroup, event.label, event.id);
+                }
+                checkRadioIfChanged(eventGroup, sensor.equals(draft.sensor) ? draft.event
+                        : events.get(0).id);
+                boolean one = events.size() == 1;
+                eventGroup.setVisibility(one ? View.GONE : View.VISIBLE);
+                onlyEvent.setText(one ? events.get(0).label : "");
+                onlyEvent.setVisibility(one ? View.VISIBLE : View.GONE);
+            } else {
+                eventGroup.setVisibility(View.GONE);
+                onlyEvent.setVisibility(View.GONE);
+            }
+            paintEvent.run();
+        };
+        sensorMenu.onChange = paintSensor;
+        eventGroup.setOnCheckedChangeListener((group, id) -> paintEvent.run());
+        sensorMenu.select(draft.sensor.isEmpty() ? "proximity" : draft.sensor);
+        paintSensor.run();
+
+        LinearLayout thenCard = card(theme, "Then");
+        // A menu, like the web page's: seven actions, see MenuField.
+        MenuField actionMenu = new MenuField(thenCard, theme, "Action");
+        for (Automations.Action action : Automations.ACTIONS) {
+            actionMenu.add(action.label, action.id);
+        }
+        actionMenu.select(draft.action.isEmpty() ? "display_on" : draft.action);
+        EditText argumentInput = themedInput(theme, draft.argument, false);
+        argumentInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        TextView argumentCaption = addField(thenCard, theme, "Sentence", argumentInput);
+        View argumentBox = (View) argumentInput.getParent();
+        Runnable paintAction = () -> {
+            Automations.Action action = Automations.action(actionMenu.value());
+            boolean argument = action != null && action.argumentLabel != null;
+            argumentBox.setVisibility(argument ? View.VISIBLE : View.GONE);
+            if (argument) {
+                argumentCaption.setText(action.argumentLabel);
+                argumentInput.setInputType(action.id.equals("play_sound")
+                        ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                        : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            }
+        };
+        actionMenu.onChange = paintAction;
+        paintAction.run();
+
+        LinearLayout onlyCard = card(theme, "Only");
+        CompoundButton onlySwitch = themedSwitch(theme, "Between these times", draft.windowed());
+        onlyCard.addView(onlySwitch, matchWrap());
+        // The time keyboard, as the web's time fields have; a full keyboard for "07:00" was
+        // the wrong tool (review, 2026-10-01).
+        EditText fromInput = themedInput(theme,
+                draft.windowed() ? Automations.clock(draft.onlyFrom) : "07:00", false);
+        fromInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
+        addField(onlyCard, theme, "From", fromInput);
+        View fromBox = (View) fromInput.getParent();
+        EditText toInput = themedInput(theme,
+                draft.windowed() ? Automations.clock(draft.onlyTo) : "22:00", false);
+        toInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
+        addField(onlyCard, theme, "To", toInput);
+        View toBox = (View) toInput.getParent();
+        Runnable paintOnly = () -> {
+            fromBox.setVisibility(onlySwitch.isChecked() ? View.VISIBLE : View.GONE);
+            toBox.setVisibility(onlySwitch.isChecked() ? View.VISIBLE : View.GONE);
+        };
+        onlySwitch.setOnCheckedChangeListener((button, checked) -> paintOnly.run());
+        paintOnly.run();
+
+        LinearLayout.LayoutParams gridParams = matchWrap();
+        gridParams.topMargin = stacked ? 0 : dp(16);
+        java.util.List<View> cards = java.util.Arrays.<View>asList(
+                nameCard, whenCard, thenCard, onlyCard);
+        if (stacked) {
+            // The first card level with the top of the list beside it, the rest 16 dp apart.
+            LinearLayout column = new LinearLayout(this);
+            column.setOrientation(LinearLayout.VERTICAL);
+            for (View card : cards) {
+                column.addView(card, column.getChildCount() == 0 ? navRowParams() : matchWrap());
+            }
+            into.addView(column, gridParams);
+        } else {
+            into.addView(cardGrid(theme, cards), gridParams);
+        }
+
+        Runnable collect = () -> {
+            draft.name = nameInput.getText().toString();
+            draft.sensor = sensorMenu.value();
+            View event = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
+            draft.event = event == null ? "" : (String) event.getTag();
+            String level = levelInput.getText().toString().trim();
+            try {
+                // A German keyboard offers the comma on a number box.
+                draft.level = level.isEmpty() ? Double.NaN
+                        : Double.parseDouble(level.replace(',', '.'));
+            } catch (NumberFormatException notANumber) {
+                draft.level = Double.NaN;
+            }
+            String minutes = minutesInput.getText().toString().trim();
+            // Blank is "at once"; anything else that is not a number is refused by validate,
+            // as the web refuses it, rather than quietly meaning 0.
+            draft.minutes = minutes.isEmpty() ? 0
+                    : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
+            draft.tag = tagMenu.value();
+            draft.action = actionMenu.value();
+            draft.argument = argumentInput.getText().toString();
+            boolean only = onlySwitch.isChecked();
+            draft.onlyFrom = only ? Automations.minutesOf(fromInput.getText().toString()) : -1;
+            draft.onlyTo = only ? Automations.minutesOf(toInput.getText().toString()) : -1;
+        };
+        Button cancel = textButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> done.run());
+        // Why a save was refused, in red under the buttons, where the web page has it: a
+        // toast was too quick to read (review, 2026-10-01).
+        TextView refused = new FlushText(this);
+        refused.setTextColor(theme.bad);
+        refused.setTextSize(12);
+        refused.setVisibility(View.GONE);
+        java.util.function.Consumer<String> refuse = why -> {
+            refused.setText("Not saved: " + why + ".");
+            refused.setVisibility(View.VISIBLE);
+        };
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            collect.run();
+            if (onlySwitch.isChecked() && (draft.onlyFrom < 0 || draft.onlyTo < 0)) {
+                refuse.accept("the times must be like 07:00");
+                return;
+            }
+            String problem = Automations.validate(draft, Sensors.names());
+            if (problem != null) {
+                refuse.accept(problem);
+                return;
+            }
+            synchronized (Automations.STORE) {
+                java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                Automations.Rule stored = Automations.find(rules, draft.id);
+                if (stored == null) {
+                    if (!draft.id.isEmpty()) {
+                        refuse.accept("that automation was deleted");
+                        return;
+                    }
+                    if (rules.size() >= Automations.MAX_RULES) {
+                        refuse.accept("there are already " + Automations.MAX_RULES
+                                + " automations");
+                        return;
+                    }
+                    draft.id = Automations.newId(rules);
+                    rules.add(draft);
+                } else {
+                    // The switch beside the editor may have been flipped while it was open, on
+                    // any surface: the stored state stands, the editor never carried it.
+                    draft.enabled = stored.enabled;
+                    rules.set(rules.indexOf(stored), draft);
+                }
+                KioskConfig.storeAutomations(this, rules);
+            }
+            selectedAutomation = draft.id;
+            KioskService.refreshSensorsSoon(this);
+            done.run();
+        });
+        Button delete = null;
+        if (!fresh) {
+            delete = dangerOutlinedButton(theme, "Delete");
+            delete.setOnClickListener(view -> {
+                // The stored name, not the draft's: what is typed in the Name box and never
+                // saved is not what is deleted.
+                Automations.Rule named = Automations.find(KioskConfig.automationsOf(this), draft.id);
+                confirmDelete(named != null ? named.name : draft.name, null, () -> {
+                synchronized (Automations.STORE) {
+                    java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                    Automations.Rule stored = Automations.find(rules, draft.id);
+                    if (stored != null) {
+                        rules.remove(stored);
+                        KioskConfig.storeAutomations(this, rules);
+                    }
+                }
+                KioskService.refreshSensorsSoon(this);
+                done.run();
+            }, reopen);
+            });
+        }
+        into.addView(editorButtonRow(delete, cancel, save), matchWrap());
+        into.addView(refused, matchWrapClose());
+        return collect;
+    }
+
+    /**
+     * Material's exposed dropdown menu: an outlined field that shows the chosen item, a
+     * chevron at its end, and the items in a menu under it on a tap; the web page's select
+     * for the same fields. For a single choice among more than five items, where radios filled
+     * a card with a column of fourteen sensors: Google's guidance for radio buttons is "If
+     * available options can be collapsed, consider using a dropdown menu because it uses less
+     * space" (Material Components for Android, radio buttons), and Nielsen Norman Group's is
+     * radio buttons for five or fewer, a dropdown for five to fifteen (Listboxes vs. Dropdown
+     * Lists). Five or fewer stay radios, the house rule (Juri, 2026-09-28).
+     */
+    private final class MenuField {
+        final EditText box;
+        final TextView caption;
+        final java.util.List<String> labels = new java.util.ArrayList<>();
+        final java.util.List<String> values = new java.util.ArrayList<>();
+        private final KioskTheme theme;
+        private String value = "";
+        Runnable onChange;
+
+        MenuField(LinearLayout parent, KioskTheme theme, String label) {
+            this.theme = theme;
+            box = themedInput(theme, "", false);
+            // A field that shows, never takes typing: no keyboard, no cursor, the tap opens.
+            box.setFocusable(false);
+            box.setFocusableInTouchMode(false);
+            box.setCursorVisible(false);
+            box.setKeyListener(null);
+            box.setLongClickable(false);
+            // Not the machine-value boxes' visible-password type, which draws in monospace.
+            box.setInputType(InputType.TYPE_NULL);
+            box.setTypeface(Typeface.DEFAULT);
+            android.graphics.drawable.Drawable chevron =
+                    getDrawable(R.drawable.ic_expand_more).mutate();
+            chevron.setTint(theme.subtext);
+            box.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, chevron, null);
+            box.setOnClickListener(view -> open());
+            caption = addField(parent, theme, label, box);
+            this.label = label;
+            describe();
+        }
+
+        private final String label;
+
+        /** "Sensor, Proximity": the field's name and its choice, for a screen reader. */
+        private void describe() {
+            box.setContentDescription(box.getText().length() == 0 ? label
+                    : label + ", " + box.getText());
+        }
+
+        void add(String label, String itemValue) {
+            labels.add(label);
+            values.add(itemValue);
+        }
+
+        /** The item with this value, or the first when there is none. */
+        void select(String wanted) {
+            int index = values.indexOf(wanted);
+            if (index < 0) {
+                index = values.isEmpty() ? -1 : 0;
+            }
+            value = index < 0 ? "" : values.get(index);
+            box.setText(index < 0 ? "" : labels.get(index));
+            describe();
+        }
+
+        String value() {
+            return value;
+        }
+
+        private void open() {
+            android.widget.ListPopupWindow menu = new android.widget.ListPopupWindow(
+                    KioskActivity.this);
+            menu.setAnchorView(box);
+            menu.setModal(true);
+            menu.setBackgroundDrawable(theme.panel(theme.cardHigh, dp(4)));
+            menu.setVerticalOffset(dp(4));
+            menu.setAdapter(new android.widget.BaseAdapter() {
+                @Override
+                public int getCount() {
+                    return labels.size();
+                }
+
+                @Override
+                public Object getItem(int position) {
+                    return labels.get(position);
+                }
+
+                @Override
+                public long getItemId(int position) {
+                    return position;
+                }
+
+                @Override
+                public View getView(int position, View reuse, ViewGroup parentGroup) {
+                    TextView item = reuse instanceof TextView ? (TextView) reuse
+                            : new FlushText(KioskActivity.this);
+                    boolean chosen = values.get(position).equals(value);
+                    item.setText(labels.get(position));
+                    item.setTextSize(16);
+                    item.setSingleLine(true);
+                    item.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    item.setGravity(Gravity.CENTER_VERTICAL);
+                    item.setMinHeight(dp(48));
+                    item.setPadding(dp(16), 0, dp(16), 0);
+                    // The chosen item in the selected colours, Material's menu with a selection.
+                    item.setTextColor(chosen ? theme.onSecondaryContainer : theme.text);
+                    item.setBackgroundColor(chosen ? theme.secondaryContainer : Color.TRANSPARENT);
+                    return item;
+                }
+            });
+            menu.setOnItemClickListener((list, item, position, id) -> {
+                menu.dismiss();
+                String chosen = values.get(position);
+                if (!chosen.equals(value)) {
+                    select(chosen);
+                    if (onChange != null) {
+                        onChange.run();
+                    }
+                }
+            });
+            menu.show();
+            // Opened on the chosen item, so a long menu does not hide what is chosen.
+            int chosenIndex = values.indexOf(value);
+            if (chosenIndex > 0) {
+                menu.setSelection(chosenIndex);
+            }
+            android.widget.ListView list = menu.getListView();
+            if (list != null) {
+                list.setDivider(null);
+                list.setSelector(theme.ripple(new android.graphics.drawable.ColorDrawable(
+                        Color.TRANSPARENT), new android.graphics.drawable.ColorDrawable(
+                                Color.WHITE), theme.text));
+            }
+        }
     }
 
     /** System stats and the overlay switch, on their own page under This panel. */
@@ -4065,6 +5010,85 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
+    }
+
+    /**
+     * What a tag carries, as a person would read it: its text records and its addresses, one
+     * after the other; a record of another kind by its type. The NDEF message Android read
+     * when it found the tag; empty for a tag with none, or one it could not read.
+     */
+    private static String tagContent(android.nfc.Tag tag) {
+        android.nfc.tech.Ndef ndef = android.nfc.tech.Ndef.get(tag);
+        android.nfc.NdefMessage message = ndef == null ? null : ndef.getCachedNdefMessage();
+        if (message == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (android.nfc.NdefRecord record : message.getRecords()) {
+            String part = null;
+            byte[] payload = record.getPayload();
+            if (record.getTnf() == android.nfc.NdefRecord.TNF_WELL_KNOWN
+                    && java.util.Arrays.equals(record.getType(), android.nfc.NdefRecord.RTD_TEXT)
+                    && payload.length > 0) {
+                // NFC Forum text record: a status byte (the encoding, the language's length),
+                // the language, then the text.
+                int language = payload[0] & 0x3f;
+                if (1 + language <= payload.length) {
+                    part = new String(payload, 1 + language, payload.length - 1 - language,
+                            (payload[0] & 0x80) != 0 ? java.nio.charset.StandardCharsets.UTF_16
+                                    : java.nio.charset.StandardCharsets.UTF_8);
+                }
+            } else if (record.toUri() != null) {
+                part = record.toUri().toString();
+            } else if (record.getTnf() == android.nfc.NdefRecord.TNF_MIME_MEDIA) {
+                part = new String(record.getType(), java.nio.charset.StandardCharsets.US_ASCII)
+                        + ", " + payload.length + " bytes";
+            }
+            if (part != null && !part.isEmpty()) {
+                text.append(text.length() == 0 ? "" : " | ").append(part);
+            }
+        }
+        return text.length() > 200 ? text.substring(0, 200) : text.toString();
+    }
+
+    /** A tag's id as hex, the reading and the name a tag is stored under. */
+    private static String tagHex(android.nfc.Tag tag) {
+        StringBuilder hex = new StringBuilder();
+        for (byte b : tag.getId()) {
+            hex.append(String.format(java.util.Locale.ROOT, "%02X", b));
+        }
+        return hex.toString();
+    }
+
+    /**
+     * Reader mode while the NFC sensor is on: a tag held to the panel is read for its id and its
+     * content, handed to the service, and Android's own tag handling stays out of the way.
+     */
+    private void applyNfcReader() {
+        android.nfc.NfcAdapter nfc = android.nfc.NfcAdapter.getDefaultAdapter(this);
+        if (nfc == null) {
+            return;
+        }
+        boolean wanted = inFront && Sensors.enabled(this, Sensors.NFC);
+        Log.i(TAG, "NFC reader mode " + (wanted ? "on" : "off") + (nfc.isEnabled() ? "" : ", adapter off"));
+        // The contents are read too, for the Home Assistant tag id a tag written by Home
+        // Assistant carries; a password-protected tag still gives its chip's id (a LEGO
+        // Dimensions figure, 2026-09-30).
+        try {
+            if (wanted) {
+                nfc.enableReaderMode(this, tag -> KioskService.tagReadSoon(this, tagHex(tag),
+                                tagContent(tag)),
+                        android.nfc.NfcAdapter.FLAG_READER_NFC_A
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_B
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_F
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_V
+                        | android.nfc.NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS, null);
+            } else {
+                nfc.disableReaderMode(this);
+            }
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "NFC reader mode refused", refused);
+        }
     }
 
     /**
@@ -5063,6 +6087,35 @@ public final class KioskActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] granted) {
         super.onRequestPermissionsResult(requestCode, permissions, granted);
+        if (requestCode == REQUEST_SENSOR_PERMISSION) {
+            Sensors.Def def = Sensors.byId(permissionAskedFor == null ? "" : permissionAskedFor);
+            permissionAskedFor = null;
+            boolean allowed = true;
+            for (int answer : granted) {
+                allowed &= answer == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            }
+            if (def != null && allowed && granted.length > 0) {
+                KioskConfig.edit(this).sensorEnabled(def.id, true).apply();
+            }
+            if (def != null) {
+                // Refused with Android no longer willing to ask: the next Allow opens settings.
+                boolean blocked = false;
+                for (int index = 0; index < granted.length && index < permissions.length; index++) {
+                    if (granted[index] != android.content.pm.PackageManager.PERMISSION_GRANTED
+                            && !shouldShowRequestPermissionRationale(permissions[index])) {
+                        blocked = true;
+                    }
+                }
+                KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                        .edit().putBoolean("permission_blocked_" + def.id, blocked).apply();
+            }
+            KioskService.refreshSensorsSoon(this);
+            if (currentScreen != null && configurationVisible) {
+                // The service rebuilds the sensors block on its next tick; the page reads it.
+                mainHandler.postDelayed(() -> redrawInPlace(currentScreen), 400);
+            }
+            return;
+        }
         if (requestCode != REQUEST_PICTURE_READ) {
             return;
         }
@@ -9194,11 +10247,24 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Red: this button deletes something, and it appears only on the confirm screen, where the
-     * one wrong tap that costs the most is the one the colour has to warn about.
+     * Filled red: the confirm screen's own Delete, the one tap that costs the most, where the
+     * colour has to warn. Nowhere else is a button filled red.
      */
     private Button dangerButton(KioskTheme theme, String label) {
         return filledButton(theme, label, theme.bad);
+    }
+
+    /**
+     * Outlined red: the Delete in an editor's row, which only asks (the confirm screen comes
+     * next), the web's {@code button.danger}. Outlined so it does not compete with Save as
+     * the row's main action (Juri, 2026-10-01).
+     */
+    private Button dangerOutlinedButton(KioskTheme theme, String label) {
+        Button button = pillShaped(new Button(this), label, 24);
+        button.setTextColor(theme.bad);
+        button.setBackground(theme.ripple(theme.pillOutlined(dp(1), theme.bad),
+                theme.pill(Color.WHITE), theme.bad));
+        return button;
     }
 
     /**
@@ -9861,6 +10927,10 @@ public final class KioskActivity extends Activity {
                 if (configurationVisible) {
                     repaintSensors();
                 }
+                break;
+            case "sensors.nfc":
+                // The NFC switch was flipped on another surface; reader mode is the activity's.
+                applyNfcReader();
                 break;
             case "kiosk.start":
                 kioskStopped = false;
@@ -11587,6 +12657,35 @@ public final class KioskActivity extends Activity {
     private LinearLayout centeredButtonRow(Button... buttons) {
         LinearLayout row = buttonRow(buttons);
         row.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+        return row;
+    }
+
+    /**
+     * An editor's buttons on one row, Material's placement for a form that can also destroy
+     * what it edits: the destructive action at the start, apart from the pair it must not be
+     * taken for, and the dismissive then the confirming action at the end, Save last. One row at
+     * every width, the three labels are short (Juri, 2026-09-28).
+     */
+    private LinearLayout editorButtonRow(Button delete, Button cancel, Button save) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setBaselineAligned(false);
+        row.setGravity(Gravity.START | Gravity.TOP);
+        if (delete != null) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.topMargin = dp(8);
+            row.addView(delete, params);
+        }
+        row.addView(new View(this), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        for (Button button : new Button[] {cancel, save}) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.leftMargin = dp(8);
+            params.topMargin = dp(8);
+            row.addView(button, params);
+        }
         return row;
     }
 

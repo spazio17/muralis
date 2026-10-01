@@ -225,6 +225,13 @@ final class KioskRuntimeState {
         return httpAdminSecure ? "https://" : "http://";
     }
 
+    /** "https://10.0.10.43:8080", from the address the panel last reported. */
+    static String httpAdminAddress() {
+        SystemStats.RuntimeFacts facts = lastFacts;
+        String host = facts == null || facts.ipAddress.isEmpty() ? "<panel>" : facts.ipAddress;
+        return httpAdminScheme() + host + ":" + httpAdminPort;
+    }
+
     /** Empty while listening, or when whoever stopped the server offered no reason. */
     static String httpAdminDownReason() {
         return httpAdminDownReason;
@@ -247,6 +254,17 @@ final class KioskRuntimeState {
 
     static org.json.JSONObject sensors() {
         return sensors;
+    }
+
+    /** The automations block of the last status document built; see Automations. */
+    private static volatile org.json.JSONArray automations = new org.json.JSONArray();
+
+    static void publishAutomations(org.json.JSONArray block) {
+        automations = block == null ? new org.json.JSONArray() : block;
+    }
+
+    static org.json.JSONArray automations() {
+        return automations;
     }
 
     /**

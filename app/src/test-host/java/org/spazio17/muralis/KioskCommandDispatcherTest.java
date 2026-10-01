@@ -386,10 +386,32 @@ public final class KioskCommandDispatcherTest {
                 new KioskCommandDispatcher.CommandArgs(-1, null, true, "light"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("setSensorEnabled:light:true"),
                 "sensor.enabled did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("automation.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "wake"), executor);
+        require(r.status.equals("rejected"), "automation.enabled without enabled accepted");
+        r = KioskCommandDispatcher.dispatch("automation.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, false, "wake"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setAutomationEnabled:wake:false"),
+                "automation.enabled did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("camera.motion",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("rejected"), "camera.motion without enabled accepted");
+        r = KioskCommandDispatcher.dispatch("camera.motion",
+                new KioskCommandDispatcher.CommandArgs(-1, null, true), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setCameraMotion:true"),
+                "camera.motion did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("camera.snapshot",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("cameraSnapshot"),
+                "camera.snapshot did not reach the executor");
         r = KioskCommandDispatcher.dispatch("proximity.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
                 "proximity.calibrate did not carry its step");
+        r = KioskCommandDispatcher.dispatch("microphone.calibrate",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "quiet"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("calibrateMicrophone:quiet"),
+                "microphone.calibrate did not carry its step");
         r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "proximity"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("sleepTest:proximity"),
@@ -784,6 +806,29 @@ public final class KioskCommandDispatcherTest {
 
         public String playAudio(String url) {
             calls.add("playAudio:" + url);
+            return null;
+        }
+
+        public String setAutomationEnabled(String id, boolean enabled) {
+            calls.add("setAutomationEnabled:" + id + ":" + enabled);
+            return null;
+        }
+
+        @Override
+        public String setCameraMotion(boolean enabled) {
+            calls.add("setCameraMotion:" + enabled);
+            return null;
+        }
+
+        @Override
+        public String cameraSnapshot() {
+            calls.add("cameraSnapshot");
+            return null;
+        }
+
+        @Override
+        public String calibrateMicrophone(String step) {
+            calls.add("calibrateMicrophone:" + step);
             return null;
         }
 

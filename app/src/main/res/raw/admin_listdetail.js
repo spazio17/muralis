@@ -1,17 +1,20 @@
-// The Sensors page from 840 px: the list at the left chooses which pane the right shows, in
-// place, the way the settings menu opens a section; the address follows so a reload lands on
-// the same one. Below 840 px the markup is left as served: a row's link opens the item's own
-// page, as on a phone.
+// The Sensors and Automations pages from 840 px: the list at the left chooses which pane the
+// right shows, in place, the way the settings menu opens a section; the address follows so a
+// reload lands on the same one. Below 840 px the markup is left as served: a row's link opens
+// the item's own page, as on a phone.
 (function(){
 var wide=window.matchMedia('(min-width:840px)');
 var ld=document.querySelector('.ld');
 if(!ld){return;}
 var title=document.querySelector('header.appbar h1');
+// The shell says which page this is: a refused save answers under /api/automations/save.
+var automations=ld.dataset.kind==='automations';
+var base=automations?'/automations?id=':'/sensors?id=';
 function select(id){
 Array.prototype.forEach.call(ld.querySelectorAll('.detail>.pane'),function(pane){pane.hidden=pane.dataset.id!==id;});
 Array.prototype.forEach.call(ld.querySelectorAll('.nav li[data-id]'),function(li){var on=li.dataset.id===id;li.classList.toggle('on',on);
 if(on){li.setAttribute('aria-current','true');}else{li.removeAttribute('aria-current');}});
-if(history.replaceState){history.replaceState(null,'',id?'/sensors?id='+encodeURIComponent(id):'/sensors');}
+if(history.replaceState){history.replaceState(null,'',id?base+encodeURIComponent(id):(automations?'/automation':'/sensors'));}
 // The page is the list with a detail beside it, so it is named after the list, whichever
 // row a bookmark opened it on (review, 2026-10-01).
 if(title&&ld.dataset.title){title.textContent=ld.dataset.title;}
@@ -19,6 +22,8 @@ if(title&&ld.dataset.title){title.textContent=ld.dataset.title;}
 ld.addEventListener('click',function(e){
 if(!wide.matches){return;}
 if(e.target.closest('input,button,label,select')){return;}
+var add=e.target.closest('.nav a[href="/automation"]');
+if(add){e.preventDefault();select('');return;}
 var li=e.target.closest('.nav li[data-id]');
 if(li){e.preventDefault();select(li.dataset.id);}
 });

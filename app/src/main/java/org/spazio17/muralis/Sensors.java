@@ -5,6 +5,7 @@
 package org.spazio17.muralis;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -17,6 +18,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -31,16 +33,22 @@ import java.util.Map;
  * The panel's sensors: one flat list, alphabetical on the pages, the companion app's "Manage
  * sensors" (Juri, 2026-09-26 and 2026-09-27). Every row is the same shape and only its right
  * edge says what kind it is: a switch for the ones a person turns on, a chevron beside the
- * switch for the ones with a page of their own, the reading alone for what the panel always
- * reports (display, screensaver, battery, power, network,
+ * switch for the ones with a page of their own, Allow while a permission is missing, the reading
+ * alone for what the panel always reports (display, screensaver, battery, power, network,
  * processor, memory), greyed at the end for what this device lacks.
  *
  * <p>Every reading is a row on both surfaces, a field of the {@code sensors} block in the status
  * document, a Home Assistant entity through discovery for the switchable ones (the panel's own
- * values have had their entities since before this class).
+ * values have had their entities since before this class), and a sample for the automations:
+ * {@link Automations.Engine} is fed from here, by the hardware listeners as readings arrive and
+ * by {@link #poll} on the service's two-second tick for everything read on demand and, again,
+ * for the last hardware reading, so a rule's "for N minutes" advances on a sensor that reports
+ * on change alone.
  *
  * <p>A hardware sensor registers its listener only while it is on, asking for the wake-up
- * variant so it answers under a real sleep.
+ * variant so it answers under a real sleep. The camera, the microphone and the beacons live in
+ * their own classes and are asked through {@link #camera}, {@link #microphone} and
+ * {@link #beacons}; NFC tags arrive from the activity's reader mode through {@link #tagRead}.
  */
 final class Sensors implements SensorEventListener {
     private static final String TAG = "MuralisSensors";
@@ -52,6 +60,8 @@ final class Sensors implements SensorEventListener {
     enum Kind {
         /** On or off by its switch. */
         SWITCH,
+        /** On or off by its switch, once its permission is granted. */
+        PERMISSION,
         /** What the panel always reports: no switch. */
         PANEL
     }
@@ -91,6 +101,10 @@ final class Sensors implements SensorEventListener {
             Kind.SWITCH, false, "audio");
     static final Def BATTERY = new Def("battery", "Battery", SENSOR, "battery", "%",
             "measurement", 0, Kind.PANEL, false, "battery");
+    static final Def BLUETOOTH = new Def("bluetooth", "Bluetooth beacons", SENSOR, null, null,
+            "measurement", 0, Kind.PERMISSION, true, "bluetooth");
+    static final Def CAMERA = new Def("camera", "Camera", BINARY, "motion", null, null, 0,
+            Kind.PERMISSION, true, "camera");
     static final Def DISPLAY = new Def("display", "Display", BINARY, null, null, null, 0,
             Kind.PANEL, false, "display");
     static final Def HUMIDITY = new Def("humidity", "Humidity", SENSOR, "humidity", "%",
@@ -99,10 +113,14 @@ final class Sensors implements SensorEventListener {
             "measurement", Sensor.TYPE_LIGHT, Kind.SWITCH, true, "light");
     static final Def MEMORY = new Def("memory", "Memory", SENSOR, null, "%", "measurement", 0,
             Kind.PANEL, false, "memory");
+    static final Def MICROPHONE = new Def("microphone", "Microphone", SENSOR, null, "%",
+            "measurement", 0, Kind.PERMISSION, true, "microphone");
     static final Def MOVEMENT = new Def("movement", "Movement", BINARY, "moving", null, null,
             Sensor.TYPE_ACCELEROMETER, Kind.SWITCH, true, "movement");
     static final Def NETWORK = new Def("network", "Network", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "network");
+    static final Def NFC = new Def("nfc", "NFC", SENSOR, null, null, null, 0, Kind.SWITCH, true,
+            "nfc");
     static final Def POWER = new Def("power", "Power", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "power");
     static final Def PRESSURE = new Def("pressure", "Pressure", SENSOR, "atmospheric_pressure",
@@ -119,11 +137,45 @@ final class Sensors implements SensorEventListener {
 
     /** Every sensor this app knows, alphabetical by name, which is the order the pages use. */
     static final List<Def> ALL = Collections.unmodifiableList(Arrays.asList(
-            TEMPERATURE, AUDIO, BATTERY, DISPLAY, HUMIDITY, LIGHT, MEMORY, MOVEMENT, NETWORK,
-            POWER, PRESSURE, PROCESSOR, PROXIMITY, SCREENSAVER));
+            TEMPERATURE, AUDIO, BATTERY, BLUETOOTH, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY,
+            MICROPHONE, MOVEMENT, NETWORK, NFC, POWER, PRESSURE, PROCESSOR, PROXIMITY,
+            SCREENSAVER));
+
+    /** What the beacons, the camera and the microphone report, asked when a document is built. */
+    interface Reading {
+        /** Fills {@code one} with value and attributes; may leave value null. */
+        void fill(JSONObject one) throws JSONException;
+
+        /** The sample for the automations, or null when there is nothing to say yet. */
+        Automations.Sample sample();
+
+        /**
+         * Who to tell of a new sample, so the rules hear it the moment it is heard rather than
+         * on the two-second poll, which missed a knock three times in four (review,
+         * 2026-10-01). A reading that tells feeds the engine itself and is left out of the poll.
+         */
+        default void onSample(Runnable listener) {
+        }
+
+        /** Whether this reading feeds the engine through its listener. */
+        default boolean feedsItself() {
+            return false;
+        }
+
+        /**
+         * What a rule that has seen nothing yet may be seeded with while {@link #sample} has
+         * nothing to say, or null: the beacons seed "none in reach" while the scan is young, so
+         * the first beacon heard after a start fires "in reach" rather than becoming the seed
+         * (review, 2026-10-01).
+         */
+        default Automations.Sample seedSample() {
+            return null;
+        }
+    }
 
     private final Context context;
     private final SensorManager manager;
+    private final Automations.Engine engine;
     private final Map<String, Float> readings = new HashMap<>();
 
     /**
@@ -250,7 +302,29 @@ final class Sensors implements SensorEventListener {
     // Far in the past, not minus the hold: elapsed time is small right after a boot, and a
     // start at minus the hold read as "Moving" until the hold had passed (review, 2026-09-27).
     private volatile long movedAtMs = Long.MIN_VALUE / 2;
-    private boolean near;
+    private volatile boolean near;
+    private String lastTag = "";
+    private String lastTagContent = "";
+    private long lastTagAtMs;
+
+    /**
+     * The tag id in a tag written by Home Assistant, whose content is the address
+     * https://www.home-assistant.io/tag/<tag id> (the companion app's documentation, "Universal
+     * links"). The companion app reports that id, and so does the panel, so a tag works the
+     * same held to a phone or to the panel. The app refuses a tag without it
+     * (TagReaderViewModel: "Tag intent had no tag id"); the panel reports such a tag by its
+     * chip's id instead, so any tag works (Juri, 2026-09-30: always as Home Assistant does).
+     */
+    static String homeAssistantTagId(String content) {
+        if (content == null) {
+            return null;
+        }
+        java.util.regex.Matcher found = java.util.regex.Pattern
+                .compile("https?://www\\.home-assistant\\.io/tag/([0-9A-Za-z_-]{1,64})")
+                .matcher(content);
+        return found.find() ? found.group(1) : null;
+    }
+    private final Map<String, Reading> sources = new HashMap<>();
     /** Told when a sensor changes state (near, moving), so nobody waits for the next tick. */
     private volatile Runnable onEdge;
     /** Told when a reading that moves all the time moved (light, pressure), for the rows. */
@@ -286,20 +360,77 @@ final class Sensors implements SensorEventListener {
     /** Moving started or ended since the last look; the start is seen on the event, the end
      * on the poll, when the still time has passed. */
     private void movingEdge() {
-        boolean now = moving();
+        boolean now;
         boolean changed;
-        synchronized (this) {
-            changed = now != wasMoving;
-            wasMoving = now;
+        // Read, compared and fed under one lock of its own: the sensor's events (main thread)
+        // and the poll (telemetry thread) both come here, and reading moving() outside it let
+        // the two feed false and true out of order (review, 2026-10-01). Its own lock, not
+        // this one, since feeding runs the rules' actions.
+        synchronized (movementEdgeLock) {
+            now = moving();
+            synchronized (this) {
+                changed = now != wasMoving;
+                wasMoving = now;
+            }
+            if (changed) {
+                // The rules hear of it on the edge, as the rows do: fed only on the poll,
+                // "picked up" ran up to two seconds late (review, 2026-10-01).
+                feed(MOVEMENT, Automations.Sample.of(now));
+            }
         }
         if (changed) {
             edge();
         }
     }
 
-    Sensors(Context context) {
+    private final Object movementEdgeLock = new Object();
+
+    Sensors(Context context, Automations.Engine engine) {
         this.context = context;
         this.manager = context.getSystemService(SensorManager.class);
+        this.engine = engine;
+    }
+
+    /** Hands over the class that reads one of the sensors this one does not read itself. */
+    void source(Def def, Reading reading) {
+        synchronized (sources) {
+            if (reading == null) {
+                sources.remove(def.id);
+            } else {
+                sources.put(def.id, reading);
+            }
+        }
+        if (reading != null) {
+            reading.onSample(() -> {
+                if (on(def)) {
+                    feed(def, reading.sample());
+                }
+            });
+        }
+    }
+
+    /** What a source offers to seed with while it has no sample; see Reading.seedSample. */
+    private Automations.Sample seedOf(Def def) {
+        Reading source;
+        synchronized (sources) {
+            source = sources.get(def.id);
+        }
+        return source == null ? null : source.seedSample();
+    }
+
+    /** Whether the sensor's reading feeds the engine itself; see Reading.feedsItself. */
+    private boolean feedsItself(Def def) {
+        Reading source;
+        synchronized (sources) {
+            source = sources.get(def.id);
+        }
+        return source != null && source.feedsItself();
+    }
+
+    private Reading sourceOf(Def def) {
+        synchronized (sources) {
+            return sources.get(def.id);
+        }
     }
 
     static Def byId(String id) {
@@ -311,16 +442,69 @@ final class Sensors implements SensorEventListener {
         return null;
     }
 
+    /** The names by id, for the automation editor's vocabulary. */
+    static Map<String, String> names() {
+        Map<String, String> names = new java.util.LinkedHashMap<>();
+        for (Def def : ALL) {
+            names.put(def.id, def.name);
+        }
+        return names;
+    }
+
     /** Whether this device has the sensor at all; an absent one is greyed at the end of the list. */
     boolean available(Def def) {
         if (def.androidType != 0) {
             return manager != null && manager.getDefaultSensor(def.androidType) != null;
+        }
+        PackageManager packages = context.getPackageManager();
+        if (def == BLUETOOTH) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE);
+        }
+        if (def == NFC) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_NFC);
+        }
+        if (def == CAMERA) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+        }
+        if (def == MICROPHONE) {
+            return packages.hasSystemFeature(PackageManager.FEATURE_MICROPHONE);
         }
         if (def == BATTERY) {
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             return facts == null || facts.batteryPresent;
         }
         return true;
+    }
+
+    /** The runtime permissions the sensor needs on this Android, none for most. */
+    static String[] permissionsFor(Def def) {
+        if (def == CAMERA) {
+            return new String[] {android.Manifest.permission.CAMERA};
+        }
+        if (def == MICROPHONE) {
+            return new String[] {android.Manifest.permission.RECORD_AUDIO};
+        }
+        if (def == BLUETOOTH) {
+            // Scan results are a location signal in Android's eyes, so a scan needs the
+            // location permission on every version, and from 12 the Bluetooth scan permission
+            // with it. Declared "never for location", Android hid every iBeacon from the scan
+            // on 12 and later (its denylist names the iBeacon frame), so the flag went and the
+            // location permission came, "while using the app" only: the service holds the
+            // location foreground type while the sensor is on, so the scan runs with the
+            // display off without the background permission (Juri, 2026-10-01). Listening only:
+            // nothing is ever sent, and no position is ever read.
+            // Coarse is asked alongside fine, as Android 12 requires; only a precise grant
+            // lets the scan hear, so fine stays the one checked, and a person who chose
+            // "approximate" is asked again.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                return new String[] {android.Manifest.permission.BLUETOOTH_SCAN,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                        android.Manifest.permission.ACCESS_COARSE_LOCATION};
+            }
+            return new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION};
+        }
+        return new String[0];
     }
 
     /**
@@ -335,19 +519,98 @@ final class Sensors implements SensorEventListener {
                     return "sensitivity must be light, normal or heavy";
                 }
                 return null;
-            case "movement_still_s":
+            case "camera_sensitivity":
+                if (!clean.equals("low") && !clean.equals("normal") && !clean.equals("high")) {
+                    return "sensitivity must be low, normal or high";
+                }
+                return null;
+            case "movement_still_s": case "camera_still_s": case "beacons_reach_s":
                 if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) < 1) {
                     return "the seconds must be 1 or more";
                 }
                 return null;
+            case "camera_lens":
+                if (!clean.equals("front") && !clean.equals("back")) {
+                    return "the lens is front or back";
+                }
+                return null;
+            case "camera_size":
+                if (!PanelCamera.SIZES.contains(clean)) {
+                    return "that size is not offered";
+                }
+                return null;
+            case "camera_fps":
+                if (!clean.matches("\\d{1,2}")
+                        || !PanelCamera.RATES.contains(Integer.parseInt(clean))) {
+                    return "that frame rate is not offered";
+                }
+                return null;
+            case "camera_orientation":
+                if (!PanelCamera.ORIENTATIONS.contains(clean)) {
+                    return "the orientation is device, portrait or landscape";
+                }
+                return null;
+            case "camera_name":
+                return clean.length() > 40 ? "the name is too long" : null;
+            case "camera_mirror": case "camera_flip":
+            case "camera_watermark": case "camera_motion": case "camera_mqtt":
+                // true or false in the forms every surface sends; "yes" used to mean off
+                // without a word (review, 2026-10-01).
+                return isSwitchWord(clean) ? null : key + " must be true or false";
             default:
+                if (key.startsWith("beacon_")) {
+                    return checkBeaconName(key.substring("beacon_".length()), clean);
+                }
                 return "no sensor setting is called " + key;
+        }
+    }
+
+    private static boolean isSwitchWord(String clean) {
+        switch (clean.toLowerCase(java.util.Locale.ROOT)) {
+            case "true": case "false": case "on": case "off": case "1": case "0":
+                return true;
+            default:
+                return false;
         }
     }
 
     /** The value as it is stored once {@link #checkOption} passed it. */
     static String cleanOption(String key, String value) {
-        return value == null ? "" : value.trim();
+        String clean = value == null ? "" : value.trim();
+        switch (key) {
+            case "camera_mirror": case "camera_flip":
+            case "camera_watermark": case "camera_motion": case "camera_mqtt":
+                return Boolean.toString(clean.equalsIgnoreCase("true") || clean.equalsIgnoreCase("on")
+                        || clean.equals("1"));
+            default:
+                return clean;
+        }
+    }
+
+    /** A beacon's name: the id has the shape the scan writes, uuid:major:minor, and the name is short. */
+    static String checkBeaconName(String id, String name) {
+        if (!id.matches("[0-9a-fA-F-]{36}:\\d{1,5}:\\d{1,5}")) {
+            return "no beacon has that id";
+        }
+        if (name != null && name.trim().length() > 40) {
+            return "the name is too long";
+        }
+        return null;
+    }
+
+    /** Whether every permission the sensor needs is granted. */
+    boolean permitted(Def def) {
+        return permitted(context, def);
+    }
+
+    /** The same, judged live by whoever holds a context: the panel's rows read it this way. */
+    static boolean permitted(Context context, Def def) {
+        for (String permission : permissionsFor(def)) {
+            if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -358,14 +621,26 @@ final class Sensors implements SensorEventListener {
         return KioskConfig.sensorEnabled(context, def.id, def.kind == Kind.PANEL);
     }
 
-    /** Whether the sensor is on: switched on. */
+    /** Whether the sensor is on: switched on and, where one is needed, permitted. */
     boolean on(Def def) {
-        return enabled(context, def);
+        return enabled(context, def) && permitted(def);
     }
+
+    /** Which sensors were on at the last refresh, for the engine's reset on the off edge. */
+    private final Map<String, Boolean> wasOn = new HashMap<>();
 
     /** Registers the hardware listeners the stored switches ask for, and drops the others. */
     synchronized void refresh() {
         proximityCalibration = Calibration.of(context);
+        for (Def def : ALL) {
+            boolean now = available(def) && on(def);
+            if (Boolean.TRUE.equals(wasOn.get(def.id)) && !now && engine != null) {
+                // A rule waiting on its minutes must not carry the old start across an off
+                // and on: the sensor starts over, and so do its rules.
+                engine.reset(def.id);
+            }
+            wasOn.put(def.id, now);
+        }
         for (Def def : ALL) {
             if (def.androidType == 0 || !available(def)) {
                 continue;
@@ -454,6 +729,7 @@ final class Sensors implements SensorEventListener {
                         : value < event.sensor.getMaximumRange();
                 boolean flipped = nowNear != near;
                 near = nowNear;
+                feed(PROXIMITY, Automations.Sample.of(value, nowNear));
                 if (flipped) {
                     edge();
                 }
@@ -480,6 +756,7 @@ final class Sensors implements SensorEventListener {
                     synchronized (this) {
                         before = readings.put(def.id, value);
                     }
+                    feed(def, Automations.Sample.of(value));
                     Runnable listener = onReading;
                     if (listener != null && (before == null || before != value)) {
                         listener.run();
@@ -517,6 +794,18 @@ final class Sensors implements SensorEventListener {
             }
         }
         return null;
+    }
+
+    private void feed(Def def, Automations.Sample sample) {
+        if (engine == null || sample == null) {
+            return;
+        }
+        engine.sample(def.id, sample, SystemClock.elapsedRealtime(), minuteOfDay());
+    }
+
+    static int minuteOfDay() {
+        java.util.Calendar now = java.util.Calendar.getInstance();
+        return now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE);
     }
 
     /**
@@ -631,11 +920,106 @@ final class Sensors implements SensorEventListener {
         }
     }
 
-    /** Sees the end of a movement, when the still time has passed; on the service's two-second tick. */
+    /**
+     * A tag held to the panel: the reading, and the one-shot event for the automations. The id
+     * is empty for a tag that reports its content alone, which only "any tag" rules match.
+     */
+    void tagRead(String id, String content) {
+        synchronized (this) {
+            lastTag = id == null ? "" : id;
+            lastTagContent = content == null ? "" : content;
+            lastTagAtMs = System.currentTimeMillis();
+        }
+        if (engine != null) {
+            engine.event(NFC.id, id, minuteOfDay());
+        }
+    }
+
+    /**
+     * Feeds the automations every reading that is not delivered by a listener: the panel's own
+     * values, the movement hold, what the other classes report, and the last reading of each
+     * hardware sensor once more (a steady room sends no light event, and "darker for 10 min"
+     * has to advance anyway). Called on the service's two-second tick.
+     */
     void poll() {
         if (available(MOVEMENT) && on(MOVEMENT)) {
             movingEdge();
         }
+        if (engine == null) {
+            return;
+        }
+        // The hardware sensors and movement feed the engine from their own events, once each;
+        // feeding their last reading again here handed it an older sample after the newer one
+        // and could fire a rule twice (review, 2026-10-01). The tick advances their minutes.
+        long now = SystemClock.elapsedRealtime();
+        for (Def def : ALL) {
+            if (!available(def) || !on(def)) {
+                continue;
+            }
+            Automations.Sample sample = sampleOf(def);
+            if (sample == null) {
+                Automations.Sample seed = seedOf(def);
+                if (seed != null) {
+                    engine.seed(def.id, seed, now);
+                }
+                continue;
+            }
+            if (def.androidType != 0 || def == MOVEMENT || feedsItself(def)) {
+                // Fed on their own events; here a rule that has seen nothing yet (a new or an
+                // edited one, or every rule after a start) is only seeded with the state as it
+                // stands, so the first event after it is a change and fires. Without this the
+                // first event itself was the seed and was swallowed (review, 2026-10-01).
+                engine.seed(def.id, sample, now);
+            } else {
+                feed(def, sample);
+            }
+        }
+        engine.tick(now, minuteOfDay());
+    }
+
+    private Automations.Sample sampleOf(Def def) {
+        if (def == MOVEMENT) {
+            return Automations.Sample.of(moving());
+        }
+        if (def == AUDIO) {
+            AudioManager audio = context.getSystemService(AudioManager.class);
+            return audio == null ? null : Automations.Sample.of(audio.isMusicActive());
+        }
+        if (def == DISPLAY) {
+            PowerManager power = context.getSystemService(PowerManager.class);
+            return Automations.Sample.of(power == null || power.isInteractive());
+        }
+        if (def == SCREENSAVER) {
+            return Automations.Sample.of(KioskRuntimeState.screensaverActive());
+        }
+        if (def == BATTERY) {
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            return facts == null || facts.batteryPercent < 0 ? null
+                    : Automations.Sample.of(facts.batteryPercent, facts.plugged);
+        }
+        if (def == NETWORK) {
+            return Automations.Sample.of(networkKind() != null);
+        }
+        if (def == PROCESSOR) {
+            SystemStats.Sample sample = KioskRuntimeState.lastSample();
+            return sample == null ? null : new Automations.Sample(sample.cpuBusyPercent, null,
+                    sample.cpuTemperatureC);
+        }
+        if (def.androidType != 0) {
+            // The last value again: a sensor that reports on change alone (light in a steady
+            // room) would otherwise never advance a rule's "for N minutes".
+            Float value;
+            synchronized (this) {
+                value = readings.get(def.id);
+            }
+            if (value == null) {
+                return null;
+            }
+            return def == PROXIMITY ? Automations.Sample.of(value, near)
+                    : Automations.Sample.of(value);
+        }
+        Reading source = sourceOf(def);
+        return source == null ? null : source.sample();
     }
 
     /** "wifi", "ethernet", "mobile", or null while nothing is connected. */
@@ -678,11 +1062,21 @@ final class Sensors implements SensorEventListener {
                 one.put("glyph", def.glyph);
                 boolean available = available(def);
                 one.put("available", available);
+                boolean permitted = available && permitted(def);
+                one.put("permitted", permitted);
                 boolean on = available && on(def);
                 one.put("enabled", enabled(context, def));
                 one.put("active", on);
                 if (on) {
                     fill(def, one);
+                }
+                if (def == NFC && on) {
+                    // Switched off in Android, a tag held to the panel does nothing, and the
+                    // row has to say why (review, 2026-10-01).
+                    android.nfc.NfcAdapter nfc = android.nfc.NfcAdapter.getDefaultAdapter(context);
+                    if (nfc != null && !nfc.isEnabled()) {
+                        one.put("radio_off", true);
+                    }
                 }
                 String reading = describe(def, one);
                 if (def.androidType != 0) {
@@ -718,6 +1112,27 @@ final class Sensors implements SensorEventListener {
             attributes.put("volume_notification",
                     volumePercent(audio, AudioManager.STREAM_NOTIFICATION));
             one.put("attributes", attributes);
+            return;
+        }
+        if (def == NFC) {
+            String tag;
+            String content;
+            long at;
+            synchronized (this) {
+                tag = lastTag;
+                content = lastTagContent;
+                at = lastTagAtMs;
+            }
+            one.put("value", !tag.isEmpty() ? tag : !content.isEmpty() ? content
+                    : JSONObject.NULL);
+            if (!tag.isEmpty() || !content.isEmpty()) {
+                JSONObject attributes = new JSONObject();
+                if (!content.isEmpty()) {
+                    attributes.put("content", content);
+                }
+                attributes.put("read_at_ms", at);
+                one.put("attributes", attributes);
+            }
             return;
         }
         if (def == DISPLAY) {
@@ -797,6 +1212,11 @@ final class Sensors implements SensorEventListener {
             one.put("attributes", attributes);
             return;
         }
+        Reading source = sourceOf(def);
+        if (source != null) {
+            source.fill(one);
+            return;
+        }
         Float reading;
         synchronized (this) {
             reading = readings.get(def.id);
@@ -823,6 +1243,9 @@ final class Sensors implements SensorEventListener {
             return "Not on this device";
         }
         if (!one.optBoolean("active")) {
+            if (def.kind == Kind.PERMISSION && !one.optBoolean("permitted")) {
+                return "Needs permission";
+            }
             return "Off";
         }
         Object value = one.opt("value");
@@ -841,6 +1264,9 @@ final class Sensors implements SensorEventListener {
         }
         if (def == SCREENSAVER) {
             return (Boolean) value ? "Showing" : "Off";
+        }
+        if (def == CAMERA) {
+            return (Boolean) value ? "Motion" : "Nothing moving";
         }
         if (def == AUDIO) {
             int volume = attributes == null ? -1 : attributes.optInt("volume_music", -1);
@@ -869,17 +1295,42 @@ final class Sensors implements SensorEventListener {
         if (def == MEMORY) {
             return value + "% used";
         }
+        if (one.optBoolean("radio_off")) {
+            // Android's own words for its switch, so a person knows where to look.
+            return def == NFC ? "NFC is off in Android" : "Bluetooth is off in Android";
+        }
+        if (one.optBoolean("location_off")) {
+            return "Location is off in Android";
+        }
+        if (def == NFC) {
+            String content = attributes == null ? "" : attributes.optString("content", "");
+            // A tag reporting its content alone has no id, and its content is the reading;
+            // with both, the content follows the id.
+            if (value.equals(content)) {
+                return "Last tag \u201c" + content + "\u201d";
+            }
+            return "Last tag " + value
+                    + (content.isEmpty() ? "" : ": \u201c" + content + "\u201d");
+        }
+        if (def == BLUETOOTH) {
+            int count = one.optInt("value", 0);
+            return count == 0 ? "None in reach" : count + " in reach";
+        }
+        if (def == MICROPHONE) {
+            return value + "%";
+        }
         return value + (def.unit == null ? "" : " " + def.unit);
     }
 
     /**
-     * What each list of sensors was drawn from, so a surface can tell that another one changed
-     * what it shows, and draw it again: the settings page's Sensors section (the sensors on) and
-     * the Sensors page (every sensor, and whether this device has it). A sensor switched on the
-     * web stayed off the panel's settings page until it was reopened (Juri, 2026-09-28). Short
-     * hashes, compared, never read.
+     * What each list of sensors and rules was drawn from, so a surface can tell that another
+     * one changed what it shows, and draw it again: the settings page's two sections (the
+     * sensors on, the rules on), the Sensors page (every sensor, whether this device has it and
+     * may read it) and the Automations page (every rule by name and sentence; its switches
+     * follow on their own). A rule added on the web stayed off the panel's pages until they
+     * were reopened (Juri, 2026-09-28). Short hashes, compared, never read.
      */
-    static JSONObject listKeys(JSONObject sensors) {
+    static JSONObject listKeys(JSONObject sensors, JSONArray rules) {
         StringBuilder on = new StringBuilder();
         StringBuilder all = new StringBuilder();
         for (Def def : ALL) {
@@ -890,12 +1341,29 @@ final class Sensors implements SensorEventListener {
             if (one.optBoolean("active")) {
                 on.append(def.id).append(',');
             }
-            all.append(def.id).append(one.optBoolean("available") ? 'a' : '-').append(',');
+            all.append(def.id).append(one.optBoolean("available") ? 'a' : '-')
+                    .append(one.optBoolean("permitted") ? 'p' : '-').append(',');
+        }
+        StringBuilder rulesOn = new StringBuilder();
+        StringBuilder rulesAll = new StringBuilder();
+        for (int index = 0; rules != null && index < rules.length(); index++) {
+            JSONObject rule = rules.optJSONObject(index);
+            if (rule == null) {
+                continue;
+            }
+            String line = rule.optString("id", "") + '|' + rule.optString("name", "") + '|'
+                    + rule.optString("sensor", "") + '|' + rule.optString("sentence", "") + '\n';
+            rulesAll.append(line);
+            if (rule.optBoolean("enabled")) {
+                rulesOn.append(line);
+            }
         }
         JSONObject keys = new JSONObject();
         try {
             keys.put("sensors_home", Integer.toHexString(on.toString().hashCode()));
             keys.put("sensors_page", Integer.toHexString(all.toString().hashCode()));
+            keys.put("automations_home", Integer.toHexString(rulesOn.toString().hashCode()));
+            keys.put("automations_page", Integer.toHexString(rulesAll.toString().hashCode()));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }

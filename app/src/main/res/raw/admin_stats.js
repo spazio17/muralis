@@ -68,8 +68,8 @@ follow('stats-overlay',cfg.stats_overlay);
 follow('f-device_id',cfg.device_id);
 var sub=document.querySelector('header.appbar .sub');
 if(sub&&cfg.device_id&&document.getElementById('f-device_id')&&sub.textContent!==cfg.device_id){sub.textContent=cfg.device_id;}
-// The sensors' switches and readings, from the status document's sensors block; every row
-// carries the reading the service already worded.
+// The sensors' switches and readings, from the status document's sensors block, and the
+// automations' switches; every row carries the reading the service already worded.
 var sensors=data.sensors||{};
 Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
 follow('sensor-'+id,one.enabled);follow('sensor-'+id+'-page',one.enabled);
@@ -78,6 +78,8 @@ var home=document.querySelector('#sensors-home li[data-id="'+id+'"]');
 if(home&&!one.active){home.remove();}
 ['sensor-'+id+'-value','sensor-'+id+'-page-value'].forEach(function(vid){var out=document.getElementById(vid);
 if(out){out.textContent=one.reading||'';}});
+// The camera page's two switches Home Assistant can flip follow the block's attributes.
+if(id==='camera'&&one.attributes){follow('opt-camera_motion',one.attributes.detecting);follow('opt-camera_mqtt',one.attributes.pictures);}
 });
 var ss=document.getElementById('sum-sensors');
 // Counted as Sensors.summary counts, every sensor this device has, the panel's own included;
@@ -85,6 +87,13 @@ var ss=document.getElementById('sum-sensors');
 if(ss){var have=0,on=0;Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
 if(!one.available){return;}have++;if(one.active){on++;}});
 ss.textContent=have?on+' of '+have+' on':'None on this device';}
+var autos=data.automations||[];
+autos.forEach(function(rule){follow('automation-'+rule.id,rule.enabled);
+var home=document.querySelector('#automations-home li[data-id="'+rule.id+'"]');
+if(home&&!rule.enabled){home.remove();}});
+var sa=document.getElementById('sum-automations');
+if(sa){var aon=autos.filter(function(rule){return rule.enabled;}).length;
+sa.textContent=autos.length?aon+' of '+autos.length+' on':'None yet';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
@@ -195,9 +204,9 @@ var pollTimer=null;
 // A save asks for the next poll now rather than in five seconds, so a row that must leave a
 // section, or a count, follows at once.
 window.muralisPollSoon=function(){if(stopped){return;}clearTimeout(pollTimer);pollTimer=setTimeout(poll,300);};
-// A list another surface changed (a sensor switched on over MQTT) is fetched again and swapped
-// in place when its key moves, the regions marked with data-lists-kind; never while something
-// in it is being edited, and a later poll tries again.
+// A list another surface changed (a rule added or renamed on the panel, a sensor switched on
+// over MQTT) is fetched again and swapped in place when its key moves, the regions marked with
+// data-lists-kind; never while something in it is being edited, and a later poll tries again.
 function editingIn(root){var a=document.activeElement;
 if(a&&root.contains(a)&&(a.tagName==='TEXTAREA'||a.tagName==='SELECT'||(a.tagName==='INPUT'&&a.type!=='checkbox'&&a.type!=='radio'))){return true;}
 return Array.prototype.some.call(root.querySelectorAll('input,select,textarea'),function(el){
@@ -215,7 +224,8 @@ fetch(location.href,{credentials:'same-origin'}).then(function(r){return r.ok?r.
 if(html===null){return;}
 var doc=new DOMParser().parseFromString(html,'text/html');
 stale.forEach(function(el){var fresh=doc.getElementById(el.id);if(!fresh||editingIn(el)){return;}
-el.innerHTML=fresh.innerHTML;el.setAttribute('data-lists',fresh.getAttribute('data-lists')||'');});})
+el.innerHTML=fresh.innerHTML;el.setAttribute('data-lists',fresh.getAttribute('data-lists')||'');});
+if(window.muralisBindEditors){window.muralisBindEditors(document);}})
 .catch(function(){}).then(function(){swapping=false;});}
 function poll(){requestedAt=Date.now();fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){
