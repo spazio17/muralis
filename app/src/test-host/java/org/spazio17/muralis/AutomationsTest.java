@@ -26,6 +26,7 @@ public final class AutomationsTest {
         testEngineResetAndDisabled();
         testEngineReseedsAnEditedRule();
         testEngineTickAdvancesTheMinutes();
+        testEngineSeedLetsTheFirstEventFire();
         testIdShape();
         System.out.println("AutomationsTest passed");
     }
@@ -188,6 +189,19 @@ public final class AutomationsTest {
         engine.rules(Collections.singletonList(renamed));
         engine.sample("light", Automations.Sample.of(20), T0 + 5000, 600);
         require(runs.ran.size() == 1, "a rename keeps the state: the same true does not fire again");
+    }
+
+    private static void testEngineSeedLetsTheFirstEventFire() {
+        Runs runs = new Runs();
+        Automations.Engine engine = new Automations.Engine(runs);
+        engine.rules(Collections.singletonList(rule("proximity", "near", "display_on")));
+        engine.seed("proximity", Automations.Sample.of(5, false), T0);
+        engine.sample("proximity", Automations.Sample.of(0, true), T0 + 1000, 600);
+        require(runs.ran.equals(Collections.singletonList("r1")),
+                "seeded with the state as it stands, the first event that changes it fires");
+        engine.seed("proximity", Automations.Sample.of(5, false), T0 + 2000);
+        engine.sample("proximity", Automations.Sample.of(0, true), T0 + 3000, 600);
+        require(runs.ran.size() == 1, "a seed never resets a rule that has already seen a state");
     }
 
     private static void testEngineTickAdvancesTheMinutes() {

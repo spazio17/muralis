@@ -55,7 +55,9 @@ bind(document);
 // A refused save answers under /api/automations/save: the address goes back to the editor's
 // own, so a reload shows the page rather than posting the form again (review, 2026-10-01).
 if(location.pathname.indexOf('/api/')===0&&history.replaceState){
-var shown=document.querySelector('.detail>.pane:not([hidden]) form.automation, form.automation'),
+// The editor in sight first, any editor after: one selector with both took the first form in
+// page order, a hidden pane's.
+var shown=document.querySelector('.detail>.pane:not([hidden]) form.automation')||document.querySelector('form.automation'),
     hidden=shown?shown.querySelector('input[name=id]'):null;
 history.replaceState(null,'',hidden&&hidden.value?'/automation?id='+encodeURIComponent(hidden.value):'/automation');}
 })();

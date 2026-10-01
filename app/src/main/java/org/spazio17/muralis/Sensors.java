@@ -292,19 +292,30 @@ final class Sensors implements SensorEventListener {
     /** Moving started or ended since the last look; the start is seen on the event, the end
      * on the poll, when the still time has passed. */
     private void movingEdge() {
-        boolean now = moving();
+        boolean now;
         boolean changed;
-        synchronized (this) {
-            changed = now != wasMoving;
-            wasMoving = now;
+        // Read, compared and fed under one lock of its own: the sensor's events (main thread)
+        // and the poll (telemetry thread) both come here, and reading moving() outside it let
+        // the two feed false and true out of order (review, 2026-10-01). Its own lock, not
+        // this one, since feeding runs the rules' actions.
+        synchronized (movementEdgeLock) {
+            now = moving();
+            synchronized (this) {
+                changed = now != wasMoving;
+                wasMoving = now;
+            }
+            if (changed) {
+                // The rules hear of it on the edge, as the rows do: fed only on the poll,
+                // "picked up" ran up to two seconds late (review, 2026-10-01).
+                feed(MOVEMENT, Automations.Sample.of(now));
+            }
         }
         if (changed) {
-            // The rules hear of it on the edge, as the rows do: fed only on the poll, "picked
-            // up" ran up to two seconds late (review, 2026-10-01).
-            feed(MOVEMENT, Automations.Sample.of(now));
             edge();
         }
     }
+
+    private final Object movementEdgeLock = new Object();
 
     Sensors(Context context, Automations.Engine engine) {
         this.context = context;
@@ -692,16 +703,26 @@ final class Sensors implements SensorEventListener {
         // The hardware sensors and movement feed the engine from their own events, once each;
         // feeding their last reading again here handed it an older sample after the newer one
         // and could fire a rule twice (review, 2026-10-01). The tick advances their minutes.
+        long now = SystemClock.elapsedRealtime();
         for (Def def : ALL) {
-            if (def.androidType != 0 || !available(def) || !on(def)) {
+            if (!available(def) || !on(def)) {
                 continue;
             }
             Automations.Sample sample = sampleOf(def);
-            if (sample != null) {
+            if (sample == null) {
+                continue;
+            }
+            if (def.androidType != 0 || def == MOVEMENT) {
+                // Fed on their own events; here a rule that has seen nothing yet (a new or an
+                // edited one, or every rule after a start) is only seeded with the state as it
+                // stands, so the first event after it is a change and fires. Without this the
+                // first event itself was the seed and was swallowed (review, 2026-10-01).
+                engine.seed(def.id, sample, now);
+            } else {
                 feed(def, sample);
             }
         }
-        engine.tick(SystemClock.elapsedRealtime(), minuteOfDay());
+        engine.tick(now, minuteOfDay());
     }
 
     private Automations.Sample sampleOf(Def def) {

@@ -525,6 +525,31 @@ final class Automations {
         }
 
         /**
+         * Seeds the rules of {@code sensor} that have seen nothing yet with the state as it
+         * stands, and fires nothing: for a sensor fed on its events, so a new or edited rule,
+         * or any rule after a start, fires on the first event that changes the state rather
+         * than spending that event on its seed (review, 2026-10-01).
+         */
+        synchronized void seed(String sensor, Sample sample, long nowMs) {
+            for (Rule rule : rules) {
+                if (!rule.sensor.equals(sensor) || states.containsKey(rule.id)
+                        && states.get(rule.id).seeded) {
+                    continue;
+                }
+                Boolean holds = Automations.holds(rule, sample);
+                if (holds == null) {
+                    continue;
+                }
+                State state = new State();
+                state.seeded = true;
+                state.was = holds;
+                state.fired = holds;
+                state.trueSinceMs = nowMs;
+                states.put(rule.id, state);
+            }
+        }
+
+        /**
          * The clock's tick without a reading: advances "for N minutes" for every rule whose
          * condition held at its last sample, so a steady room, which sends no light event,
          * still fires "darker for 10 min". Nothing else changes; a reading comes from the

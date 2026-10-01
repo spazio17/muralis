@@ -2119,10 +2119,13 @@ final class HttpAdminServer {
             // hidden by the stylesheet (label.radio.one).
             String one_ = list.size() == 1 ? " one" : "";
             events.append("<div class=\"radios events\" data-sensor=\"").append(def.id)
-                    .append("\" role=\"radiogroup\" aria-label=\"What ").append(escapeHtml(def.name))
-                    .append(" notices\">");
+                    .append("\" role=\"radiogroup\" aria-label=\"").append(escapeHtml(def.name))
+                    .append(" events\">");
             for (Automations.Event event : list) {
-                boolean checked = def.id.equals(rule.sensor) && event.id.equals(rule.event);
+                // The only event of its sensor is ticked, so a form posted without scripting
+                // carries it: the radio is hidden and could not be picked (review, 2026-10-01).
+                boolean checked = def.id.equals(rule.sensor) && event.id.equals(rule.event)
+                        || list.size() == 1;
                 events.append("<label class=\"radio").append(one_).append("\"><input type=\"radio\" name=\"event_")
                         .append(def.id).append("\" value=\"").append(event.id).append("\"")
                         .append(checked ? " checked" : "")
