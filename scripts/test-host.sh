@@ -137,6 +137,19 @@ javac -d "${test_dir}/automations" \
     "${host_test_dir}/AutomationsTest.java"
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
 
+# The shapes the fleet of 0.7 builds on: shared or one-panel settings, and named lists.
+mkdir -p "${test_dir}/fleetshape"
+javac -d "${test_dir}/fleetshape" \
+    "${pure_java_dir}/SensorSettings.java" \
+    "${pure_java_dir}/NamedList.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/HostJson.java" \
+    "${host_test_dir}/../../json/JSONException.java" \
+    "${host_test_dir}/../../json/JSONObject.java" \
+    "${host_test_dir}/../../json/JSONArray.java" \
+    "${host_test_dir}/FleetShapeTest.java"
+java -cp "${test_dir}/fleetshape" org.spazio17.muralis.FleetShapeTest
+
 mkdir -p "${test_dir}/provisioning"
 javac -d "${test_dir}/provisioning" \
     "${pure_java_dir}/Provisioning.java" \

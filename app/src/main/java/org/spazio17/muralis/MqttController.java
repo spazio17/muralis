@@ -315,6 +315,17 @@ final class MqttController implements MqttCallbackExtended {
         return key.toString();
     }
 
+    /** A tag held to the panel, as Home Assistant's tag scanned event expects it. */
+    void publishTagRead(String tagId) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("tag_id", tagId);
+            publish(topicPrefix + "tag", payload.toString(), 1, false);
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
     /** A picture from the camera, raw JPEG bytes, what an MQTT camera entity shows. */
     void publishPicture(byte[] jpeg) {
         MqttAsyncClient activeClient = client;
@@ -885,7 +896,8 @@ final class MqttController implements MqttCallbackExtended {
                 } else {
                     entity.put("value_template", "{{ value_json.sensors." + def.id + ".value }}");
                 }
-                if (def == Sensors.AUDIO || def == Sensors.CAMERA) {
+                if (def == Sensors.AUDIO || def == Sensors.BLUETOOTH || def == Sensors.NFC
+                        || def == Sensors.CAMERA) {
                     entity.put("json_attributes_topic", topicPrefix + "state");
                     entity.put("json_attributes_template",
                             "{{ value_json.sensors." + def.id + ".attributes | tojson }}");
@@ -1025,6 +1037,7 @@ final class MqttController implements MqttCallbackExtended {
             }
 
             publishMqttStateEntity(device, origin);
+            publishTagDiscovery(device);
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
 
@@ -1049,6 +1062,19 @@ final class MqttController implements MqttCallbackExtended {
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /**
+     * Tags are not a component of the device document: Home Assistant discovers them on their
+     * own topic, one per panel, and a read on the state topic named here fires its tag scanned
+     * event, so its tag automations work as they do with the companion app.
+     */
+    private void publishTagDiscovery(JSONObject device) throws JSONException {
+        JSONObject tag = new JSONObject();
+        tag.put("topic", topicPrefix + "tag");
+        tag.put("value_template", "{{ value_json.tag_id }}");
+        tag.put("device", device);
+        publish("homeassistant/tag/" + config.deviceId + "/config", tag.toString(), 1, true);
     }
 
     /**

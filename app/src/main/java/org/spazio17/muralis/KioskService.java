@@ -180,7 +180,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (hub != null) {
                 // Refreshed on every tick, not only from a settings surface: every branch is a
                 // no-op while the state matches, and it is what brings back a camera the
-                // platform took. Then the block the panel's rows read, with or without MQTT.
+                // platform took, a scan that failed, or beacons switched on while the radio
+                // was still off. Then the block the panel's rows read, with or without MQTT.
                 refreshSensors();
                 hub.poll();
             }
@@ -288,10 +289,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // The sensors before the controllers and the telemetry: the first discovery a fast
         // broker asks for, and the first status document, must see the stored switches and
         // rules, not an empty hub (review, 2026-09-27).
+        KioskConfig.dropRetiredSettings(this);
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
+        beacons = new Beacons(this);
+        microphone = new Microphone(this);
         camera = new PanelCamera(this, this::onCameraMotion);
+        sensors.source(Sensors.BLUETOOTH, beacons);
+        sensors.source(Sensors.MICROPHONE, microphone);
         sensors.source(Sensors.CAMERA, camera);
         sensors.onEdge(this::sensorEdge);
         sensors.onReading(this::sensorReading);
@@ -358,6 +364,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             automations.rules(KioskConfig.automationsOf(this));
             refreshSensors();
             publishStateSoon();
+        } else if (intent != null && ACTION_TAG_READ.equals(intent.getAction())) {
+            tagRead(intent.getStringExtra(EXTRA_TAG_ID), intent.getStringExtra(EXTRA_TAG_CONTENT));
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
             displayVisualOff();
             // Not a dispatched command, so nothing else republishes: without this the Screensaver
@@ -382,6 +390,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         stopTelemetry();
         if (sensors != null) {
             sensors.stop();
+        }
+        if (beacons != null) {
+            beacons.stop();
+        }
+        if (microphone != null) {
+            microphone.stop();
         }
         if (camera != null) {
             camera.stop();
@@ -475,6 +489,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (android.os.Build.VERSION.SDK_INT >= 29
                 && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0) {
             inUse.add("Camera on");
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0) {
+            inUse.add("Microphone on");
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0) {
+            inUse.add("Listening for beacons");
         }
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID);
         if (!inUse.isEmpty()) {
@@ -584,10 +606,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * somebody noticed. Auto-granting removes that failure mode entirely.
      *
      * <p>Scope: the permissions this app declares and needs, which since the sensors (2026-09-27,
-     * a product decision) include the camera and the microphone, granted so a sensor's row shows
-     * a switch on a panel nobody stands at; every sensor stays off until switched on, and the
-     * Wi-Fi SSID is still never read. The ROM repo's docs/play-store-viability.md records the
-     * earlier, narrower set.
+     * a product decision) include the camera, the microphone and, for the Bluetooth beacons,
+     * location (Juri, 2026-10-01), granted so a sensor's row shows a switch on a panel nobody
+     * stands at; every sensor stays off until switched on, and neither a position nor the Wi-Fi
+     * SSID is ever read. The ROM repo's docs/play-store-viability.md records the earlier,
+     * narrower set.
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
@@ -2028,7 +2051,55 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
     private Automations.Engine automations;
+    private Beacons beacons;
+    private Microphone microphone;
     private PanelCamera camera;
+    static final String ACTION_TAG_READ = "org.spazio17.muralis.TAG_READ";
+    static final String EXTRA_TAG_ID = "tag_id";
+    static final String EXTRA_TAG_CONTENT = "tag_content";
+
+    /**
+     * The activity's reader mode saw a tag: the chip's id, and the tag's text and addresses.
+     * The reading, the automations, Home Assistant.
+     */
+    static void tagReadSoon(Context context, String chipId, String content) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_TAG_READ);
+        intent.putExtra(EXTRA_TAG_ID, chipId);
+        intent.putExtra(EXTRA_TAG_CONTENT, content);
+        context.startService(intent);
+    }
+
+    /**
+     * One tag, as Home Assistant's app reports it: the Home Assistant tag id a tag written by
+     * Home Assistant carries, else the chip's id; the tag's text and addresses ride along.
+     */
+    private void tagRead(String chipId, String content) {
+        if (sensors == null || !sensors.on(Sensors.NFC)) {
+            return;
+        }
+        String read = content == null ? "" : content;
+        String homeAssistant = Sensors.homeAssistantTagId(read);
+        String tagId = homeAssistant != null ? homeAssistant : chipId == null ? "" : chipId;
+        if (tagId.isEmpty() && read.isEmpty()) {
+            Log.i(TAG, "Tag read, with nothing to report: no content on it");
+            return;
+        }
+        // The id, and the content's length only: a tag can carry anything.
+        Log.i(TAG, "Tag read: " + (tagId.isEmpty() ? "no id" : tagId)
+                + (read.isEmpty() ? "" : ", content of " + read.length() + " characters"));
+        if (!tagId.isEmpty()) {
+            KioskConfig.edit(this).sensorOption("tag_seen_" + tagId,
+                    Long.toString(System.currentTimeMillis())).apply();
+            KioskConfig.pruneSeenTags(this, 20);
+        }
+        sensors.tagRead(tagId, read);
+        MqttController mqtt = mqttController;
+        if (mqtt != null && !tagId.isEmpty()) {
+            mqtt.publishTagRead(tagId);
+        }
+        publishStateSoon();
+    }
 
     /** Runs one automation's action; the engine decided it is due. */
     private void runAutomation(Automations.Rule rule) {
@@ -2081,7 +2152,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 return "no automation is called " + id;
             }
             rule.enabled = enabled;
-            KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+            KioskConfig.storeAutomations(this, rules);
             automations.rules(rules);
         }
         publishStateSoon();
@@ -2210,6 +2281,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return values == null || values.length == 0 ? "none" : Float.toString(values[0]);
     }
 
+    @Override
+    public String calibrateMicrophone(String step) {
+        Sensors hub = sensors;
+        Microphone ears = microphone;
+        if (hub == null || ears == null || !hub.available(Sensors.MICROPHONE)) {
+            return "this device has no microphone";
+        }
+        if (!hub.on(Sensors.MICROPHONE) || !ears.running()) {
+            return "the microphone is off";
+        }
+        String problem = ears.calibrate(step);
+        if (problem == null) {
+            publishSensorBlock();
+            publishStateSoon();
+        }
+        return problem;
+    }
+
     /** Coalesces a burst of changes of state into one publish; a hand is slower than this. */
     private static final long SENSOR_EDGE_DELAY_MS = 100L;
 
@@ -2305,7 +2394,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return camera;
     }
 
-    /** The live service, for a screen that needs what only the service holds. */
+    Beacons beacons() {
+        return beacons;
+    }
+
+    /** The live service, for a screen that needs what only the service holds (the beacons). */
     private static volatile KioskService live;
 
     /** The live service, for the panel's calibration steps; null while it is not running. */
@@ -2313,12 +2406,28 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return live;
     }
 
+    static Beacons beaconsOf(Context context) {
+        KioskService service = live;
+        return service == null ? null : service.beacons;
+    }
     private android.media.MediaPlayer player;
     private android.speech.tts.TextToSpeech speech;
     private boolean speechReady;
 
     @Override
     public String setSensorEnabled(String id, boolean enabled) {
+        String problem = sensorSwitchProblem(id, enabled);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
+        refreshSensors();
+        publishStateSoon();
+        return null;
+    }
+
+    /** Why a sensor's switch cannot be set so, or null when it can. */
+    String sensorSwitchProblem(String id, boolean enabled) {
         Sensors.Def def = Sensors.byId(id);
         if (def == null) {
             return "no sensor is called " + id;
@@ -2330,9 +2439,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (enabled && !hub.permitted(def)) {
             return "allow " + def.name + " on the panel first";
         }
-        KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
-        refreshSensors();
-        publishStateSoon();
         return null;
     }
 
@@ -2383,12 +2489,32 @@ public final class KioskService extends Service implements KioskCommandDispatche
             mqtt.clearPicture();
         }
         picturesToBroker = pictures;
+        if (beacons != null) {
+            beacons.refresh(hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH));
+        }
+        if (microphone != null) {
+            if (hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
+                microphone.start();
+            } else {
+                microphone.stop();
+            }
+        }
         if (camera != null) {
             camera.refresh(cameraOn);
         }
         refreshForegroundTypes();
+        boolean nfcOn = hub.available(Sensors.NFC) && hub.on(Sensors.NFC);
+        if (nfcApplied == null || nfcApplied != nfcOn) {
+            // Reader mode belongs to the activity; told once per change, whichever surface
+            // flipped the switch.
+            nfcApplied = nfcOn;
+            sendUiCommand("sensors.nfc", -1, null);
+        }
         publishSensorBlock();
     }
+
+    /** The NFC switch as last told to the activity; see refreshSensors. */
+    private Boolean nfcApplied;
 
     /** The foreground service types in force; see {@link #refreshForegroundTypes}. */
     private int foregroundTypesNow;
@@ -2401,12 +2527,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * Adds the camera foreground type while that sensor is on, and drops it when it goes off:
-     * from Android 11 a stopped activity may use the camera only through a foreground service
-     * of that type, so without this a panel whose screen is off loses its camera ("disabled by
-     * policy", the Pixel, 2026-09-27). Android refuses the type to an app in the background;
-     * the activity asks again when it comes to the front, which is where the switches are
-     * flipped anyway.
+     * Adds the camera and microphone foreground types while those sensors are on, and drops
+     * them when they go off: from Android 11 a stopped activity may use either only through a
+     * foreground service of that type, so without this a panel whose screen is off loses its
+     * camera ("disabled by policy", the Pixel, 2026-09-27) and hears silence. Android refuses
+     * the types to an app in the background; the activity asks again when it comes to the
+     * front, which is where the switches are flipped anyway.
      */
     private void refreshForegroundTypes() {
         if (android.os.Build.VERSION.SDK_INT < 29) {
@@ -2416,6 +2542,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
         int wanted = baseForegroundType();
         if (hub != null && hub.available(Sensors.CAMERA) && hub.on(Sensors.CAMERA)) {
             wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        }
+        if (hub != null && hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        }
+        if (hub != null && hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH)) {
+            // The Bluetooth scan counts as location use: with this type held, "while using the
+            // app" location is enough for the scan to run with the display off (Juri,
+            // 2026-10-01, in place of the background location permission).
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         }
         if (wanted == foregroundTypesNow) {
             return;
