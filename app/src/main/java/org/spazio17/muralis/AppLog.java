@@ -114,6 +114,25 @@ final class AppLog {
      * underscore in its host) is cut by hand the same way, rather than logged whole (review,
      * 2026-10-01).
      */
+    /**
+     * Free text with every address in it cut as {@link #withoutSecrets} cuts one: a page's
+     * console error often quotes the address that failed, query and all (review, 2026-10-01).
+     */
+    static String secretsCut(String text) {
+        if (text == null) {
+            return "";
+        }
+        java.util.regex.Matcher url = java.util.regex.Pattern
+                .compile("[A-Za-z][A-Za-z0-9+.-]*://\\S+").matcher(text);
+        StringBuffer out = new StringBuffer();
+        while (url.find()) {
+            url.appendReplacement(out,
+                    java.util.regex.Matcher.quoteReplacement(withoutSecrets(url.group())));
+        }
+        url.appendTail(out);
+        return out.toString();
+    }
+
     static String withoutSecrets(String url) {
         if (url == null) {
             return "";

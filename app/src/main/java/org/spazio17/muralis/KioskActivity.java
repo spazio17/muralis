@@ -9914,7 +9914,7 @@ public final class KioskActivity extends Activity {
                 // Logged but deliberately NOT recorded as the kiosk's last error: a live Home
                 // Assistant dashboard emits console errors routinely, and letting them fill that
                 // slot would keep the overlay permanently red and hide a real load failure.
-                Log.w(TAG, "console error: " + message.message() + " ("
+                Log.w(TAG, "console error: " + AppLog.secretsCut(message.message()) + " ("
                         + AppLog.withoutSecrets(message.sourceId()) + ":" + message.lineNumber() + ")");
             }
             return true;
