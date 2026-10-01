@@ -297,6 +297,13 @@ final class MqttController implements MqttCallbackExtended {
                 key.append(def.id).append(',');
             }
         }
+        // The snapshot button comes and goes with the camera's pictures-to-MQTT switch.
+        org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
+        org.json.JSONObject cameraAttributes = cameraState == null ? null
+                : cameraState.optJSONObject("attributes");
+        if (cameraAttributes != null && cameraAttributes.optBoolean("pictures")) {
+            key.append("pictures,");
+        }
         org.json.JSONArray rules = KioskRuntimeState.automations();
         for (int index = 0; index < rules.length(); index++) {
             JSONObject rule = rules.optJSONObject(index);
@@ -890,12 +897,24 @@ final class MqttController implements MqttCallbackExtended {
             // as a camera entity, all only while the camera is on.
             org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
             boolean cameraOn = cameraState != null && cameraState.optBoolean("active");
+            org.json.JSONObject cameraAttributes = cameraState == null ? null
+                    : cameraState.optJSONObject("attributes");
+            // The snapshot button and the picture entity only while pictures may go to the
+            // broker ("Picture to MQTT", camera_mqtt): a photo of the room is retained there,
+            // and the privacy text says it goes only when that is switched on (review,
+            // 2026-10-01).
+            boolean pictures = cameraOn && cameraAttributes != null
+                    && cameraAttributes.optBoolean("pictures");
             if (cameraOn) {
                 components.put("camera_motion", toggle(
                         "Camera motion detection",
                         "{\"command\":\"camera.motion\",\"args\":{\"enabled\":true}}",
                         "{\"command\":\"camera.motion\",\"args\":{\"enabled\":false}}",
                         "{{ 'ON' if value_json.sensors.camera.attributes.detecting else 'OFF' }}"));
+            } else {
+                components.put("camera_motion", new JSONObject().put("p", "switch"));
+            }
+            if (pictures) {
                 components.put("camera_snapshot", button("Camera snapshot", "camera.snapshot"));
                 JSONObject picture = new JSONObject();
                 picture.put("p", "camera");
@@ -904,10 +923,11 @@ final class MqttController implements MqttCallbackExtended {
                 picture.put("topic", topicPrefix + "camera");
                 components.put("camera_picture", picture);
             } else {
-                components.put("camera_motion", new JSONObject().put("p", "switch"));
                 components.put("camera_snapshot", new JSONObject().put("p", "button"));
                 components.put("camera_picture", new JSONObject().put("p", "camera"));
-                clearPicture();
+                if (!cameraOn) {
+                    clearPicture();
+                }
             }
             // One switch per automation, so a rule can be paused from Home Assistant; a rule
             // that was deleted is withdrawn by the id discovery last announced.

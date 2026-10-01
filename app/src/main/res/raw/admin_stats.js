@@ -78,6 +78,8 @@ var home=document.querySelector('#sensors-home li[data-id="'+id+'"]');
 if(home&&!one.active){home.remove();}
 ['sensor-'+id+'-value','sensor-'+id+'-page-value'].forEach(function(vid){var out=document.getElementById(vid);
 if(out){out.textContent=one.reading||'';}});
+// The camera page's two switches Home Assistant can flip follow the block's attributes.
+if(id==='camera'&&one.attributes){follow('opt-camera_motion',one.attributes.detecting);follow('opt-camera_mqtt',one.attributes.pictures);}
 });
 var ss=document.getElementById('sum-sensors');
 // Counted as Sensors.summary counts, every sensor this device has, the panel's own included;

@@ -82,7 +82,9 @@ final class Automations {
                 new Event("stopped", "Sound stops", null, false)));
         map.put("camera", Arrays.asList(
                 new Event("motion", "Motion in front of the panel", null, false),
-                new Event("no_motion", "Nothing moving for", null, true)));
+                // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
+                // itself, and read "for for" (review, 2026-10-01).
+                new Event("no_motion", "Nothing moving", null, true)));
         map.put("display", Arrays.asList(
                 new Event("on", "Display switched on", null, false),
                 new Event("off", "Display switched off", null, false)));

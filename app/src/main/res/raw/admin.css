@@ -178,8 +178,9 @@ ul.list li.two{min-height:72px}
 .text .s .stops svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .stopsnote .lead{color:var(--warn)}
 .text .h,.text .s{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* A name wraps rather than ends in dots: "Bluetooth ..." on a 360 px phone said nothing. */
-.text .h{white-space:normal;overflow-wrap:anywhere}
+/* A name wraps rather than ends in dots: "Bluetooth ..." on a 360 px phone said nothing; so does
+   a second line a person has to read or copy whole (an address, a tag's id). */
+.text .h,.text .s.wrap{white-space:normal;overflow-wrap:anywhere}
 .text .h{font-size:16px;line-height:24px;color:var(--text)}
 .text .s{font-size:14px;line-height:20px;color:var(--subtext)}
 .trail{display:inline-flex;align-items:center;flex:none;gap:0;color:var(--subtext);font-size:12px}

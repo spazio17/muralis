@@ -264,7 +264,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
         super.onCreate();
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
-        startForeground(NOTIFICATION_ID, buildNotification());
+        // The base type alone, named: the two-argument call asks for every type the manifest
+        // lists, and from Android 14 the camera and microphone types throw a SecurityException
+        // here unless both permissions are already granted, which a fresh install never has
+        // (review, 2026-10-01; seen on the Pixel). refreshForegroundTypes adds them later, while
+        // their sensors are on and allowed.
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, buildNotification(baseForegroundType()),
+                    baseForegroundType());
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification(0));
+        }
         foregroundTypesNow = baseForegroundType();
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
@@ -448,7 +458,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         manager.createNotificationChannel(channel);
     }
 
-    private Notification buildNotification() {
+    /**
+     * The service's notification; {@code types} are the foreground types held, and the text
+     * says when the camera or the microphone is among them, so a panel with no privacy dot (the
+     * API 26 tablet) still shows what is in use, as Google's foreground-service policy asks.
+     */
+    private Notification buildNotification(int types) {
         PendingIntent openKiosk = PendingIntent.getActivity(
                 this,
                 0,
@@ -456,7 +471,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
                                 | Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this, CHANNEL_ID)
+        java.util.List<String> inUse = new java.util.ArrayList<>();
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0) {
+            inUse.add("Camera on");
+        }
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID);
+        if (!inUse.isEmpty()) {
+            builder.setContentText(android.text.TextUtils.join(" · ", inUse));
+        }
+        return builder
                 .setContentTitle(getString(R.string.service_notification_title))
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(openKiosk)
@@ -559,11 +583,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * it is a hang, and after an unattended reboot it would sit there over the dashboard until
      * somebody noticed. Auto-granting removes that failure mode entirely.
      *
-     * <p>Scope is deliberately narrow: only permissions this app actually declares and needs, and
-     * nothing in a location or privacy-sensitive class. In particular <b>no location permission is
-     * requested</b>, so the Wi-Fi SSID stays unavailable, which remains the right call for a wall
-     * panel and is unchanged from the decision recorded in the ROM repo's
-     * docs/play-store-viability.md. Widening this set is a product decision, not a refactor.
+     * <p>Scope: the permissions this app declares and needs, which since the sensors (2026-09-27,
+     * a product decision) include the camera and the microphone, granted so a sensor's row shows
+     * a switch on a panel nobody stands at; every sensor stays off until switched on, and the
+     * Wi-Fi SSID is still never read. The ROM repo's docs/play-store-viability.md records the
+     * earlier, narrower set.
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
@@ -2256,6 +2280,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (lens == null || !lens.open()) {
             return "the camera is off";
         }
+        if (!KioskConfig.sensorOptionOn(this, "camera_mqtt", false)) {
+            // A picture of the room goes to the broker, retained, only where "Picture to MQTT"
+            // is on, as the privacy text says; the button is announced only then too (review,
+            // 2026-10-01).
+            return "pictures to MQTT are off";
+        }
         if (lens.snapshot() == null) {
             return "the camera has not delivered a picture yet";
         }
@@ -2392,7 +2422,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return;
         }
         try {
-            startForeground(NOTIFICATION_ID, buildNotification(), wanted);
+            startForeground(NOTIFICATION_ID, buildNotification(wanted), wanted);
             foregroundTypesNow = wanted;
             foregroundTypesRefused = false;
             Log.i(TAG, "Foreground service types: " + wanted);

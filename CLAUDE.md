@@ -426,9 +426,18 @@ the playlist page was the case that set the rule.
   snapshot at `/camera/snapshot.jpg` behind the admin password, a name (the device id until
   changed), lens, size, frame rate, mirror, upside down, a watermark of name and time, and motion
   detection on a coarse grid of the brightness plane with a sensitivity and a still time; over
-  MQTT only what Frigate and Blue Iris publish: the motion sensor, a motion-detection switch, a
-  snapshot button and, when asked, the last picture on motion as raw JPEG on `<prefix>camera`
-  for a camera entity. **This panel** is the section that holds the panel's name
+  MQTT only what Frigate and Blue Iris publish: the motion sensor, a motion-detection switch
+  and, only while "Picture to MQTT" (`camera_mqtt`) is on, a snapshot button and the last
+  picture on motion as raw JPEG on `<prefix>camera` for a camera entity, retained and cleared
+  when the switch or the camera goes off; `camera.snapshot` is refused while the switch is off,
+  since a picture of the room must not reach the broker unasked (review, 2026-10-01). The
+  stream serves at most two viewers and ends a frame's write after ten seconds. The service
+  starts with the special-use type alone and adds camera (and microphone) only while those
+  sensors are on and allowed: the two-argument `startForeground` asks for every manifest type
+  and crashed a fresh install on Android 14+. The notification says "Camera on" while the type
+  is held. On the panel the camera's Stream card is greyed with "Needs the local web admin"
+  while the admin is not listening, and Allow, once Android will not ask again, opens the app's
+  page in Android's settings and says so. **This panel** is the section that holds the panel's name
   (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
   Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
   Open dashboard, outlined, on an ordinary install; the readings are on the

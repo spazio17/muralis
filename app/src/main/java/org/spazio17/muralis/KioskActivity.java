@@ -3962,17 +3962,45 @@ public final class KioskActivity extends Activity {
 
     /** Judged live rather than from the snapshot, which is rebuilt on the service's next tick. */
     private boolean permittedNow(Sensors.Def def) {
-        for (String permission : Sensors.permissionsFor(def)) {
-            if (checkSelfPermission(permission)
-                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                return false;
-            }
-        }
-        return true;
+        return Sensors.permitted(this, def);
     }
 
+    /**
+     * Asks Android for the sensor's permissions. Once a permission has been refused for good
+     * ("Don't ask again", or twice on Android 11 and later) Android shows no dialog, and Allow
+     * looked dead (review, 2026-10-01): the second press then opens this app's page in
+     * Android's settings, where the permission is a switch, and says so.
+     */
     private void requestSensorPermission(Sensors.Def def) {
+        android.content.SharedPreferences asked = getPreferences(MODE_PRIVATE);
+        boolean askedBefore = asked.getBoolean("asked_" + def.id, false);
+        boolean blocked = false;
+        for (String permission : Sensors.permissionsFor(def)) {
+            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    && askedBefore && !shouldShowRequestPermissionRationale(permission)) {
+                blocked = true;
+            }
+        }
+        if (blocked) {
+            Runnable screen = currentScreen;
+            showNotice("Blocked in Android settings", "Android will not ask for this permission "
+                    + "again. Allow " + def.name + " on Muralis's page in Android's settings, "
+                    + "which opens now.", () -> {
+                        try {
+                            startActivity(new Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:" + getPackageName())));
+                        } catch (android.content.ActivityNotFoundException noSettings) {
+                            Log.w(TAG, "No settings page to open", noSettings);
+                        }
+                        if (screen != null) {
+                            screen.run();
+                        }
+                    });
+            return;
+        }
         permissionAskedFor = def.id;
+        asked.edit().putBoolean("asked_" + def.id, true).apply();
         try {
             requestPermissions(Sensors.permissionsFor(def), REQUEST_SENSOR_PERMISSION);
         } catch (RuntimeException refused) {
@@ -4192,15 +4220,27 @@ public final class KioskActivity extends Activity {
             addOptionSwitch(motion, theme, "Detect motion", "camera_motion", true);
             addOptionRadios(motion, theme, "Sensitivity", "camera_sensitivity", "normal",
                     "low", "Low", "normal", "Normal", "high", "High");
-            addOptionField(motion, theme, "Still after, seconds", "camera_still_s", "30", true);
-            addOptionSwitch(motion, theme, "Picture to MQTT on motion", "camera_mqtt", false);
+            addOptionField(motion, theme, "Still after (seconds)", "camera_still_s", "30", true);
+            addOptionSwitch(motion, theme, "Picture to MQTT", "camera_mqtt", false);
             cards.add(motion);
+            // The addresses only while the web admin listens: greyed, with the reason, where it
+            // does not (a free panel, the admin off), since an address that leads nowhere is
+            // worse than none; and the address wraps rather than ending in dots on a phone
+            // (review, 2026-10-01).
             LinearLayout stream = card(theme, "Stream");
+            boolean serving = KioskRuntimeState.httpAdminListening();
             String address = KioskRuntimeState.httpAdminAddress();
-            stream.addView(glyphRow(theme, R.drawable.ic_web, "Live stream",
-                    address + "/camera/stream", null, null, false), matchWrap());
-            stream.addView(glyphRow(theme, R.drawable.ic_web, "Snapshot",
-                    address + "/camera/snapshot.jpg", null, null, false), matchWrap());
+            for (String[] link : new String[][] {{"Live stream", "/camera/stream"},
+                    {"Snapshot", "/camera/snapshot.jpg"}}) {
+                LinearLayout row = glyphRow(theme, R.drawable.ic_web, link[0],
+                        serving ? address + link[1] : "Needs the local web admin", null, null,
+                        !serving);
+                TextView sub = readingOf(row);
+                sub.setSingleLine(false);
+                sub.setEllipsize(null);
+                sub.setMaxLines(3);
+                stream.addView(row, matchWrap());
+            }
             cards.add(stream);
         }
         return cards;

@@ -73,8 +73,9 @@
     <!-- The sensors (Sensors.java), every one off until a person switches it on. Camera: the
          IP-camera stream and motion detection. Each runtime permission is asked for once from
          the Sensors page on an ordinary install and granted silently on a device-owner panel.
-         Play consequence: CAMERA needs its use described in the listing's Data safety form; see
-         media/google-play/PLAY-LISTING.md. -->
+         Play consequence: CAMERA needs its use described in the listing's Data safety form and
+         the camera foreground type a declaration with a video; see
+         ../media/google-play/PLAY-LISTING.md. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />

@@ -546,7 +546,7 @@ final class HttpAdminServer {
             }
 
 
-            route(method, target, headers, body, output);
+            route(method, target, headers, body, output, socket);
         } catch (IOException exception) {
             Log.w(TAG, "HTTP admin connection error", exception);
         } catch (RuntimeException | OutOfMemoryError unexpected) {
@@ -588,7 +588,7 @@ final class HttpAdminServer {
 
     private void route(
             String method, String target, Map<String, String> headers, byte[] body,
-            OutputStream output) throws IOException {
+            OutputStream output, java.net.Socket socket) throws IOException {
         String path = target;
         String query = "";
         int questionMark = target.indexOf('?');
@@ -652,7 +652,7 @@ final class HttpAdminServer {
         } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
-            serveStream(output);
+            serveStream(output, socket);
         } else if (path.equals("/screensaver") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
@@ -1890,7 +1890,7 @@ final class HttpAdminServer {
      * repeats the row is left off here (review, 2026-10-01).
      */
     private static boolean webPage(Sensors.Def def) {
-        return def.page && def == Sensors.MOVEMENT;
+        return def.page && (def == Sensors.MOVEMENT || def == Sensors.CAMERA);
     }
 
     /**
@@ -2005,16 +2005,17 @@ final class HttpAdminServer {
                     .append(optionField("camera_name", "Name",
                             KioskConfig.sensorOption(context, "camera_name",
                                     PanelCamera.defaultName(context)), "text"))
-                    .append(optionSelect("camera_lens", "Lens",
+                    // Radios, as the panel draws a choice of five or fewer.
+                    .append(optionRadios("camera_lens", "Lens",
                             KioskConfig.sensorOption(context, "camera_lens", "front"),
                             "front", "Front", "back", "Back"))
-                    .append(optionSelect("camera_size", "Size",
+                    .append(optionRadios("camera_size", "Size",
                             KioskConfig.sensorOption(context, "camera_size", "640x480"),
                             sizes.toString().split(",")))
-                    .append(optionSelect("camera_fps", "Frames per second",
+                    .append(optionRadios("camera_fps", "Frames per second",
                             KioskConfig.sensorOption(context, "camera_fps", "5"),
                             rates.toString().split(",")))
-                    .append(optionSelect("camera_orientation", "Orientation",
+                    .append(optionRadios("camera_orientation", "Orientation",
                             KioskConfig.sensorOption(context, "camera_orientation", "device"),
                             "device", "Follow the device", "portrait", "Portrait",
                             "landscape", "Landscape"))
@@ -2030,20 +2031,23 @@ final class HttpAdminServer {
                     .append(optionSwitch("camera_motion", "Detect motion",
                             KioskConfig.sensorOptionOn(context, "camera_motion", true)))
                     .append("</div>")
-                    .append(optionSelect("camera_sensitivity", "Sensitivity",
+                    .append(optionRadios("camera_sensitivity", "Sensitivity",
                             KioskConfig.sensorOption(context, "camera_sensitivity", "normal"),
                             "low", "Low", "normal", "Normal", "high", "High"))
-                    .append(optionField("camera_still_s", "Still after, seconds",
+                    .append(optionField("camera_still_s", "Still after (seconds)",
                             KioskConfig.sensorOption(context, "camera_still_s", "30"), "number"))
                     .append("<div class=\"switches\">")
-                    .append(optionSwitch("camera_mqtt", "Picture to MQTT on motion",
+                    .append(optionSwitch("camera_mqtt", "Picture to MQTT",
                             KioskConfig.sensorOptionOn(context, "camera_mqtt", false)))
                     .append("</div></section>")
+                    // The addresses wrap (.wrap): an address cut with dots cannot be copied.
                     .append("<section class=\"card\"><h2>Stream</h2><ul class=\"list\">")
                     .append(linkRow("/camera/stream", "open", "Live stream",
-                            address + "/camera/stream", null, ""))
+                            address + "/camera/stream", null, "")
+                            .replace("<span class=\"s\"", "<span class=\"s wrap\""))
                     .append(linkRow("/camera/snapshot.jpg", "open", "Snapshot",
-                            address + "/camera/snapshot.jpg", null, ""))
+                            address + "/camera/snapshot.jpg", null, "")
+                            .replace("<span class=\"s\"", "<span class=\"s wrap\""))
                     .append("</ul></section>");
         } else {
             html.append(head).append("</section>");
@@ -2056,7 +2060,7 @@ final class HttpAdminServer {
             return "Report movement";
         }
         if (def == Sensors.CAMERA) {
-            return "Camera on";
+            return "Use the camera";
         }
         return def.name;
     }
@@ -2443,11 +2447,26 @@ final class HttpAdminServer {
                 Collections.singletonMap("Cache-Control", "no-store"));
     }
 
-    /** The live stream: MJPEG, one part per frame, until the viewer goes. */
-    private void serveStream(OutputStream output) throws IOException {
+    /** A frame not written within this long is a viewer that stopped reading; the stream ends. */
+    private static final long STREAM_WRITE_MS = 10_000;
+
+    /**
+     * The live stream: MJPEG, one part per frame, until the viewer goes. At most
+     * {@link PanelCamera#MAX_VIEWERS} at once, and each frame's write under its own deadline:
+     * a viewer that stops reading (a laptop asleep with the tab open) held one of the admin's
+     * workers until TCP gave up, with no limit on how long a write may block (review,
+     * 2026-10-01).
+     */
+    private void serveStream(OutputStream output, java.net.Socket socket) throws IOException {
         PanelCamera camera = kioskService.camera();
         if (camera == null || !camera.open()) {
             writeResponse(output, 503, "text/plain", bytes("The camera is off."));
+            return;
+        }
+        if (camera.viewers() >= PanelCamera.MAX_VIEWERS) {
+            writeResponse(output, 503, "text/plain", bytes("The stream has "
+                    + PanelCamera.MAX_VIEWERS + " viewers already; close one first."),
+                    Collections.singletonMap("Retry-After", "10"));
             return;
         }
         output.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; "
@@ -2455,6 +2474,7 @@ final class HttpAdminServer {
                 .getBytes(StandardCharsets.US_ASCII));
         camera.viewerJoined();
         long shown = -1;
+        java.util.concurrent.ScheduledFuture<?> writeDeadline = null;
         try {
             long waitingSinceMs = System.currentTimeMillis();
             while (camera.open()) {
@@ -2472,6 +2492,11 @@ final class HttpAdminServer {
                 }
                 waitingSinceMs = System.currentTimeMillis();
                 shown = at;
+                if (writeDeadline != null) {
+                    writeDeadline.cancel(false);
+                }
+                writeDeadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                        STREAM_WRITE_MS, TimeUnit.MILLISECONDS);
                 output.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
                         + jpeg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
                 output.write(jpeg);
@@ -2481,6 +2506,9 @@ final class HttpAdminServer {
         } catch (InterruptedException ended) {
             Thread.currentThread().interrupt();
         } finally {
+            if (writeDeadline != null) {
+                writeDeadline.cancel(false);
+            }
             camera.viewerLeft();
         }
     }

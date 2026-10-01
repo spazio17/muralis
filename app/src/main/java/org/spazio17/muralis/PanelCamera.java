@@ -48,7 +48,8 @@ import java.util.List;
  * publish: the motion sensor, and a picture on motion when asked for.
  *
  * <p>Frames come from Camera2 as YUV, are turned into JPEG by the platform's own encoder, and
- * only pass through a bitmap when mirror, upside down or the watermark asks for it. Motion is
+ * only pass through a bitmap when mirror, upside down, the watermark, a turn to stand upright
+ * or a crop to the chosen orientation asks for it. Motion is
  * a coarse grid of the brightness plane compared with the last frame's: the share of cells
  * that changed beyond the sensitivity is motion. The camera is open only while the sensor is
  * on; nothing is recorded.
@@ -551,10 +552,6 @@ final class PanelCamera implements Sensors.Reading {
         return lastFrameAtMs;
     }
 
-    boolean motion() {
-        return motionNow;
-    }
-
     void viewerJoined() {
         viewers.incrementAndGet();
     }
@@ -563,9 +560,13 @@ final class PanelCamera implements Sensors.Reading {
         viewers.updateAndGet(count -> Math.max(0, count - 1));
     }
 
+    /** How many are watching the stream; the admin serves at most {@link #MAX_VIEWERS}. */
     int viewers() {
         return viewers.get();
     }
+
+    /** Streams at once: each holds one of the admin's workers for as long as it is watched. */
+    static final int MAX_VIEWERS = 2;
 
     @Override
     public void fill(JSONObject one) throws JSONException {
@@ -575,6 +576,9 @@ final class PanelCamera implements Sensors.Reading {
         attributes.put("open", open);
         attributes.put("viewers", viewers.get());
         attributes.put("detecting", KioskConfig.sensorOptionOn(context, "camera_motion", true));
+        // Whether pictures go to the broker: discovery announces the snapshot button only then,
+        // and the web page's switch follows a flip made elsewhere.
+        attributes.put("pictures", KioskConfig.sensorOptionOn(context, "camera_mqtt", false));
         one.put("attributes", attributes);
     }
 

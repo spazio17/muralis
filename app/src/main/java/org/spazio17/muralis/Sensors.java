@@ -445,9 +445,20 @@ final class Sensors implements SensorEventListener {
                 return clean.length() > 40 ? "the name is too long" : null;
             case "camera_mirror": case "camera_flip":
             case "camera_watermark": case "camera_motion": case "camera_mqtt":
-                return null;
+                // true or false in the forms every surface sends; "yes" used to mean off
+                // without a word (review, 2026-10-01).
+                return isSwitchWord(clean) ? null : key + " must be true or false";
             default:
                 return "no sensor setting is called " + key;
+        }
+    }
+
+    private static boolean isSwitchWord(String clean) {
+        switch (clean.toLowerCase(java.util.Locale.ROOT)) {
+            case "true": case "false": case "on": case "off": case "1": case "0":
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -457,7 +468,7 @@ final class Sensors implements SensorEventListener {
         switch (key) {
             case "camera_mirror": case "camera_flip":
             case "camera_watermark": case "camera_motion": case "camera_mqtt":
-                return Boolean.toString(clean.equals("true") || clean.equals("on")
+                return Boolean.toString(clean.equalsIgnoreCase("true") || clean.equalsIgnoreCase("on")
                         || clean.equals("1"));
             default:
                 return clean;
@@ -466,6 +477,11 @@ final class Sensors implements SensorEventListener {
 
     /** Whether every permission the sensor needs is granted. */
     boolean permitted(Def def) {
+        return permitted(context, def);
+    }
+
+    /** The same, judged live by whoever holds a context: the panel's rows read it this way. */
+    static boolean permitted(Context context, Def def) {
         for (String permission : permissionsFor(def)) {
             if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
                 return false;
