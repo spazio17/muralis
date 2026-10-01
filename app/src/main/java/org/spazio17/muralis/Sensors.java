@@ -474,11 +474,16 @@ final class Sensors implements SensorEventListener {
             // location foreground type while the sensor is on, so the scan runs with the
             // display off without the background permission (Juri, 2026-10-01). Listening only:
             // nothing is ever sent, and no position is ever read.
+            // Coarse is asked alongside fine, as Android 12 requires; only a precise grant
+            // lets the scan hear, so fine stays the one checked, and a person who chose
+            // "approximate" is asked again.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 return new String[] {android.Manifest.permission.BLUETOOTH_SCAN,
-                        android.Manifest.permission.ACCESS_FINE_LOCATION};
+                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                        android.Manifest.permission.ACCESS_COARSE_LOCATION};
             }
-            return new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION};
+            return new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION};
         }
         return new String[0];
     }
