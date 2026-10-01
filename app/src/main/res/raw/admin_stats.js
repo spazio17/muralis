@@ -40,7 +40,8 @@ if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.disabled||el.dataset.pending||value==null){return;}
 var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
-if(typing){return;}
+// A refused value stays in its box with the reason until the person changes it.
+if(typing||el.classList.contains('check-bad')){return;}
 if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
