@@ -2070,6 +2070,15 @@ final class HttpAdminServer {
     }
 
     /**
+     * The panel's delete question (KioskActivity.confirmDelete) in one string for the browser's
+     * confirm(), which has no title of its own: the title, a blank line, the text.
+     */
+    private static String deleteQuestion(String name) {
+        String quoted = "\"" + name + "\"";
+        return "Delete " + quoted + "?\n\n" + quoted + " will be deleted.";
+    }
+
+    /**
      * The same, with the times as they were typed where a refused save is shown again: the
      * rule holds no window then, and the boxes must not fall back to 07:00 and 22:00.
      */
@@ -2155,7 +2164,8 @@ final class HttpAdminServer {
                 + "<a class=\"btn text\" href=\"/automations\">Cancel</a>"
                 + (fresh ? "" : "<button type=\"submit\" class=\"danger\""
                         + " formaction=\"/api/automations/delete\""
-                        + " data-confirm=\"Delete this automation?\">Delete</button>")
+                        + " data-confirm=\"" + escapeHtml(deleteQuestion(
+                                stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
     }
 

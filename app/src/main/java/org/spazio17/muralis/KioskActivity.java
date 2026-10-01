@@ -4487,19 +4487,18 @@ public final class KioskActivity extends Activity {
         Button delete = null;
         if (!fresh) {
             delete = dangerButton(theme, "Delete");
-            delete.setOnClickListener(view -> showConfirm("Delete this automation?",
-                    "\"" + draft.name + "\" will be gone.", "Delete", true, () -> {
-                        synchronized (Automations.STORE) {
-                            java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
-                            Automations.Rule stored = Automations.find(rules, draft.id);
-                            if (stored != null) {
-                                rules.remove(stored);
-                                KioskConfig.edit(this).automations(Automations.store(rules)).apply();
-                            }
-                        }
-                        KioskService.refreshSensorsSoon(this);
-                        done.run();
-                    }, reopen));
+            delete.setOnClickListener(view -> confirmDelete(draft.name, null, () -> {
+                synchronized (Automations.STORE) {
+                    java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                    Automations.Rule stored = Automations.find(rules, draft.id);
+                    if (stored != null) {
+                        rules.remove(stored);
+                        KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+                    }
+                }
+                KioskService.refreshSensorsSoon(this);
+                done.run();
+            }, reopen));
         }
         into.addView(editorButtonRow(delete, cancel, save), matchWrap());
         return collect;
