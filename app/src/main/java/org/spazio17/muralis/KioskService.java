@@ -2297,11 +2297,28 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     + android.speech.tts.TextToSpeech.getMaxSpeechInputLength() + " characters)";
         }
         if (speech == null) {
+            if (speechStarting != null) {
+                // One engine at a time: a second request while the first is starting is told
+                // so, rather than starting a second engine that speaks too and is never shut
+                // down (review, 2026-10-01).
+                return "the text-to-speech engine is not ready";
+            }
             final android.speech.tts.TextToSpeech[] engine = new android.speech.tts.TextToSpeech[1];
+            final boolean[] failedAtOnce = {false};
             engine[0] = new android.speech.tts.TextToSpeech(this, status -> {
                 synchronized (KioskService.this) {
-                    boolean ready = status == android.speech.tts.TextToSpeech.SUCCESS;
-                    if (ready && engine[0] != null) {
+                    // Where no engine exists Android calls this inside the constructor, before
+                    // engine[0] is set: noted, and handled after the constructor returns.
+                    if (engine[0] == null) {
+                        failedAtOnce[0] = true;
+                        return;
+                    }
+                    // An engine let go meanwhile is no longer this one.
+                    if (speechStarting != engine[0]) {
+                        return;
+                    }
+                    speechStarting = null;
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
                         speech = engine[0];
                         speechReady = true;
                         speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null,
@@ -2310,14 +2327,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         // Let go, so the next call asks the engine again rather than
                         // answering "not ready" until the service restarts.
                         Log.w(TAG, "No text-to-speech engine answered");
-                        if (engine[0] != null) {
-                            engine[0].shutdown();
-                        }
-                        speech = null;
-                        speechReady = false;
+                        engine[0].shutdown();
                     }
                 }
             });
+            if (failedAtOnce[0]) {
+                Log.w(TAG, "No text-to-speech engine on this device");
+                engine[0].shutdown();
+                return "this device has no text-to-speech engine";
+            }
+            speechStarting = engine[0];
             return null;
         }
         if (!speechReady) {
@@ -2327,13 +2346,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return null;
     }
 
+    /** The engine asked for and not yet answered; see say. */
+    private android.speech.tts.TextToSpeech speechStarting;
+
     /** Lets the speech engine go with the service: a connection to it leaked per restart. */
     private synchronized void stopSpeech() {
         if (speech != null) {
             speech.shutdown();
             speech = null;
-            speechReady = false;
         }
+        if (speechStarting != null) {
+            speechStarting.shutdown();
+            speechStarting = null;
+        }
+        speechReady = false;
     }
 
     @Override

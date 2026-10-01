@@ -2478,8 +2478,11 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
-        aboutCard.addView(listRow(theme, "System stats and log", this::showStatsPage),
-                matchWrap());
+        // The web's row: the stats glyph and the overlay's state under the name (review,
+        // 2026-10-01).
+        aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
+                config.statsOverlay ? "Overlay on" : "Overlay off", null, this::showStatsPage,
+                false), matchWrap());
         TextView buildLine = new FlushText(this);
         buildLine.setTextColor(theme.subtext);
         buildLine.setTextSize(13);
@@ -3853,6 +3856,8 @@ public final class KioskActivity extends Activity {
             }
             String stored = KioskConfig.sensorOption(this, key, fallback);
             if (value.equals(stored)) {
+                // Back to what is stored: an earlier refusal no longer applies.
+                problem.setVisibility(View.GONE);
                 return;
             }
             // The same rule book as the web admin's form; a refused value is put back to what
