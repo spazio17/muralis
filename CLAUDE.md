@@ -1055,7 +1055,7 @@ the playlist page was the case that set the rule.
 - **A page's only panel sits in the middle at the legal pages' width**, never at one side of a
   grid with an empty column beside it (Juri, 2026-09-28): 640 dp centred from 720 dp on the panel
   (`singlePanelWidth`, `singlePanelParams`), `max-width:640px` centred on the web (`.one`). The
-  privacy and terms pages and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
+  privacy and terms pages, every confirm screen (`showConfirm`, its buttons in the same column) and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
 - **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid,
   explicit columns placed by hand. Multicol balances by
   height, and with two boxes in four columns it put one at the far left and one at the far right

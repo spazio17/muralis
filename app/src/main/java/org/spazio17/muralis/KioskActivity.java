@@ -4123,7 +4123,13 @@ public final class KioskActivity extends Activity {
         text.setTextSize(15);
         text.setText(message);
         box.addView(text, matchWrapClose());
-        page.addView(box, matchWrap());
+        // The question and its buttons are one lone panel: the legal pages' column, centred,
+        // rather than a paragraph across the whole tablet (2026-10-01).
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.addView(column, singlePanelParams());
         Button keep = textButton(theme, "Cancel");
         keep.setOnClickListener(view -> onCancel.run());
         // Red when the button destroys something: the one screen where a wrong tap costs the most
@@ -4131,7 +4137,7 @@ public final class KioskActivity extends Activity {
         Button go = destructive ? dangerButton(theme, confirmLabel)
                 : primaryButton(theme, confirmLabel);
         go.setOnClickListener(view -> onConfirm.run());
-        page.addView(buttonRow(keep, go), matchWrap());
+        column.addView(buttonRow(keep, go), matchWrap());
         setContentView(scrollPage(theme, page));
         currentScreen = () ->
                 showConfirm(title, message, confirmLabel, destructive, onConfirm, onCancel);
