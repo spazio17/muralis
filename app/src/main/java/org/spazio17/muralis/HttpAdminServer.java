@@ -50,7 +50,7 @@ final class HttpAdminServer {
      */
     private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
             new java.util.HashSet<>(java.util.Arrays.asList(
-                    "dashboard", "mqtt", "webadmin", "sequences")));
+                    "dashboard", "mqtt", "webadmin", "sequences", "panel")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
     private static final int HANDSHAKE_TIMEOUT_MS = 2_000;
     /** Long enough for a socket close to land, short enough that a reload never looks like a hang. */
@@ -73,6 +73,13 @@ final class HttpAdminServer {
      * big playlist could not be reordered from the page at all. Eight seconds still suffice.
      */
     private static final int MAX_ORDER_BYTES = 256 * 1024;
+    /**
+     * The three documents of the fleet shape (/api/automations, /api/sensors/settings,
+     * /api/beacons/names): 64 rules with 500-character arguments in a script of three bytes a
+     * character, or full of escaped quotes, come to about 130 KB, which the 16 KB budget
+     * refused, so "post back the shape GET gives" failed (review, 2026-10-01).
+     */
+    private static final int MAX_DOCUMENT_BYTES = 160 * 1024;
     private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
     private static final int UPLOAD_DEADLINE_MS = 120_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
@@ -110,6 +117,8 @@ final class HttpAdminServer {
      * cost of being wrong is one refused request from a client on a genuinely awful link.
      */
     private static final int REQUEST_DEADLINE_MS = 8_000;
+    /** How long the camera stream waits for a frame before it ends; see serveStream. */
+    private static final long STREAM_STALL_MS = 15_000;
     /** Backoff after a failed {@code accept()}; see the comment at that call site. */
     private static final long ACCEPT_RETRY_DELAY_MS = 250L;
 
@@ -127,6 +136,8 @@ final class HttpAdminServer {
     private final String settingScript;
     private final String checkScript;
     private final String statsScript;
+    private final String automationScript;
+    private final String listDetailScript;
     private final String themeScript;
     private final String pictureScript;
     private final String playlistScript;
@@ -188,6 +199,8 @@ final class HttpAdminServer {
         settingScript = script(R.raw.admin_setting);
         checkScript = script(R.raw.admin_check);
         statsScript = script(R.raw.admin_stats);
+        automationScript = script(R.raw.admin_automation);
+        listDetailScript = script(R.raw.admin_listdetail);
         themeScript = script(R.raw.admin_theme);
         pictureScript = script(R.raw.admin_pictures);
         playlistScript = script(R.raw.admin_playlists);
@@ -509,6 +522,11 @@ final class HttpAdminServer {
                 }
             }
             String requestPath = target.split("\\?", 2)[0];
+            if (method.equals("GET") && requestPath.equals("/camera/stream")) {
+                // The stream lasts as long as the viewer does; the request deadline that
+                // closes a slow connection would cut it at eight seconds.
+                deadline.cancel(false);
+            }
             boolean upload = method.equals("POST") && requestPath.equals("/api/pictures");
             if (upload) {
                 uploadHeld = uploadSlot.tryAcquire();
@@ -526,8 +544,12 @@ final class HttpAdminServer {
             try {
                 boolean order = method.equals("POST")
                         && requestPath.equals("/api/playlists/order");
+                boolean document = method.equals("POST")
+                        && (requestPath.equals("/api/automations")
+                                || requestPath.equals("/api/sensors/settings")
+                                || requestPath.equals("/api/beacons/names"));
                 body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
-                        : order ? MAX_ORDER_BYTES : MAX_BODY_BYTES);
+                        : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES : MAX_BODY_BYTES);
             } catch (BodyTooLargeException tooLarge) {
                 writeResponse(output, 413, "text/plain",
                         bytes("Payload Too Large: " + tooLarge.getMessage()));
@@ -535,7 +557,7 @@ final class HttpAdminServer {
             }
 
 
-            route(method, target, headers, body, output);
+            route(method, target, headers, body, output, socket);
         } catch (IOException exception) {
             Log.w(TAG, "HTTP admin connection error", exception);
         } catch (RuntimeException | OutOfMemoryError unexpected) {
@@ -577,7 +599,7 @@ final class HttpAdminServer {
 
     private void route(
             String method, String target, Map<String, String> headers, byte[] body,
-            OutputStream output) throws IOException {
+            OutputStream output, java.net.Socket socket) throws IOException {
         String path = target;
         String query = "";
         int questionMark = target.indexOf('?');
@@ -612,6 +634,49 @@ final class HttpAdminServer {
             }
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
+        } else if (path.equals("/sensors") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSensorsPage(queryValue(query, "id"), false)));
+        } else if (path.equals("/sensor") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSensorPage(queryValue(query, "id"))));
+        } else if (path.equals("/automations") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildAutomationsPage(null, queryValue(query, "id"), null, false)));
+        } else if (path.equals("/automation") && method.equals("GET")) {
+            String wanted = queryValue(query, "id");
+            Automations.Rule rule = Automations.find(KioskConfig.automationsOf(context), wanted);
+            if (rule == null && wanted != null && !wanted.isEmpty()) {
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationsPage("No automation is called that.")));
+            } else {
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationPage(rule == null ? new Automations.Rule() : rule,
+                                null)));
+            }
+        } else if (path.equals("/api/automations") && method.equals("GET")) {
+            writeJson(output, 200, automationsDocument());
+        } else if (path.equals("/api/automations") && method.equals("POST")) {
+            replaceAutomations(headers, body, output);
+        } else if (path.equals("/api/sensors/settings") && method.equals("GET")) {
+            writeJson(output, 200, KioskConfig.sensorSettingsDocument(context));
+        } else if (path.equals("/api/sensors/settings") && method.equals("POST")) {
+            applySensorSettings(headers, body, output);
+        } else if (path.equals("/api/beacons/names") && method.equals("GET")) {
+            writeResponse(output, 200, "application/json",
+                    bytes(KioskConfig.beaconNames(context).store()));
+        } else if (path.equals("/api/beacons/names") && method.equals("POST")) {
+            applyBeaconNames(headers, body, output);
+        } else if (path.equals("/api/automations/save") && method.equals("POST")) {
+            saveAutomation(parseFormBody(headers, body), output);
+        } else if (path.equals("/api/automations/delete") && method.equals("POST")) {
+            deleteAutomation(parseFormBody(headers, body), output);
+        } else if (path.equals("/stats") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
+        } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
+            serveSnapshot(output);
+        } else if (path.equals("/camera/stream") && method.equals("GET")) {
+            serveStream(output, socket);
         } else if (path.equals("/screensaver") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
@@ -914,8 +979,7 @@ final class HttpAdminServer {
             case "sequences":
                 return saveEscapeSequences(form, fresh);
             case "dashboard": {
-                String stale = staleFormRefusal(form,
-                        fresh.dashboardUrl + "|" + fresh.deviceId);
+                String stale = staleFormRefusal(form, fresh.dashboardUrl);
                 if (stale != null) {
                     return stale;
                 }
@@ -928,14 +992,8 @@ final class HttpAdminServer {
                 if (urlProblem != null) {
                     return "Not saved: " + urlProblem + ".";
                 }
-                String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
-                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
-                if (idProblem != null) {
-                    return "Not saved: " + idProblem + ".";
-                }
                 KioskConfig.edit(context)
                         .dashboardUrl(url)
-                        .deviceId(deviceId)
                         .apply();
                 if (!url.equals(fresh.dashboardUrl)) {
                     // Saving a new URL must also navigate to it; the form path used to only save,
@@ -944,6 +1002,22 @@ final class HttpAdminServer {
                     // the dispatcher uses, so the two paths cannot disagree again.
                     kioskService.setDashboardUrl(url);
                 }
+                return null;
+            }
+            case "panel": {
+                // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
+                // box since 2026-09-27 (Juri: the id is the panel's identity, not the page's).
+                String stale = staleFormRefusal(form, fresh.deviceId);
+                if (stale != null) {
+                    return stale;
+                }
+                String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
+                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                if (idProblem != null) {
+                    // The box is called Name; "device id" is the dispatcher's word for MQTT.
+                    return "Not saved: " + idProblem.replace("device id", "the name") + ".";
+                }
+                KioskConfig.edit(context).deviceId(deviceId).apply();
                 return null;
             }
             case "mqtt": {
@@ -1012,8 +1086,9 @@ final class HttpAdminServer {
                 return null;
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
-            // POST /api/setting has always accepted. It now covers the stats-overlay switch alone,
-            // the publish interval having been removed. See settingScript.
+            // POST /api/setting has always accepted. It covers the stats-overlay switch, the
+            // display and screensaver keys, and since the sensors the sensor switches, their
+            // options, the automation switches and the beacon names. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
                 // the whole box was posted at once. These controls now post one at a time as they
@@ -1024,10 +1099,56 @@ final class HttpAdminServer {
                 // applies on its own, in this order: a hand-built request carrying several keys
                 // gets the earlier ones applied and the first refusal reported. The screensaver
                 // keys are the exception, checked as a set before any of them is stored.
+                for (String key : form.keySet()) {
+                    if (key.startsWith("sensor_") && !key.startsWith("sensor_option_")
+                            && Sensors.byId(key.substring("sensor_".length())) == null) {
+                        return "no sensor is called " + key.substring("sensor_".length());
+                    }
+                }
+                for (Sensors.Def def : Sensors.ALL) {
+                    String key = "sensor_" + def.id;
+                    if (form.containsKey(key)) {
+                        String problem = kioskService.setSensorEnabled(def.id, isTrue(form.get(key)));
+                        if (problem != null) {
+                            return problem;
+                        }
+                    }
+                }
+                for (Map.Entry<String, String> entry : form.entrySet()) {
+                    if (entry.getKey().startsWith("sensor_option_")) {
+                        String problem = saveSensorOption(
+                                entry.getKey().substring("sensor_option_".length()),
+                                entry.getValue());
+                        if (problem != null) {
+                            return problem;
+                        }
+                    } else if (entry.getKey().startsWith("automation_")) {
+                        String problem = kioskService.setAutomationEnabled(
+                                entry.getKey().substring("automation_".length()),
+                                isTrue(entry.getValue()));
+                        if (problem != null) {
+                            return problem;
+                        }
+                    }
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
                             .apply();
+                }
+                if (form.containsKey("device_id")) {
+                    // The panel's name stores when its box lets go of the focus, as on the panel
+                    // since 2026-09-27; the Save button stays only for a browser without
+                    // scripting (review, 2026-10-01).
+                    String deviceId = form.get("device_id").trim();
+                    String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                    if (idProblem != null) {
+                        return "Not saved: " + idProblem.replace("device id", "the name") + ".";
+                    }
+                    if (!deviceId.equals(KioskConfig.load(context).deviceId)) {
+                        KioskConfig.edit(context).deviceId(deviceId).apply();
+                        KioskService.reloadConfiguration(context);
+                    }
                 }
                 if (form.containsKey("display_off_method")) {
                     String method = form.get("display_off_method");
@@ -1260,23 +1381,7 @@ final class HttpAdminServer {
                 + (backTo == null ? "" : iconLink(backTo, "back", "Back"))
                 + titles
                 + (chip ? statusChip() : "")
-                + themePicker()
                 + "</header>";
-    }
-
-    /**
-     * Auto, Light and Dark as a segmented button where the app bar has room, and one cycling icon
-     * button where it has not; the stylesheet shows one or the other, {@code admin_theme.js}
-     * drives both.
-     */
-    private static String themePicker() {
-        return "<div class=\"themepick\" role=\"group\" aria-label=\"Colour theme\">"
-                + "<button type=\"button\" data-theme=\"system\">Auto</button>"
-                + "<button type=\"button\" data-theme=\"light\">Light</button>"
-                + "<button type=\"button\" data-theme=\"dark\">Dark</button></div>"
-                + "<button type=\"button\" class=\"ib themecycle\" data-theme-cycle=\"1\""
-                + " title=\"Colour theme\" aria-label=\"Colour theme\">" + glyph("theme")
-                + "</button>";
     }
 
     /**
@@ -1303,6 +1408,31 @@ final class HttpAdminServer {
                 + "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M4 4l16 16\"/>");
         paths.put("prev", "<path d=\"M15 6l-6 6 6 6\"/>");
         paths.put("next", "<path d=\"M9 6l6 6-6 6\"/>");
+        paths.put("plus", "<path d=\"M12 5v14M5 12h14\"/>");
+        paths.put("sensors", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14\"/>");
+        paths.put("panel", "<rect x=\"4\" y=\"2\" width=\"16\" height=\"20\" rx=\"2\"/><path d=\"M9 18h6\"/>");
+        paths.put("tag", "<path d=\"M3 12V4h8l10 10-8 8z\"/><circle cx=\"7.5\" cy=\"8.5\" r=\"1.5\"/>");
+        // The sensors' glyphs, the same paths the panel's drawables carry.
+        paths.put("proximity", "<circle cx=\"12\" cy=\"10\" r=\"2.5\"/><path d=\"M7.5 17.5a4.5 3.5 0 019 0M3.13 8.6A9.5 9.5 0 018.6 3.13M15.4 3.13A9.5 9.5 0 0120.87 8.6M20.87 15.4A9.5 9.5 0 0115.4 20.87M8.6 20.87A9.5 9.5 0 013.13 15.4\"/>");
+        paths.put("light", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
+        paths.put("movement", "<path d=\"M3 12h3l3-7 4 14 3-7h5\"/>");
+        paths.put("bluetooth", "<path d=\"M7 7l10 10-5 5V2l5 5L7 17\"/>");
+        paths.put("nfc", "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/><path d=\"M8 8v8M12 8v8M16 8v8\"/>");
+        paths.put("audio", "<path d=\"M4 10v4h4l5 4V6L8 10zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11\"/>");
+        paths.put("camera", "<path d=\"M4 8h4l2-3h4l2 3h4v11H4z\"/><circle cx=\"12\" cy=\"13\" r=\"3.5\"/>");
+        paths.put("microphone", "<rect x=\"9\" y=\"3\" width=\"6\" height=\"11\" rx=\"3\"/><path d=\"M5 11a7 7 0 0014 0M12 18v3M9 21h6\"/>");
+        paths.put("pressure", "<circle cx=\"12\" cy=\"13\" r=\"8\"/><path d=\"M12 13l4-4M12 5V3\"/>");
+        paths.put("temperature", "<path d=\"M10 4a2 2 0 014 0v9.5a4 4 0 11-4 0z\"/>");
+        paths.put("humidity", "<path d=\"M12 3s6 7 6 11a6 6 0 01-12 0c0-4 6-11 6-11z\"/>");
+        paths.put("display", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M8 21h8\"/>");
+        paths.put("automations", "<path d=\"M17 21H7a3 3 0 01-3-3v-1h10v1a3 3 0 006 0V5a2 2 0 00-2-2H9a2 2 0 00-2 2v12M11 8h5M11 12h5\"/>");
+        paths.put("asleep_off", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14M3 3l18 18\"/>");
+        paths.put("screensaver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
+        paths.put("battery", "<rect x=\"3\" y=\"7\" width=\"16\" height=\"10\" rx=\"2\"/><path d=\"M21 11v2M6 10v4M9 10v4\"/>");
+        paths.put("power", "<path d=\"M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0zM12 18v3\"/>");
+        paths.put("network", "<path d=\"M2 9a15 15 0 0120 0M5.5 12.5a10 10 0 0113 0M9 16a5 5 0 016 0\"/><circle cx=\"12\" cy=\"19\" r=\"1\"/>");
+        paths.put("memory", "<rect x=\"5\" y=\"5\" width=\"14\" height=\"14\" rx=\"2\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\"/><path d=\"M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3\"/>");
+        paths.put("processor", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
         paths.put("down", "<path d=\"M6 9l6 6 6-6\"/>");
         paths.put("list", "<path d=\"M4 6h16M4 12h16M4 18h16\"/>");
         paths.put("details", "<rect x=\"3\" y=\"4\" width=\"5\" height=\"5\" rx=\"1\"/>"
@@ -1363,6 +1493,8 @@ final class HttpAdminServer {
         // The Folders head's one button: chevrons closing on each other, or opening away.
         paths.put("unfold_less", "<path d=\"M7 4l5 5 5-5M7 20l5-5 5 5\"/>");
         paths.put("unfold_more", "<path d=\"M7 9l5-5 5 5M7 15l5 5 5-5\"/>");
+        paths.put("sun", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,7c-2.76,0 -5,2.24 -5,5s2.24,5 5,5 5,-2.24 5,-5 -2.24,-5 -5,-5zM2,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1L2,11c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM20,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1h-2c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM11,2v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1L13,2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM11,20v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1v-2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM5.99,4.58c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0s0.39,-1.03 0,-1.41L5.99,4.58zM18.36,16.95c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0 0.39,-0.39 0.39,-1.03 0,-1.41l-1.06,-1.06zM19.42,5.99c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06zM7.05,18.36c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06z\"/>");
+        paths.put("moon", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9 9,-4.03 9,-9c0,-0.46 -0.04,-0.92 -0.1,-1.36 -0.98,1.37 -2.58,2.26 -4.4,2.26 -2.98,0 -5.4,-2.42 -5.4,-5.4 0,-1.81 0.89,-3.42 2.26,-4.4C12.92,3.04 12.46,3 12,3z\"/>");
         paths.put("theme", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
                 + "<path d=\"M12 3a9 9 0 010 18z\" fill=\"currentColor\"/>");
         return Collections.unmodifiableMap(paths);
@@ -1427,12 +1559,14 @@ final class HttpAdminServer {
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
         sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
                 screensaverBody()});
-        sections.add(new String[] {"stats", "stats", "System stats", statsSummary(),
-                statsBody(config)});
-        sections.add(new String[] {"quick", "bolt", "Quick actions",
+        sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
+                sensorsSectionBody()});
+        sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
+                automationsSectionBody()});
+        sections.add(new String[] {"quick", "reload", "Quick actions",
                 "Reboot · Reload · Restart", quickActionsBody()});
-        sections.add(new String[] {"about", "info", "About", "Muralis " + appVersionName(),
-                aboutBody()});
+        sections.add(new String[] {"panel", "panel", "This panel", config.deviceId,
+                panelBody(config, notice, noticeSection)});
 
         StringBuilder nav = new StringBuilder("<nav class=\"sections\" aria-label=\"Sections\">");
         StringBuilder boxes = new StringBuilder("<div class=\"boxes\">");
@@ -1442,13 +1576,20 @@ final class HttpAdminServer {
             nav.append("<a class=\"item\" href=\"#box-").append(key).append("\" data-box=\"box-")
                     .append(key).append("\">").append(summaryRow(section[1], section[2],
                             section[3], key)).append("</a>");
+            // The Display section carries the theme switch beside its name, as the panel does:
+            // in the accordion's row before the chevron, and in the open card at the right of
+            // the title (Juri, 2026-09-27, "copy the app 1:1").
+            String action = key.equals("display") ? themeButton() : "";
             boxes.append("<details class=\"box\" id=\"box-").append(key).append("\"")
                     .append(open ? " open" : "").append("><summary>")
                     .append(summaryRow(section[1], section[2], section[3], null))
+                    .append(action)
                     .append("<span class=\"chev\">").append(glyph("down")).append("</span>")
                     .append("</summary><div class=\"body\" data-title=\"")
-                    .append(escapeHtml(section[2])).append("\">").append(section[4])
-                    .append("</div></details>");
+                    .append(escapeHtml(section[2])).append("\">")
+                    .append(action.isEmpty() ? "" : action.replace("class=\"ib themecycle\"",
+                            "class=\"ib themecycle sectionaction\""))
+                    .append(section[4]).append("</div></details>");
         }
         nav.append("</nav>");
         boxes.append("</div>");
@@ -1507,29 +1648,1192 @@ final class HttpAdminServer {
 
     private String screensaverSummary() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
-        String name = screensaverOptionsTitle(saver.mode);
-        name = name.substring(0, name.length() - " options".length());
         return ScreensaverPolicy.OFF.equals(saver.mode) ? "Off"
-                : name + " · after " + saver.idleSeconds + " s";
+                : ScreensaverPolicy.modeName(saver.mode) + " · after " + saver.idleSeconds + " s";
     }
 
-    /** Memory, load and uptime from the same document the poll reads; the script keeps it current. */
-    private String statsSummary() {
+    /** "n of m on" for the Sensors section and page; admin_stats.js keeps it current. */
+    private String sensorsSummary() {
+        return Sensors.summary(KioskRuntimeState.sensors());
+    }
+
+    private String automationsSummary() {
+        org.json.JSONArray rules = KioskRuntimeState.automations();
+        int on = 0;
+        for (int index = 0; index < rules.length(); index++) {
+            org.json.JSONObject rule = rules.optJSONObject(index);
+            if (rule != null && rule.optBoolean("enabled")) {
+                on++;
+            }
+        }
+        return rules.length() == 0 ? "None yet" : on + " of " + rules.length() + " on";
+    }
+
+    /** One list row: a glyph, two lines, and whatever stands at the right. */
+    private static String listRow(String glyphName, String head, String headId, String sub,
+            String subId, String trail, boolean dim) {
+        return listRow(glyphName, head, headId, sub, subId, trail, dim, "");
+    }
+
+    /** The same, with {@code mark}, markup, before the second line: see stopsMark. */
+    private static String listRow(String glyphName, String head, String headId, String sub,
+            String subId, String trail, boolean dim, String mark) {
+        return "<li class=\"two" + (dim ? " dim" : "") + "\"><span class=\"lead\">"
+                + glyph(glyphName) + "</span><span class=\"text\"><span class=\"h\""
+                + (headId == null ? "" : " id=\"" + headId + "\"") + ">" + escapeHtml(head)
+                + "</span><span class=\"s\"" + (subId == null ? "" : " id=\"" + subId + "\"")
+                + ">" + mark + escapeHtml(sub) + "</span></span>"
+                + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
+    }
+
+    /** The same row with its text a link to the page it names. */
+    private static String linkRow(String href, String glyphName, String head, String sub,
+            String subId, String trail) {
+        return linkRow(href, glyphName, head, sub, subId, trail, "");
+    }
+
+    private static String linkRow(String href, String glyphName, String head, String sub,
+            String subId, String trail, String mark) {
+        return "<li class=\"two\"><a class=\"rowlink plain\" href=\"" + href + "\">"
+                + "<span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(head) + "</span><span class=\"s\""
+                + (subId == null ? "" : " id=\"" + subId + "\"") + ">" + mark + escapeHtml(sub)
+                + "</span></span></a>"
+                + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
+    }
+
+    /**
+     * The mark before a rule's sentence when its sensor is not running while the display
+     * sleeps, the panel's own: the sensor with a slash, small, in the warning colour.
+     */
+    private String stopsMark(String sensorId) {
+        // The words for a screen reader too, not only in a tooltip (review, 2026-10-01).
+        return KioskService.stopsWhileAsleep(context, sensorId)
+                ? "<span class=\"stops\" title=\"Not running while the display is off\">"
+                        + glyph("asleep_off") + "<span class=\"sr\">Not running while the display"
+                        + " is off. </span></span>"
+                : "";
+    }
+
+    private static String sensorSwitch(Sensors.Def def, boolean on) {
+        return sensorSwitch(def, on, "");
+    }
+
+    /** The same switch under another id, for the detail's own row beside the list's. */
+    private static String sensorSwitch(Sensors.Def def, boolean on, String suffix) {
+        return "<input type=\"checkbox\" class=\"sw\" id=\"sensor-" + def.id + suffix
+                + "\" data-setting=\"sensor_" + def.id + "\" aria-label=\"" + escapeHtml(def.name)
+                + "\"" + (on ? " checked" : "") + ">";
+    }
+
+    /** A list row as a row of the list beside a detail: its id on it, and marked when chosen. */
+    private static String navRow(String li, String id, boolean on) {
+        java.util.regex.Matcher tag = java.util.regex.Pattern.compile("<li( class=\"([^\"]*)\")?")
+                .matcher(li);
+        if (!tag.find()) {
+            return li;
+        }
+        String classes = (tag.group(2) == null ? "" : tag.group(2)) + (on ? " on" : "");
+        return li.substring(0, tag.start()) + "<li data-id=\"" + escapeHtml(id) + "\" class=\""
+                + classes.trim() + "\"" + li.substring(tag.end());
+    }
+
+    /**
+     * The list-detail shell the Sensors and Automations pages share, the settings page's own
+     * shape from 840 px: the list at the left, the chosen item's page at the right. Below that
+     * one of the two shows, which one {@code detailPage} says, and from 600 px the column is
+     * no wider than 640 px (Juri, 2026-09-27).
+     */
+    private String listDetail(String kind, boolean detailPage, String nav, String detail) {
+        return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
+                + (detailPage ? "detail" : "list") + "\" data-title=\""
+                + escapeHtml(Character.toUpperCase(kind.charAt(0)) + kind.substring(1)) + "\""
+                + listsAttributes(kind + "_page") + ">"
+                + nav + "<div class=\"detail\">" + detail + "</div></div>" + listDetailScript;
+    }
+
+    /**
+     * The key a list was drawn from, for admin_stats.js: when the stats carry another, the list
+     * is fetched again and swapped in place, unless something in it is being edited. See
+     * Sensors.listKeys; the rules as stored, as the pages draw them.
+     */
+    private String listsAttributes(String kind) {
+        String key = Sensors.listKeys(KioskRuntimeState.sensors(),
+                Automations.toJson(KioskConfig.automationsOf(context), true)).optString(kind, "");
+        return " data-lists-kind=\"" + kind + "\" data-lists=\"" + escapeHtml(key) + "\"";
+    }
+
+    /** The settings page's Sensors section: only what is on, and the way to the rest. */
+    private String sensorsSectionBody() {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        StringBuilder rows = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null || !one.optBoolean("active")) {
+                continue;
+            }
+            // The switch on the row too (Juri, 2026-09-27): switched off, admin_stats.js takes
+            // the row out at the next poll; the Sensors page switches it on again.
+            rows.append(navRow(listRow(def.glyph, def.name, null, one.optString("reading", ""),
+                    "sensor-" + def.id + "-value", sensorSwitch(def, true, "-home"), false),
+                    def.id, false));
+        }
+        return "<div id=\"sensors-body\"" + listsAttributes("sensors_home") + ">"
+                + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"sensors-home\">" + rows + "</ul>")
+                + "<div class=\"actions" + (rows.length() == 0 ? " tight" : "") + "\">"
+                + "<a class=\"btn text\" href=\"/sensors\">More sensor settings" + glyph("next")
+                + "</a></div></div>";
+    }
+
+    private String automationsSectionBody() {
+        // As stored, not the status document's copy, which follows a change by a tick: the
+        // list's key is taken from what is stored, and the two must agree.
+        org.json.JSONArray rules = Automations.toJson(KioskConfig.automationsOf(context), true);
+        StringBuilder rows = new StringBuilder();
+        for (int index = 0; index < rules.length(); index++) {
+            org.json.JSONObject rule = rules.optJSONObject(index);
+            if (rule == null || !rule.optBoolean("enabled")) {
+                continue;
+            }
+            String id = rule.optString("id", "");
+            rows.append(navRow(listRow("automations", rule.optString("name", ""),
+                    null, rule.optString("sentence", ""), null,
+                    "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
+                            + "-home\" data-setting=\"automation_" + id + "\" aria-label=\""
+                            + escapeHtml(rule.optString("name", "")) + "\" checked>", false,
+                    stopsMark(rule.optString("sensor", ""))),
+                    id, false));
+        }
+        return "<div id=\"automations-body\"" + listsAttributes("automations_home") + ">"
+                + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"automations-home\">" + rows + "</ul>")
+                + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                + "<a class=\"btn text\" href=\"/automations\">More automation settings"
+                + glyph("next") + "</a></div></div>";
+    }
+
+    /** This panel: its name, then the stats and log, the version and the legal pages as rows. */
+    private String panelBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("panel", notice, noticeSection)
+                + baselineField(config.deviceId)
+                // Stored on change, as the panel's box is; Save only where nothing runs.
+                + field("text", "device_id", "Name", config.deviceId,
+                        " data-setting=\"device_id\"", null)
+                + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
+                + "</button></div></form>"
+                + "<ul class=\"list gap\">"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
+                + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
+                + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
+                + "\" target=\"_blank\" rel=\"noopener\"><span class=\"lead\">" + glyph("info")
+                + "</span><span class=\"text\"><span class=\"h\">"
+                + "Muralis " + escapeHtml(appVersionName()) + "</span><span class=\"s\">"
+                + REPOSITORY_URL.replaceFirst("^https://", "") + "</span></span></a>"
+                + "<span class=\"trail\">" + glyph("open") + "</span></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/privacy\"><span class=\"lead\">"
+                + glyph("open") + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.privacy_policy_title))
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/terms\"><span class=\"lead\">"
+                + glyph("open") + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "</ul>";
+    }
+
+    /**
+     * The Sensors page: the one flat list, alphabetical, every row the same shape (see Sensors),
+     * and beside it from 840 px the chosen sensor's cards.
+     */
+    private String buildSensorsPage(String selectedId, boolean detailPage) {
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        Sensors.Def chosen = null;
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            if (def.id.equals(selectedId)) {
+                chosen = def;
+                break;
+            }
+            if (chosen == null && one.optBoolean("available")) {
+                chosen = def;
+            }
+        }
+        StringBuilder rows = new StringBuilder();
+        StringBuilder absent = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            String reading = one.optString("reading", "");
+            String readingId = "sensor-" + def.id + "-value";
+            boolean on = def == chosen;
+            if (!one.optBoolean("available")) {
+                absent.append(navRow(listRow(def.glyph, def.name, null, reading, null,
+                        "<input type=\"checkbox\" class=\"sw\" disabled aria-label=\""
+                                + escapeHtml(def.name) + "\">", true), def.id, on));
+                continue;
+            }
+            String row;
+            if (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted")) {
+                row = listRow(def.glyph, def.name, null, reading, readingId,
+                        "<span class=\"allow\">Allow on the panel</span>", false);
+            } else if (webPage(def)) {
+                row = linkRow("/sensor?id=" + def.id, def.glyph, def.name, reading, readingId,
+                        "<span class=\"chev\">" + glyph("next") + "</span><span class=\"divider\"></span>"
+                                + sensorSwitch(def, one.optBoolean("enabled")));
+            } else {
+                row = listRow(def.glyph, def.name, null, reading, readingId,
+                        sensorSwitch(def, one.optBoolean("enabled")), false);
+            }
+            rows.append(navRow(row, def.id, on));
+        }
+        String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Sensors</h2>"
+                + "<span class=\"count\" id=\"sum-sensors\">" + escapeHtml(sensorsSummary())
+                + "</span></div><ul class=\"list\">" + rows + absent + "</ul></section>";
+        // Every sensor's cards are on the page, one pane each, so choosing one at the left is
+        // a switch of panes and not a page load, the way the settings menu opens a section.
+        StringBuilder detail = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (one == null) {
+                continue;
+            }
+            detail.append("<div class=\"pane\" data-id=\"").append(def.id).append("\"")
+                    .append(def == chosen ? "" : " hidden").append(">")
+                    .append(sensorCards(def, one)).append("</div>");
+        }
+        return pageStart(detailPage && chosen != null ? chosen.name : "Sensors", null,
+                detailPage ? "/sensors" : "/")
+                + listDetail("sensors", detailPage, nav, detail.toString()) + pageEnd();
+    }
+
+    /**
+     * Whether the sensor's page says anything on this surface beyond its row: the calibration
+     * and the test while asleep are the panel's alone, so a chevron to a page that only
+     * repeats the row is left off here (review, 2026-10-01).
+     */
+    private static boolean webPage(Sensors.Def def) {
+        return def.page && (def == Sensors.MOVEMENT || def == Sensors.CAMERA
+                || def == Sensors.BLUETOOTH || def == Sensors.NFC);
+    }
+
+    /**
+     * A choice of five or fewer as radios, the panel's shape for the same settings, each one
+     * stored the moment it is picked through admin_setting.js (a menu here and radios on the
+     * panel broke the mirror, review of 2026-10-01).
+     */
+    private static String optionRadios(String key, String label, String current,
+            String... valuesAndLabels) {
+        StringBuilder html = new StringBuilder("<div class=\"choice\"><p class=\"label\" id=\"opt-")
+                .append(key).append("-label\">").append(escapeHtml(label))
+                .append("</p><div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-")
+                .append(key).append("-label\">");
+        for (int index = 0; index + 1 < valuesAndLabels.length; index += 2) {
+            String value = valuesAndLabels[index];
+            html.append("<label class=\"radio\"><input type=\"radio\" name=\"opt-").append(key)
+                    .append("\" value=\"").append(escapeHtml(value)).append("\" data-setting=\"sensor_option_")
+                    .append(key).append("\"").append(value.equals(current) ? " checked" : "")
+                    .append(">").append(escapeHtml(valuesAndLabels[index + 1])).append("</label>");
+        }
+        return html.append("</div></div>").toString();
+    }
+
+    private static String optionSelect(String key, String label, String current,
+            String... valuesAndLabels) {
+        StringBuilder options = new StringBuilder();
+        for (int index = 0; index + 1 < valuesAndLabels.length; index += 2) {
+            options.append(selectOption(valuesAndLabels[index], valuesAndLabels[index + 1],
+                    current));
+        }
+        return selectField("opt-" + key, null, label, "sensor_option_" + key, options.toString(),
+                null);
+    }
+
+    private static String optionField(String key, String label, String current, String type) {
+        return fieldWithId("opt-" + key, type, null, label, current,
+                " data-setting=\"sensor_option_" + key + "\"", null);
+    }
+
+    private static String optionSwitch(String key, String label, boolean on) {
+        return switchRow("opt-" + key, label, " data-setting=\"sensor_option_" + key + "\"", on);
+    }
+
+    /** A sensor's own page: its switch, then what it can be told; the list beside it when wide. */
+    private String buildSensorPage(String id) {
+        Sensors.Def def = Sensors.byId(id == null ? "" : id);
+        if (def == null || KioskRuntimeState.sensors().optJSONObject(def.id) == null) {
+            return pageStart("Sensors", null, "/sensors")
+                    + "<p class=\"hint bad\">No sensor page is called that.</p>" + pageEnd();
+        }
+        return buildSensorsPage(def.id, true);
+    }
+
+    /**
+     * The cards of a sensor's page: its own row first, with what its kind allows at the right,
+     * then what it can be told. Its row carries ids of its own, so the list beside it keeps
+     * the ids the stats poll follows.
+     */
+    private String sensorCards(Sensors.Def def, org.json.JSONObject one) {
+        boolean on = one.optBoolean("enabled");
+        StringBuilder html = new StringBuilder();
+        String reading = one.optString("reading", "");
+        String trailing;
+        String label = switchLabel(def);
+        if (!one.optBoolean("available")) {
+            trailing = "<input type=\"checkbox\" class=\"sw\" disabled aria-label=\""
+                    + escapeHtml(def.name) + "\">";
+            label = def.name;
+        } else if (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted")) {
+            trailing = "<span class=\"allow\">Allow on the panel</span>";
+        } else {
+            trailing = sensorSwitch(def, on, "-page").replace("class=\"sw\"", "class=\"sw pageswitch\"");
+        }
+        // No title on the first card: the app bar and the row already name the sensor (review,
+        // 2026-10-01). From 840 px the switch hides with the list beside it, and the row then
+        // says the name, not the switch's words (the stylesheet's .pageswitch and .pagename).
+        String words = label.equals(def.name) ? escapeHtml(def.name)
+                : "<span class=\"switchname\">" + escapeHtml(label) + "</span><span class=\"pagename\">"
+                        + escapeHtml(def.name) + "</span>";
+        String head = "<section class=\"card\"><ul class=\"list\">"
+                + listRow(def.glyph, label, null, reading, "sensor-" + def.id + "-page-value",
+                        trailing, !one.optBoolean("available"))
+                        .replaceFirst("<span class=\"h\">" + java.util.regex.Matcher.quoteReplacement(escapeHtml(label)),
+                                java.util.regex.Matcher.quoteReplacement("<span class=\"h\">" + words)) + "</ul>";
+        // The calibration and the test while asleep are the panel's alone: both need a hand
+        // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
+                || (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted"))) {
+            html.append(head).append("</section>");
+        } else if (def == Sensors.PROXIMITY) {
+            html.append(head).append("</section>");
+        } else if (def == Sensors.MOVEMENT) {
+            // Low to High, as the camera says it; a light push is the most sensitive setting.
+            html.append(head)
+                    .append(optionRadios("movement_sensitivity", "Sensitivity",
+                            KioskConfig.sensorOption(context, "movement_sensitivity", "normal"),
+                            "heavy", "Low", "normal", "Normal", "light", "High"))
+                    .append(optionField("movement_still_s", "Still after (seconds)",
+                            KioskConfig.sensorOption(context, "movement_still_s", "5"), "number"))
+                    .append("</section>");
+        } else if (def == Sensors.NFC) {
+            html.append(head).append("</section>")
+                    .append("<section class=\"card\"><h2>Tags</h2>").append(tagRows())
+                    .append("</section>");
+        } else if (def == Sensors.BLUETOOTH) {
+            html.append(head)
+                    .append(optionField("beacons_reach_s", "Out of reach after (seconds)",
+                            KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
+                    .append(beaconRows()).append("</section>");
+        } else if (def == Sensors.CAMERA) {
+            StringBuilder sizes = new StringBuilder();
+            for (String size : PanelCamera.SIZES) {
+                sizes.append(size).append(',').append(size.replace("x", " × ")).append(',');
+            }
+            StringBuilder rates = new StringBuilder();
+            for (int rate : PanelCamera.RATES) {
+                rates.append(rate).append(',').append(rate).append(',');
+            }
+            String address = KioskRuntimeState.httpAdminAddress();
+            html.append(head)
+                    .append(optionField("camera_name", "Name",
+                            KioskConfig.sensorOption(context, "camera_name",
+                                    PanelCamera.defaultName(context)), "text"))
+                    // Radios, as the panel draws a choice of five or fewer.
+                    .append(optionRadios("camera_lens", "Lens",
+                            KioskConfig.sensorOption(context, "camera_lens", "front"),
+                            "front", "Front", "back", "Back"))
+                    .append(optionRadios("camera_size", "Size",
+                            KioskConfig.sensorOption(context, "camera_size", "640x480"),
+                            sizes.toString().split(",")))
+                    .append(optionRadios("camera_fps", "Frames per second",
+                            KioskConfig.sensorOption(context, "camera_fps", "5"),
+                            rates.toString().split(",")))
+                    .append(optionRadios("camera_orientation", "Orientation",
+                            KioskConfig.sensorOption(context, "camera_orientation", "device"),
+                            "device", "Follow the device", "portrait", "Portrait",
+                            "landscape", "Landscape"))
+                    .append("<div class=\"switches\">")
+                    .append(optionSwitch("camera_mirror", "Mirror",
+                            KioskConfig.sensorOptionOn(context, "camera_mirror", false)))
+                    .append(optionSwitch("camera_flip", "Upside down",
+                            KioskConfig.sensorOptionOn(context, "camera_flip", false)))
+                    .append(optionSwitch("camera_watermark", "Watermark, name and time",
+                            KioskConfig.sensorOptionOn(context, "camera_watermark", true)))
+                    .append("</div></section>")
+                    .append("<section class=\"card\"><h2>Motion</h2><div class=\"switches\">")
+                    .append(optionSwitch("camera_motion", "Detect motion",
+                            KioskConfig.sensorOptionOn(context, "camera_motion", true)))
+                    .append("</div>")
+                    .append(optionRadios("camera_sensitivity", "Sensitivity",
+                            KioskConfig.sensorOption(context, "camera_sensitivity", "normal"),
+                            "low", "Low", "normal", "Normal", "high", "High"))
+                    .append(optionField("camera_still_s", "Still after (seconds)",
+                            KioskConfig.sensorOption(context, "camera_still_s", "30"), "number"))
+                    .append("<div class=\"switches\">")
+                    .append(optionSwitch("camera_mqtt", "Picture to MQTT",
+                            KioskConfig.sensorOptionOn(context, "camera_mqtt", false)))
+                    .append("</div></section>")
+                    // The addresses wrap (.wrap): an address cut with dots cannot be copied.
+                    .append("<section class=\"card\"><h2>Stream</h2><ul class=\"list\">")
+                    .append(linkRow("/camera/stream", "open", "Live stream",
+                            address + "/camera/stream", null, "")
+                            .replace("<span class=\"s\"", "<span class=\"s wrap\""))
+                    .append(linkRow("/camera/snapshot.jpg", "open", "Snapshot",
+                            address + "/camera/snapshot.jpg", null, "")
+                            .replace("<span class=\"s\"", "<span class=\"s wrap\""))
+                    .append("</ul></section>");
+        } else {
+            html.append(head).append("</section>");
+        }
+        return html.toString();
+    }
+
+    private static String switchLabel(Sensors.Def def) {
+        if (def == Sensors.MOVEMENT) {
+            return "Report movement";
+        }
+        if (def == Sensors.NFC) {
+            return "Read tags";
+        }
+        if (def == Sensors.BLUETOOTH) {
+            return "Listen for beacons";
+        }
+        if (def == Sensors.CAMERA) {
+            return "Use the camera";
+        }
+        return def.name;
+    }
+
+    /**
+     * The tags read lately, newest first, by their id and when; a tag is named and used in
+     * Home Assistant, as the panel's own page has it.
+     */
+    private String tagRows() {
+        Map<String, Long> seen = KioskConfig.seenTags(context);
+        if (seen.isEmpty()) {
+            return "<p class=\"hint\">No tag has been held to the panel yet.</p>";
+        }
+        StringBuilder rows = new StringBuilder("<ul class=\"list\">");
+        for (Map.Entry<String, Long> tag : seen.entrySet()) {
+            rows.append(listRow("tag", tag.getKey(), null, "Read "
+                    + android.text.format.DateUtils.getRelativeTimeSpanString(tag.getValue()),
+                    null, "", false));
+        }
+        return rows.append("</ul>").toString();
+    }
+
+    /** The beacons heard, each with a box for its name. */
+    private String beaconRows() {
+        Beacons beacons = kioskService.beacons();
+        java.util.List<Beacons.Seen> heard = beacons == null
+                ? Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+        if (heard.isEmpty()) {
+            return "<p class=\"hint\">No beacon has been heard yet.</p>";
+        }
+        java.util.List<Beacons.Seen> reach = beacons.inReach();
+        StringBuilder rows = new StringBuilder("<ul class=\"list gap\">");
+        NamedList names = KioskConfig.beaconNames(context);
+        for (Beacons.Seen one : heard) {
+            String name = names.name(one.id);
+            String state = reach.contains(one)
+                    ? "In reach" + (Double.isNaN(one.distance()) ? "" : ", " + one.distance() + " m")
+                    : "Out of reach";
+            rows.append("<li class=\"two\"><span class=\"lead\">").append(glyph("bluetooth"))
+                    .append("</span><span class=\"text\">")
+                    .append(fieldWithId("beacon-" + one.id.hashCode(), "text", null, "Name", name,
+                            " data-setting=\"sensor_option_beacon_" + escapeHtml(one.id) + "\"",
+                            one.id + ", " + state.substring(0, 1).toLowerCase(Locale.ROOT)
+                                    + state.substring(1)))
+                    .append("</span></li>");
+        }
+        return rows.append("</ul>").toString();
+    }
+
+    /** Stores one setting of a sensor's page, checked by key; the rules are Sensors.checkOption. */
+    private String saveSensorOption(String key, String value) {
+        String problem = Sensors.checkOption(key, value);
+        if (problem != null) {
+            return problem;
+        }
+        if (key.startsWith("beacon_")) {
+            // A beacon's name lives in the beacons' named list, not a setting of its own.
+            KioskConfig.beaconName(context, key.substring("beacon_".length()), value);
+            KioskService.publishTelemetrySoon(context);
+            return null;
+        }
+        KioskConfig.edit(context).sensorOption(key, Sensors.cleanOption(key, value)).apply();
+        KioskService.refreshSensorsSoon(context);
+        return null;
+    }
+
+    private String buildAutomationsPage(String notice) {
+        return buildAutomationsPage(notice, null, null, false);
+    }
+
+    /**
+     * The Automations page: the rules with Add under them, and beside them from 840 px the
+     * editor of the chosen rule, of {@code editing} when a save came back refused, or of a new
+     * one. As a detail page it is the editor alone below 840 px.
+     */
+    private String buildAutomationsPage(String notice, String selectedId,
+            Automations.Rule editing, boolean detailPage) {
+        return buildAutomationsPage(notice, selectedId, editing, detailPage, null, null);
+    }
+
+    private String buildAutomationsPage(String notice, String selectedId,
+            Automations.Rule editing, boolean detailPage, String typedFrom, String typedTo) {
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
+        Automations.Rule rule = editing;
+        if (rule == null) {
+            Automations.Rule stored = Automations.find(rules, selectedId);
+            rule = stored != null ? stored : rules.isEmpty() ? new Automations.Rule() : rules.get(0);
+        }
+        StringBuilder rows = new StringBuilder();
+        for (Automations.Rule each : rules) {
+            // Ids pass Automations.ID_SHAPE on the way in; escaped here all the same.
+            String id = escapeHtml(each.id);
+            rows.append(navRow(linkRow("/automation?id=" + urlEncode(each.id), "automations",
+                    each.name, Automations.sentence(each), null,
+                    "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
+                            + "\" data-setting=\"automation_" + id + "\" aria-label=\""
+                            + escapeHtml(each.name) + "\"" + (each.enabled ? " checked" : "") + ">",
+                    stopsMark(each.sensor)),
+                    each.id, each.id.equals(rule.id)));
+        }
+        String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Automations</h2>"
+                + "<span class=\"count\" id=\"sum-automations\">" + escapeHtml(automationsSummary())
+                + "</span></div>"
+                + (rows.length() == 0 ? "<p class=\"hint\">No automations yet.</p>"
+                        : "<ul class=\"list\">" + rows + "</ul>")
+                + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/automation\">" + glyph("plus")
+                + "Add</a></div></section>";
+        boolean fresh = rule.id.isEmpty();
+        // One editor per rule and one for a new rule, each in its pane, so choosing at the left
+        // is a switch of panes; the rule being edited stands in for its stored twin.
+        StringBuilder detail = new StringBuilder();
+        for (Automations.Rule each : rules) {
+            boolean shown = each.id.equals(rule.id);
+            detail.append("<div class=\"pane\" data-id=\"").append(escapeHtml(each.id)).append("\"")
+                    .append(shown ? "" : " hidden").append(">")
+                    .append(shown ? automationEditor(rule, typedFrom, typedTo) : automationEditor(each))
+                    .append("</div>");
+        }
+        detail.append("<div class=\"pane\" data-id=\"\"").append(fresh ? "" : " hidden").append(">")
+                .append(fresh ? automationEditor(rule, typedFrom, typedTo)
+                        : automationEditor(new Automations.Rule())).append("</div>");
+        return pageStart(!detailPage ? "Automations" : fresh ? "New automation" : "Edit automation",
+                null, detailPage ? "/automations" : "/")
+                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + listDetail("automations", detailPage, nav, detail.toString()) + pageEnd();
+    }
+
+    /** The editor as a page of its own, the list beside it when wide. */
+    private String buildAutomationPage(Automations.Rule rule, String notice) {
+        return buildAutomationsPage(notice, rule.id, rule, true, null, null);
+    }
+
+    private String buildAutomationPage(Automations.Rule rule, String notice, String typedFrom,
+            String typedTo) {
+        return buildAutomationsPage(notice, rule.id, rule, true, typedFrom, typedTo);
+    }
+
+    /** The editor: Name, When, Then, Only, as the products it copies write an automation. */
+    private String automationEditor(Automations.Rule rule) {
+        return automationEditor(rule, null, null);
+    }
+
+    /**
+     * The panel's delete question (KioskActivity.confirmDelete) in one string for the browser's
+     * confirm(), which has no title of its own: the title, a blank line, the text.
+     */
+    private static String deleteQuestion(String name) {
+        String quoted = "\"" + name + "\"";
+        return "Delete " + quoted + "?\n\n" + quoted + " will be deleted.";
+    }
+
+    /**
+     * The same, with the times as they were typed where a refused save is shown again: the
+     * rule holds no window then, and the boxes must not fall back to 07:00 and 22:00.
+     */
+    private String automationEditor(Automations.Rule rule, String typedFrom, String typedTo) {
+        boolean fresh = rule.id.isEmpty();
+        // The stored rule as the baseline, so a page left open cannot overwrite a change made
+        // on the panel or in Home Assistant meanwhile: the Save-button forms' rule.
+        Automations.Rule stored = Automations.find(KioskConfig.automationsOf(context), rule.id);
+        String baseline = stored == null ? "" : Automations.baseline(stored);
+        // Ids of its own per editor: several stand on one page, one per rule.
+        String sfx = "-" + (fresh ? "new" : escapeHtml(rule.id));
+        org.json.JSONObject block = KioskRuntimeState.sensors();
+        StringBuilder sensorOptions = new StringBuilder();
+        StringBuilder events = new StringBuilder();
+        // A new rule starts on the proximity sensor where there is one, as on the panel, so
+        // the two surfaces offer the same first rule; a chosen option is always rendered, so
+        // the stats poll never takes a fresh editor for one being edited (review, 2026-10-01).
+        String chosenSensor = rule.sensor;
+        if (chosenSensor.isEmpty()) {
+            org.json.JSONObject proximity = block.optJSONObject("proximity");
+            chosenSensor = proximity != null && proximity.optBoolean("available") ? "proximity"
+                    : firstAvailableSensor(block);
+        }
+        boolean offered = false;
+        for (Sensors.Def def : Sensors.ALL) {
+            java.util.List<Automations.Event> list = Automations.EVENTS.get(def.id);
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (list == null || one == null || !one.optBoolean("available")) {
+                continue;
+            }
+            offered |= def.id.equals(chosenSensor);
+            sensorOptions.append(selectOption(def.id, def.name, chosenSensor));
+            // One event is a line of text, not a choice: the radio is there for the form and
+            // hidden by the stylesheet (label.radio.one).
+            String one_ = list.size() == 1 ? " one" : "";
+            events.append("<div class=\"radios events\" data-sensor=\"").append(def.id)
+                    .append("\" role=\"radiogroup\" aria-label=\"").append(escapeHtml(def.name))
+                    .append(" events\">");
+            for (Automations.Event event : list) {
+                // The only event of its sensor is ticked, so a form posted without scripting
+                // carries it: the radio is hidden and could not be picked (review, 2026-10-01).
+                boolean checked = def.id.equals(rule.sensor) && event.id.equals(rule.event)
+                        || list.size() == 1;
+                events.append("<label class=\"radio").append(one_).append("\"><input type=\"radio\" name=\"event_")
+                        .append(def.id).append("\" value=\"").append(event.id).append("\"")
+                        .append(checked ? " checked" : "")
+                        .append(" data-level=\"").append(event.levelUnit == null ? "" : event.levelUnit)
+                        .append("\" data-holds=\"").append(event.holds ? "1" : "")
+                        .append("\" data-tag=\"").append(event.tag ? "1" : "").append("\">")
+                        .append(escapeHtml(event.label)).append("</label>");
+            }
+            events.append("</div>");
+        }
+        if (!offered && !rule.sensor.isEmpty()) {
+            // A rule on a sensor this device lacks keeps it: saving the rule for its name must
+            // not move it to the first sensor of the menu (review, 2026-10-01).
+            Sensors.Def missing = Sensors.byId(rule.sensor);
+            sensorOptions.append(selectOption(rule.sensor,
+                    (missing == null ? rule.sensor : missing.name) + " (not on this device)",
+                    rule.sensor));
+        }
+        String chosenAction = rule.action.isEmpty() ? "display_on" : rule.action;
+        StringBuilder actionOptions = new StringBuilder();
+        for (Automations.Action action : Automations.ACTIONS) {
+            actionOptions.append("<option value=\"").append(action.id).append("\"")
+                    .append(action.id.equals(chosenAction) ? " selected" : "")
+                    .append(" data-argument=\"")
+                    .append(action.argumentLabel == null ? "" : escapeHtml(action.argumentLabel))
+                    .append("\">").append(escapeHtml(action.label)).append("</option>");
+        }
+        // Every tag read lately, by its id, newest first, as the panel's own editor has it.
+        StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.tag));
+        java.util.Set<String> tagsRead = KioskConfig.seenTags(context).keySet();
+        for (String tag : tagsRead) {
+            tags.append(selectOption(tag, tag, rule.tag));
+        }
+        if (!rule.tag.isEmpty() && !tagsRead.contains(rule.tag)) {
+            tags.append(selectOption(rule.tag, rule.tag, rule.tag));
+        }
+        return "<form method=\"post\" action=\"/api/automations/save\" class=\"automation\" id=\"editor"
+                + sfx + "\">"
+                + "<input type=\"hidden\" name=\"id\" value=\"" + escapeHtml(rule.id) + "\">"
+                + baselineField(baseline)
+                + "<section class=\"card\">"
+                // Words, not a machine value: capitals and the keyboard's corrections stay on.
+                + fieldWithId("a-name" + sfx, "text", "name", "Name", rule.name, "", null)
+                        .replace(MACHINE_TEXT, "")
+                + "</section>"
+                + "<section class=\"card gap\"><h2>When</h2>"
+                + selectField("a-sensor" + sfx, "sensor", "Sensor", null, sensorOptions.toString(), null)
+                + stopsNote(rule.sensor)
+                + events
+                + fieldWithId("a-level" + sfx, "number", "level", "Level",
+                        Double.isNaN(rule.level) ? "" : Automations.number(rule.level),
+                        " step=\"any\" min=\"0\"", null)
+                + fieldWithId("a-minutes" + sfx, "number", "minutes", "For (minutes)",
+                        rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
+                        " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
+                + selectField("a-tag" + sfx, "tag", "Tag", null, tags.toString(), null)
+                + "</section>"
+                + "<section class=\"card\"><h2>Then</h2>"
+                + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
+                + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence", rule.argument, "", null)
+                        .replace(MACHINE_TEXT, "")
+                + "</section>"
+                + "<section class=\"card\"><h2>Only</h2>"
+                + switchRow("a-only" + sfx, "Between these times", " name=\"only\" value=\"1\"",
+                        rule.windowed())
+                + "<div class=\"two\">"
+                + fieldWithId("a-from" + sfx, "time", "only_from", "From",
+                        typedFrom != null ? typedFrom
+                                : rule.windowed() ? Automations.clock(rule.onlyFrom) : "07:00", "", null)
+                + fieldWithId("a-to" + sfx, "time", "only_to", "To",
+                        typedTo != null ? typedTo
+                                : rule.windowed() ? Automations.clock(rule.onlyTo) : "22:00", "", null)
+                + "</div></section>"
+                // One row, as the panel lays it out (Juri, 2026-09-28): Delete at the start,
+                // Cancel then Save at the end, ordered by the stylesheet. Save is the form's
+                // first submit button in the DOM, so Enter in a box saves (review of
+                // 2026-09-27: Enter in the Name box used to post to Delete). Delete asks first.
+                + "<div class=\"actions editor\">"
+                + "<button type=\"submit\" class=\"primary\">Save</button>"
+                + "<a class=\"btn text\" href=\"/automations\">Cancel</a>"
+                + (fresh ? "" : "<button type=\"submit\" class=\"danger\""
+                        + " formaction=\"/api/automations/delete\""
+                        + " data-confirm=\"" + escapeHtml(deleteQuestion(
+                                stored == null ? rule.name : stored.name)) + "\">Delete</button>")
+                + "</div></form>";
+    }
+
+    /** The first sensor the editor offers, for a new rule on a panel with no proximity sensor. */
+    private static String firstAvailableSensor(org.json.JSONObject block) {
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (Automations.EVENTS.containsKey(def.id) && one != null
+                    && one.optBoolean("available")) {
+                return def.id;
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Under the editor's sensor, for a sensor whose test found it not running while the
+     * display sleeps, the panel's own note; admin_automation.js follows the menu by the ids
+     * the list carries.
+     */
+    private String stopsNote(String chosen) {
+        StringBuilder silent = new StringBuilder();
+        for (Sensors.Def def : Sensors.ALL) {
+            if (KioskService.stopsWhileAsleep(context, def.id)) {
+                silent.append(silent.length() == 0 ? "" : ",").append(def.id);
+            }
+        }
+        return "<ul class=\"list stopsnote" + (KioskService.stopsWhileAsleep(context, chosen)
+                ? "" : " gone") + "\" data-silent=\"" + silent + "\">"
+                + listRow("asleep_off", "Not running while the display is off", null,
+                        "The black film keeps it running", null, "", false)
+                + "</ul>";
+    }
+
+    // ---- The documents the fleet of 0.7 reads and replaces (2026-09-30): the automations, the
+    // sensor settings and the beacons' names, each whole, checked by the rules the pages use.
+
+    private void writeJson(OutputStream output, int status, JSONObject document)
+            throws IOException {
+        writeResponse(output, status, "application/json", bytes(document.toString()));
+    }
+
+    private void refuseJson(OutputStream output, String detail) throws IOException {
+        writeResponse(output, 400, "application/json", bytes("{\"status\":\"rejected\","
+                + "\"detail\":" + JSONObject.quote(detail) + "}"));
+    }
+
+    /** The body as a JSON object, or null after a refusal was written. */
+    private JSONObject jsonBody(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        if (!headers.getOrDefault("content-type", "").contains("application/json")) {
+            refuseJson(output, "send the document as application/json");
+            return null;
+        }
         try {
-            org.json.JSONObject stats = kioskService.statsJson();
-            org.json.JSONObject system = stats.optJSONObject("system");
-            StringBuilder text = new StringBuilder();
-            if (system != null && system.optLong("mem_total_kb", 0) > 0) {
-                text.append(Math.round(100.0 * system.optLong("mem_used_kb", 0)
-                        / system.optLong("mem_total_kb", 1))).append("% memory");
+            return new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException malformed) {
+            refuseJson(output, "malformed json");
+            return null;
+        }
+    }
+
+    /** {"rules": [...], "deleted": [{"id", "deleted_at"}]}, each rule with its changed_at. */
+    private JSONObject automationsDocument() {
+        JSONObject document = new JSONObject();
+        try {
+            document.put("rules", Automations.toJson(KioskConfig.automationsOf(context), false));
+            document.put("deleted", new org.json.JSONArray(KioskConfig.automationsDeleted(context)));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return document;
+    }
+
+    /**
+     * Replaces every rule with {"rules": [...]}, the shape GET gives: each checked by the
+     * editor's rule book, a rule without an id (or with one used twice) given a new one, at most
+     * MAX_RULES; stored through the one path, so each rule's change time and the markers of the
+     * rules left out follow. changed_at and deleted are the panel's own and a post's copies are
+     * ignored. All or nothing.
+     */
+    private void replaceAutomations(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        JSONObject document = jsonBody(headers, body, output);
+        if (document == null) {
+            return;
+        }
+        org.json.JSONArray array = document.optJSONArray("rules");
+        if (array == null) {
+            refuseJson(output, "the document needs a rules array");
+            return;
+        }
+        if (array.length() > Automations.MAX_RULES) {
+            refuseJson(output, "at most " + Automations.MAX_RULES + " automations");
+            return;
+        }
+        java.util.List<Automations.Rule> rules = new java.util.ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject one = array.optJSONObject(index);
+            if (one == null) {
+                refuseJson(output, "rule " + (index + 1) + " is not an object");
+                return;
             }
-            if (system != null && system.has("cpu_busy_percent")) {
-                text.append(text.length() > 0 ? " · " : "")
-                        .append(Math.round(system.optDouble("cpu_busy_percent", 0))).append("% CPU");
+            rules.add(Automations.parseRule(one));
+        }
+        synchronized (Automations.STORE) {
+            java.util.Set<String> ids = new java.util.HashSet<>();
+            for (Automations.Rule rule : rules) {
+                if (rule.id.isEmpty() || !ids.add(rule.id)) {
+                    rule.id = Automations.newId(rules);
+                    ids.add(rule.id);
+                }
+                String problem = Automations.validate(rule, Sensors.names());
+                if (problem != null) {
+                    refuseJson(output, "\"" + rule.name + "\": " + problem);
+                    return;
+                }
             }
-            return text.length() == 0 ? "Live readings" : text.toString();
-        } catch (RuntimeException unavailable) {
-            return "Live readings";
+            KioskConfig.storeAutomations(context, rules);
+        }
+        KioskService.refreshSensorsSoon(context);
+        writeJson(output, 200, automationsDocument());
+    }
+
+    /**
+     * Applies {"switches": {"<id>": {"on": true}}, "shared": {"<key>": {"value": "..."}}}, the
+     * shape GET gives: each switch and shared setting checked as the pages check it, all before
+     * anything is written. A setting of this panel alone under shared is refused, the fleet never
+     * pushes one (SensorSettings); this_panel and changed_at are the panel's own and ignored.
+     */
+    private void applySensorSettings(Map<String, String> headers, byte[] body,
+            OutputStream output) throws IOException {
+        JSONObject document = jsonBody(headers, body, output);
+        if (document == null) {
+            return;
+        }
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        JSONObject shared = document.optJSONObject("shared");
+        java.util.Iterator<String> keys = shared == null ? null : shared.keys();
+        while (keys != null && keys.hasNext()) {
+            String key = keys.next();
+            if (key.startsWith("beacon_")) {
+                // The names are a document of their own; stored here they went into the old
+                // loose keys the names list no longer reads (review, 2026-10-01).
+                refuseJson(output, "beacon names go through /api/beacons/names");
+                return;
+            }
+            if (!SensorSettings.shared(key)) {
+                refuseJson(output, key + " belongs to this panel alone");
+                return;
+            }
+            JSONObject one = shared.optJSONObject(key);
+            Object value = one == null ? null : one.opt("value");
+            if (!(value instanceof String)) {
+                refuseJson(output, key + " needs {\"value\": \"...\"}");
+                return;
+            }
+            String problem = Sensors.checkOption(key, (String) value);
+            if (problem != null) {
+                refuseJson(output, key + ": " + problem);
+                return;
+            }
+            values.put(key, Sensors.cleanOption(key, (String) value));
+        }
+        Map<String, Boolean> switchesWanted = new java.util.LinkedHashMap<>();
+        JSONObject switches = document.optJSONObject("switches");
+        java.util.Iterator<String> ids = switches == null ? null : switches.keys();
+        while (ids != null && ids.hasNext()) {
+            String id = ids.next();
+            JSONObject one = switches.optJSONObject(id);
+            Object on = one == null ? null : one.opt("on");
+            if (!(on instanceof Boolean)) {
+                refuseJson(output, id + " needs {\"on\": true} or {\"on\": false}");
+                return;
+            }
+            Sensors.Def def = Sensors.byId(id);
+            // Judged against the switch as it stands, which for the panel's own values is on
+            // with nothing stored: against a stored-or-false default, display could not be
+            // switched off and switching it on stamped a change that never happened (review,
+            // 2026-10-01).
+            if (def != null && (Boolean) on == Sensors.enabled(context, def)) {
+                continue;
+            }
+            String problem = kioskService.sensorSwitchProblem(id, (Boolean) on);
+            if (problem != null) {
+                refuseJson(output, problem);
+                return;
+            }
+            switchesWanted.put(id, (Boolean) on);
+        }
+        KioskConfig.Editor editor = KioskConfig.edit(context);
+        for (Map.Entry<String, String> value : values.entrySet()) {
+            editor.sensorOption(value.getKey(), value.getValue());
+        }
+        for (Map.Entry<String, Boolean> wanted : switchesWanted.entrySet()) {
+            editor.sensorEnabled(wanted.getKey(), wanted.getValue());
+        }
+        editor.apply();
+        KioskService.refreshSensorsSoon(context);
+        writeJson(output, 200, KioskConfig.sensorSettingsDocument(context));
+    }
+
+    /**
+     * Applies {"names": [{"id": "<uuid:major:minor>", "name": "..."}]}, the shape GET gives; a
+     * blank name takes it away, a beacon left out keeps its name. changed_at and deleted are
+     * the panel's own and ignored.
+     */
+    /** Names in one post: twice the beacons the panel keeps (Beacons.MAX_SEEN). */
+    private static final int MAX_BEACON_NAMES = 200;
+
+    private void applyBeaconNames(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        JSONObject document = jsonBody(headers, body, output);
+        if (document == null) {
+            return;
+        }
+        org.json.JSONArray names = document.optJSONArray("names");
+        if (names == null) {
+            refuseJson(output, "the document needs a names array");
+            return;
+        }
+        if (names.length() > MAX_BEACON_NAMES) {
+            refuseJson(output, "at most " + MAX_BEACON_NAMES + " names in one document");
+            return;
+        }
+        Map<String, String> wanted = new java.util.LinkedHashMap<>();
+        for (int index = 0; index < names.length(); index++) {
+            JSONObject one = names.optJSONObject(index);
+            String id = one == null ? "" : one.optString("id", "");
+            if (id.isEmpty()) {
+                refuseJson(output, "name " + (index + 1) + " needs an id");
+                return;
+            }
+            String name = one.optString("name", "");
+            String problem = Sensors.checkBeaconName(id, name);
+            if (problem != null) {
+                refuseJson(output, id + ": " + problem);
+                return;
+            }
+            wanted.put(id, name);
+        }
+        for (Map.Entry<String, String> name : wanted.entrySet()) {
+            KioskConfig.beaconName(context, name.getKey(), name.getValue());
+        }
+        KioskService.publishTelemetrySoon(context);
+        writeResponse(output, 200, "application/json",
+                bytes(KioskConfig.beaconNames(context).store()));
+    }
+
+    private void saveAutomation(Map<String, String> form, OutputStream output)
+            throws IOException {
+        java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
+        String id = form.getOrDefault("id", "").trim();
+        Automations.Rule existing = Automations.find(rules, id);
+        if (!id.isEmpty() && existing == null) {
+            // Saved from a page whose rule was deleted meanwhile: not brought back under a
+            // new id.
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(
+                    buildAutomationsPage("Not saved: that automation was deleted.")));
+            return;
+        }
+        Automations.Rule rule = existing == null ? new Automations.Rule() : existing.copy();
+        if (existing != null) {
+            String stale = staleFormRefusal(form, Automations.baseline(existing));
+            if (stale != null) {
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationPage(existing, stale)));
+                return;
+            }
+        }
+        rule.name = form.getOrDefault("name", "");
+        rule.sensor = form.getOrDefault("sensor", "");
+        rule.event = form.getOrDefault("event_" + rule.sensor, "");
+        rule.level = parseLevel(form.get("level"));
+        rule.minutes = parseMinutes(form.get("minutes"));
+        rule.tag = form.getOrDefault("tag", "").trim();
+        rule.action = form.getOrDefault("action", "");
+        rule.argument = form.getOrDefault("argument", "");
+        boolean only = isTrue(form.getOrDefault("only", "0"));
+        String typedFrom = form.getOrDefault("only_from", "");
+        String typedTo = form.getOrDefault("only_to", "");
+        rule.onlyFrom = only ? Automations.minutesOf(typedFrom) : -1;
+        rule.onlyTo = only ? Automations.minutesOf(typedTo) : -1;
+        if (only && (rule.onlyFrom < 0 || rule.onlyTo < 0)) {
+            // Shown again with the times as typed and the window switch on, so the page can be
+            // corrected rather than filled in again.
+            rule.onlyFrom = Math.max(rule.onlyFrom, 0);
+            rule.onlyTo = rule.onlyTo < 0 ? 24 * 60 - 1 : rule.onlyTo;
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(
+                    buildAutomationPage(rule, "Not saved: the times must be like 07:00.",
+                            typedFrom, typedTo)));
+            return;
+        }
+        String problem = Automations.validate(rule, Sensors.names());
+        if (problem != null) {
+            // Still without an id when it is new, so the page it goes back to is the one for
+            // a new rule, without a Delete for a rule that was never stored.
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildAutomationPage(rule, "Not saved: " + problem + ".")));
+            return;
+        }
+        synchronized (Automations.STORE) {
+            rules = KioskConfig.automationsOf(context);
+            existing = Automations.find(rules, id);
+            if (existing == null) {
+                // The cap judged under the lock, so two adds at once cannot pass it together.
+                if (rules.size() >= Automations.MAX_RULES) {
+                    writeResponse(output, 200, "text/html; charset=utf-8", bytes(
+                            buildAutomationPage(rule, "Not saved: there are already "
+                                    + Automations.MAX_RULES + " automations.")));
+                    return;
+                }
+                rule.id = Automations.newId(rules);
+                rules.add(rule);
+            } else {
+                // The switch beside the editor may have been flipped while it was open, on any
+                // surface: the stored state stands, the editor never carried it.
+                rule.enabled = existing.enabled;
+                rules.set(rules.indexOf(existing), rule);
+            }
+            KioskConfig.storeAutomations(context, rules);
+        }
+        KioskService.refreshSensorsSoon(context);
+        writeResponse(output, 303, "text/plain", bytes("saved"),
+                Collections.singletonMap("Location", "/automations?id=" + rule.id));
+    }
+
+    private void deleteAutomation(Map<String, String> form, OutputStream output)
+            throws IOException {
+        synchronized (Automations.STORE) {
+            java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(context);
+            Automations.Rule rule = Automations.find(rules, form.getOrDefault("id", "").trim());
+            if (rule != null) {
+                rules.remove(rule);
+                KioskConfig.storeAutomations(context, rules);
+                KioskService.refreshSensorsSoon(context);
+            }
+        }
+        writeResponse(output, 303, "text/plain", bytes("deleted"),
+                Collections.singletonMap("Location", "/automations"));
+    }
+
+    private static double parseLevel(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return Double.NaN;
+        }
+        try {
+            return Double.parseDouble(text.trim());
+        } catch (NumberFormatException notANumber) {
+            return Double.NaN;
+        }
+    }
+
+    /** The minutes as typed: empty is none, anything that is not a small number is refused. */
+    private static int parseMinutes(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return 0;
+        }
+        return text.trim().matches("\\d{1,4}") ? Integer.parseInt(text.trim()) : -1;
+    }
+
+    /** System stats and the log, on their own page under This panel. */
+    private String buildStatsPage() {
+        KioskConfig config = KioskConfig.load(context);
+        // Two panels, as the panel's page has them (Juri, 2026-09-28): side by side from 840 px,
+        // one under the other below, the way every page of several panels without a menu is.
+        return pageStart("System stats and log", null, "/")
+                + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
+                + statsBody(config) + "</section>"
+                + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
+                + pageEnd();
+    }
+
+    private void serveSnapshot(OutputStream output) throws IOException {
+        PanelCamera camera = kioskService.camera();
+        byte[] jpeg = camera == null ? null : camera.snapshot();
+        if (jpeg == null) {
+            writeResponse(output, 503, "text/plain",
+                    bytes(camera != null && camera.open() ? "No picture yet." : "The camera is off."));
+            return;
+        }
+        writeResponse(output, 200, "image/jpeg", jpeg,
+                Collections.singletonMap("Cache-Control", "no-store"));
+    }
+
+    /** A frame not written within this long is a viewer that stopped reading; the stream ends. */
+    private static final long STREAM_WRITE_MS = 10_000;
+
+    /**
+     * The live stream: MJPEG, one part per frame, until the viewer goes. At most
+     * {@link PanelCamera#MAX_VIEWERS} at once, and each frame's write under its own deadline:
+     * a viewer that stops reading (a laptop asleep with the tab open) held one of the admin's
+     * workers until TCP gave up, with no limit on how long a write may block (review,
+     * 2026-10-01).
+     */
+    private void serveStream(OutputStream output, java.net.Socket socket) throws IOException {
+        PanelCamera camera = kioskService.camera();
+        if (camera == null || !camera.open()) {
+            writeResponse(output, 503, "text/plain", bytes("The camera is off."));
+            return;
+        }
+        // Counted before the check, so requests arriving together cannot all pass it.
+        if (camera.viewerJoined() > PanelCamera.MAX_VIEWERS) {
+            camera.viewerLeft();
+            writeResponse(output, 503, "text/plain", bytes("The stream has "
+                    + PanelCamera.MAX_VIEWERS + " viewers already; close one first."),
+                    Collections.singletonMap("Retry-After", "10"));
+            return;
+        }
+        long shown = -1;
+        java.util.concurrent.ScheduledFuture<?> writeDeadline = null;
+        try {
+            output.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; "
+                    + "boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            long waitingSinceMs = System.currentTimeMillis();
+            while (camera.open()) {
+                byte[] jpeg = camera.snapshot();
+                long at = camera.lastFrameAtMs();
+                if (jpeg == null || at == shown) {
+                    if (System.currentTimeMillis() - waitingSinceMs > STREAM_STALL_MS) {
+                        // No picture for this long is a camera that stopped, not a slow one;
+                        // the connection ends rather than holding a worker for a viewer who
+                        // may be long gone.
+                        break;
+                    }
+                    Thread.sleep(50);
+                    continue;
+                }
+                waitingSinceMs = System.currentTimeMillis();
+                shown = at;
+                // The deadline covers the write alone and is lifted once the frame is out, so
+                // a gap between frames (a slow camera) never closes a healthy stream.
+                writeDeadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                        STREAM_WRITE_MS, TimeUnit.MILLISECONDS);
+                output.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                        + jpeg.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                output.write(jpeg);
+                output.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+                output.flush();
+                writeDeadline.cancel(false);
+                writeDeadline = null;
+            }
+        } catch (InterruptedException ended) {
+            Thread.currentThread().interrupt();
+        } finally {
+            if (writeDeadline != null) {
+                writeDeadline.cancel(false);
+            }
+            camera.viewerLeft();
         }
     }
 
@@ -1550,10 +2854,8 @@ final class HttpAdminServer {
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
-                + baselineField(config.dashboardUrl + "|" + config.deviceId)
+                + baselineField(config.dashboardUrl)
                 + urlField("dashboard_url", "Dashboard URL", config.dashboardUrl)
-                + field("text", "device_id", "Device ID", config.deviceId, "",
-                        "Open once shows the address until the next kiosk restart and stores nothing.")
                 // Two buttons on one input, the shape the tablet's Dashboard card has had since
                 // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it until
                 // the next kiosk restart and stores nothing (kiosk.open_url, never set_url). Open
@@ -1612,7 +2914,17 @@ final class HttpAdminServer {
                 + sectionFormEnd("Save");
     }
 
+    /** The sun or the moon: the panel's yellow sun in the dark theme, its grey moon in the light. */
+    private static String themeButton() {
+        return "<button type=\"button\" class=\"ib themecycle\" data-theme-cycle=\"1\""
+                + " title=\"Colour theme\" aria-label=\"Colour theme\">"
+                + "<span class=\"sun\">" + glyph("sun") + "</span>"
+                + "<span class=\"moon\">" + glyph("moon") + "</span></button>";
+    }
+
     private String displayBody() {
+        // The theme switch stands beside the section's name (see the menu builder); the app
+        // bar's Auto/Light/Dark went (Juri, 2026-09-27).
         return "<div class=\"actions tight\">"
                 + quickAction("display.wake", "Display on", "tonal", null)
                 + quickAction("display.visual_off", "Display off", "tonal", null)
@@ -1637,24 +2949,32 @@ final class HttpAdminServer {
                 + "</p>"
                 // No "Back to the page" beside these: it ends a showing screensaver, which is what
                 // Display on already does to a lit panel (Juri, 2026-09-11, C16).
+                // Off has no page to lead to: the page holds a mode's options and Off has none
+                // (Juri, 2026-09-11), and since the page stopped carrying the chooser
+                // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
                 + "<div class=\"actions\">"
                 + quickAction("screensaver.start", "Preview", "tonal", null)
-                + "<a class=\"btn text\" href=\"/screensaver\">More screensaver settings"
+                + "<a class=\"btn text" + (ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
+                + "\" id=\"screensaver-more\" href=\"/screensaver\">More screensaver settings"
                 + glyph("next") + "</a></div>";
     }
 
     private String statsBody(KioskConfig config) {
         // The switch sits under the readout it governs. No form and no Save button: it stands
         // alone and applies itself, the way the brightness controls do; see settingScript.
-        // The log under the switch, the panel's settings screen has the same in the same order:
-        // the level chips (warnings and errors by default, the way Home Assistant's log page
-        // opens), a search box, pause, copy and clear-from-here, then the block admin_stats.js
-        // fills and colours. Empty until the first poll, since a "loading" word in a log would
-        // read as a log line.
         return "<pre id=\"stats\">loading...</pre>"
                 + switchRow("stats-overlay", "Show system stats on the dashboard",
-                        " data-setting=\"stats_overlay\"", config.statsOverlay)
-                + "<div class=\"logbar\" id=\"logbar\">"
+                        " data-setting=\"stats_overlay\"", config.statsOverlay);
+    }
+
+    /**
+     * The Log panel, the panel's own in the same order: the level chips (the app's own lines by
+     * default), a search box, pause, copy, download and clear-from-here, then the block
+     * admin_stats.js fills and colours. Empty until the first poll, since a "loading" word in a
+     * log would read as a log line.
+     */
+    private String logBody() {
+        return "<div class=\"logbar\" id=\"logbar\">"
                 + "<div class=\"levels\" role=\"group\" aria-label=\"What the log shows\">"
                 + "<button type=\"button\" class=\"lvl\" data-level=\"V\" data-own=\"1\""
                 + " aria-pressed=\"true\">Muralis</button>"
@@ -1689,24 +3009,6 @@ final class HttpAdminServer {
                 + "</div>";
     }
 
-    private String aboutBody() {
-        // The two legal pages and the version, which links to the repository (Juri, 2026-09-23).
-        // Rendered in-app rather than linked out, for the reason renderLegalPage gives.
-        return "<ul class=\"list\">"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/privacy\"><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.privacy_policy_title))
-                + "</span></span><span class=\"trail\">" + glyph("next") + "</span></a></li>"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/terms\"><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
-                + "</span></span><span class=\"trail\">" + glyph("next") + "</span></a></li>"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
-                + "\" target=\"_blank\" rel=\"noopener\"><span class=\"text\"><span class=\"h\">"
-                + "Muralis " + escapeHtml(appVersionName()) + "</span><span class=\"s\">"
-                + REPOSITORY_URL.replaceFirst("^https://", "") + "</span></span>"
-                + "<span class=\"trail\">" + glyph("open") + "</span></a></li>"
-                + "</ul>";
-    }
-
     private static final String REPOSITORY_URL = "https://github.com/spazio17/muralis";
 
 
@@ -1724,7 +3026,7 @@ final class HttpAdminServer {
      */
     private String renderLegalPage(String title, int rawRes) {
         StringBuilder html = new StringBuilder(pageStart(title, null, "/"));
-        html.append("<div class=\"doc\">");
+        html.append("<div class=\"doc one\">");
         for (String block : readRawText(rawRes).trim().split("\n\\s*\n")) {
             String content = block.trim();
             if (content.isEmpty()) {
@@ -2020,20 +3322,22 @@ final class HttpAdminServer {
         boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode)
                 && PictureSources.LOCAL.equals(saver.source);
         PictureLibrary library = PictureLibrary.get(context);
-        StringBuilder html = new StringBuilder("<section class=\"card")
-                .append(shown ? "" : " gone").append("\" id=\"screensaver-library\">")
-                .append("<h2>Playlist</h2>");
+        // The cell around the panel is what leaves for another mode, so the options keep
+        // the right-hand column of the grid whether or not the playlists are shown.
+        StringBuilder html = new StringBuilder("<div")
+                .append(shown ? "" : " class=\"gone\"").append(" id=\"screensaver-library\">")
+                .append("<section class=\"card\"><h2>Playlist</h2>");
         if (!library.browsesOwnStorage()) {
             return html.append("<p class=\"hint bad\">This panel may not read its own pictures ")
                     .append("yet. Allow it on the panel's Screensaver settings; Android will only ")
-                    .append("ask there.</p></section>").toString();
+                    .append("ask there.</p></section></div>").toString();
         }
         return html.append("<div id=\"playlist-table\">")
                 .append(playlistTable(library.playlists().load())).append("</div>")
                 .append("<p class=\"banner bad gone\" id=\"playlist-banner\" role=\"status\">")
                 .append("<span></span><button type=\"button\" class=\"dismiss\" ")
                 .append("aria-label=\"Close\">&times;</button></p>")
-                .append("</section>").toString();
+                .append("</section></div>").toString();
     }
 
 
@@ -2242,8 +3546,8 @@ final class HttpAdminServer {
 
     /** The scripts and the closing tags every page of this server ends with. */
     private String pageEnd() {
-        return commandScript + settingScript + pictureScript + statsScript + themeScript
-                + "</main></body></html>";
+        return commandScript + settingScript + pictureScript + statsScript + automationScript
+                + themeScript + "</main></body></html>";
     }
 
     /** The browse token is {@code offset|location}, or a bare location for the first page. */
@@ -2766,11 +4070,8 @@ final class HttpAdminServer {
 
 
     /**
-     * The mode as a menu, for the settings page's own Screensaver card.
-     *
-     * <p>A menu there and radios on the screensaver page, deliberately: the card is one of a dozen
-     * on a packed page and every other chooser on it is a menu, while the screensaver page's
-     * chooser decides what the rest of that page says and is worth seeing at once.
+     * The mode as a menu, for the settings page's own Screensaver card, the one place it is
+     * chosen: the screensaver page stopped repeating it on 2026-09-28.
      */
     private String screensaverModeOptions(ScreensaverPolicy.Settings saver) {
         return selectOption(ScreensaverPolicy.OFF, "Off", saver.mode)
@@ -2779,32 +4080,6 @@ final class HttpAdminServer {
                 + selectOption(ScreensaverPolicy.URL, "Web page", saver.mode)
                 + selectOption(ScreensaverPolicy.PICTURES, "Pictures", saver.mode);
     }
-
-    /**
-     * The mode as five radios rather than a menu, which is what the panel's own page shows.
-     *
-     * <p>Juri asked for the two surfaces to offer the same control here (2026-09-11). Five choices
-     * that decide what the rest of the page says are worth seeing at once, which is the case for
-     * radios and against a menu, and this is the only chooser on the page whose value changes what
-     * else is on it.
-     */
-    private String screensaverModeChoices(ScreensaverPolicy.Settings saver) {
-        return "<div id=\"screensaver-mode\" class=\"radios\" role=\"radiogroup\""
-                + " aria-label=\"Screensaver mode\">"
-                + modeRadio(ScreensaverPolicy.OFF, "Off", saver.mode)
-                + modeRadio(ScreensaverPolicy.DIM, "Dimmed page", saver.mode)
-                + modeRadio(ScreensaverPolicy.FILM, "Black film", saver.mode)
-                + modeRadio(ScreensaverPolicy.URL, "Web page", saver.mode)
-                + modeRadio(ScreensaverPolicy.PICTURES, "Pictures", saver.mode)
-                + "</div>";
-    }
-
-    private static String modeRadio(String value, String label, String current) {
-        return "<label class=\"radio\"><input type=\"radio\" name=\"screensaver_mode\""
-                + " data-setting=\"screensaver_mode\" value=\"" + escapeHtml(value) + "\""
-                + (value.equals(current) ? " checked" : "") + ">" + escapeHtml(label) + "</label>";
-    }
-
 
     private String buildScreensaverPage(String notice, String at) {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
@@ -2817,15 +4092,33 @@ final class HttpAdminServer {
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        html.append("<div class=\"two modes\">")
-                .append("<section class=\"card\" id=\"screensaver-mode-box\"><h2>Screensaver mode</h2>")
-                .append(screensaverModeChoices(saver))
-                .append("</section>")
-
-                .append("<section class=\"card")
+        // The Sensors page's shape (Juri, 2026-09-28): the playlists at the left and the chosen
+        // mode's options at the right from 840 px, one under the other below. The mode itself
+        // is chosen on the settings page, whose Screensaver section leads here; the page's
+        // shell carries the mode and every title, so admin_setting.js can rename the options
+        // when the mode changes elsewhere, without a chooser of its own.
+        org.json.JSONObject titles = new org.json.JSONObject();
+        for (String mode : new String[] {ScreensaverPolicy.DIM, ScreensaverPolicy.FILM,
+                ScreensaverPolicy.URL, ScreensaverPolicy.PICTURES}) {
+            try {
+                titles.put(mode, ScreensaverPolicy.optionsTitle(mode));
+            } catch (org.json.JSONException ignored) {
+                // A string keyed by a string cannot fail.
+            }
+        }
+        // A mode without playlists leaves the options the page's only panel, centred at the
+        // legal pages' width (class one); admin_setting.js keeps the class with the mode.
+        boolean library = ScreensaverPolicy.PICTURES.equals(saver.mode)
+                && PictureSources.LOCAL.equals(saver.source);
+        html.append("<div class=\"ld").append(library ? "" : " one")
+                .append("\" id=\"screensaver-page\" data-mode=\"")
+                .append(escapeHtml(saver.mode)).append("\" data-titles=\"")
+                .append(escapeHtml(titles.toString())).append("\">")
+                .append(pictureLibraryBox())
+                .append("<div class=\"detail\"><section class=\"card")
                 .append(ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
                 .append("\" id=\"screensaver-options\"><h2 id=\"screensaver-options-title\">")
-                .append(escapeHtml(screensaverOptionsTitle(saver.mode))).append("</h2>")
+                .append(escapeHtml(ScreensaverPolicy.optionsTitle(saver.mode))).append("</h2>")
                 .append(fieldWithId("screensaver-idle", "number", null,
                         "Idle before the screensaver (seconds, 0 = off)",
                         String.valueOf(saver.idleSeconds),
@@ -2866,9 +4159,7 @@ final class HttpAdminServer {
                 .append("<div class=\"actions\">")
                 .append(quickAction("screensaver.start", "Preview", "tonal", null))
                 .append("</div>")
-                .append("</section>")
-
-                .append(pictureLibraryBox())
+                .append("</section></div>")
                 .append("</div>");
         html.append(commandScript);
         html.append(settingScript);
@@ -2878,21 +4169,6 @@ final class HttpAdminServer {
         html.append(themeScript);
         html.append("</main></body></html>");
         return html.toString();
-    }
-
-    /**
-     * "Dimmed page options", and so on: the mode named where its settings are.
-     *
-     * <p>Rendered here for the first paint and repeated in {@code admin_setting.js} for a mode
-     * changed without a reload, which reads the chooser's own label rather than a second copy of
-     * these names.
-     */
-    private static String screensaverOptionsTitle(String mode) {
-        String name = ScreensaverPolicy.DIM.equals(mode) ? "Dimmed page"
-                : ScreensaverPolicy.FILM.equals(mode) ? "Black film"
-                : ScreensaverPolicy.URL.equals(mode) ? "Web page"
-                : ScreensaverPolicy.PICTURES.equals(mode) ? "Pictures" : "Screensaver";
-        return name + " options";
     }
 
     /**
@@ -3014,8 +4290,9 @@ final class HttpAdminServer {
     }
 
     private static String selectOption(String value, String label, String current) {
-        return "<option value=\"" + value + "\"" + (value.equals(current) ? " selected" : "")
-                + ">" + label + "</option>";
+        return "<option value=\"" + escapeHtml(value) + "\""
+                + (value.equals(current) ? " selected" : "") + ">" + escapeHtml(label)
+                + "</option>";
     }
 
 
@@ -3040,9 +4317,10 @@ final class HttpAdminServer {
         }
         return selectField("display-off-method", null, "Display off",
                 deviceOwner ? "display_off_method" : null, options.toString(), null, !deviceOwner)
-                + "<p class=\"hint" + (KioskService.displayOffWarning(context) ? " bad" : "")
-                + "\" id=\"display-off-note\">"
-                + escapeHtml(KioskService.describeDisplayOff(context)) + "</p>";
+                + "<p class=\"hint bad\" id=\"display-off-note\""
+                + (KioskService.displayOffWarning(context) ? "" : " hidden") + ">"
+                + (KioskService.displayOffWarning(context)
+                        ? escapeHtml(KioskService.describeDisplayOff(context)) : "") + "</p>";
     }
 
 
@@ -3568,6 +4846,8 @@ final class HttpAdminServer {
                 return "Unauthorized";
             case 403:
                 return "Forbidden";
+            case 303:
+                return "See Other";
             case 404:
                 return "Not Found";
             case 405:

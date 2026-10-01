@@ -359,8 +359,9 @@ if(form.classList.contains('caption')){saveName(form);return;}
 // Deleting a file asks first, as the panel does: an icon button carries no word to slow the
 // hand down, and the file is gone for good.
 if(/\/api\/pictures\/delete$/.test(form.action)){
-var tile=form.closest('li,.tile'),named=tile&&tile.querySelector('.name,.h');
-if(!window.confirm('Delete '+(named?named.textContent.trim():'this picture')+'? The file is removed from this panel.')){return;}}
+// The panel's words (confirmDelete): the name quoted, then what else changes.
+var tile=form.closest('li,.tile'),named=tile&&tile.querySelector('.name,.h'),name=named?'"'+named.textContent.trim()+'"':'this picture';
+if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'It')+' will be deleted. It leaves every playlist that holds it.')){return;}}
 post(form).then(function(r){
 if(form.closest&&form.closest('details.rename')){renamed(form,r.ok,r.message);return;}
 say(r.message,r.ok);

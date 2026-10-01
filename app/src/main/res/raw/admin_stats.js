@@ -37,30 +37,74 @@ var auto=document.getElementById('auto-brightness');
 if(auto&&!auto.dataset.pending&&cfg.auto_brightness!=null){auto.checked=cfg.auto_brightness;}
 // These controls have no Save button, so nothing else would ever correct them after
 // somebody changed the same setting on the tablet or from a second browser.
+var requestedAt=0;
+// A value the person set here moments ago wins over a document that does not carry it yet:
+// the panel's block follows a change by a tick or two and the poll by more on a slow link, so
+// a stats reply is followed only once it agrees with the local change or the change is old.
+function localWins(el,value){var local=window.muralisLocal&&el.dataset.setting?window.muralisLocal[el.dataset.setting]:null;
+if(!local){return false;}
+var same=el.type==='checkbox'?((value===true||value==='1'||value==='true')===(local.value==='1')):String(value)===String(local.value);
+if(same){delete window.muralisLocal[el.dataset.setting];return false;}
+return local.at>requestedAt||Date.now()-local.at<20000;}
 function follow(id,value){var el=document.getElementById(id);
-if(!el||el.disabled||el.dataset.pending||value==null){return;}
-// A radio group is a div holding the radios, since the screensaver mode stopped being a menu
-// on 2026-09-11. Following it means ticking the one whose value matches, and the group carries
-// the pending flag for all of them so a poll landing on a fresh click cannot undo it.
-if(el.classList.contains('radios')){
-var radios=el.getElementsByTagName('input'),i;
-for(i=0;i<radios.length;i++){
-if(radios[i].value===String(value)&&!radios[i].checked){radios[i].checked=true;
-if(window.muralisScreensaverFields){window.muralisScreensaverFields();}}}
-return;}
+if(!el||el.disabled||el.dataset.pending||value==null||localWins(el,value)){return;}
 var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
 if(typing){return;}
-if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
+// A refused text stays in its box with the reason, until the panel's value itself changes
+// (from the panel or MQTT); a refused switch or menu goes back to the panel's state, as it
+// always did (review, 2026-10-01).
+var text=el.tagName==='INPUT'&&el.type!=='checkbox'&&el.type!=='radio';
+if(text&&el.classList.contains('check-bad')){
+if(el.dataset.heldOver===undefined){el.dataset.heldOver=String(value);return;}
+if(el.dataset.heldOver===String(value)){return;}}
+delete el.dataset.heldOver;
+if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);}
+el.classList.remove('check-bad');el.title='';
+var refused=el.closest&&el.closest('.field')?el.closest('.field').querySelector('.support.refused'):null;
+if(refused){refused.parentNode.removeChild(refused);}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
+// The panel's name, renamed on the panel or over MQTT: the box and the app bar's subtitle.
+follow('f-device_id',cfg.device_id);
+var sub=document.querySelector('header.appbar .sub');
+if(sub&&cfg.device_id&&document.getElementById('f-device_id')&&sub.textContent!==cfg.device_id){sub.textContent=cfg.device_id;}
+// The sensors' switches and readings, from the status document's sensors block, and the
+// automations' switches; every row carries the reading the service already worded.
+var sensors=data.sensors||{};
+Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
+follow('sensor-'+id,one.enabled);follow('sensor-'+id+'-page',one.enabled);
+// The settings page's row goes when its sensor is switched off; the Sensors page brings it back.
+var home=document.querySelector('#sensors-home li[data-id="'+id+'"]');
+if(home&&!one.active){home.remove();}
+['sensor-'+id+'-value','sensor-'+id+'-page-value'].forEach(function(vid){var out=document.getElementById(vid);
+if(out){out.textContent=one.reading||'';}});
+// The camera page's two switches Home Assistant can flip follow the block's attributes.
+if(id==='camera'&&one.attributes){follow('opt-camera_motion',one.attributes.detecting);follow('opt-camera_mqtt',one.attributes.pictures);}
+});
+var ss=document.getElementById('sum-sensors');
+// Counted as Sensors.summary counts, every sensor this device has, the panel's own included;
+// leaving those out read "5 of 7" five seconds after the page said "12 of 14" (2026-10-01).
+if(ss){var have=0,on=0;Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
+if(!one.available){return;}have++;if(one.active){on++;}});
+ss.textContent=have?on+' of '+have+' on':'None on this device';}
+var autos=data.automations||[];
+autos.forEach(function(rule){follow('automation-'+rule.id,rule.enabled);
+var home=document.querySelector('#automations-home li[data-id="'+rule.id+'"]');
+if(home&&!rule.enabled){home.remove();}});
+var sa=document.getElementById('sum-automations');
+if(sa){var aon=autos.filter(function(rule){return rule.enabled;}).length;
+sa.textContent=autos.length?aon+' of '+autos.length+' on':'None yet';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
-if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_reason;dn.classList.toggle('bad',!!disp.off_method_warning);}
+if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_warning?disp.off_method_reason:'';dn.hidden=!disp.off_method_warning;}
 var ss=data.screensaver||{};
 follow('screensaver-mode',ss.mode);
+// The screensaver page has no chooser: its shell carries the mode for admin_setting.js.
+var sp=document.getElementById('screensaver-page');
+if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
 follow('screensaver-idle',ss.idle_s);
 follow('screensaver-off',ss.off_s);
@@ -97,13 +141,6 @@ if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
 show(lines.join('\n'));
-// The System stats section's one-line summary, on the settings page, so the closed row reads
-// like a status line without opening it.
-var sum=document.getElementById('sum-stats');
-if(sum){var parts=[];
-if(sys.mem_used_kb&&sys.mem_total_kb){parts.push(Math.round(100*sys.mem_used_kb/sys.mem_total_kb)+'% memory');}
-if(sys.cpu_busy_percent!=null){parts.push(Math.round(sys.cpu_busy_percent)+'% CPU');}
-if(parts.length){sum.textContent=parts.join(' \u00b7 ');}}
 var battery=document.getElementById('chip-battery');
 if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;
 battery.textContent=mains?'mains':(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');
@@ -158,12 +195,39 @@ el.textContent=text;}
 function clearNote(){var el=document.getElementById('stats-stale');
 if(el){el.parentNode.removeChild(el);}}
 function again(){if(stopped){return;}
-setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
+clearTimeout(pollTimer);pollTimer=setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
 function ok(){fails=0;shown=true;clearNote();again();}
 function bad(text){fails++;
 if(shown){note(text+'; showing the last reading');}else{show(text);}
 again();}
-function poll(){fetch('/api/stats',{credentials:'same-origin'})
+var pollTimer=null;
+// A save asks for the next poll now rather than in five seconds, so a row that must leave a
+// section, or a count, follows at once.
+window.muralisPollSoon=function(){if(stopped){return;}clearTimeout(pollTimer);pollTimer=setTimeout(poll,300);};
+// A list another surface changed (a rule added or renamed on the panel, a sensor switched on
+// over MQTT) is fetched again and swapped in place when its key moves, the regions marked with
+// data-lists-kind; never while something in it is being edited, and a later poll tries again.
+function editingIn(root){var a=document.activeElement;
+if(a&&root.contains(a)&&(a.tagName==='TEXTAREA'||a.tagName==='SELECT'||(a.tagName==='INPUT'&&a.type!=='checkbox'&&a.type!=='radio'))){return true;}
+return Array.prototype.some.call(root.querySelectorAll('input,select,textarea'),function(el){
+if(el.hasAttribute('data-setting')||el.type==='hidden'||el.offsetParent===null){return false;}
+if(el.type==='checkbox'||el.type==='radio'){return el.checked!==el.defaultChecked;}
+if(el.tagName==='SELECT'){return Array.prototype.some.call(el.options,function(o){return o.selected!==o.defaultSelected;});}
+return el.value!==el.defaultValue;});}
+var swapping=false;
+function refreshLists(lists){if(!lists||swapping){return;}
+var stale=Array.prototype.filter.call(document.querySelectorAll('[data-lists-kind]'),function(el){
+var want=lists[el.getAttribute('data-lists-kind')];return want&&want!==el.getAttribute('data-lists')&&!editingIn(el);});
+if(!stale.length){return;}
+swapping=true;
+fetch(location.href,{credentials:'same-origin'}).then(function(r){return r.ok?r.text():null;}).then(function(html){
+if(html===null){return;}
+var doc=new DOMParser().parseFromString(html,'text/html');
+stale.forEach(function(el){var fresh=doc.getElementById(el.id);if(!fresh||editingIn(el)){return;}
+el.innerHTML=fresh.innerHTML;el.setAttribute('data-lists',fresh.getAttribute('data-lists')||'');});
+if(window.muralisBindEditors){window.muralisBindEditors(document);}})
+.catch(function(){}).then(function(){swapping=false;});}
+function poll(){requestedAt=Date.now();fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){
 if(r.status===401||r.status===403){stop('stats unavailable: this browser was not authorised. Reload the page to sign in again.');return null;}
 if(r.status===429){stop('stats unavailable: the panel is refusing this machine after too many failed sign-ins. Wait a minute, then reload.');return null;}
@@ -172,7 +236,7 @@ return r.json();})
 .then(function(data){if(data===null){return;}
 // A bug in render() is not the panel being unreachable, and reporting it as one sent
 // somebody to check the network cable. The data arrived; say so, and log the reason.
-try{render(data);}catch(e){shown=false;fails=0;clearNote();
+try{render(data);refreshLists(data.lists);}catch(e){shown=false;fails=0;clearNote();
 show('stats received but could not be displayed: '+e.message);
 if(window.console){console.error('Muralis: stats render failed',e);}
 again();return;}
@@ -194,7 +258,9 @@ poll();
 (function(){
 var target=document.getElementById('log'),bar=document.getElementById('logbar');
 if(!target||!bar){return;}
-var stopped=false,fails=0,level='V',own=true,query='',paused=false,since='',lines=[];
+// Its own timer: the stats poll's lives in the other closure, and reading it from here threw
+// on the first reschedule, so the log never refreshed after its first load (found 2026-09-28).
+var stopped=false,fails=0,level='V',own=true,query='',paused=false,since='',lines=[],pollTimer=null;
 // The line Clear was pressed on, by its text: everything up to and including its last copy in
 // the tail is hidden, and once it has rotated out of the tail nothing is. By text rather than by
 // time because the served time is HH:MM:SS, which a Clear at 23:50 made hide every line after
@@ -220,7 +286,7 @@ function parse(text){return text.split('\n').filter(Boolean).map(function(t){
 var colon=t.indexOf(': ',11);
 return {level:t.charAt(10)==='/'&&'VDIWEF'.indexOf(t.charAt(9))>=0?t.charAt(9):'I',colon:colon<0?t.length:colon+1,text:t};});}
 function again(){if(stopped){return;}
-setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
+clearTimeout(pollTimer);pollTimer=setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
 function poll(){fetch(url(),{credentials:'same-origin'})
 .then(function(r){
 if(r.status===401||r.status===403||r.status===429){stopped=true;return null;}
