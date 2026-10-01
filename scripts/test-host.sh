@@ -62,7 +62,8 @@ for path in sorted(root.glob('*.java')):
         continue  # it is handed a context; the callers are what this checks
     lines = path.read_text().split('\n')
     for i, line in enumerate(lines):
-        if 'getSharedPreferences(' not in line and 'new SecretStore(' not in line:
+        if ('getSharedPreferences(' not in line and 'getPreferences(' not in line
+                and 'new SecretStore(' not in line):
             continue
         window = '\n'.join(lines[max(0, i - 2):i + 1])
         if 'storageContext' in window or 'credential-encrypted on purpose' in window.lower():

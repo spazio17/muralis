@@ -3968,24 +3968,19 @@ public final class KioskActivity extends Activity {
     /**
      * Asks Android for the sensor's permissions. Once a permission has been refused for good
      * ("Don't ask again", or twice on Android 11 and later) Android shows no dialog, and Allow
-     * looked dead (review, 2026-10-01): the second press then opens this app's page in
-     * Android's settings, where the permission is a switch, and says so.
+     * looked dead (review, 2026-10-01): the press after such a refusal opens this app's page in
+     * Android's settings, where the permission is a switch, and says so. Refused for good is
+     * judged from the answer itself (onRequestPermissionsResult), not from a guess before
+     * asking, which a dialog closed with Back also matched.
      */
     private void requestSensorPermission(Sensors.Def def) {
-        android.content.SharedPreferences asked = getPreferences(MODE_PRIVATE);
-        boolean askedBefore = asked.getBoolean("asked_" + def.id, false);
-        boolean blocked = false;
-        for (String permission : Sensors.permissionsFor(def)) {
-            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                    && askedBefore && !shouldShowRequestPermissionRationale(permission)) {
-                blocked = true;
-            }
-        }
-        if (blocked) {
+        android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+        if (ui.getBoolean("permission_blocked_" + def.id, false) && !permittedNow(def)) {
             Runnable screen = currentScreen;
             showNotice("Blocked in Android settings", "Android will not ask for this permission "
-                    + "again. Allow " + def.name + " on Muralis's page in Android's settings, "
-                    + "which opens now.", () -> {
+                    + "again. OK opens Muralis's page in Android's settings, where it is under "
+                    + "Permissions.", () -> {
                         try {
                             startActivity(new Intent(
                                     android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -4000,7 +3995,6 @@ public final class KioskActivity extends Activity {
             return;
         }
         permissionAskedFor = def.id;
-        asked.edit().putBoolean("asked_" + def.id, true).apply();
         try {
             requestPermissions(Sensors.permissionsFor(def), REQUEST_SENSOR_PERMISSION);
         } catch (RuntimeException refused) {
@@ -4013,7 +4007,14 @@ public final class KioskActivity extends Activity {
     /** A field of a sensor's page, stored when the box lets go of the focus or on Done. */
     private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
             String fallback, boolean number) {
-        EditText input = themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
+        addOptionField(card, theme, label, key, fallback, number, false);
+    }
+
+    /** The same; {@code words} for a name a person writes, in the prose box, not monospace. */
+    private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
+            String fallback, boolean number, boolean words) {
+        EditText input = words ? proseInput(theme, KioskConfig.sensorOption(this, key, fallback))
+                : themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
         if (number) {
             input.setInputType(InputType.TYPE_CLASS_NUMBER);
         }
@@ -4193,7 +4194,7 @@ public final class KioskActivity extends Activity {
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
-                    false);
+                    false, true);
             addOptionRadios(card, theme, "Lens", "camera_lens", "front",
                     "front", "Front", "back", "Back");
             java.util.List<String> sizes = new java.util.ArrayList<>();
@@ -5857,6 +5858,18 @@ public final class KioskActivity extends Activity {
             }
             if (def != null && allowed && granted.length > 0) {
                 KioskConfig.edit(this).sensorEnabled(def.id, true).apply();
+            }
+            if (def != null) {
+                // Refused with Android no longer willing to ask: the next Allow opens settings.
+                boolean blocked = false;
+                for (int index = 0; index < granted.length && index < permissions.length; index++) {
+                    if (granted[index] != android.content.pm.PackageManager.PERMISSION_GRANTED
+                            && !shouldShowRequestPermissionRationale(permissions[index])) {
+                        blocked = true;
+                    }
+                }
+                KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                        .edit().putBoolean("permission_blocked_" + def.id, blocked).apply();
             }
             KioskService.refreshSensorsSoon(this);
             if (currentScreen != null && configurationVisible) {

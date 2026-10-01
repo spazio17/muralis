@@ -2463,19 +2463,20 @@ final class HttpAdminServer {
             writeResponse(output, 503, "text/plain", bytes("The camera is off."));
             return;
         }
-        if (camera.viewers() >= PanelCamera.MAX_VIEWERS) {
+        // Counted before the check, so requests arriving together cannot all pass it.
+        if (camera.viewerJoined() > PanelCamera.MAX_VIEWERS) {
+            camera.viewerLeft();
             writeResponse(output, 503, "text/plain", bytes("The stream has "
                     + PanelCamera.MAX_VIEWERS + " viewers already; close one first."),
                     Collections.singletonMap("Retry-After", "10"));
             return;
         }
-        output.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; "
-                + "boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
-                .getBytes(StandardCharsets.US_ASCII));
-        camera.viewerJoined();
         long shown = -1;
         java.util.concurrent.ScheduledFuture<?> writeDeadline = null;
         try {
+            output.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; "
+                    + "boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
             long waitingSinceMs = System.currentTimeMillis();
             while (camera.open()) {
                 byte[] jpeg = camera.snapshot();
@@ -2492,9 +2493,8 @@ final class HttpAdminServer {
                 }
                 waitingSinceMs = System.currentTimeMillis();
                 shown = at;
-                if (writeDeadline != null) {
-                    writeDeadline.cancel(false);
-                }
+                // The deadline covers the write alone and is lifted once the frame is out, so
+                // a gap between frames (a slow camera) never closes a healthy stream.
                 writeDeadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
                         STREAM_WRITE_MS, TimeUnit.MILLISECONDS);
                 output.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
@@ -2502,6 +2502,8 @@ final class HttpAdminServer {
                 output.write(jpeg);
                 output.write("\r\n".getBytes(StandardCharsets.US_ASCII));
                 output.flush();
+                writeDeadline.cancel(false);
+                writeDeadline = null;
             }
         } catch (InterruptedException ended) {
             Thread.currentThread().interrupt();

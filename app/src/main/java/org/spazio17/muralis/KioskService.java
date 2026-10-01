@@ -2328,8 +2328,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return "not on this device: " + def.name;
         }
         if (enabled && !hub.permitted(def)) {
-            return "the " + def.name.toLowerCase(java.util.Locale.ROOT)
-                    + " needs a permission first";
+            return "allow " + def.name + " on the panel first";
         }
         KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
         refreshSensors();

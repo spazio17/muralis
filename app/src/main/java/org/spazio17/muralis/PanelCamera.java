@@ -552,8 +552,9 @@ final class PanelCamera implements Sensors.Reading {
         return lastFrameAtMs;
     }
 
-    void viewerJoined() {
-        viewers.incrementAndGet();
+    /** One more viewer; the count with it, for the cap. */
+    int viewerJoined() {
+        return viewers.incrementAndGet();
     }
 
     void viewerLeft() {
