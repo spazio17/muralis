@@ -603,7 +603,7 @@ the playlist page was the case that set the rule.
   calibrations, sleep tests, tags read); beacon names are a `NamedList` document with
   change times and deletion markers (moved from `sensor_option_beacon_*` at the next naming). The
   three documents are served and taken at `/api/automations`, `/api/sensors/settings` and
-  `/api/beacons/names` in the shape GET gives, with a 64 KB body budget of their own, checked in
+  `/api/beacons/names` in the shape GET gives, with a 160 KB body budget of their own, checked in
   full before anything is written (a rule's id must be `Automations.ID_SHAPE`); the
   panel writes the times itself and ignores a post's copies, a key of this panel alone and a
   `beacon_` key under `shared` are refused, the switches document lists every sensor's switch as

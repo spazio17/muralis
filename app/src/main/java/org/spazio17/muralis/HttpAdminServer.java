@@ -75,11 +75,11 @@ final class HttpAdminServer {
     private static final int MAX_ORDER_BYTES = 256 * 1024;
     /**
      * The three documents of the fleet shape (/api/automations, /api/sensors/settings,
-     * /api/beacons/names): 64 rules with long arguments and their markers come to about 50 KB,
-     * which the 16 KB budget refused, so "post back the shape GET gives" failed (review,
-     * 2026-10-01).
+     * /api/beacons/names): 64 rules with 500-character arguments in a script of three bytes a
+     * character, or full of escaped quotes, come to about 130 KB, which the 16 KB budget
+     * refused, so "post back the shape GET gives" failed (review, 2026-10-01).
      */
-    private static final int MAX_DOCUMENT_BYTES = 64 * 1024;
+    private static final int MAX_DOCUMENT_BYTES = 160 * 1024;
     private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
     private static final int UPLOAD_DEADLINE_MS = 120_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
