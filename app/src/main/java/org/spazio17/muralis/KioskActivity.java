@@ -6428,9 +6428,13 @@ public final class KioskActivity extends Activity {
         final char[] levels = {'V', 'E', 'W', 'V'};
         final boolean[] owns = {true, false, false, false};
         final String[] labels = {"Muralis", "E", "W", "All"};
+        // E and W are spoken in full, and the chosen chip is selected for a screen reader, not
+        // only coloured (review, 2026-10-01).
+        final String[] spoken = {"Muralis", "Errors", "Warnings", "All"};
         final Runnable paintChips = () -> {
             for (int i = 0; i < chips.length; i++) {
                 boolean on = levels[i] == view.level && owns[i] == view.own;
+                chips[i].setSelected(on);
                 chips[i].setTextColor(on ? theme.onSecondaryContainer : theme.accent);
                 chips[i].setBackground(on
                         ? theme.ripple(theme.pill(theme.secondaryContainer), null,
@@ -6443,6 +6447,7 @@ public final class KioskActivity extends Activity {
             final char level = levels[i];
             final boolean own = owns[i];
             chips[i] = pillShaped(new Button(this), labels[i], 12);
+            chips[i].setContentDescription(spoken[i]);
             chips[i].setMinWidth(dp(40));
             chips[i].setMinimumWidth(dp(40));
             chips[i].setOnClickListener(v -> {
@@ -6454,7 +6459,7 @@ public final class KioskActivity extends Activity {
             });
             LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            chipParams.rightMargin = dp(6);
+            chipParams.rightMargin = dp(8);
             row.addView(chips[i], chipParams);
         }
         paintChips.run();
@@ -6488,12 +6493,14 @@ public final class KioskActivity extends Activity {
             view.paused = !view.paused;
             pause.setImageResource(view.paused ? R.drawable.ic_play : R.drawable.ic_pause);
             pause.setContentDescription(view.paused ? "Follow" : "Pause");
+            pause.setTooltipText(pause.getContentDescription());
             if (!view.paused) {
                 worker.removeCallbacks(read[0]);
                 worker.post(read[0]);
             }
         });
-        LinearLayout.LayoutParams pauseParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        // 48 dp, the touch target iconButton promises; 40 dp cut it to the glyph's disc.
+        LinearLayout.LayoutParams pauseParams = new LinearLayout.LayoutParams(dp(48), dp(48));
         pauseParams.leftMargin = dp(8);
         searchRow.addView(pause, pauseParams);
         ImageButton copy = iconButton(theme, R.drawable.ic_content_copy, "Copy");
@@ -6505,12 +6512,14 @@ public final class KioskActivity extends Activity {
                         "Muralis log", block.getText()));
             }
         });
-        searchRow.addView(copy, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        searchRow.addView(copy, new LinearLayout.LayoutParams(dp(48), dp(48)));
         ImageButton clear = iconButton(theme, R.drawable.ic_block, "Clear");
-        searchRow.addView(clear, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        searchRow.addView(clear, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         EditText search = themedInput(theme, "", false);
-        search.setContentDescription("Search the log");
+        // A hint, not a content description: on an EditText the description replaces the typed
+        // text for a screen reader, and the hint is also the placeholder a sighted person sees.
+        search.setHint("Search");
         search.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
         search.setCompoundDrawablePadding(dp(8));
         search.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(
@@ -9753,7 +9762,7 @@ public final class KioskActivity extends Activity {
             return;
         }
         dashboardRetries++;
-        Log.i(TAG, "Dashboard retry " + dashboardRetries + ": " + url);
+        Log.i(TAG, "Dashboard retry " + dashboardRetries + ": " + AppLog.withoutSecrets(url));
         recovery.issueLoad(now);
         resetServerProbeTracking();
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
@@ -9840,7 +9849,8 @@ public final class KioskActivity extends Activity {
                 WebView view, WebResourceRequest request, WebResourceError error) {
             if (request.isForMainFrame()) {
                 String description = error.getErrorCode() + " " + error.getDescription();
-                Log.w(TAG, "Dashboard load failed: " + description + " " + request.getUrl());
+                Log.w(TAG, "Dashboard load failed: " + description + " "
+                        + AppLog.withoutSecrets(request.getUrl().toString()));
                 recordLoadFailure(description);
             }
         }
@@ -9852,7 +9862,8 @@ public final class KioskActivity extends Activity {
             // nothing at all, which is indistinguishable from a hung renderer.
             if (request.isForMainFrame()) {
                 String description = "HTTP " + response.getStatusCode();
-                Log.w(TAG, "Dashboard " + description + " for " + request.getUrl());
+                Log.w(TAG, "Dashboard " + description + " for "
+                        + AppLog.withoutSecrets(request.getUrl().toString()));
                 // An HTTP error status is the *normal* way a dashboard goes away: a reverse proxy
                 // answers 502 or 503 for as long as its backend is restarting, which is exactly what a
                 // Home Assistant update looks like from here.

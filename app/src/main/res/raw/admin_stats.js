@@ -195,13 +195,18 @@ poll();
 var target=document.getElementById('log'),bar=document.getElementById('logbar');
 if(!target||!bar){return;}
 var stopped=false,fails=0,level='V',own=true,query='',paused=false,since='',lines=[];
+// The line Clear was pressed on, by its text: everything up to and including its last copy in
+// the tail is hidden, and once it has rotated out of the tail nothing is. By text rather than by
+// time because the served time is HH:MM:SS, which a Clear at 23:50 made hide every line after
+// midnight (review, 2026-10-01).
+function firstShown(){if(!since){return 0;}
+for(var i=lines.length-1;i>=0;i--){if(lines[i].text===since){return i+1;}}return 0;}
 var pause=document.getElementById('log-pause'),box=document.getElementById('log-q'),count=document.getElementById('log-count');
 function url(){return '/api/log?level='+level+(own?'&own=1':'');}
 function paint(){
 var atEnd=target.scrollHeight-target.scrollTop-target.clientHeight<24,q=query.toLowerCase();
 var frag=document.createDocumentFragment(),n=0;
-lines.forEach(function(l){
-if(l.time<=since){return;}
+lines.slice(firstShown()).forEach(function(l){
 if(q&&l.text.toLowerCase().indexOf(q)<0){return;}
 var s=document.createElement('span');s.className='lv-'+l.level;
 var head=document.createElement('b');head.textContent=l.text.slice(0,l.colon);
@@ -210,10 +215,10 @@ frag.appendChild(s);n++;});
 target.textContent='';target.appendChild(frag);
 count.textContent=n+' of '+lines.length;
 if(atEnd){target.scrollTop=target.scrollHeight;}}
-// "HH:MM:SS L/Tag: message" per line; the time compared as text, which orders within a day.
+// "HH:MM:SS L/Tag: message" per line.
 function parse(text){return text.split('\n').filter(Boolean).map(function(t){
 var colon=t.indexOf(': ',11);
-return {time:t.slice(0,8),level:t.charAt(10)==='/'&&'VDIWEF'.indexOf(t.charAt(9))>=0?t.charAt(9):'I',colon:colon<0?t.length:colon+1,text:t};});}
+return {level:t.charAt(10)==='/'&&'VDIWEF'.indexOf(t.charAt(9))>=0?t.charAt(9):'I',colon:colon<0?t.length:colon+1,text:t};});}
 function again(){if(stopped){return;}
 setTimeout(poll,fails?Math.min(60000,5000*Math.pow(2,Math.min(fails,4))):5000);}
 function poll(){fetch(url(),{credentials:'same-origin'})
@@ -231,20 +236,29 @@ level=b.dataset.level;own=b.dataset.own==='1';
 bar.querySelectorAll('.lvl').forEach(function(o){o.setAttribute('aria-pressed',String(o===b));});
 poll();});});
 box.addEventListener('input',function(){query=box.value;paint();});
+// Paused, the button turns into Follow with the play glyph, as the panel's does: a name and
+// a glyph that say what the next press does, not a pressed state on top of a new name.
 pause.addEventListener('click',function(){paused=!paused;
-pause.setAttribute('aria-pressed',String(paused));pause.title=paused?'Follow':'Pause';pause.setAttribute('aria-label',pause.title);
+pause.title=paused?'Follow':'Pause';pause.setAttribute('aria-label',pause.title);
 pause.classList.toggle('on',paused);if(!paused){poll();}});
 document.getElementById('log-copy').addEventListener('click',function(){
 var text=target.textContent;
 if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text);return;}
 var range=document.createRange();range.selectNodeContents(target);var sel=getSelection();sel.removeAllRanges();sel.addRange(range);document.execCommand('copy');sel.removeAllRanges();});
 // The whole tail under the current chip, unsearched and uncleared, as a file named by the panel.
+// A refusal or a lost network says so under the block rather than saving an empty file; the
+// object URL is let go a moment after the click, since Firefox can drop a download whose
+// URL is revoked in the same tick.
 document.getElementById('log-download').addEventListener('click',function(){
-fetch(url(),{credentials:'same-origin'}).then(function(r){return r.ok?r.text():'';}).then(function(text){
+fetch(url(),{credentials:'same-origin'}).then(function(r){if(!r.ok){throw new Error('HTTP '+r.status);}return r.text();}).then(function(text){
 var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
 a.download='muralis-log-'+new Date().toISOString().slice(0,19).split(':').join('-')+'.txt';
-document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);});});
+document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(a.href);},1000);})
+.catch(function(e){logNote('Not downloaded: '+(e&&e.message?e.message:'no answer from the panel'));});});
+function logNote(text){var el=document.getElementById('log-note');
+if(!el){el=document.createElement('p');el.id='log-note';el.className='hint bad';target.parentNode.insertBefore(el,target.nextSibling);}
+el.textContent=text;setTimeout(function(){if(el.parentNode){el.parentNode.removeChild(el);}},5000);}
 document.getElementById('log-clear').addEventListener('click',function(){
-since=lines.length?lines[lines.length-1].time:since;paint();});
+since=lines.length?lines[lines.length-1].text:since;paint();});
 poll();
 })();

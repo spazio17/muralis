@@ -94,14 +94,38 @@ final class AppLog {
 
     /**
      * Whether a line is Muralis's own rather than a framework's under its pid: every tag of this
-     * app starts with "Muralis" or "Pro" (ProBilling, ProEntitlement), and the kernel's audit
+     * app starts with "Muralis" or is one of the two Pro tags (ProBilling, ProEntitlement, named
+     * in full: a prefix let ProfileInstaller and ProcessState through), and the kernel's audit
      * lines carry the thread name, "MuralisTelemetr", which is about this app as well. An OEM's
      * frameworks log a line a second under the same pid on a Huawei (ZeroHung, HiTouch), which
      * is why "own" is the first chip and the default, the way Android Studio's Logcat opens on
      * {@code package:mine}.
      */
     static boolean own(Entry entry) {
-        return entry.tag.startsWith("Muralis") || entry.tag.startsWith("Pro");
+        return entry.tag.startsWith("Muralis") || entry.tag.equals("ProBilling")
+                || entry.tag.equals("ProEntitlement");
+    }
+
+    /**
+     * A URL as it may be logged: scheme, host, port and path, with the user:password part and
+     * the query taken off, because the log leaves the panel now (Copy, Download, /api/log, "for
+     * a support mail") and a dashboard or sound address often carries a token in its query or
+     * credentials before its host. Anything that is not a URL comes back as it was.
+     */
+    static String withoutSecrets(String url) {
+        if (url == null) {
+            return "";
+        }
+        try {
+            java.net.URI uri = new java.net.URI(url.trim());
+            if (uri.getScheme() == null || uri.getHost() == null) {
+                return url;
+            }
+            return new java.net.URI(uri.getScheme(), null, uri.getHost(), uri.getPort(),
+                    uri.getPath(), null, null).toString();
+        } catch (java.net.URISyntaxException notAUrl) {
+            return url;
+        }
     }
 
     /**

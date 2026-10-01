@@ -220,10 +220,12 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 #log b{font-weight:600}
 .logcount{font-size:12px;color:var(--subtext);white-space:nowrap}
 .logbar{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+/* Paused, the button shows the play glyph and is named Follow, as on the panel. */
+#log-pause svg+svg,#log-pause.on svg:first-child{display:none}#log-pause.on svg+svg{display:block}
 .levels{display:inline-flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
-.lvl{height:36px;min-width:44px;padding:0 12px;border:0;background:transparent;color:var(--subtext);font:inherit;font-size:14px;cursor:pointer}
+.lvl{height:40px;min-width:44px;padding:0 12px;border:0;background:transparent;color:var(--subtext);font:inherit;font-size:14px;cursor:pointer}
 .lvl+.lvl{border-left:1px solid var(--outline)}.lvl[aria-pressed=true]{background:var(--secondary-container);color:var(--on-secondary-container)}
-.logsearch{display:flex;align-items:center;gap:6px;flex:1;min-width:120px;height:36px;padding:0 10px;border:1px solid var(--outline);border-radius:20px;color:var(--subtext)}
+.logsearch{display:flex;align-items:center;gap:8px;flex:1;min-width:120px;height:40px;padding:0 10px;border:1px solid var(--outline);border-radius:20px;color:var(--subtext)}
 .logsearch svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .logsearch input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font:inherit;font-size:14px;outline:none}
 .ib.on{background:var(--secondary-container);color:var(--on-secondary-container)}

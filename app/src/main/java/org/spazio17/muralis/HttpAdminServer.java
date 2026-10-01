@@ -1662,12 +1662,12 @@ final class HttpAdminServer {
                 + "<button type=\"button\" class=\"lvl\" data-level=\"W\" aria-pressed=\"false\">W</button>"
                 + "<button type=\"button\" class=\"lvl\" data-level=\"V\" aria-pressed=\"false\">All</button>"
                 + "</div>"
-                + "<span class=\"logcount\" id=\"log-count\" aria-live=\"polite\"></span>"
+                + "<span class=\"logcount\" id=\"log-count\"></span>"
                 + "<label class=\"logsearch\">" + glyph("search")
                 + "<input type=\"search\" id=\"log-q\" autocomplete=\"off\""
                 + " aria-label=\"Search the log\"></label>"
                 + "<button type=\"button\" class=\"ib\" id=\"log-pause\" title=\"Pause\""
-                + " aria-label=\"Pause\" aria-pressed=\"false\">" + glyph("pause") + "</button>"
+                + " aria-label=\"Pause\">" + glyph("pause") + glyph("play") + "</button>"
                 + "<button type=\"button\" class=\"ib\" id=\"log-copy\" title=\"Copy\""
                 + " aria-label=\"Copy\">" + glyph("copy") + "</button>"
                 + "<button type=\"button\" class=\"ib\" id=\"log-download\" title=\"Download\""
@@ -1675,7 +1675,7 @@ final class HttpAdminServer {
                 + "<button type=\"button\" class=\"ib\" id=\"log-clear\" title=\"Clear\""
                 + " aria-label=\"Clear\">" + glyph("clear") + "</button>"
                 + "</div>"
-                + "<pre id=\"log\" aria-label=\"The app's log\"></pre>";
+                + "<pre id=\"log\" role=\"log\" aria-label=\"The app's log\"></pre>";
     }
 
     private String quickActionsBody() {
