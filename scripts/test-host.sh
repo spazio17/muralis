@@ -62,7 +62,8 @@ for path in sorted(root.glob('*.java')):
         continue  # it is handed a context; the callers are what this checks
     lines = path.read_text().split('\n')
     for i, line in enumerate(lines):
-        if 'getSharedPreferences(' not in line and 'new SecretStore(' not in line:
+        if ('getSharedPreferences(' not in line and 'getPreferences(' not in line
+                and 'new SecretStore(' not in line):
             continue
         window = '\n'.join(lines[max(0, i - 2):i + 1])
         if 'storageContext' in window or 'credential-encrypted on purpose' in window.lower():
@@ -135,6 +136,19 @@ javac -d "${test_dir}/automations" \
     "${host_test_dir}/../../json/JSONArray.java" \
     "${host_test_dir}/AutomationsTest.java"
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
+
+# The shapes the fleet of 0.7 builds on: shared or one-panel settings, and named lists.
+mkdir -p "${test_dir}/fleetshape"
+javac -d "${test_dir}/fleetshape" \
+    "${pure_java_dir}/SensorSettings.java" \
+    "${pure_java_dir}/NamedList.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/HostJson.java" \
+    "${host_test_dir}/../../json/JSONException.java" \
+    "${host_test_dir}/../../json/JSONObject.java" \
+    "${host_test_dir}/../../json/JSONArray.java" \
+    "${host_test_dir}/FleetShapeTest.java"
+java -cp "${test_dir}/fleetshape" org.spazio17.muralis.FleetShapeTest
 
 mkdir -p "${test_dir}/provisioning"
 javac -d "${test_dir}/provisioning" \

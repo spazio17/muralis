@@ -796,6 +796,9 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // In front: the camera and microphone foreground types a background start could not
+        // take are asked for again; see KioskService.refreshForegroundTypes.
+        KioskService.foregroundTypesSoon(this);
         if (orientationPending) {
             orientationPending = false;
             applyOrientation();
@@ -826,6 +829,7 @@ public final class KioskActivity extends Activity {
         if (proBilling != null) {
             proBilling.refresh();
         }
+        applyNfcReader();
         // Back from the Settings screen that "Grant it now" opened, whether the watcher brought
         // the activity back or the operator did: the card was drawn with the grant missing and the
         // grant is there now, so redraw before the red line is read again. Here rather than in the
@@ -851,6 +855,7 @@ public final class KioskActivity extends Activity {
     protected void onPause() {
         inFront = false;
         KioskRuntimeState.publishActivityInFront(false);
+        applyNfcReader();
         // Belt and braces for the same invariant: a bar disabled while nothing is pinned is a
         // tablet nobody can use.
         disableStatusBarIfPinned();
@@ -3367,12 +3372,20 @@ public final class KioskActivity extends Activity {
         return alive;
     }
 
+    private static final int REQUEST_SENSOR_PERMISSION = 22;
+    /** The sensor whose permission was just asked for, redrawn when the answer arrives. */
+    private String permissionAskedFor;
+
     private static int sensorGlyph(String glyph) {
         switch (glyph) {
             case "proximity": return R.drawable.ic_sensor_proximity;
             case "light": return R.drawable.ic_sensor_light;
             case "movement": return R.drawable.ic_sensor_movement;
+            case "bluetooth": return R.drawable.ic_sensor_bluetooth;
+            case "nfc": return R.drawable.ic_sensor_nfc;
             case "audio": return R.drawable.ic_sensor_audio;
+            case "camera": return R.drawable.ic_sensor_camera;
+            case "microphone": return R.drawable.ic_sensor_microphone;
             case "pressure": return R.drawable.ic_sensor_pressure;
             case "temperature": return R.drawable.ic_sensor_temperature;
             case "humidity": return R.drawable.ic_sensor_humidity;
@@ -3383,6 +3396,7 @@ public final class KioskActivity extends Activity {
             case "network": return R.drawable.ic_sensor_network;
             case "memory": return R.drawable.ic_sensor_memory;
             case "processor": return R.drawable.ic_sensor_processor;
+            case "tag": return R.drawable.ic_sensor_tag;
             default: return R.drawable.ic_sensor_bolt;
         }
     }
@@ -3512,6 +3526,9 @@ public final class KioskActivity extends Activity {
             KioskConfig.edit(this).sensorEnabled(def.id, checked).apply();
             KioskService.refreshSensorsSoon(this);
             paintSensorActions(def.id, checked);
+            if (def == Sensors.NFC) {
+                applyNfcReader();
+            }
             if (after != null) {
                 after.run();
             }
@@ -3539,7 +3556,7 @@ public final class KioskActivity extends Activity {
                 Automations.Rule stored = Automations.find(fresh, rule.id);
                 if (stored != null) {
                     stored.enabled = checked;
-                    KioskConfig.edit(this).automations(Automations.store(fresh)).apply();
+                    KioskConfig.storeAutomations(this, fresh);
                 }
             }
             KioskService.refreshSensorsSoon(this);
@@ -3691,6 +3708,11 @@ public final class KioskActivity extends Activity {
                 off.setEnabled(false);
                 row = sensorRow(theme, def, one, off, open, !wide);
                 absent.add(row);
+            } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
+                Button allow = secondaryButton(theme, "Allow");
+                allow.setOnClickListener(view -> requestSensorPermission(def));
+                row = sensorRow(theme, def, one, allow, open, !wide);
+                addRow.accept(row);
             } else {
                 row = sensorRow(theme, def, one, sensorSwitch(theme, def, one), open, !wide);
                 addRow.accept(row);
@@ -3874,6 +3896,45 @@ public final class KioskActivity extends Activity {
         return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
+    /** One step of the microphone calibration through the service; the reason when refused. */
+    private String microphoneStep(String step) {
+        KioskService service = KioskService.liveService();
+        return service == null ? "the service is not running" : service.calibrateMicrophone(step);
+    }
+
+    /**
+     * The two steps, each a screen of its own: the room quiet, then the loudest sound that
+     * should read 100. The panel averages the last three seconds when the button is tapped,
+     * so the room has to stay that way until then.
+     */
+    private void calibrateMicrophone() {
+        final Runnable screen = currentScreen;
+        Runnable back = () -> {
+            if (screen != null) {
+                screen.run();
+            }
+        };
+        showConfirm("Keep the room quiet", "Let the room be as quiet as it gets, for a few "
+                + "seconds, then tap Quiet.", "Quiet", false, () -> {
+                    String problem = microphoneStep("quiet");
+                    if (problem != null) {
+                        showNotice("Not done", capital(problem) + ".", back);
+                        return;
+                    }
+                    showConfirm("Make it loud", "Make the loudest sound that should read 100: "
+                            + "talk loudly or play music near the panel, and tap Loud while it "
+                            + "goes on.", "Loud", false, () -> {
+                                String done = microphoneStep("loud");
+                                if (done != null) {
+                                    showNotice("Not done", capital(done) + ".", back);
+                                    return;
+                                }
+                                back.run();
+                                redrawSoon();
+                            }, back);
+                }, back);
+    }
+
     /** One step of the proximity calibration through the service; the reason when refused. */
     private String proximityStep(String step) {
         KioskService service = KioskService.liveService();
@@ -3947,10 +4008,71 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Judged live rather than from the snapshot, which is rebuilt on the service's next tick. */
+    private boolean permittedNow(Sensors.Def def) {
+        boolean permitted = Sensors.permitted(this, def);
+        if (permitted) {
+            // Granted, in Android's settings or here: a later refusal is judged afresh, so
+            // Allow asks Android again before it sends anyone to settings (review, 2026-10-01).
+            android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                    .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+            if (ui.getBoolean("permission_blocked_" + def.id, false)) {
+                ui.edit().remove("permission_blocked_" + def.id).apply();
+            }
+        }
+        return permitted;
+    }
+
+    /**
+     * Asks Android for the sensor's permissions. Once a permission has been refused for good
+     * ("Don't ask again", or twice on Android 11 and later) Android shows no dialog, and Allow
+     * looked dead (review, 2026-10-01): the press after such a refusal opens this app's page in
+     * Android's settings, where the permission is a switch, and says so. Refused for good is
+     * judged from the answer itself (onRequestPermissionsResult), not from a guess before
+     * asking, which a dialog closed with Back also matched.
+     */
+    private void requestSensorPermission(Sensors.Def def) {
+        android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+        if (ui.getBoolean("permission_blocked_" + def.id, false) && !permittedNow(def)) {
+            Runnable screen = currentScreen;
+            showNotice("Blocked in Android settings", "Android will not ask for this permission "
+                    + "again. OK opens Muralis's page in Android's settings, where it is under "
+                    + "Permissions.", () -> {
+                        try {
+                            startActivity(new Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:" + getPackageName())));
+                        } catch (android.content.ActivityNotFoundException noSettings) {
+                            Log.w(TAG, "No settings page to open", noSettings);
+                        }
+                        if (screen != null) {
+                            screen.run();
+                        }
+                    });
+            return;
+        }
+        permissionAskedFor = def.id;
+        try {
+            requestPermissions(Sensors.permissionsFor(def), REQUEST_SENSOR_PERMISSION);
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Cannot ask for the permission", refused);
+            Toast.makeText(this, "This device would not show the permission request.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
     /** A field of a sensor's page, stored when the box lets go of the focus or on Done. */
     private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
             String fallback, boolean number) {
-        EditText input = themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
+        addOptionField(card, theme, label, key, fallback, number, false);
+    }
+
+    /** The same; {@code words} for a name a person writes, in the prose box, not monospace. */
+    private void addOptionField(LinearLayout card, KioskTheme theme, String label, String key,
+            String fallback, boolean number, boolean words) {
+        EditText input = words ? proseInput(theme, KioskConfig.sensorOption(this, key, fallback))
+                : themedInput(theme, KioskConfig.sensorOption(this, key, fallback), false);
         if (number) {
             input.setInputType(InputType.TYPE_CLASS_NUMBER);
         }
@@ -4081,13 +4203,22 @@ public final class KioskActivity extends Activity {
         // No title on the first card: the app bar and the row already name the sensor, and
         // three times in a column was two too many (review, 2026-10-01).
         LinearLayout card = card(theme, null);
-        String switchLabel = def == Sensors.MOVEMENT ? "Report movement" : def.name;
+        // "Use the camera": an action like the other switches' words, where "Camera on" read
+        // as a state (review, 2026-10-01).
+        String switchLabel = def == Sensors.MOVEMENT ? "Report movement"
+                : def == Sensors.NFC ? "Read tags"
+                : def == Sensors.BLUETOOTH ? "Listen for beacons"
+                : def == Sensors.CAMERA ? "Use the camera" : def.name;
         View trailing;
         if (!one.optBoolean("available")) {
             CompoundButton off = themedSwitch(theme, "", false);
             off.setEnabled(false);
             trailing = off;
             switchLabel = def.name;
+        } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
+            Button allow = secondaryButton(theme, "Allow");
+            allow.setOnClickListener(view -> requestSensorPermission(def));
+            trailing = allow;
         } else {
             trailing = sensorSwitch(theme, def, one);
         }
@@ -4102,7 +4233,8 @@ public final class KioskActivity extends Activity {
         viewsOf(sensorReadouts, def.id).add(readingOf((LinearLayout) card.getChildAt(card.getChildCount() - 1)));
         java.util.List<View> cards = new java.util.ArrayList<>();
         cards.add(card);
-        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
+        if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
+                || (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def))) {
             return cards;
         }
         if (def.androidType != 0) {
@@ -4120,6 +4252,140 @@ public final class KioskActivity extends Activity {
             // guessing at a driver's values, a procedure the user runs). Until then Android's
             // distance rule reads it.
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
+        } else if (def == Sensors.MICROPHONE) {
+            // The room's quiet and loud, shown by the person, the proximity's procedure: a
+            // quiet room read about 30 of 100 before (Juri, 2026-09-28), and what counts as
+            // loud is the room's, not Android's.
+            cards.add(calibrationCard(theme, def, one, this::calibrateMicrophone));
+        } else if (def == Sensors.NFC) {
+            // The tags read lately, newest first, by their id and when: a tag is named and
+            // used in Home Assistant, which gets each read as a tag scanned, the way its
+            // companion app hands one over (Juri, 2026-09-30: "copy what Home Assistant does").
+            // The automations here offer the same tags by id.
+            LinearLayout tags = card(theme, "Tags");
+            java.util.Map<String, Long> seen = KioskConfig.seenTags(this);
+            if (seen.isEmpty()) {
+                TextView none = new FlushText(this);
+                none.setText("No tag has been held to the panel yet.");
+                none.setTextColor(theme.subtext);
+                none.setTextSize(14);
+                tags.addView(none, matchWrap());
+            }
+            boolean firstTag = true;
+            for (java.util.Map.Entry<String, Long> tag : seen.entrySet()) {
+                addListRow(tags, theme, glyphRow(theme, R.drawable.ic_sensor_tag, tag.getKey(),
+                        "Read " + android.text.format.DateUtils.getRelativeTimeSpanString(
+                                tag.getValue()), null, null, false), firstTag);
+                firstTag = false;
+            }
+            cards.add(tags);
+        } else if (def == Sensors.BLUETOOTH) {
+            addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_s", "30",
+                    true);
+            Beacons beacons = KioskService.beaconsOf(this);
+            java.util.List<Beacons.Seen> heard = beacons == null
+                    ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+            if (heard.isEmpty()) {
+                TextView none = new FlushText(this);
+                none.setText("No beacon has been heard yet.");
+                none.setTextColor(theme.subtext);
+                none.setTextSize(14);
+                LinearLayout.LayoutParams noneParams = matchWrap();
+                noneParams.topMargin = dp(16);
+                card.addView(none, noneParams);
+            } else {
+                java.util.List<Beacons.Seen> reach = beacons.inReach();
+                NamedList beaconNames = KioskConfig.beaconNames(this);
+                for (Beacons.Seen seen : heard) {
+                    // Words, not a machine value: the prose box (review, 2026-10-01).
+                    EditText name = proseInput(theme, beaconNames.name(seen.id));
+                    addField(card, theme, "Name", name, seen.id + ", " + (reach.contains(seen)
+                            ? "in reach" + (Double.isNaN(seen.distance()) ? ""
+                                    : ", " + seen.distance() + " m")
+                            : "out of reach"));
+                    // Why a name is refused, in red under its box, as on the other fields.
+                    TextView nameProblem = new FlushText(this);
+                    nameProblem.setTextColor(theme.bad);
+                    nameProblem.setTextSize(12);
+                    nameProblem.setVisibility(View.GONE);
+                    LinearLayout.LayoutParams nameProblemParams = matchWrapClose();
+                    nameProblemParams.leftMargin = dp(16);
+                    card.addView(nameProblem, nameProblemParams);
+                    Runnable store = () -> {
+                        String typed = name.getText().toString().trim();
+                        String problem = Sensors.checkBeaconName(seen.id, typed);
+                        if (problem != null) {
+                            nameProblem.setText("Not saved: " + problem + ".");
+                            nameProblem.setVisibility(View.VISIBLE);
+                            return;
+                        }
+                        nameProblem.setVisibility(View.GONE);
+                        KioskConfig.beaconName(this, seen.id, typed);
+                        KioskService.publishTelemetrySoon(this);
+                    };
+                    name.setOnFocusChangeListener((view, focused) -> {
+                        if (!focused) {
+                            store.run();
+                        }
+                    });
+                    name.setOnEditorActionListener((view, actionId, event) -> {
+                        // hideKeyboard clears the focus, and the focus listener stores.
+                        hideKeyboard(view);
+                        return true;
+                    });
+                }
+            }
+        } else if (def == Sensors.CAMERA) {
+            addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
+                    false, true);
+            addOptionRadios(card, theme, "Lens", "camera_lens", "front",
+                    "front", "Front", "back", "Back");
+            java.util.List<String> sizes = new java.util.ArrayList<>();
+            for (String size : PanelCamera.SIZES) {
+                sizes.add(size);
+                sizes.add(size.replace("x", " × "));
+            }
+            addOptionRadios(card, theme, "Size", "camera_size", "640x480",
+                    sizes.toArray(new String[0]));
+            java.util.List<String> rates = new java.util.ArrayList<>();
+            for (int rate : PanelCamera.RATES) {
+                rates.add(Integer.toString(rate));
+                rates.add(Integer.toString(rate));
+            }
+            addOptionRadios(card, theme, "Frames per second", "camera_fps", "5",
+                    rates.toArray(new String[0]));
+            addOptionRadios(card, theme, "Orientation", "camera_orientation", "device",
+                    "device", "Follow the device", "portrait", "Portrait", "landscape",
+                    "Landscape");
+            addOptionSwitch(card, theme, "Mirror", "camera_mirror", false);
+            addOptionSwitch(card, theme, "Upside down", "camera_flip", false);
+            addOptionSwitch(card, theme, "Watermark, name and time", "camera_watermark", true);
+            LinearLayout motion = card(theme, "Motion");
+            addOptionSwitch(motion, theme, "Detect motion", "camera_motion", true);
+            addOptionRadios(motion, theme, "Sensitivity", "camera_sensitivity", "normal",
+                    "low", "Low", "normal", "Normal", "high", "High");
+            addOptionField(motion, theme, "Still after (seconds)", "camera_still_s", "30", true);
+            addOptionSwitch(motion, theme, "Picture to MQTT", "camera_mqtt", false);
+            cards.add(motion);
+            // The addresses only while the web admin listens: greyed, with the reason, where it
+            // does not (a free panel, the admin off), since an address that leads nowhere is
+            // worse than none; and the address wraps rather than ending in dots on a phone
+            // (review, 2026-10-01).
+            LinearLayout stream = card(theme, "Stream");
+            boolean serving = KioskRuntimeState.httpAdminListening();
+            String address = KioskRuntimeState.httpAdminAddress();
+            for (String[] link : new String[][] {{"Live stream", "/camera/stream"},
+                    {"Snapshot", "/camera/snapshot.jpg"}}) {
+                LinearLayout row = glyphRow(theme, R.drawable.ic_web, link[0],
+                        serving ? address + link[1] : "Needs the local web admin", null, null,
+                        !serving);
+                TextView sub = readingOf(row);
+                sub.setSingleLine(false);
+                sub.setEllipsize(null);
+                sub.setMaxLines(3);
+                stream.addView(row, matchWrap());
+            }
+            cards.add(stream);
         }
         return cards;
     }
@@ -4330,6 +4596,19 @@ public final class KioskActivity extends Activity {
         minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(whenCard, theme, "For (minutes)", minutesInput);
         View minutesBox = (View) minutesInput.getParent();
+        // A menu too: the tags read here have no upper bound. Every one read lately is
+        // offered by its id, newest first.
+        MenuField tagMenu = new MenuField(whenCard, theme, "Tag");
+        tagMenu.add("Any tag", "");
+        java.util.Set<String> tagsRead = KioskConfig.seenTags(this).keySet();
+        for (String tag : tagsRead) {
+            tagMenu.add(tag, tag);
+        }
+        if (!draft.tag.isEmpty() && !tagsRead.contains(draft.tag)) {
+            tagMenu.add(draft.tag, draft.tag);
+        }
+        tagMenu.select(draft.tag);
+        View tagBox = (View) tagMenu.box.getParent();
 
         Runnable paintEvent = () -> {
             View checked = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
@@ -4342,6 +4621,8 @@ public final class KioskActivity extends Activity {
                 levelCaption.setText("Level (" + event.levelUnit + ")");
             }
             minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
+            boolean tag = event != null && event.tag;
+            tagBox.setVisibility(tag ? View.VISIBLE : View.GONE);
         };
         Runnable paintSensor = () -> {
             String sensor = sensorMenu.value();
@@ -4452,6 +4733,7 @@ public final class KioskActivity extends Activity {
             // as the web refuses it, rather than quietly meaning 0.
             draft.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
+            draft.tag = tagMenu.value();
             draft.action = actionMenu.value();
             draft.argument = argumentInput.getText().toString();
             boolean only = onlySwitch.isChecked();
@@ -4503,7 +4785,7 @@ public final class KioskActivity extends Activity {
                     draft.enabled = stored.enabled;
                     rules.set(rules.indexOf(stored), draft);
                 }
-                KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+                KioskConfig.storeAutomations(this, rules);
             }
             selectedAutomation = draft.id;
             KioskService.refreshSensorsSoon(this);
@@ -4522,7 +4804,7 @@ public final class KioskActivity extends Activity {
                     Automations.Rule stored = Automations.find(rules, draft.id);
                     if (stored != null) {
                         rules.remove(stored);
-                        KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+                        KioskConfig.storeAutomations(this, rules);
                     }
                 }
                 KioskService.refreshSensorsSoon(this);
@@ -4728,6 +5010,85 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
+    }
+
+    /**
+     * What a tag carries, as a person would read it: its text records and its addresses, one
+     * after the other; a record of another kind by its type. The NDEF message Android read
+     * when it found the tag; empty for a tag with none, or one it could not read.
+     */
+    private static String tagContent(android.nfc.Tag tag) {
+        android.nfc.tech.Ndef ndef = android.nfc.tech.Ndef.get(tag);
+        android.nfc.NdefMessage message = ndef == null ? null : ndef.getCachedNdefMessage();
+        if (message == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (android.nfc.NdefRecord record : message.getRecords()) {
+            String part = null;
+            byte[] payload = record.getPayload();
+            if (record.getTnf() == android.nfc.NdefRecord.TNF_WELL_KNOWN
+                    && java.util.Arrays.equals(record.getType(), android.nfc.NdefRecord.RTD_TEXT)
+                    && payload.length > 0) {
+                // NFC Forum text record: a status byte (the encoding, the language's length),
+                // the language, then the text.
+                int language = payload[0] & 0x3f;
+                if (1 + language <= payload.length) {
+                    part = new String(payload, 1 + language, payload.length - 1 - language,
+                            (payload[0] & 0x80) != 0 ? java.nio.charset.StandardCharsets.UTF_16
+                                    : java.nio.charset.StandardCharsets.UTF_8);
+                }
+            } else if (record.toUri() != null) {
+                part = record.toUri().toString();
+            } else if (record.getTnf() == android.nfc.NdefRecord.TNF_MIME_MEDIA) {
+                part = new String(record.getType(), java.nio.charset.StandardCharsets.US_ASCII)
+                        + ", " + payload.length + " bytes";
+            }
+            if (part != null && !part.isEmpty()) {
+                text.append(text.length() == 0 ? "" : " | ").append(part);
+            }
+        }
+        return text.length() > 200 ? text.substring(0, 200) : text.toString();
+    }
+
+    /** A tag's id as hex, the reading and the name a tag is stored under. */
+    private static String tagHex(android.nfc.Tag tag) {
+        StringBuilder hex = new StringBuilder();
+        for (byte b : tag.getId()) {
+            hex.append(String.format(java.util.Locale.ROOT, "%02X", b));
+        }
+        return hex.toString();
+    }
+
+    /**
+     * Reader mode while the NFC sensor is on: a tag held to the panel is read for its id and its
+     * content, handed to the service, and Android's own tag handling stays out of the way.
+     */
+    private void applyNfcReader() {
+        android.nfc.NfcAdapter nfc = android.nfc.NfcAdapter.getDefaultAdapter(this);
+        if (nfc == null) {
+            return;
+        }
+        boolean wanted = inFront && Sensors.enabled(this, Sensors.NFC);
+        Log.i(TAG, "NFC reader mode " + (wanted ? "on" : "off") + (nfc.isEnabled() ? "" : ", adapter off"));
+        // The contents are read too, for the Home Assistant tag id a tag written by Home
+        // Assistant carries; a password-protected tag still gives its chip's id (a LEGO
+        // Dimensions figure, 2026-09-30).
+        try {
+            if (wanted) {
+                nfc.enableReaderMode(this, tag -> KioskService.tagReadSoon(this, tagHex(tag),
+                                tagContent(tag)),
+                        android.nfc.NfcAdapter.FLAG_READER_NFC_A
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_B
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_F
+                        | android.nfc.NfcAdapter.FLAG_READER_NFC_V
+                        | android.nfc.NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS, null);
+            } else {
+                nfc.disableReaderMode(this);
+            }
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "NFC reader mode refused", refused);
+        }
     }
 
     /**
@@ -5726,6 +6087,35 @@ public final class KioskActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] granted) {
         super.onRequestPermissionsResult(requestCode, permissions, granted);
+        if (requestCode == REQUEST_SENSOR_PERMISSION) {
+            Sensors.Def def = Sensors.byId(permissionAskedFor == null ? "" : permissionAskedFor);
+            permissionAskedFor = null;
+            boolean allowed = true;
+            for (int answer : granted) {
+                allowed &= answer == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            }
+            if (def != null && allowed && granted.length > 0) {
+                KioskConfig.edit(this).sensorEnabled(def.id, true).apply();
+            }
+            if (def != null) {
+                // Refused with Android no longer willing to ask: the next Allow opens settings.
+                boolean blocked = false;
+                for (int index = 0; index < granted.length && index < permissions.length; index++) {
+                    if (granted[index] != android.content.pm.PackageManager.PERMISSION_GRANTED
+                            && !shouldShowRequestPermissionRationale(permissions[index])) {
+                        blocked = true;
+                    }
+                }
+                KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                        .edit().putBoolean("permission_blocked_" + def.id, blocked).apply();
+            }
+            KioskService.refreshSensorsSoon(this);
+            if (currentScreen != null && configurationVisible) {
+                // The service rebuilds the sensors block on its next tick; the page reads it.
+                mainHandler.postDelayed(() -> redrawInPlace(currentScreen), 400);
+            }
+            return;
+        }
         if (requestCode != REQUEST_PICTURE_READ) {
             return;
         }
@@ -10537,6 +10927,10 @@ public final class KioskActivity extends Activity {
                 if (configurationVisible) {
                     repaintSensors();
                 }
+                break;
+            case "sensors.nfc":
+                // The NFC switch was flipped on another surface; reader mode is the activity's.
+                applyNfcReader();
                 break;
             case "kiosk.start":
                 kioskStopped = false;

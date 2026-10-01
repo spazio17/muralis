@@ -185,8 +185,17 @@ final class KioskCommandDispatcher {
         /** Switches one automation on or off by its id; null when done, else the refusal. */
         String setAutomationEnabled(String id, boolean enabled);
 
+        /** Switches the camera's motion detection; null when done, else the refusal. */
+        String setCameraMotion(boolean enabled);
+
+        /** Publishes the camera's last picture over MQTT now; null when done, else why not. */
+        String cameraSnapshot();
+
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
+
+        /** One step of the microphone calibration, quiet, loud or reset; see Microphone. */
+        String calibrateMicrophone(String step);
 
         /** Sleeps the panel for a moment and notes whether the sensor reported; see Sensors. */
         String sleepTest(String sensorId);
@@ -431,8 +440,23 @@ final class KioskCommandDispatcher {
                 String problem = executor.setAutomationEnabled(args.value, args.enabled);
                 return problem == null ? accepted() : rejected(problem);
             }
+            case "camera.motion": {
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                String problem = executor.setCameraMotion(args.enabled);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "camera.snapshot": {
+                String problem = executor.cameraSnapshot();
+                return problem == null ? accepted() : rejected(problem);
+            }
             case "proximity.calibrate": {
                 String problem = executor.calibrateProximity(args.value);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "microphone.calibrate": {
+                String problem = executor.calibrateMicrophone(args.value);
                 return problem == null ? accepted() : rejected(problem);
             }
             case "sensor.sleep_test": {

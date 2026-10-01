@@ -178,8 +178,9 @@ ul.list li.two{min-height:72px}
 .text .s .stops svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .stopsnote .lead{color:var(--warn)}
 .text .h,.text .s{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* A name wraps rather than ends in dots: "Bluetooth ..." on a 360 px phone said nothing. */
-.text .h{white-space:normal;overflow-wrap:anywhere}
+/* A name wraps rather than ends in dots: "Bluetooth ..." on a 360 px phone said nothing; so does
+   a second line a person has to read or copy whole (an address, a tag's id). */
+.text .h,.text .s.wrap{white-space:normal;overflow-wrap:anywhere}
 .text .h{font-size:16px;line-height:24px;color:var(--text)}
 .text .s{font-size:14px;line-height:20px;color:var(--subtext)}
 .trail{display:inline-flex;align-items:center;flex:none;gap:0;color:var(--subtext);font-size:12px}
@@ -377,6 +378,7 @@ input.sw::after{content:"";position:absolute;top:6px;left:6px;width:16px;height:
 input.sw:checked{background:var(--accent);border-color:var(--accent)}
 input.sw:checked::after{left:22px;top:4px;width:20px;height:20px;background:var(--on-accent)}
 input.sw:disabled{opacity:.38;cursor:default}
+.trail .allow{font-size:13px;color:var(--subtext);white-space:nowrap}
 .card .count{font-size:12px;color:var(--subtext)}
 .actions.tight{margin-top:8px}
 /* A refused switch: the border red, and the reason on a line under its row for a few seconds,
@@ -398,6 +400,8 @@ ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16p
 html.js .events{display:none}html.js .events.on{display:block}
 label.radio.one input{position:absolute;opacity:0;pointer-events:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.text .field{margin-top:8px}
+.text .field .support{margin-top:2px}
 
 /* ---- list-detail pages: Sensors, Automations (2026-09-27) and Screensaver (2026-09-28) ---- */
 .ld{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}

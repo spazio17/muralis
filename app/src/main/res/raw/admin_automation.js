@@ -1,6 +1,6 @@
 // The automation editor shows only what the chosen sensor and action need: the events of the
-// sensor picked in the menu, the level and the minutes where the event has them, and the
-// argument box named after the action (Sentence, Sound address).
+// sensor picked in the menu, the level and the minutes where the event has them, the tag menu
+// for a tag event, and the argument box named after the action (Sentence, Sound address).
 // Without scripting every group is shown (the stylesheet hides them only under html.js) and
 // the server still reads the right one, since the event radios are named per sensor. One editor per rule stands on the wide page, so each form
 // is bound on its own, by the ids that carry its suffix.
@@ -13,7 +13,7 @@ if(form.dataset.bound){return;}
 form.dataset.bound='1';
 function by(prefix){return form.querySelector('[id^="'+prefix+'-"]');}
 var sensor=by('a-sensor'),action=by('a-action');
-var level=by('a-level'),minutes=by('a-minutes');
+var level=by('a-level'),minutes=by('a-minutes'),tag=by('a-tag');
 var argument=by('a-argument');
 var only=by('a-only'),from=by('a-from'),to=by('a-to');
 // The note under the sensor for one that is not running while the display sleeps.
@@ -37,6 +37,7 @@ var unit=checked?checked.getAttribute('data-level'):'';
 show(level,!!unit);
 if(unit){label(level,'Level ('+unit+')');}
 show(minutes,!!(checked&&checked.getAttribute('data-holds')));
+show(tag,!!(checked&&checked.getAttribute('data-tag')));
 var opt=action&&action.options[action.selectedIndex];
 var arg=opt?opt.getAttribute('data-argument'):'';
 show(argument,!!arg);
