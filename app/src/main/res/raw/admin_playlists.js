@@ -49,8 +49,10 @@ event.preventDefault();
 // Delete asks first, as the panel does: a playlist is gone for good, and Delete sits next to
 // Edit on a phone (review of 2026-09-19).
 if(/\/api\/playlists\/delete$/.test(form.action)){
-var row=form.closest('li'),name=row&&row.querySelector('.h')?row.querySelector('.h').textContent:'this playlist';
-if(!window.confirm('Delete '+name+'? The pictures themselves are not deleted.')){return;}}
+// The panel's words (confirmDelete): the name quoted, then what else changes.
+var row=form.closest('li'),named=row&&row.querySelector('.h'),name=named?'"'+named.textContent.trim()+'"':'this playlist';
+var inUse=row&&row.querySelector('.inuse')?'It is the playlist in use, so the screensaver will have none until you choose another. ':'';
+if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'It')+' will be deleted. '+inUse+'The pictures themselves are not deleted.')){return;}}
 // URL-encoded, not FormData: a FormData body is sent as multipart, and the server parses
 // multipart for the upload alone.
 var data=new URLSearchParams(new FormData(form));

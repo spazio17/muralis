@@ -4144,6 +4144,25 @@ public final class KioskActivity extends Activity {
     }
 
     /**
+     * Asks before deleting something a person made in Muralis, in the words every such question
+     * uses (Juri, 2026-10-01): the title {@code Delete "name"?}, the text {@code "name" will be
+     * deleted.} with what else changes after it, and the button Delete. Settings are changed,
+     * never deleted, so this is for playlists, uploaded pictures and automations.
+     *
+     * <p>The fleet, when it comes, adds to this and nowhere else: a word about it only where the
+     * fleet is on, so a panel on its own never reads one; a thing the fleet owns deleted only from
+     * the fleet's control panel; and there the text says "Changes will be synced across all
+     * devices.", because they are.
+     */
+    private void confirmDelete(String name, String consequence, Runnable onDelete,
+            Runnable onCancel) {
+        String quoted = "\"" + name + "\"";
+        showConfirm("Delete " + quoted + "?",
+                quoted + " will be deleted." + (consequence == null ? "" : " " + consequence),
+                "Delete", true, onDelete, onCancel);
+    }
+
+    /**
      * Asks before deleting, and names the playlist while asking.
      *
      * <p>Deleting the one in use leaves nothing in use, which the Pictures sentence then says out
@@ -4151,13 +4170,11 @@ public final class KioskActivity extends Activity {
      * the worse failure.
      */
     private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist) {
-        showConfirm("Delete " + playlist.name + "?",
+        confirmDelete(playlist.name,
                 playlist.active
                         ? "It is the playlist in use, so the screensaver will have none until you "
                                 + "choose another. The pictures themselves are not deleted."
                         : "The pictures themselves are not deleted.",
-                "Delete it",
-                true,
                 () -> {
                     showScreensaverSettings();
                     changePlaylists(document -> {
@@ -5234,10 +5251,7 @@ public final class KioskActivity extends Activity {
      */
     private void confirmDeleteUpload(PlaylistPage screen, PictureBrowser.Entry entry) {
         PlaylistDraft draft = screen.draft;
-        showConfirm("Delete " + entry.name + "?",
-                "The file is removed from this panel and from every playlist that holds it.",
-                "Delete it",
-                true,
+        confirmDelete(entry.name, "It leaves every playlist that holds it.",
                 () -> {
                     PictureLibrary library = PictureLibrary.get(this);
                     library.run(() -> {

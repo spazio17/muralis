@@ -1007,6 +1007,7 @@ the playlist page was the case that set the rule.
   45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
   cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
   160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
+- **Every delete asks in the same words** (Juri, 2026-10-01): title `Delete "name"?`, text `"name" will be deleted.` followed by what else changes, button Delete (`confirmDelete` on the panel; the web's `confirm()` carries the title and the text). Only things made in Muralis are deleted (playlists, uploaded pictures, automations); settings have no Delete. Fleet words appear only where the fleet is on: a thing the fleet owns is deleted only from the fleet's control panel, and there the text adds "Changes will be synced across all devices.", which they then are.
 - **A button's colour says what it does, on both surfaces.** Juri's rule, 2026-09-11: the main
   colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
   playlist" as the mark that something is enabled); a plain outline is a visible action that saves
