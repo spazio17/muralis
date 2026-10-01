@@ -47,7 +47,8 @@ code{overflow-wrap:anywhere}
 /* ---- type ---- */
 h1{font-size:24px;line-height:32px;font-weight:400;margin:0;color:var(--text)}
 h2{font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0 0 4px}
-.sub{color:var(--subtext);font-size:12px;line-height:16px;margin:-2px 0 0;overflow-wrap:anywhere}
+/* The panel's id under Muralis, the only subtitle: Title medium, as on the panel (2026-10-01). */
+.sub{color:var(--subtext);font-size:16px;line-height:24px;margin:0;overflow-wrap:anywhere}
 .hint{color:var(--subtext);font-size:12px;line-height:16px;letter-spacing:.4px;margin:8px 0 0}
 .hint.bad{color:var(--bad)}
 .gone{display:none!important}
@@ -57,8 +58,9 @@ header.appbar .titles{flex:1;min-width:0}
 header.appbar .titlerow{display:flex;align-items:center;gap:4px;min-width:0}
 header.appbar .titlerow h1{overflow-wrap:anywhere;min-width:0}
 /* The chip: one glyph per row, monochrome, matching StatusIcon on the tablet glyph for glyph. */
-.chip{display:none;flex-direction:column;align-items:flex-end;gap:2px;line-height:18px;font-size:12px;color:var(--subtext);margin-right:8px}
-.chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:16px;height:16px;flex:none;color:var(--text)}
+/* At the right on every width, as on the panel; 14 px like its 14 sp readings. */
+.chip{display:flex;flex:none;flex-direction:column;align-items:flex-end;gap:2px;line-height:20px;font-size:14px;color:var(--subtext);margin-right:8px}
+.chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:17px;height:17px;flex:none;color:var(--text)}
 /* Segmented button for the theme on wide screens; one cycling icon button where there is no room
    for three words beside the title. */
 .themecycle{display:inline-flex}
@@ -70,7 +72,6 @@ details.box>.body{position:relative}
 html[data-theme=dark] .themecycle .sun{display:inline-flex}html[data-theme=dark] .themecycle .moon{display:none}
 @media (prefers-color-scheme:dark){html:not([data-theme=light]) .themecycle .sun{display:inline-flex}html:not([data-theme=light]) .themecycle .moon{display:none}}
 .field select option{background:var(--card);color:var(--text)}
-@media (min-width:840px){.chip{display:flex}}
 /* ---- buttons: filled for a card's one main action, tonal for the second, outlined for a command
    that acts now and stores nothing, text for navigation, and a 40 px icon button for anything
    repeated in a row. Never red outside a confirmation. ---- */

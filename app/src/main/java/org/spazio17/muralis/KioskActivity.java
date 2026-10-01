@@ -7719,9 +7719,12 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The same, with the readings chip, or the readings on the subtitle line where the bar is
-     * narrow, only where {@code readings} asks for it: the settings page alone (Juri,
-     * 2026-09-27). A page below it says its name and nothing else.
+     * The same, with the readings at the right only where {@code readings} asks for it: the
+     * settings page alone (Juri, 2026-09-27). A page below it says its name and nothing else.
+     * There the subtitle is the panel's id at 16 sp, Material's Title medium, and the readings
+     * stay at the right on every width, phones included (Juri, 2026-10-01: at 12 sp the id was
+     * "barely readable"). They went onto the id's line below 840 dp only while the theme toggle
+     * shared the bar, which it stopped doing on 2026-09-23.
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
             View beside, Runnable back, View trailing, boolean readings) {
@@ -7768,15 +7771,8 @@ public final class KioskActivity extends Activity {
             TextView sub = new FlushText(this);
             sub.setText(subtitle);
             sub.setTextColor(theme.subtext);
-            sub.setTextSize(12);
+            sub.setTextSize(readings ? 16 : 12);
             titles.addView(sub);
-            if (readings && getResources().getConfiguration().screenWidthDp < 840) {
-                // This line is the narrow app bar's chip: the readings are appended to what the
-                // page has to say for itself, and the same tick keeps them current.
-                statusLine = sub;
-                statusLinePrefix = subtitle;
-                updateStatusChip();
-            }
         }
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -7785,11 +7781,9 @@ public final class KioskActivity extends Activity {
         titleParams.rightMargin = dp(12);
         heading.addView(titles, titleParams);
 
-        // The chip only where the app bar has room for it, which is the rule the web page
-        // already follows: on a phone the title, three rows of readings and the theme toggle do
-        // not fit one bar, and the title was squeezed to "Murali / s" (measured 2026-09-23). Below
-        // 840 dp the same readings go on the subtitle line instead, one line, still live.
-        if (readings && getResources().getConfiguration().screenWidthDp >= 840) {
+        // Wrap-content at the right and the title's column takes the rest, so a long id wraps
+        // under Muralis and the readings keep their width.
+        if (readings) {
             heading.addView(buildStatusChip(theme), new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
@@ -7859,35 +7853,13 @@ public final class KioskActivity extends Activity {
         return chip;
     }
 
-    /** The narrow app bar's status line, and what it says before the readings. */
-    private TextView statusLine;
-    private String statusLinePrefix = "";
-
     /**
-     * Writes the latest reading into the chip, or into the narrow app bar's line. Returns false
-     * once the screen holding either has gone, so the tick can stop.
+     * Writes the latest reading into the chip. Returns false once the screen holding it has
+     * gone, so the tick can stop.
      */
     private boolean updateStatusChip() {
-        boolean painted = false;
-        if (statusLine != null) {
-            if (statusLine.getParent() == null) {
-                statusLine = null;
-            } else {
-                SystemStats.RuntimeFacts line = KioskRuntimeState.lastFacts();
-                StringBuilder said = new StringBuilder(statusLinePrefix);
-                if (line != null && line.batteryPercent >= 0) {
-                    said.append(" · ").append(Math.round(line.batteryPercent))
-                            .append("% ").append(SystemStats.chargeStateLabel(line));
-                }
-                if (line != null && !line.ipAddress.isEmpty()) {
-                    said.append(" · ").append(line.ipAddress);
-                }
-                statusLine.setText(said);
-                painted = true;
-            }
-        }
         if (batteryValue == null || statusChipTheme == null) {
-            return painted;
+            return false;
         }
         if (batteryValue.getParent() == null) {
             clearStatusChip();
@@ -7918,8 +7890,6 @@ public final class KioskActivity extends Activity {
     }
 
     private void clearStatusChip() {
-        statusLine = null;
-        statusLinePrefix = "";
         batteryValue = null;
         batteryIcon = null;
         addressValue = null;

@@ -388,8 +388,10 @@ the playlist page was the case that set the rule.
   out of the Dashboard card, stored when the box lets go of the focus or on Done (a refused name
   stays in the box with the reason), "System stats and log" as a page of its own, the version
   and Pro line and the legal rows; Close Muralis stands under Open dashboard, outlined, on an
-  ordinary install; the readings chip or subtitle is on the settings page alone, every
-  sub-page's app bar empty at the right. The Display section's "Display off turns the screen
+  ordinary install; the readings are on the settings page alone, every
+  sub-page's app bar empty at the right. That page's top row is the same on every width and on
+  both surfaces (Juri, 2026-10-01): Muralis with the id under it at 16 sp (Title medium) on the
+  left, the readings at 14 sp on the right, centred on one line; a long id wraps under Muralis. The Display section's "Display off turns the screen
   off ..." sentence went from both surfaces, the note shows only as the red warning that a
   sleep ended badly. On rotation a box that stores on blur stores before the page is rebuilt
   (`redrawInPlace` clears the focus first). `applyOrientation` catches Android 8.0's "Only
