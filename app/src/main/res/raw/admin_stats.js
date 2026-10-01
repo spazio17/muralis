@@ -44,6 +44,10 @@ if(typing){return;}
 if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.value=String(value);el.classList.remove('check-bad');el.title='';}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
+// The panel's name, renamed on the panel or over MQTT: the box and the app bar's subtitle.
+follow('f-device_id',cfg.device_id);
+var sub=document.querySelector('header.appbar .sub');
+if(sub&&cfg.device_id&&document.getElementById('f-device_id')&&sub.textContent!==cfg.device_id){sub.textContent=cfg.device_id;}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
@@ -91,13 +95,6 @@ if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
 show(lines.join('\n'));
-// The System stats section's one-line summary, on the settings page, so the closed row reads
-// like a status line without opening it.
-var sum=document.getElementById('sum-stats');
-if(sum){var parts=[];
-if(sys.mem_used_kb&&sys.mem_total_kb){parts.push(Math.round(100*sys.mem_used_kb/sys.mem_total_kb)+'% memory');}
-if(sys.cpu_busy_percent!=null){parts.push(Math.round(sys.cpu_busy_percent)+'% CPU');}
-if(parts.length){sum.textContent=parts.join(' \u00b7 ');}}
 var battery=document.getElementById('chip-battery');
 if(battery){var pct=bat.present===false?null:bat.percent,mains=bat.present===false;
 battery.textContent=mains?'mains':(pct==null?'--':Math.round(pct)+'%')+(bat.charge_state?' '+bat.charge_state:'');

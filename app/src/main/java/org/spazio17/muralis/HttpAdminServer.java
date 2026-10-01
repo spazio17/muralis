@@ -951,7 +951,8 @@ final class HttpAdminServer {
                 String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
                 String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
                 if (idProblem != null) {
-                    return "Not saved: " + idProblem + ".";
+                    // The box is called Name; "device id" is the dispatcher's word for MQTT.
+                    return "Not saved: " + idProblem.replace("device id", "the name") + ".";
                 }
                 KioskConfig.edit(context).deviceId(deviceId).apply();
                 return null;
@@ -1038,6 +1039,20 @@ final class HttpAdminServer {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
                             .apply();
+                }
+                if (form.containsKey("device_id")) {
+                    // The panel's name stores when its box lets go of the focus, as on the panel
+                    // since 2026-09-27; the Save button stays only for a browser without
+                    // scripting (review, 2026-10-01).
+                    String deviceId = form.get("device_id").trim();
+                    String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                    if (idProblem != null) {
+                        return "Not saved: " + idProblem.replace("device id", "the name") + ".";
+                    }
+                    if (!deviceId.equals(KioskConfig.load(context).deviceId)) {
+                        KioskConfig.edit(context).deviceId(deviceId).apply();
+                        KioskService.reloadConfiguration(context);
+                    }
                 }
                 if (form.containsKey("display_off_method")) {
                     String method = form.get("display_off_method");
@@ -1517,8 +1532,11 @@ final class HttpAdminServer {
     private String panelBody(KioskConfig config, String notice, String noticeSection) {
         return sectionFormStart("panel", notice, noticeSection)
                 + baselineField(config.deviceId)
-                + field("text", "device_id", "Name", config.deviceId)
-                + sectionFormEnd("Save")
+                // Stored on change, as the panel's box is; Save only where nothing runs.
+                + field("text", "device_id", "Name", config.deviceId,
+                        " data-setting=\"device_id\"", null)
+                + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
+                + "</button></div></form>"
                 + "<ul class=\"list gap\">"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"

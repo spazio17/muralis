@@ -556,8 +556,8 @@ the playlist page was the case that set the rule.
   before the dashboard took the screen, which is exactly where a misconfiguration must not be
   reported. Any new input whose validity is a runtime fact should get a probe here rather than a
   bespoke checker.
-- **Legal documents and app/device facts are shown in-app, not linked externally.** The About
-  screen (tablet) and a matching page (web admin) render the bundled privacy policy and terms
+- **Legal documents and app/device facts are shown in-app, not linked externally.** This panel
+  (tablet) and a matching section (web admin) render the bundled privacy policy and terms
   directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately
   requires the same text at a public URL, which is a listing concern rather than an app one. Each
   surface also states where the public copy lives (plain text on the tablet, a link on the web
@@ -941,8 +941,8 @@ the playlist page was the case that set the rule.
   below 840 dp an accordion no wider than 720 dp with one section open and remembered
   (`admin_menu.js` on the web, UI preference `open_section` on the panel), from 840 dp Material's
   list-detail, the list half the open section with Material's 24 dp gutter between them, so no
-  panel spans a landscape tablet; Quick actions (web only) and About are the last two sections,
-  About holding the legal pages and the version, which links to the repository on the web. The
+  panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
+  This panel holding the legal pages and the version, which links to the repository on the web. The
   summaries carry stored values and nothing the page already says, because the list is a third of
   the column. **Open dashboard is a menu of one entry** under the panel's menu, in the main
   colour, a card's gap below the list, and under the list in the two-column layout. It is the
@@ -954,15 +954,15 @@ the playlist page was the case that set the rule.
   (`addBesideBox` on the panel, `.beside` on the web). The certificate's SHA-256
   fingerprint and the system stats readout are code blocks on both surfaces, on the lowest
   surface: white on a light theme, near-black on a dark one (`KioskTheme.lowest`, `--lowest`).
-  The privacy policy and the terms are rows of the About section and nowhere else: the panel's
+  The privacy policy and the terms are rows of This panel and nowhere else: the panel's
   Version and device details page carried them a second time until 2026-09-23, and a legal page's
   back arrow returns to the settings. **Back is the arrow in the app
   bar, once**; the "← Back" buttons at head and foot went. The theme control is a sun or a moon in
   the Display section on both surfaces: **the panel's at the right of the section's name**
   (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
-  that carries a control beside its name (`Section.action`); the web's at the right of the
-  section's Display on and off buttons, cycling automatic, light and dark, the glyph following
-  the theme in force. The web's app bar carried an Auto/Light/Dark picker until 2026-09-27
+  that carries a control beside its name (`Section.action`); the web's beside the section's
+  name too, in the accordion's row and, from 840 px, in the open card's top corner, cycling
+  automatic, light and dark, the glyph following the theme in force. The web's app bar carried an Auto/Light/Dark picker until 2026-09-27
   (Juri: it did not fit there). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
   folders under it opens and closes that branch and leaves the pictures alone, the head's one
   icon button opens or closes every branch, a tap on a folder opens it and its branch and a second tap closes the branch, and the tree

@@ -8,7 +8,7 @@ Two layouts, one document. Below 840 px the settings are one accordion (a <detai
 one open at a time, no wider than 720 px); from 840 px, and only with scripting, the same
 sections stand in a list on the left and the open one on the right, Material's list-detail. No
 panel ever spans the screen: content lives in a centred column of at most 1016 px, which the app
-bar shares, so the title sits over the list's left edge and the theme picker over the panel's
+bar shares, so the title sits over the list's left edge and the readings over the panel's
 right edge (Juri, 2026-09-23).
 */
 :root{color-scheme:light dark;
@@ -38,7 +38,7 @@ html[data-theme=dark]{color-scheme:dark;
 body{margin:0;padding:12px 0 40px;background:var(--base);color:var(--text);font-family:Roboto,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:20px}
 /* The column, centred, with a gutter each side: 5% of the window, whatever the shape of it
    (Juri, 2026-09-23, with the drawing in media/drafts/material3/). The app bar spans exactly
-   that column, which is what puts the theme picker over the panel's right edge rather than
+   that column, which is what puts the readings over the panel's right edge rather than
    the window's. It stops growing at 1000 px: past that the gutters take the rest,
    because a field drawn across a very wide monitor is a bar. */
 main{width:90%;max-width:1000px;margin:0 auto}
@@ -61,13 +61,18 @@ header.appbar .titlerow h1{overflow-wrap:anywhere;min-width:0}
 /* At the right on every width, as on the panel; 14 px like its 14 sp readings. */
 .chip{display:flex;flex:none;flex-direction:column;align-items:flex-end;gap:2px;line-height:20px;font-size:14px;color:var(--subtext);margin-right:8px}
 .chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:17px;height:17px;flex:none;color:var(--text)}
-/* Segmented button for the theme on wide screens; one cycling icon button where there is no room
-   for three words beside the title. */
+/* The theme: one cycling icon button beside the Display section's name, and from 840 px the
+   same button in the open card's top corner (the app bar's three-word picker went 2026-09-27). */
 .themecycle{display:inline-flex}
 .themecycle svg{width:24px;height:24px;fill:currentColor;stroke:none}
 .themecycle .sun{color:var(--warn)}.themecycle .moon{color:var(--subtext)}
 details.box>.body{position:relative}
 .body>.themecycle.sectionaction{display:none;position:absolute;top:8px;right:8px}
+/* A button inside <summary> is a control inside a control, and without scripting it does nothing:
+   it shows only where the script runs and takes the click. Likewise a Save that scripting
+   replaces with storing on change (the panel's name) is for the no-script page alone. */
+html:not(.js) summary .themecycle{display:none}
+html.js .actions.nojs{display:none}
 .themecycle .sun{display:none}.themecycle .moon{display:inline-flex}
 html[data-theme=dark] .themecycle .sun{display:inline-flex}html[data-theme=dark] .themecycle .moon{display:none}
 @media (prefers-color-scheme:dark){html:not([data-theme=light]) .themecycle .sun{display:inline-flex}html:not([data-theme=light]) .themecycle .moon{display:none}}

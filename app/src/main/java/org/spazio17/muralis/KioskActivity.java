@@ -2383,7 +2383,8 @@ public final class KioskActivity extends Activity {
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(buttonRow(manageSequences), matchWrap());
 
-        // The Pro state lives in About (moved 2026-08-29, by decision of that day): it is a fact about this
+        // The Pro state lives in This panel (About until 2026-09-27; moved here 2026-08-29, by
+        // decision of that day): it is a fact about this
         // installation, like the version line beside it, not a card-sized feature of its own.
         // The purchase still lives where the features it unlocks are: the locked MQTT and web
         // admin cards stay visible, complete and inert, each with its own Buy button. The button
@@ -2394,19 +2395,33 @@ public final class KioskActivity extends Activity {
         // and the two legal pages.
         LinearLayout aboutCard = sectionBody(theme);
         addField(aboutCard, theme, "Name", deviceIdInput);
+        // The reason a name is refused, in red under the box, where the web page has it: a
+        // toast was too quick to read, and Done showed it twice (review, 2026-10-01).
+        TextView nameProblem = new FlushText(this);
+        nameProblem.setTextColor(theme.bad);
+        nameProblem.setTextSize(12);
+        nameProblem.setVisibility(View.GONE);
+        LinearLayout.LayoutParams nameProblemParams = matchWrapClose();
+        nameProblemParams.leftMargin = dp(16);
+        aboutCard.addView(nameProblem, nameProblemParams);
         // Stored when the box lets go of the focus or on Done; the Save button under it went on
         // 2026-09-27 (Juri). A refused name stays in the box with the reason, so it can be
         // corrected rather than retyped.
         Runnable storeName = () -> {
             String deviceId = deviceIdInput.getText().toString().trim();
             if (deviceId.equals(KioskConfig.load(this).deviceId)) {
+                nameProblem.setVisibility(View.GONE);
                 return;
             }
             String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
             if (idProblem != null) {
-                Toast.makeText(this, "Not saved: " + idProblem + ".", Toast.LENGTH_LONG).show();
+                // The box is called Name here; "device id" is the dispatcher's word for MQTT.
+                nameProblem.setText("Not saved: " + idProblem.replace("device id", "the name")
+                        + ".");
+                nameProblem.setVisibility(View.VISIBLE);
                 return;
             }
+            nameProblem.setVisibility(View.GONE);
             String before = KioskConfig.load(this).deviceId;
             KioskConfig.edit(this).deviceId(deviceId).apply();
             KioskService.reloadConfiguration(this);
@@ -2425,8 +2440,9 @@ public final class KioskActivity extends Activity {
             }
         });
         deviceIdInput.setOnEditorActionListener((view, actionId, event) -> {
+            // hideKeyboard clears the focus, and the focus listener stores; a second store here
+            // showed a refusal twice (review, 2026-10-01).
             hideKeyboard(view);
-            storeName.run();
             return true;
         });
         aboutCard.addView(listRow(theme, "System stats and log", this::showStatsPage),
@@ -3030,7 +3046,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * A row that opens something: its words and a chevron, Material's list item for navigation,
-     * used where the About section leads to the two legal pages and the details page.
+     * used where This panel leads to the stats, the two legal pages and the details page.
      */
     private LinearLayout listRow(KioskTheme theme, String label, Runnable onOpen) {
         LinearLayout row = new LinearLayout(this);
@@ -3218,7 +3234,7 @@ public final class KioskActivity extends Activity {
         // has (see HttpAdminServer.logBody and admin_stats.js): the last lines logcat holds for this
         // process, read every few seconds off the main thread while the block is on screen, and
         // stopped by its own detach listener. Above it the row every log reader has: the level
-        // (warnings and errors by default), a search, pause, copy and clear-from-here. Fewer
+        // (Muralis's own lines by default), a search, pause, copy and clear-from-here. Fewer
         // lines than the web page and no scroller of its own: a block that scrolls inside a page
         // that scrolls fought the finger on the phone (2026-09-25), and the wall is not where a
         // long log gets read. The page grows with it; the newest line is at the bottom.
@@ -6559,7 +6575,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Builds the log row and block into the stats card and keeps the block current for as long
+     * Builds the log row and block into the log card and keeps the block current for as long
      * as it is on screen.
      *
      * <p>One background thread reads the tail (a logcat spawn, tens of milliseconds, never on the
