@@ -4280,7 +4280,7 @@ public final class KioskActivity extends Activity {
             }
             cards.add(tags);
         } else if (def == Sensors.BLUETOOTH) {
-            addOptionField(card, theme, "Out of reach after, seconds", "beacons_reach_s", "30",
+            addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_s", "30",
                     true);
             Beacons beacons = KioskService.beaconsOf(this);
             java.util.List<Beacons.Seen> heard = beacons == null
@@ -4296,20 +4296,30 @@ public final class KioskActivity extends Activity {
             } else {
                 java.util.List<Beacons.Seen> reach = beacons.inReach();
                 for (Beacons.Seen seen : heard) {
-                    EditText name = themedInput(theme,
-                            KioskConfig.sensorOption(this, "beacon_" + seen.id, ""), false);
+                    // Words, not a machine value: the prose box (review, 2026-10-01).
+                    EditText name = proseInput(theme,
+                            KioskConfig.sensorOption(this, "beacon_" + seen.id, ""));
                     addField(card, theme, "Name", name, seen.id + ", " + (reach.contains(seen)
                             ? "in reach" + (Double.isNaN(seen.distance()) ? ""
                                     : ", " + seen.distance() + " m")
                             : "out of reach"));
+                    // Why a name is refused, in red under its box, as on the other fields.
+                    TextView nameProblem = new FlushText(this);
+                    nameProblem.setTextColor(theme.bad);
+                    nameProblem.setTextSize(12);
+                    nameProblem.setVisibility(View.GONE);
+                    LinearLayout.LayoutParams nameProblemParams = matchWrapClose();
+                    nameProblemParams.leftMargin = dp(16);
+                    card.addView(nameProblem, nameProblemParams);
                     Runnable store = () -> {
                         String typed = name.getText().toString().trim();
                         String problem = Sensors.checkBeaconName(seen.id, typed);
                         if (problem != null) {
-                            Toast.makeText(this, "Not saved: " + problem + ".",
-                                    Toast.LENGTH_LONG).show();
+                            nameProblem.setText("Not saved: " + problem + ".");
+                            nameProblem.setVisibility(View.VISIBLE);
                             return;
                         }
+                        nameProblem.setVisibility(View.GONE);
                         KioskConfig.edit(this).sensorOption("beacon_" + seen.id, typed).apply();
                         KioskService.publishTelemetrySoon(this);
                     };
@@ -4319,7 +4329,7 @@ public final class KioskActivity extends Activity {
                         }
                     });
                     name.setOnEditorActionListener((view, actionId, event) -> {
-                        store.run();
+                        // hideKeyboard clears the focus, and the focus listener stores.
                         hideKeyboard(view);
                         return true;
                     });

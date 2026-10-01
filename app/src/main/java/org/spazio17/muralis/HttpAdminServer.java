@@ -1894,7 +1894,8 @@ final class HttpAdminServer {
      * repeats the row is left off here (review, 2026-10-01).
      */
     private static boolean webPage(Sensors.Def def) {
-        return def.page && (def == Sensors.MOVEMENT || def == Sensors.CAMERA);
+        return def.page && (def == Sensors.MOVEMENT || def == Sensors.CAMERA
+                || def == Sensors.BLUETOOTH || def == Sensors.NFC);
     }
 
     /**
@@ -2001,7 +2002,7 @@ final class HttpAdminServer {
                     .append("</section>");
         } else if (def == Sensors.BLUETOOTH) {
             html.append(head)
-                    .append(optionField("beacons_reach_s", "Out of reach after, seconds",
+                    .append(optionField("beacons_reach_s", "Out of reach after (seconds)",
                             KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
                     .append(beaconRows()).append("</section>");
         } else if (def == Sensors.CAMERA) {

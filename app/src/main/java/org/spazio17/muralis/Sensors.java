@@ -1276,6 +1276,9 @@ final class Sensors implements SensorEventListener {
             // Android's own words for its switch, so a person knows where to look.
             return def == NFC ? "NFC is off in Android" : "Bluetooth is off in Android";
         }
+        if (one.optBoolean("location_off")) {
+            return "Location is off in Android";
+        }
         if (def == NFC) {
             String content = attributes == null ? "" : attributes.optString("content", "");
             // A tag reporting its content alone has no id, and its content is the reading;

@@ -508,6 +508,32 @@ final class KioskConfig {
     }
 
     /**
+     * Drops the settings of the beacon transmitter, which was removed on 2026-10-01: a panel
+     * that ever stored them kept them, and the sensor settings document then carried keys a
+     * post back is refused for. Run at every start; it does nothing once they are gone.
+     */
+    static void dropRetiredSettings(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        android.content.SharedPreferences.Editor editor = null;
+        for (String key : prefs.getAll().keySet()) {
+            for (String retired : new String[] {"beacons_transmit", "beacons_uuid",
+                    "beacons_major", "beacons_minor"}) {
+                if (key.equals("sensor_option_" + retired)
+                        || key.equals("changed_sensor_option_" + retired)) {
+                    if (editor == null) {
+                        editor = prefs.edit();
+                    }
+                    editor.remove(key);
+                }
+            }
+        }
+        if (editor != null) {
+            editor.apply();
+        }
+    }
+
+    /**
      * Keeps the tags seen down to the newest {@code keep}: a panel in a public place reads tags
      * all day, and each one is a line in the settings file otherwise. The names a person could
      * give a tag went on 2026-09-30 (a tag is named in Home Assistant, as the companion app

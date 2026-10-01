@@ -72,7 +72,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- The sensors (Sensors.java), every one off until a person switches it on. Bluetooth
+    <!-- The sensors (Sensors.java): every one that reads the room off until a person switches it
+         on, the panel's own readings on, as they always were. Bluetooth
          beacons: the scan alone, never a beacon sent, with the location permission on every
          version, since Android counts a scan as location use and, told "never for location",
          hides every iBeacon from Android 12 on; "while using the app" is enough, because the

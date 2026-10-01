@@ -289,6 +289,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // The sensors before the controllers and the telemetry: the first discovery a fast
         // broker asks for, and the first status document, must see the stored switches and
         // rules, not an empty hub (review, 2026-09-27).
+        KioskConfig.dropRetiredSettings(this);
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);

@@ -74,6 +74,8 @@ final class Beacons implements Sensors.Reading {
     private static final long FORGET_MS = 10 * 60_000L;
     private BluetoothLeScanner scanner;
     private boolean scanning;
+    /** When the scan began, so the rules hear nothing before one reach time has passed. */
+    private long scanStartedAtMs;
     /** Not before this moment after a failed scan: Android throttles five starts in 30 s. */
     private long retryAtMs;
     private static final long RETRY_MS = 7_000;
@@ -90,7 +92,9 @@ final class Beacons implements Sensors.Reading {
     /** Starts or stops the scan to match the sensor's switch. */
     synchronized void refresh(boolean sensorOn) {
         BluetoothAdapter adapter = adapter();
-        if (adapter == null || !adapter.isEnabled()) {
+        if (adapter == null || !adapter.isEnabled() || locationOff()) {
+            // Location switched off in Android stops a scan that is not declared "never for
+            // location" from hearing anything, so it is stopped and the row says why.
             stopScan();
             return;
         }
@@ -144,6 +148,7 @@ final class Beacons implements Sensors.Reading {
             scanner.startScan(filters, new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build(), scanCallback);
             scanning = true;
+            scanStartedAtMs = SystemClock.elapsedRealtime();
             retryAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
             Log.i(TAG, "Listening for beacons");
         } catch (SecurityException | IllegalStateException refused) {
@@ -232,6 +237,29 @@ final class Beacons implements Sensors.Reading {
         return adapter == null || !adapter.isEnabled();
     }
 
+    /**
+     * Whether Location is switched off in Android: since the scan counts as location use (the
+     * manifest no longer says "never for location"), it then hears nothing (review,
+     * 2026-10-01).
+     */
+    boolean locationOff() {
+        android.location.LocationManager location =
+                context.getSystemService(android.location.LocationManager.class);
+        if (location == null) {
+            return false;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            return !location.isLocationEnabled();
+        }
+        try {
+            return android.provider.Settings.Secure.getInt(context.getContentResolver(),
+                    android.provider.Settings.Secure.LOCATION_MODE)
+                    == android.provider.Settings.Secure.LOCATION_MODE_OFF;
+        } catch (android.provider.Settings.SettingNotFoundException unknown) {
+            return false;
+        }
+    }
+
     /** Every beacon heard since the scan began, for the page where one is named. */
     List<Seen> everHeard() {
         synchronized (seen) {
@@ -245,6 +273,8 @@ final class Beacons implements Sensors.Reading {
         one.put("value", reach.size());
         if (radioOff()) {
             one.put("radio_off", true);
+        } else if (locationOff()) {
+            one.put("location_off", true);
         }
         JSONObject attributes = new JSONObject();
         org.json.JSONArray list = new org.json.JSONArray();
@@ -269,8 +299,10 @@ final class Beacons implements Sensors.Reading {
     public Automations.Sample sample() {
         // Nothing to say while not listening: Bluetooth switched off in Android used to read
         // as "the last beacon went out of reach" and fire those rules (review, 2026-10-01).
+        // Nor for one reach time after the scan starts: an empty list before the first result
+        // read as "out of reach" the moment Bluetooth came back on.
         synchronized (this) {
-            if (!scanning) {
+            if (!scanning || SystemClock.elapsedRealtime() - scanStartedAtMs < reachMs()) {
                 return null;
             }
         }
