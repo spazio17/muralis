@@ -3896,6 +3896,32 @@ public final class KioskActivity extends Activity {
         return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
+    /**
+     * The beacons' one step: a beacon held one metre from the panel, nothing between them,
+     * long enough for the signal's average (BeaconDistance.WINDOW_MS) to settle.
+     */
+    private void calibrateBeacons() {
+        final Runnable screen = currentScreen;
+        Runnable back = () -> {
+            if (screen != null) {
+                screen.run();
+            }
+        };
+        showConfirm("Hold a beacon 1 m away", "Hold one beacon 1 m from the panel, with "
+                + "nothing between them, for 20 seconds, then tap Calibrate. The strongest "
+                + "beacon in reach is the one used.", "Calibrate", false, () -> {
+                    KioskService service = KioskService.liveService();
+                    String problem = service == null ? "the service is not running"
+                            : service.calibrateBeacons("near");
+                    if (problem != null) {
+                        showNotice("Not done", capital(problem) + ".", back);
+                        return;
+                    }
+                    back.run();
+                    redrawSoon();
+                }, back);
+    }
+
     /** One step of the microphone calibration through the service; the reason when refused. */
     private String microphoneStep(String step) {
         KioskService service = KioskService.liveService();
@@ -4299,10 +4325,8 @@ public final class KioskActivity extends Activity {
                 for (Beacons.Seen seen : heard) {
                     // Words, not a machine value: the prose box (review, 2026-10-01).
                     EditText name = proseInput(theme, beaconNames.name(seen.id));
-                    addField(card, theme, "Name", name, seen.id + ", " + (reach.contains(seen)
-                            ? "in reach" + (Double.isNaN(seen.distance()) ? ""
-                                    : ", " + seen.distance() + " m")
-                            : "out of reach"));
+                    addField(card, theme, "Name", name,
+                            seen.id + ", " + beacons.describe(seen, reach.contains(seen)));
                     // Why a name is refused, in red under its box, as on the other fields.
                     TextView nameProblem = new FlushText(this);
                     nameProblem.setTextColor(theme.bad);
@@ -4335,6 +4359,10 @@ public final class KioskActivity extends Activity {
                     });
                 }
             }
+            // A beacon held at one metre teaches this panel how strongly it hears, the way
+            // Home Assistant's iBeacon page calibrates (Juri, 2026-10-01): the distance is a
+            // guess until then.
+            cards.add(calibrationCard(theme, def, one, this::calibrateBeacons));
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
                     false, true);

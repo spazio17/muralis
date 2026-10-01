@@ -2282,6 +2282,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     @Override
+    public String calibrateBeacons(String step) {
+        Sensors hub = sensors;
+        Beacons ears = beacons;
+        if (hub == null || ears == null || !hub.available(Sensors.BLUETOOTH)) {
+            return "not on this device: " + Sensors.BLUETOOTH.name;
+        }
+        if (!hub.on(Sensors.BLUETOOTH)) {
+            return Sensors.BLUETOOTH.name + " is off";
+        }
+        String problem = ears.calibrate(step);
+        if (problem == null) {
+            publishSensorBlock();
+            publishStateSoon();
+        }
+        return problem;
+    }
+
+    @Override
     public String calibrateMicrophone(String step) {
         Sensors hub = sensors;
         Microphone ears = microphone;

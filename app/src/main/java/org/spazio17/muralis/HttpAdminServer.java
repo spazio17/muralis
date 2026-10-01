@@ -2146,15 +2146,12 @@ final class HttpAdminServer {
         NamedList names = KioskConfig.beaconNames(context);
         for (Beacons.Seen one : heard) {
             String name = names.name(one.id);
-            String state = reach.contains(one)
-                    ? "In reach" + (Double.isNaN(one.distance()) ? "" : ", " + one.distance() + " m")
-                    : "Out of reach";
+            String state = beacons.describe(one, reach.contains(one));
             rows.append("<li class=\"two\"><span class=\"lead\">").append(glyph("bluetooth"))
                     .append("</span><span class=\"text\">")
                     .append(fieldWithId("beacon-" + one.id.hashCode(), "text", null, "Name", name,
                             " data-setting=\"sensor_option_beacon_" + escapeHtml(one.id) + "\"",
-                            one.id + ", " + state.substring(0, 1).toLowerCase(Locale.ROOT)
-                                    + state.substring(1)))
+                            one.id + ", " + state))
                     .append("</span></li>");
         }
         return rows.append("</ul>").toString();

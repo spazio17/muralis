@@ -38,26 +38,140 @@ final class Beacons implements Sensors.Reading {
     private static final String TAG = "MuralisBeacons";
     private static final int APPLE = 0x004C;
 
-    /** One beacon heard: its id, its last signal and when. */
+    /** One beacon heard: its id, its signal over the last seconds, what it announces, when. */
     static final class Seen {
         final String id;
-        int rssi;
         int txPower;
         long heardAtMs;
+        /** {elapsed ms, dBm} per packet heard within BeaconDistance.WINDOW_MS. */
+        private final java.util.ArrayDeque<long[]> readings = new java.util.ArrayDeque<>();
 
         Seen(String id) {
             this.id = id;
         }
 
-        /** The companion app's estimate, in metres, from the calibrated power and the signal. */
-        double distance() {
-            if (txPower == 0 || rssi == 0) {
-                return Double.NaN;
+        private void heard(int rssi, long nowMs) {
+            readings.addLast(new long[] {nowMs, rssi});
+            while (!readings.isEmpty()
+                    && nowMs - readings.peekFirst()[0] > BeaconDistance.WINDOW_MS) {
+                readings.removeFirst();
             }
-            double ratio = rssi * 1.0 / txPower;
-            double metres = ratio < 1.0 ? Math.pow(ratio, 10)
-                    : 0.89976 * Math.pow(ratio, 7.7095) + 0.111;
-            return Math.round(metres * 10) / 10.0;
+        }
+
+        /** The signal averaged over the window, the outliers left out; NaN for none. */
+        double rssi() {
+            int[] values = new int[readings.size()];
+            int index = 0;
+            for (long[] one : readings) {
+                values[index++] = (int) one[1];
+            }
+            return BeaconDistance.average(values);
+        }
+
+        /** How many packets the average holds. */
+        int readings() {
+            return readings.size();
+        }
+    }
+
+    /** This panel's correction of what beacons announce, in dB; see BeaconDistance. */
+    private volatile double correctionDb;
+
+    private void loadCorrection() {
+        try {
+            correctionDb = Double.parseDouble(
+                    KioskConfig.sensorOption(context, CORRECTION_KEY, "0"));
+        } catch (NumberFormatException none) {
+            correctionDb = 0;
+        }
+    }
+
+    /** Where the correction is kept: a setting of this panel alone (SensorSettings). */
+    static final String CORRECTION_KEY = "beacons_correction_db";
+
+    /** Whether this panel was calibrated with a beacon at one metre. */
+    boolean calibrated() {
+        return !KioskConfig.sensorOption(context, CORRECTION_KEY, "").isEmpty();
+    }
+
+    /** The beacon's distance in metres with this panel's correction; NaN when unknown. */
+    double distance(Seen one) {
+        synchronized (seen) {
+            return BeaconDistance.metres(one.rssi(), one.txPower, correctionDb);
+        }
+    }
+
+    /** The beacon's signal, averaged, in whole dBm; 0 when unknown. */
+    int signal(Seen one) {
+        synchronized (seen) {
+            double rssi = one.rssi();
+            return Double.isNaN(rssi) ? 0 : (int) Math.round(rssi);
+        }
+    }
+
+    /**
+     * A beacon's state in words, the one wording both surfaces show: "in reach, 1.2 m,
+     * -63 dBm" or "out of reach"; the signal beside the distance, so the estimate can be
+     * checked against the raw number (Juri, 2026-09-30).
+     */
+    String describe(Seen one, boolean inReach) {
+        if (!inReach) {
+            return "out of reach";
+        }
+        double metres = distance(one);
+        int dbm = signal(one);
+        return "in reach" + (Double.isNaN(metres) ? "" : ", " + metres + " m")
+                + (dbm == 0 ? "" : ", " + dbm + " dBm");
+    }
+
+    /** The fewest packets in the window a calibration takes, so one packet cannot set it. */
+    static final int CALIBRATION_READINGS = 5;
+
+    /**
+     * One step of the calibration: "near", a beacon held at one metre, takes the strongest
+     * beacon in reach and keeps how much stronger or weaker this panel hears it than it
+     * announces; "reset" forgets that. The reason when refused.
+     */
+    String calibrate(String step) {
+        switch (step == null ? "" : step) {
+            case "reset":
+                KioskConfig.edit(context).removeSensorOption(CORRECTION_KEY).apply();
+                loadCorrection();
+                return null;
+            case "near": {
+                Seen strongest = null;
+                double strongestRssi = Double.NaN;
+                synchronized (seen) {
+                    for (Seen one : inReach()) {
+                        double rssi = one.rssi();
+                        if (Double.isNaN(rssi) || one.txPower == 0) {
+                            continue;
+                        }
+                        if (strongest == null || rssi > strongestRssi) {
+                            strongest = one;
+                            strongestRssi = rssi;
+                        }
+                    }
+                    if (strongest == null) {
+                        return "no beacon is in reach";
+                    }
+                    if (strongest.readings() < CALIBRATION_READINGS) {
+                        return "the beacon has not been heard long enough; hold it there a few "
+                                + "seconds more";
+                    }
+                }
+                double correction = BeaconDistance.correction(strongestRssi, strongest.txPower);
+                KioskConfig.edit(context).sensorOption(CORRECTION_KEY,
+                        String.format(java.util.Locale.ROOT, "%.1f", correction)).apply();
+                loadCorrection();
+                Log.i(TAG, String.format(java.util.Locale.ROOT,
+                        "Beacons calibrated on %s: heard %.1f dBm at one metre, announced %d, "
+                                + "correction %.1f dB", strongest.id, strongestRssi,
+                        strongest.txPower, correction));
+                return null;
+            }
+            default:
+                return "the step must be near or reset";
         }
     }
 
@@ -82,6 +196,7 @@ final class Beacons implements Sensors.Reading {
 
     Beacons(Context context) {
         this.context = context;
+        loadCorrection();
     }
 
     private BluetoothAdapter adapter() {
@@ -202,9 +317,10 @@ final class Beacons implements Sensors.Reading {
                 one = new Seen(id);
                 seen.put(id, one);
             }
-            one.rssi = result.getRssi();
+            long now = SystemClock.elapsedRealtime();
+            one.heard(result.getRssi(), now);
             one.txPower = apple[22];
-            one.heardAtMs = SystemClock.elapsedRealtime();
+            one.heardAtMs = now;
         }
     }
 
@@ -271,6 +387,7 @@ final class Beacons implements Sensors.Reading {
     public void fill(JSONObject one) throws JSONException {
         List<Seen> reach = inReach();
         one.put("value", reach.size());
+        one.put("calibrated", calibrated());
         if (radioOff()) {
             one.put("radio_off", true);
         } else if (locationOff()) {
@@ -286,9 +403,10 @@ final class Beacons implements Sensors.Reading {
             if (!name.isEmpty()) {
                 entry.put("name", name);
             }
-            entry.put("rssi", beacon.rssi);
-            if (!Double.isNaN(beacon.distance())) {
-                entry.put("distance_m", beacon.distance());
+            entry.put("rssi", signal(beacon));
+            double metres = distance(beacon);
+            if (!Double.isNaN(metres)) {
+                entry.put("distance_m", metres);
             }
             list.put(entry);
         }

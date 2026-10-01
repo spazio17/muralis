@@ -197,6 +197,9 @@ final class KioskCommandDispatcher {
         /** One step of the microphone calibration, quiet, loud or reset; see Microphone. */
         String calibrateMicrophone(String step);
 
+        /** One step of the beacons' calibration, near (one metre) or reset; see Beacons. */
+        String calibrateBeacons(String step);
+
         /** Sleeps the panel for a moment and notes whether the sensor reported; see Sensors. */
         String sleepTest(String sensorId);
 
@@ -457,6 +460,10 @@ final class KioskCommandDispatcher {
             }
             case "microphone.calibrate": {
                 String problem = executor.calibrateMicrophone(args.value);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "beacons.calibrate": {
+                String problem = executor.calibrateBeacons(args.value);
                 return problem == null ? accepted() : rejected(problem);
             }
             case "sensor.sleep_test": {

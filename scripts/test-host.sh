@@ -137,6 +137,12 @@ javac -d "${test_dir}/automations" \
     "${host_test_dir}/AutomationsTest.java"
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
 
+# The beacon distance: the trimmed running average and the curve, with the panel's correction.
+javac -d "${test_dir}/beacons" \
+    "${pure_java_dir}/BeaconDistance.java" \
+    "${host_test_dir}/BeaconDistanceTest.java"
+java -cp "${test_dir}/beacons" org.spazio17.muralis.BeaconDistanceTest
+
 # The shapes the fleet of 0.7 builds on: shared or one-panel settings, and named lists.
 mkdir -p "${test_dir}/fleetshape"
 javac -d "${test_dir}/fleetshape" \
