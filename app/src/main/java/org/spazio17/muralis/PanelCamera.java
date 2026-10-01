@@ -406,7 +406,13 @@ final class PanelCamera implements Sensors.Reading {
 
     private void detectMotion(byte[] nv21, int width, int height, long now) {
         if (!KioskConfig.sensorOptionOn(context, "camera_motion", true)) {
-            motionNow = false;
+            if (motionNow) {
+                // Detection switched off mid-motion ends the motion for the rules too, so the
+                // first motion after it is switched back on is a change and fires (review,
+                // 2026-10-01).
+                motionNow = false;
+                sampled();
+            }
             lastGrid = null;
             return;
         }
