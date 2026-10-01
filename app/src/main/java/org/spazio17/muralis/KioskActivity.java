@@ -3962,7 +3962,17 @@ public final class KioskActivity extends Activity {
 
     /** Judged live rather than from the snapshot, which is rebuilt on the service's next tick. */
     private boolean permittedNow(Sensors.Def def) {
-        return Sensors.permitted(this, def);
+        boolean permitted = Sensors.permitted(this, def);
+        if (permitted) {
+            // Granted, in Android's settings or here: a later refusal is judged afresh, so
+            // Allow asks Android again before it sends anyone to settings (review, 2026-10-01).
+            android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                    .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+            if (ui.getBoolean("permission_blocked_" + def.id, false)) {
+                ui.edit().remove("permission_blocked_" + def.id).apply();
+            }
+        }
+        return permitted;
     }
 
     /**
