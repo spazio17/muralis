@@ -231,8 +231,10 @@ fails=0;
 if(!paused){lines=parse(text);paint();}
 again();})
 .catch(function(){fails++;again();});}
+// Another chip is another view, so a Clear made on the last one does not carry over: its
+// line may not be in the new tail at all (review, 2026-10-01).
 bar.querySelectorAll('.lvl').forEach(function(b){b.addEventListener('click',function(){
-level=b.dataset.level;own=b.dataset.own==='1';
+level=b.dataset.level;own=b.dataset.own==='1';since='';
 bar.querySelectorAll('.lvl').forEach(function(o){o.setAttribute('aria-pressed',String(o===b));});
 poll();});});
 box.addEventListener('input',function(){query=box.value;paint();});

@@ -110,7 +110,9 @@ final class AppLog {
      * A URL as it may be logged: scheme, host, port and path, with the user:password part and
      * the query taken off, because the log leaves the panel now (Copy, Download, /api/log, "for
      * a support mail") and a dashboard or sound address often carries a token in its query or
-     * credentials before its host. Anything that is not a URL comes back as it was.
+     * credentials before its host. An address Java will not parse (a space in its path, an
+     * underscore in its host) is cut by hand the same way, rather than logged whole (review,
+     * 2026-10-01).
      */
     static String withoutSecrets(String url) {
         if (url == null) {
@@ -118,14 +120,27 @@ final class AppLog {
         }
         try {
             java.net.URI uri = new java.net.URI(url.trim());
-            if (uri.getScheme() == null || uri.getHost() == null) {
-                return url;
+            if (uri.getScheme() != null && uri.getHost() != null) {
+                return new java.net.URI(uri.getScheme(), null, uri.getHost(), uri.getPort(),
+                        uri.getPath(), null, null).toString();
             }
-            return new java.net.URI(uri.getScheme(), null, uri.getHost(), uri.getPort(),
-                    uri.getPath(), null, null).toString();
         } catch (java.net.URISyntaxException notAUrl) {
-            return url;
+            // Cut by hand below.
         }
+        String text = url.trim();
+        int cut = text.length();
+        for (char end : new char[] {'?', '#'}) {
+            int at = text.indexOf(end);
+            if (at >= 0 && at < cut) {
+                cut = at;
+            }
+        }
+        text = text.substring(0, cut);
+        int scheme = text.indexOf("://");
+        int start = scheme < 0 ? 0 : scheme + 3;
+        int slash = text.indexOf('/', start);
+        int at = text.lastIndexOf('@', slash < 0 ? text.length() : slash);
+        return at >= start ? text.substring(0, start) + text.substring(at + 1) : text;
     }
 
     /**

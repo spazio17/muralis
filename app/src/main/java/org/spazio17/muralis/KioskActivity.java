@@ -9913,7 +9913,7 @@ public final class KioskActivity extends Activity {
                 // Assistant dashboard emits console errors routinely, and letting them fill that
                 // slot would keep the overlay permanently red and hide a real load failure.
                 Log.w(TAG, "console error: " + message.message() + " ("
-                        + message.sourceId() + ":" + message.lineNumber() + ")");
+                        + AppLog.withoutSecrets(message.sourceId()) + ":" + message.lineNumber() + ")");
             }
             return true;
         }
