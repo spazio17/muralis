@@ -142,7 +142,7 @@ the playlist page was the case that set the rule.
   the hardware signed every handshake at about 0.4 s on the Huawei tablet (a full handshake
   0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response closes its connection, and
   a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
-  deadline: `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
+  deadline (8 s since 2026-09-30, when a lossy Wi-Fi link lost one request in seven to it): `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
   Nineteen parallel curls against the tablet all failed, seven refused at the per-host cap and
   twelve cut at 2.05 s. A software key signs in under a millisecond. The old Keystore alias is
   deleted the first time the new code runs, so a panel updated across that date shows a new
@@ -1408,7 +1408,10 @@ the playlist page was the case that set the rule.
   repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
   renderer death, and file descriptors steady at 188 to 191 (210 while the second WebView is up).
 - **The HTTPS server's capacity is sized for a browser, not for curl.** 16 workers, 12 connections
-  per host, a queue depth of 8, and a socket that has sent nothing by 2 s is closed, which is what
+  per host, a queue depth of 8, and a socket that has sent nothing by 8 s is closed (2 s until
+  2026-10-01, when a lossy Wi-Fi link cut one request in seven; the per-host cap still bounds
+  what a browser's speculative connections can hold, and the measurement below is the 2 s one,
+  to be repeated), which is what
   keeps a browser's speculative connections from spending the whole per-host budget. Measured on
   the Lenovo 2026-09-10 against the failure reported that morning: six silent sockets held open
   from one address no longer cost anything, the admin page still loads in half a second; twelve or
