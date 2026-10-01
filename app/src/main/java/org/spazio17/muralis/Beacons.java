@@ -296,6 +296,13 @@ final class Beacons implements Sensors.Reading {
     }
 
     @Override
+    public Automations.Sample seedSample() {
+        synchronized (this) {
+            return scanning ? Automations.Sample.of(0) : null;
+        }
+    }
+
+    @Override
     public Automations.Sample sample() {
         // Nothing to say while not listening: Bluetooth switched off in Android used to read
         // as "the last beacon went out of reach" and fire those rules (review, 2026-10-01).

@@ -161,6 +161,16 @@ final class Sensors implements SensorEventListener {
         default boolean feedsItself() {
             return false;
         }
+
+        /**
+         * What a rule that has seen nothing yet may be seeded with while {@link #sample} has
+         * nothing to say, or null: the beacons seed "none in reach" while the scan is young, so
+         * the first beacon heard after a start fires "in reach" rather than becoming the seed
+         * (review, 2026-10-01).
+         */
+        default Automations.Sample seedSample() {
+            return null;
+        }
     }
 
     private final Context context;
@@ -397,6 +407,15 @@ final class Sensors implements SensorEventListener {
                 }
             });
         }
+    }
+
+    /** What a source offers to seed with while it has no sample; see Reading.seedSample. */
+    private Automations.Sample seedOf(Def def) {
+        Reading source;
+        synchronized (sources) {
+            source = sources.get(def.id);
+        }
+        return source == null ? null : source.seedSample();
     }
 
     /** Whether the sensor's reading feeds the engine itself; see Reading.feedsItself. */
@@ -939,6 +958,10 @@ final class Sensors implements SensorEventListener {
             }
             Automations.Sample sample = sampleOf(def);
             if (sample == null) {
+                Automations.Sample seed = seedOf(def);
+                if (seed != null) {
+                    engine.seed(def.id, seed, now);
+                }
                 continue;
             }
             if (def.androidType != 0 || def == MOVEMENT || feedsItself(def)) {
