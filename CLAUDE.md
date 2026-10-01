@@ -489,7 +489,7 @@ the playlist page was the case that set the rule.
   with "disabled by policy" the moment its screen went dark (2026-09-27). Android refuses the
   types to an app in the background, so the activity asks again on every resume; the Play
   console's foreground-service declaration must name the two types before the next upload;
-  every writer of the rules JSON, the service, both web handlers, the panel's switch, Save and
+  every writer of the rules JSON, the service, the three web handlers, the panel's switch, Save and
   Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
   beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
   stand-in in the test tree) covers the storage round trip, the rule book, the window and the
@@ -599,13 +599,16 @@ the playlist page was the case that set the rule.
   and every write goes through `KioskConfig.storeAutomations`, which stamps both, so nothing
   writes the list any other way. Every sensor switch and setting keeps its change time
   (`changed_sensor_*`). `SensorSettings` says which settings a fleet may share and which belong to
-  one panel's hardware (the camera's name, lens, size, orientation, mirror and flip, the beacon it
-  sends, calibrations, sleep tests, tags read); beacon names are a `NamedList` document with
-  change times and deletion markers (moved from `sensor_option_beacon_*` on first read). The
+  one panel's hardware (the camera's name, lens, size, orientation, mirror and flip,
+  calibrations, sleep tests, tags read); beacon names are a `NamedList` document with
+  change times and deletion markers (moved from `sensor_option_beacon_*` at the next naming). The
   three documents are served and taken at `/api/automations`, `/api/sensors/settings` and
-  `/api/beacons/names` in the shape GET gives, checked in full before anything is written; the
-  panel writes the times itself and ignores a post's copies, and a key of this panel alone under
-  `shared` is refused. The site's API page documents them.
+  `/api/beacons/names` in the shape GET gives, with a 64 KB body budget of their own, checked in
+  full before anything is written (a rule's id must be `Automations.ID_SHAPE`); the
+  panel writes the times itself and ignores a post's copies, a key of this panel alone and a
+  `beacon_` key under `shared` are refused, the switches document lists every sensor's switch as
+  it stands (the panel's own values on with nothing stored), and a tag read is never stamped with
+  a change time. The site's API page documents them.
 - **A single choice among more than five items is a menu, five or fewer stay radios** (Juri,
   2026-09-28, from Google's radio-button guidance, "If available options can be collapsed,
   consider using a dropdown menu because it uses less space", and Nielsen Norman Group's

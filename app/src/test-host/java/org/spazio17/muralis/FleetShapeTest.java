@@ -34,7 +34,6 @@ public final class FleetShapeTest {
                 && !SensorSettings.shared("microphone_quiet_db"),
                 "calibrations belong to one panel");
         require(!SensorSettings.shared("light_asleep"), "a test while asleep belongs to one panel");
-        require(!SensorSettings.shared("beacons_uuid"), "a panel's own beacon is its own");
         require(!SensorSettings.shared("tag_seen_04F9AB7A2B4980"), "tags read belong to one panel");
         require(!SensorSettings.shared(null), "no key is not shared");
     }

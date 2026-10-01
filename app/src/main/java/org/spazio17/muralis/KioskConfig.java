@@ -270,7 +270,11 @@ final class KioskConfig {
 
         /** One setting of a sensor's own page, a word or a number as text; see Sensors. */
         Editor sensorOption(String key, String value) {
-            stampSensor("sensor_option_" + key, value);
+            // A tag read is a fact of this panel, not a setting anybody changes: no change
+            // time, which was one orphan line per tag for ever (review, 2026-10-01).
+            if (!key.startsWith("tag_seen_")) {
+                stampSensor("sensor_option_" + key, value);
+            }
             plain.putString("sensor_option_" + key, value);
             return this;
         }
@@ -559,23 +563,27 @@ final class KioskConfig {
         org.json.JSONObject shared = new org.json.JSONObject();
         org.json.JSONObject thisPanel = new org.json.JSONObject();
         try {
+            // Every sensor's switch as it stands, stored or not: the panel's own values start
+            // on with nothing stored, and a document that left them out was not the whole
+            // state (review, 2026-10-01).
+            for (Sensors.Def def : Sensors.ALL) {
+                org.json.JSONObject one = new org.json.JSONObject();
+                one.put("on", Sensors.enabled(context, def));
+                one.put("changed_at", prefs.getLong("changed_sensor_" + def.id, 0));
+                switches.put(def.id, one);
+            }
             for (java.util.Map.Entry<String, ?> entry : new java.util.TreeMap<>(prefs.getAll())
                     .entrySet()) {
                 String key = entry.getKey();
                 if (key.startsWith("sensor_option_")) {
                     String option = key.substring("sensor_option_".length());
-                    if (option.startsWith("beacon_")) {
+                    if (option.startsWith("beacon_") || option.startsWith("tag_seen_")) {
                         continue;
                     }
                     org.json.JSONObject one = new org.json.JSONObject();
                     one.put("value", String.valueOf(entry.getValue()));
                     one.put("changed_at", prefs.getLong("changed_" + key, 0));
                     (SensorSettings.shared(option) ? shared : thisPanel).put(option, one);
-                } else if (key.startsWith("sensor_") && entry.getValue() instanceof Boolean) {
-                    org.json.JSONObject one = new org.json.JSONObject();
-                    one.put("on", entry.getValue());
-                    one.put("changed_at", prefs.getLong("changed_" + key, 0));
-                    switches.put(key.substring("sensor_".length()), one);
                 }
             }
             org.json.JSONObject document = new org.json.JSONObject();
@@ -639,7 +647,9 @@ final class KioskConfig {
         android.content.SharedPreferences.Editor leftovers = prefs.edit();
         boolean stale = false;
         for (java.util.Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
-            if (entry.getKey().startsWith("nfc_tag_")) {
+            if (entry.getKey().startsWith("nfc_tag_")
+                    || entry.getKey().startsWith("changed_sensor_option_tag_seen_")) {
+                // The change times an earlier build stamped on tag reads go with the names.
                 leftovers.remove(entry.getKey());
                 stale = true;
                 continue;

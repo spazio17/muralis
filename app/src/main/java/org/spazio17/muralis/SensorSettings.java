@@ -16,8 +16,7 @@ import java.util.Set;
  * knows what it may push to every panel. One panel alone: what is measured on a device's
  * hardware (the calibrations, the test while asleep, the tags it read) and what follows the
  * device and how it is mounted (the camera's name, lens, size, orientation, mirror and upside
- * down; Juri: the size can differ between devices), and the beacon a panel transmits, which
- * is its own. Everything else is shared: the switches, sensitivities and still times, the
+ * down; Juri: the size can differ between devices). Everything else is shared: the switches, sensitivities and still times, the
  * frame rate, the watermark, motion detection and its picture. Pure, for the host tests.
  */
 final class SensorSettings {
@@ -27,7 +26,7 @@ final class SensorSettings {
     /** Settings of one panel alone, by their whole key. */
     static final Set<String> THIS_PANEL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "camera_name", "camera_lens", "camera_size", "camera_orientation", "camera_mirror",
-            "camera_flip", "beacons_uuid", "beacons_major", "beacons_minor")));
+            "camera_flip")));
 
     /** Settings of one panel alone, by the start of their key: calibrations and tags read. */
     static final List<String> THIS_PANEL_PREFIXES = Collections.unmodifiableList(Arrays.asList(

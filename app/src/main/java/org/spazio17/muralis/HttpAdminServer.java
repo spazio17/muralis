@@ -73,6 +73,13 @@ final class HttpAdminServer {
      * big playlist could not be reordered from the page at all. Eight seconds still suffice.
      */
     private static final int MAX_ORDER_BYTES = 256 * 1024;
+    /**
+     * The three documents of the fleet shape (/api/automations, /api/sensors/settings,
+     * /api/beacons/names): 64 rules with long arguments and their markers come to about 50 KB,
+     * which the 16 KB budget refused, so "post back the shape GET gives" failed (review,
+     * 2026-10-01).
+     */
+    private static final int MAX_DOCUMENT_BYTES = 64 * 1024;
     private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
     private static final int UPLOAD_DEADLINE_MS = 120_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
@@ -537,8 +544,12 @@ final class HttpAdminServer {
             try {
                 boolean order = method.equals("POST")
                         && requestPath.equals("/api/playlists/order");
+                boolean document = method.equals("POST")
+                        && (requestPath.equals("/api/automations")
+                                || requestPath.equals("/api/sensors/settings")
+                                || requestPath.equals("/api/beacons/names"));
                 body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
-                        : order ? MAX_ORDER_BYTES : MAX_BODY_BYTES);
+                        : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES : MAX_BODY_BYTES);
             } catch (BodyTooLargeException tooLarge) {
                 writeResponse(output, 413, "text/plain",
                         bytes("Payload Too Large: " + tooLarge.getMessage()));
@@ -2514,6 +2525,12 @@ final class HttpAdminServer {
         java.util.Iterator<String> keys = shared == null ? null : shared.keys();
         while (keys != null && keys.hasNext()) {
             String key = keys.next();
+            if (key.startsWith("beacon_")) {
+                // The names are a document of their own; stored here they went into the old
+                // loose keys the names list no longer reads (review, 2026-10-01).
+                refuseJson(output, "beacon names go through /api/beacons/names");
+                return;
+            }
             if (!SensorSettings.shared(key)) {
                 refuseJson(output, key + " belongs to this panel alone");
                 return;
@@ -2542,8 +2559,12 @@ final class HttpAdminServer {
                 refuseJson(output, id + " needs {\"on\": true} or {\"on\": false}");
                 return;
             }
-            if ((Boolean) on == KioskConfig.sensorEnabled(context, id)
-                    && Sensors.byId(id) != null) {
+            Sensors.Def def = Sensors.byId(id);
+            // Judged against the switch as it stands, which for the panel's own values is on
+            // with nothing stored: against a stored-or-false default, display could not be
+            // switched off and switching it on stamped a change that never happened (review,
+            // 2026-10-01).
+            if (def != null && (Boolean) on == Sensors.enabled(context, def)) {
                 continue;
             }
             String problem = kioskService.sensorSwitchProblem(id, (Boolean) on);
@@ -2570,6 +2591,9 @@ final class HttpAdminServer {
      * blank name takes it away, a beacon left out keeps its name. changed_at and deleted are
      * the panel's own and ignored.
      */
+    /** Names in one post: twice the beacons the panel keeps (Beacons.MAX_SEEN). */
+    private static final int MAX_BEACON_NAMES = 200;
+
     private void applyBeaconNames(Map<String, String> headers, byte[] body, OutputStream output)
             throws IOException {
         JSONObject document = jsonBody(headers, body, output);
@@ -2579,6 +2603,10 @@ final class HttpAdminServer {
         org.json.JSONArray names = document.optJSONArray("names");
         if (names == null) {
             refuseJson(output, "the document needs a names array");
+            return;
+        }
+        if (names.length() > MAX_BEACON_NAMES) {
+            refuseJson(output, "at most " + MAX_BEACON_NAMES + " names in one document");
             return;
         }
         Map<String, String> wanted = new java.util.LinkedHashMap<>();

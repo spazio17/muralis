@@ -329,6 +329,12 @@ final class Automations {
         } else if (rule.minutes < 0 || rule.minutes > MAX_MINUTES) {
             return "the minutes must be between 0 and " + MAX_MINUTES;
         }
+        // A tag id as homeAssistantTagId and the chip ids are shaped, 64 characters at most;
+        // it is written into the sentence and the pages.
+        rule.tag = rule.tag.replaceAll("\\p{Cntrl}", "").trim();
+        if (rule.tag.length() > 64) {
+            return "the tag id is too long";
+        }
         if (!event.tag) {
             rule.tag = "";
         }
@@ -425,6 +431,8 @@ final class Automations {
     static String baseline(Rule stored) {
         Rule copy = stored.copy();
         copy.enabled = true;
+        // The change time moves with the switch too.
+        copy.changedAt = 0;
         return toJson(Collections.singletonList(copy), false).toString();
     }
 
