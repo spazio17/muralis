@@ -467,11 +467,10 @@ final class Sensors implements SensorEventListener {
         }
         if (def == BLUETOOTH) {
             // Scan results are a location signal, so before Android 12 a scan needs the
-            // location permission; from 12 the two Bluetooth permissions, declared as never
-            // for location, replace it. The companion app asks for the same.
+            // location permission; from 12 the Bluetooth scan permission, declared as never
+            // for location, replaces it. Listening only: nothing is ever sent.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                return new String[] {android.Manifest.permission.BLUETOOTH_SCAN,
-                        android.Manifest.permission.BLUETOOTH_ADVERTISE};
+                return new String[] {android.Manifest.permission.BLUETOOTH_SCAN};
             }
             return new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION};
         }
@@ -500,16 +499,6 @@ final class Sensors implements SensorEventListener {
                     return "the seconds must be 1 or more";
                 }
                 return null;
-            case "beacons_major": case "beacons_minor":
-                if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) > 65535) {
-                    return "major and minor are numbers from 0 to 65535";
-                }
-                return null;
-            case "beacons_uuid":
-                if (!clean.isEmpty() && Beacons.uuidOf(clean) == null) {
-                    return "that is not a UUID";
-                }
-                return null;
             case "camera_lens":
                 if (!clean.equals("front") && !clean.equals("back")) {
                     return "the lens is front or back";
@@ -533,7 +522,7 @@ final class Sensors implements SensorEventListener {
                 return null;
             case "camera_name":
                 return clean.length() > 40 ? "the name is too long" : null;
-            case "beacons_transmit": case "camera_mirror": case "camera_flip":
+            case "camera_mirror": case "camera_flip":
             case "camera_watermark": case "camera_motion": case "camera_mqtt":
                 // true or false in the forms every surface sends; "yes" used to mean off
                 // without a word (review, 2026-10-01).
@@ -559,7 +548,7 @@ final class Sensors implements SensorEventListener {
     static String cleanOption(String key, String value) {
         String clean = value == null ? "" : value.trim();
         switch (key) {
-            case "beacons_transmit": case "camera_mirror": case "camera_flip":
+            case "camera_mirror": case "camera_flip":
             case "camera_watermark": case "camera_motion": case "camera_mqtt":
                 return Boolean.toString(clean.equalsIgnoreCase("true") || clean.equalsIgnoreCase("on")
                         || clean.equals("1"));

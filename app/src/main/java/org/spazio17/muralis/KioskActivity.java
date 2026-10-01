@@ -4325,12 +4325,6 @@ public final class KioskActivity extends Activity {
                     });
                 }
             }
-            LinearLayout send = card(theme, "Send a beacon");
-            addOptionSwitch(send, theme, "Transmit", "beacons_transmit", false);
-            addOptionField(send, theme, "UUID", "beacons_uuid", "", false);
-            addOptionField(send, theme, "Major", "beacons_major", "1", true);
-            addOptionField(send, theme, "Minor", "beacons_minor", "1", true);
-            cards.add(send);
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
                     false, true);

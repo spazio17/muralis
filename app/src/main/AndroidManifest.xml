@@ -72,8 +72,8 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <!-- The sensors (Sensors.java), every one off until a person switches it on. Bluetooth
-         beacons: the scan and the transmitter, declared as never for location from Android 12
-         and needing the location permission before it, as the companion app does. NFC: tags
+         beacons: the scan alone, declared as never for location from Android 12 and needing the
+         location permission before it, as the companion app does; nothing is ever sent. NFC: tags
          read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
          motion detection. Microphone: a sound level, nothing recorded. Each runtime permission
          is asked for once from the Sensors page on an ordinary install and granted silently on a
@@ -86,7 +86,6 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />

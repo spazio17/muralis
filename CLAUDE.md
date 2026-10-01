@@ -438,9 +438,9 @@ the playlist page was the case that set the rule.
   and crashed a fresh install on Android 14+. The notification says "Camera on" while the type
   is held. On the panel the camera's Stream card is greyed with "Needs the local web admin"
   while the admin is not listening, and Allow, once Android will not ask again, opens the app's
-  page in Android's settings and says so. **Beacons** (`Beacons`) are the companion app's Beacon Monitor and BLE
-  Transmitter: iBeacons heard within the reach time, named on the page, and the panel's own
-  iBeacon. **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
+  page in Android's settings and says so. **Beacons** (`Beacons`) are the companion app's Beacon Monitor:
+  iBeacons heard within the reach time, named on the page. **Listen only, never send** (Juri,
+  2026-10-01): a transmitter, never asked for, was removed with its permission. **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
   the reading, a one-shot event for the automations and a Home Assistant tag event through
   `homeassistant/tag/<id>/config`; the NFC page lists the tags read lately by id and when, and the automations' Tag menu offers them by id; a tag is named in Home Assistant, which gets each read as a tag scanned, the way the companion app hands one over (Juri, 2026-09-30: names on the panel meant nothing to someone who never used NFC, and one could not be deleted); a tag is reported as Home Assistant's app reports it, always: a tag written by Home Assistant by the id in its address, https://www.home-assistant.io/tag/<id>, any other tag by its chip's id (where the app refuses it), and its text and addresses ride in the attributes and on the row (Juri, 2026-09-30: a choice of what to read went, since doing what Home Assistant does covers it) (reader mode for all four tag
   types, so a password-protected tag reads like any other;

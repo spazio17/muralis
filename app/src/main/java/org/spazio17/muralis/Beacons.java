@@ -6,10 +6,6 @@ package org.spazio17.muralis;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
-import android.bluetooth.le.AdvertiseCallback;
-import android.bluetooth.le.AdvertiseData;
-import android.bluetooth.le.AdvertiseSettings;
-import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
@@ -30,9 +26,9 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Bluetooth beacons, the companion app's Beacon Monitor and BLE Transmitter in one: the panel
- * listens for iBeacons around it and reports how many are in reach, each with its distance, and
- * can send a beacon of its own so other devices know they are near this panel.
+ * Bluetooth beacons, the companion app's Beacon Monitor: the panel listens for iBeacons around
+ * it and reports how many are in reach, each with its distance. It only listens and never sends
+ * a beacon of its own (Juri, 2026-10-01: "Only listen for beacons, never send a beacon").
  *
  * <p>A beacon is in reach while it has been heard within the "out of reach after" time; the
  * automations see the count. Beacons are named on the sensor's page, by their
@@ -68,9 +64,7 @@ final class Beacons implements Sensors.Reading {
     private final Context context;
     private final Map<String, Seen> seen = new LinkedHashMap<>();
     private BluetoothLeScanner scanner;
-    private BluetoothLeAdvertiser advertiser;
     private boolean scanning;
-    private boolean advertising;
     /** Not before this moment after a failed scan: Android throttles five starts in 30 s. */
     private long retryAtMs;
     private static final long RETRY_MS = 7_000;
@@ -84,13 +78,11 @@ final class Beacons implements Sensors.Reading {
         return manager == null ? null : manager.getAdapter();
     }
 
-    /** Starts or stops the scan and the transmitter to match the stored settings. */
+    /** Starts or stops the scan to match the sensor's switch. */
     synchronized void refresh(boolean sensorOn) {
-        boolean transmit = sensorOn && KioskConfig.sensorOptionOn(context, "beacons_transmit", false);
         BluetoothAdapter adapter = adapter();
         if (adapter == null || !adapter.isEnabled()) {
             stopScan();
-            stopAdvertising();
             return;
         }
         if (sensorOn && !scanning) {
@@ -100,16 +92,10 @@ final class Beacons implements Sensors.Reading {
         } else if (!sensorOn && scanning) {
             stopScan();
         }
-        if (transmit && !advertising) {
-            startAdvertising(adapter);
-        } else if (!transmit && advertising) {
-            stopAdvertising();
-        }
     }
 
     synchronized void stop() {
         stopScan();
-        stopAdvertising();
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -247,75 +233,11 @@ final class Beacons implements Sensors.Reading {
             list.put(entry);
         }
         attributes.put("beacons", list);
-        attributes.put("transmitting", advertising);
         one.put("attributes", attributes);
     }
 
     @Override
     public Automations.Sample sample() {
         return Automations.Sample.of(inReach().size());
-    }
-
-    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {
-        @Override
-        public void onStartFailure(int errorCode) {
-            Log.w(TAG, "Transmitting failed: " + errorCode);
-            synchronized (Beacons.this) {
-                advertising = false;
-            }
-        }
-    };
-
-    static UUID uuidOf(String text) {
-        try {
-            return UUID.fromString(text.trim());
-        } catch (IllegalArgumentException notAUuid) {
-            return null;
-        }
-    }
-
-    private void startAdvertising(BluetoothAdapter adapter) {
-        advertiser = adapter.getBluetoothLeAdvertiser();
-        UUID uuid = uuidOf(KioskConfig.sensorOption(context, "beacons_uuid", ""));
-        if (advertiser == null || uuid == null) {
-            return;
-        }
-        int major = KioskConfig.sensorOptionInt(context, "beacons_major", 1) & 0xffff;
-        int minor = KioskConfig.sensorOptionInt(context, "beacons_minor", 1) & 0xffff;
-        ByteBuffer payload = ByteBuffer.allocate(23);
-        payload.put((byte) 0x02).put((byte) 0x15);
-        payload.putLong(uuid.getMostSignificantBits()).putLong(uuid.getLeastSignificantBits());
-        payload.putShort((short) major).putShort((short) minor);
-        // The calibrated signal at one metre, the figure every iBeacon carries; -59 dBm is the
-        // usual value for a phone-class radio and what the companion app sends.
-        payload.put((byte) -59);
-        try {
-            advertiser.startAdvertising(new AdvertiseSettings.Builder()
-                            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
-                            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-                            .setConnectable(false).build(),
-                    new AdvertiseData.Builder().addManufacturerData(APPLE, payload.array())
-                            .build(), advertiseCallback);
-            advertising = true;
-            Log.i(TAG, "Transmitting " + uuid + ":" + major + ":" + minor);
-        } catch (SecurityException | IllegalStateException refused) {
-            Log.w(TAG, "Cannot transmit a beacon", refused);
-        }
-    }
-
-    private void stopAdvertising() {
-        if (advertising && advertiser != null) {
-            try {
-                advertiser.stopAdvertising(advertiseCallback);
-            } catch (SecurityException | IllegalStateException gone) {
-                // The adapter went away under us.
-            }
-            Log.i(TAG, "Stopped transmitting");
-        }
-        advertising = false;
-    }
-
-    boolean transmitting() {
-        return advertising;
     }
 }

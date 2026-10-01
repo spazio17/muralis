@@ -2003,17 +2003,7 @@ final class HttpAdminServer {
             html.append(head)
                     .append(optionField("beacons_reach_s", "Out of reach after, seconds",
                             KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
-                    .append(beaconRows()).append("</section>")
-                    .append("<section class=\"card\"><h2>Send a beacon</h2>")
-                    .append(optionSwitch("beacons_transmit", "Transmit",
-                            KioskConfig.sensorOptionOn(context, "beacons_transmit", false)))
-                    .append(optionField("beacons_uuid", "UUID",
-                            KioskConfig.sensorOption(context, "beacons_uuid", ""), "text"))
-                    .append(optionField("beacons_major", "Major",
-                            KioskConfig.sensorOption(context, "beacons_major", "1"), "number"))
-                    .append(optionField("beacons_minor", "Minor",
-                            KioskConfig.sensorOption(context, "beacons_minor", "1"), "number"))
-                    .append("</section>");
+                    .append(beaconRows()).append("</section>");
         } else if (def == Sensors.CAMERA) {
             StringBuilder sizes = new StringBuilder();
             for (String size : PanelCamera.SIZES) {
