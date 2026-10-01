@@ -71,6 +71,8 @@ final class Microphone implements Sensors.Reading {
     private final Context context;
     /** The last half second, in dB of full scale; NaN while off. */
     private volatile double windowDb = Double.NaN;
+    /** Told of each half second, the rules' way in; see Sensors.Reading.onSample. */
+    private volatile Runnable onSample;
     /** The smoothed loudness, in dB of full scale; NaN while off. */
     private volatile double smoothDb = Double.NaN;
     /** The smoothed loudness as last reported, in dB; NaN before the first. */
@@ -178,8 +180,12 @@ final class Microphone implements Sensors.Reading {
         try {
             recorder.startRecording();
             if (recorder.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                // Every way out that is not a stop waits RETRY_MS before the next recorder, as
+                // the open that failed does: another app holding the microphone had a new
+                // recorder and a warning every two seconds (review, 2026-10-01).
                 Log.w(TAG, "The microphone would not record");
                 mine.running = false;
+                retryAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_MS;
                 return;
             }
             int empty = 0;
@@ -190,6 +196,7 @@ final class Microphone implements Sensors.Reading {
                     // tick starts a new one.
                     Log.w(TAG, "The microphone stopped answering: " + read);
                     mine.running = false;
+                    retryAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_MS;
                     break;
                 }
                 if (read == 0) {
@@ -198,6 +205,7 @@ final class Microphone implements Sensors.Reading {
                         // input went elsewhere, and a new recorder gets it back.
                         Log.w(TAG, "The microphone went quiet");
                         mine.running = false;
+                        retryAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_MS;
                         break;
                     }
                     Thread.sleep(WINDOW_MS);
@@ -220,6 +228,7 @@ final class Microphone implements Sensors.Reading {
         } catch (RuntimeException failed) {
             Log.w(TAG, "The microphone stopped", failed);
             mine.running = false;
+            retryAtMs = android.os.SystemClock.elapsedRealtime() + RETRY_MS;
         } finally {
             try {
                 recorder.stop();
@@ -233,6 +242,10 @@ final class Microphone implements Sensors.Reading {
     /** One half second heard: the fast value, the smoothed one, and the step it is shown by. */
     private void hear(double db) {
         windowDb = db;
+        Runnable listener = onSample;
+        if (listener != null) {
+            listener.run();
+        }
         double smooth = Double.isNaN(smoothDb) ? db : smoothDb + SMOOTHING * (db - smoothDb);
         smoothDb = smooth;
         double before = shownDb;
@@ -362,5 +375,15 @@ final class Microphone implements Sensors.Reading {
     public Automations.Sample sample() {
         double db = windowDb;
         return Double.isNaN(db) ? null : Automations.Sample.of(levelOf(db));
+    }
+
+    @Override
+    public void onSample(Runnable listener) {
+        onSample = listener;
+    }
+
+    @Override
+    public boolean feedsItself() {
+        return true;
     }
 }

@@ -142,6 +142,19 @@ final class Sensors implements SensorEventListener {
 
         /** The sample for the automations, or null when there is nothing to say yet. */
         Automations.Sample sample();
+
+        /**
+         * Who to tell of a new sample, so the rules hear it the moment it is heard rather than
+         * on the two-second poll, which missed a knock three times in four (review,
+         * 2026-10-01). A reading that tells feeds the engine itself and is left out of the poll.
+         */
+        default void onSample(Runnable listener) {
+        }
+
+        /** Whether this reading feeds the engine through its listener. */
+        default boolean feedsItself() {
+            return false;
+        }
     }
 
     private final Context context;
@@ -350,6 +363,22 @@ final class Sensors implements SensorEventListener {
                 sources.put(def.id, reading);
             }
         }
+        if (reading != null) {
+            reading.onSample(() -> {
+                if (on(def)) {
+                    feed(def, reading.sample());
+                }
+            });
+        }
+    }
+
+    /** Whether the sensor's reading feeds the engine itself; see Reading.feedsItself. */
+    private boolean feedsItself(Def def) {
+        Reading source;
+        synchronized (sources) {
+            source = sources.get(def.id);
+        }
+        return source != null && source.feedsItself();
     }
 
     private Reading sourceOf(Def def) {
@@ -830,7 +859,7 @@ final class Sensors implements SensorEventListener {
             if (sample == null) {
                 continue;
             }
-            if (def.androidType != 0 || def == MOVEMENT) {
+            if (def.androidType != 0 || def == MOVEMENT || feedsItself(def)) {
                 // Fed on their own events; here a rule that has seen nothing yet (a new or an
                 // edited one, or every rule after a start) is only seeded with the state as it
                 // stands, so the first event after it is a change and fires. Without this the

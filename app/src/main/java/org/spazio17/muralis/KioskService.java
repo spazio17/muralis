@@ -481,6 +481,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0) {
             inUse.add("Camera on");
         }
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0) {
+            inUse.add("Microphone on");
+        }
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID);
         if (!inUse.isEmpty()) {
             builder.setContentText(android.text.TextUtils.join(" · ", inUse));

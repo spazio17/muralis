@@ -87,6 +87,8 @@ final class PanelCamera implements Sensors.Reading {
     private final java.util.concurrent.atomic.AtomicInteger viewers =
             new java.util.concurrent.atomic.AtomicInteger();
     private final Runnable onMotion;
+    /** Told when motion starts or ends, the rules' way in; see Sensors.Reading.onSample. */
+    private volatile Runnable onSample;
     /**
      * Which opening the callbacks belong to: one that arrives after a stop, or from a previous
      * opening, is ignored, and a stale onOpened closes the device it was handed.
@@ -445,6 +447,7 @@ final class PanelCamera implements Sensors.Reading {
                 motionNow = true;
                 if (fresh) {
                     Log.i(TAG, "Motion");
+                    sampled();
                     onMotion.run();
                 }
             }
@@ -454,7 +457,26 @@ final class PanelCamera implements Sensors.Reading {
         if (motionNow && now - movedAtMs > stillAfter) {
             motionNow = false;
             Log.i(TAG, "Nothing moving");
+            sampled();
         }
+    }
+
+    /** Motion started or ended: the rules hear of it now, not on the next poll. */
+    private void sampled() {
+        Runnable listener = onSample;
+        if (listener != null) {
+            listener.run();
+        }
+    }
+
+    @Override
+    public void onSample(Runnable listener) {
+        onSample = listener;
+    }
+
+    @Override
+    public boolean feedsItself() {
+        return true;
     }
 
     /**
