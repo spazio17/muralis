@@ -396,7 +396,7 @@ ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16p
 .ld .nav{padding:8px}
 /* The list's name and count stay at the head of the list from 840 px too, as on the panel. */
 .ld .nav .cardhead{padding:8px 12px 4px}
-.ld .nav ul.list li.refusal{min-height:0;padding:4px 16px 8px;border-radius:0;cursor:default;background:none}
+.ld .nav ul.list li.refusal,.ld .nav ul.list li.refusal:hover{min-height:0;padding:4px 16px 8px;border-radius:0;cursor:default;background:none}
 .ld .nav .chev,.ld .nav .divider{display:none}
 .ld .nav ul.list li,.ld .nav ul.list li.two{min-height:64px;padding:4px 12px;border-bottom:0;border-radius:999px}
 .ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,transparent);cursor:pointer}

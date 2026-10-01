@@ -2285,10 +2285,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * <p>The engine is reached through the manifest's {@code queries} entry for
      * {@code TTS_SERVICE}, which an app targeting Android 11 or later needs to see one at all.
      * Where none exists, Android calls the listener with ERROR from inside the constructor,
-     * before the field is assigned, so the listener shuts down the engine it was handed and
-     * never the field (review, 2026-10-01). The engine refuses a sentence longer than
-     * {@code getMaxSpeechInputLength()}, and so does this, rather than accepting and saying
-     * nothing.
+     * before the engine is assigned: the listener only notes it, and this shuts the engine
+     * down once the constructor returns and says so. One engine is asked at a time; one that
+     * never answers is let go after {@link #SPEECH_START_MS}, so "not ready" does not last
+     * until the service restarts (review, 2026-10-01). The engine refuses a sentence longer
+     * than {@code getMaxSpeechInputLength()}, and so does this, rather than accepting and
+     * saying nothing.
      */
     @Override
     public synchronized String say(String text) {
@@ -2337,6 +2339,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 return "this device has no text-to-speech engine";
             }
             speechStarting = engine[0];
+            final android.speech.tts.TextToSpeech asked = engine[0];
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                synchronized (KioskService.this) {
+                    if (speechStarting == asked) {
+                        Log.w(TAG, "The text-to-speech engine did not answer");
+                        asked.shutdown();
+                        speechStarting = null;
+                    }
+                }
+            }, SPEECH_START_MS);
             return null;
         }
         if (!speechReady) {
@@ -2345,6 +2357,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "muralis-say");
         return null;
     }
+
+    /** How long an engine has to answer before it is let go. */
+    private static final long SPEECH_START_MS = 10_000;
 
     /** The engine asked for and not yet answered; see say. */
     private android.speech.tts.TextToSpeech speechStarting;
