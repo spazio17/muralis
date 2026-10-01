@@ -9,7 +9,7 @@
 # compile and run these suites: dispatcher, provisioning, request origin, system
 # bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
 # retry, system stats, recycle policy, recovery policy, server probe policy,
-# escape sequence, relaunch policy and the self-signed certificate.
+# escape sequence, relaunch policy, the self-signed certificate and the automations.
 
 set -euo pipefail
 
@@ -62,7 +62,8 @@ for path in sorted(root.glob('*.java')):
         continue  # it is handed a context; the callers are what this checks
     lines = path.read_text().split('\n')
     for i, line in enumerate(lines):
-        if 'getSharedPreferences(' not in line and 'new SecretStore(' not in line:
+        if ('getSharedPreferences(' not in line and 'getPreferences(' not in line
+                and 'new SecretStore(' not in line):
             continue
         window = '\n'.join(lines[max(0, i - 2):i + 1])
         if 'storageContext' in window or 'credential-encrypted on purpose' in window.lower():
@@ -123,6 +124,31 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
+
+# The automations: vocabulary, storage and engine, over a small org.json stand-in in the test
+# tree, since the class speaks Android's org.json and the host has none.
+javac -d "${test_dir}/automations" \
+    "${pure_java_dir}/Automations.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/HostJson.java" \
+    "${host_test_dir}/../../json/JSONException.java" \
+    "${host_test_dir}/../../json/JSONObject.java" \
+    "${host_test_dir}/../../json/JSONArray.java" \
+    "${host_test_dir}/AutomationsTest.java"
+java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
+
+# The shapes the fleet of 0.7 builds on: shared or one-panel settings, and named lists.
+mkdir -p "${test_dir}/fleetshape"
+javac -d "${test_dir}/fleetshape" \
+    "${pure_java_dir}/SensorSettings.java" \
+    "${pure_java_dir}/NamedList.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/HostJson.java" \
+    "${host_test_dir}/../../json/JSONException.java" \
+    "${host_test_dir}/../../json/JSONObject.java" \
+    "${host_test_dir}/../../json/JSONArray.java" \
+    "${host_test_dir}/FleetShapeTest.java"
+java -cp "${test_dir}/fleetshape" org.spazio17.muralis.FleetShapeTest
 
 mkdir -p "${test_dir}/provisioning"
 javac -d "${test_dir}/provisioning" \

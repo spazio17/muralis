@@ -35,10 +35,30 @@ if(el.tagName==='INPUT'&&el.type!=='checkbox'&&el.type!=='radio'&&el.closest){va
 if(field){var why=field.querySelector('.support.refused');
 if(rejected){if(!why){why=document.createElement('p');why.className='support bad refused';field.appendChild(why);}why.textContent=/^Not saved:/.test(detail)?detail:'Not saved: '+detail;}
 else if(why){why.parentNode.removeChild(why);}}}
+// A switch on a list row says why under the row, for five seconds; a tooltip a phone never
+// shows was the only word before (review, 2026-10-01).
+if(rejected&&el.classList.contains('sw')&&el.closest){var row=el.closest('li');
+if(row){var old=row.nextElementSibling;if(old&&old.classList.contains('refusal')){old.parentNode.removeChild(old);}
+var why=document.createElement('li');why.className='refusal';why.textContent='Not done: '+detail;
+row.parentNode.insertBefore(why,row.nextSibling);setTimeout(function(){if(why.parentNode){why.parentNode.removeChild(why);}},5000);}}
+if(!rejected){
+// Stored: every other control of the same setting on the page (a sensor's row in the list and
+// in its detail) shows it at once, and the poll leaves this setting alone until the panel's
+// document has caught up, however slow the path to it is (Juri, 2026-09-27: ten seconds on a
+// tablet behind a slow link, the two rows disagreeing meanwhile).
+window.muralisLocal=window.muralisLocal||{};
+window.muralisLocal[el.dataset.setting]={value:value,at:Date.now()};
+Array.prototype.forEach.call(document.querySelectorAll('[data-setting="'+el.dataset.setting+'"]'),function(other){
+if(other===el){return;}
+if(other.type==='checkbox'){other.checked=el.checked;}else if(other.type!=='radio'){other.value=el.value;}});
+if(window.muralisPollSoon){window.muralisPollSoon();}}
 if(window.console){console.log('Muralis: '+el.dataset.setting+': '+text);}})
 .catch(function(){if(window.console){console.warn('Muralis: '+el.dataset.setting+': no response. The device may be rebooting or off the network');}})
 .then(function(){setTimeout(function(){delete pendingOn.dataset.pending;},1500);});}
-Array.prototype.forEach.call(document.querySelectorAll('[data-setting]'),function(el){el.addEventListener('change',function(){apply(el);});});
+// On the document, not on each control: admin_stats.js swaps a list in place when another
+// surface changed it, and the switches it brings must apply like the ones it replaced.
+document.addEventListener('change',function(e){var el=e.target;
+if(el&&el.dataset&&el.dataset.setting){apply(el);}});
 // A box that stores on change sits in a form whose Save is for a browser without scripting:
 // Enter there would post the form with the old baseline right after the change stored, and
 // answer "changed elsewhere" for a name that was saved. Enter leaves the box instead.
