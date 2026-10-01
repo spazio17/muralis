@@ -27,13 +27,13 @@ fetch('/api/setting',{method:'POST',credentials:'same-origin',headers:{'Content-
 // and a rejection still has to be diagnosable.
 .then(function(text){var rejected=false,detail=text;
 try{var parsed=JSON.parse(text);rejected=parsed.status==='rejected';detail=parsed.detail||text;}catch(ignored){}
-el.classList.toggle('check-bad',rejected);
+el.classList.toggle('check-bad',rejected);delete el.dataset.heldOver;
 el.title=rejected?detail:'';
 // A text box says why under itself, the field's own support line, as the panel does; a
 // tooltip a phone never shows was the only word before (review, 2026-10-01).
 if(el.tagName==='INPUT'&&el.type!=='checkbox'&&el.type!=='radio'&&el.closest){var field=el.closest('.field');
 if(field){var why=field.querySelector('.support.refused');
-if(rejected){if(!why){why=document.createElement('p');why.className='support bad refused';field.appendChild(why);}why.textContent='Not saved: '+detail;}
+if(rejected){if(!why){why=document.createElement('p');why.className='support bad refused';field.appendChild(why);}why.textContent=/^Not saved:/.test(detail)?detail:'Not saved: '+detail;}
 else if(why){why.parentNode.removeChild(why);}}}
 if(window.console){console.log('Muralis: '+el.dataset.setting+': '+text);}})
 .catch(function(){if(window.console){console.warn('Muralis: '+el.dataset.setting+': no response. The device may be rebooting or off the network');}})
