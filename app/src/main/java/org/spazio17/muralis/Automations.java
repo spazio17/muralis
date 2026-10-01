@@ -301,7 +301,9 @@ final class Automations {
         if (action.argumentLabel == null) {
             rule.argument = "";
         } else {
-            rule.argument = rule.argument.trim();
+            // Control characters out, as from the name: they say nothing in a sentence or an
+            // address, and each one costs six bytes in the JSON document (review, 2026-10-01).
+            rule.argument = rule.argument.replaceAll("\\p{Cntrl}", " ").trim();
             if (rule.argument.isEmpty()) {
                 return "the " + action.argumentLabel.toLowerCase(java.util.Locale.ROOT)
                         + " is missing";
