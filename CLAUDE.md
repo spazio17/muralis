@@ -383,7 +383,7 @@ the playlist page was the case that set the rule.
   `warn`, info in `text`, the rest in `subtext`, the time and tag bold; the date and the pid are
   dropped, the tag kept. Nothing is stored or sent; logd prunes the
   buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
-  reshaped 2026-09-26 ("it looks poor"); the site's API page does not describe it yet.
+  reshaped 2026-09-26 ("it looks poor"); the site's API page documents it with the sensors.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
