@@ -38,12 +38,15 @@ final class Automations {
         final String levelUnit;
         /** Whether "for N minutes" applies: the condition must hold that long before it fires. */
         final boolean holds;
+        /** Whether the event names a tag (NFC): one-shot, matched by id. */
+        final boolean tag;
 
-        Event(String id, String label, String levelUnit, boolean holds) {
+        Event(String id, String label, String levelUnit, boolean holds, boolean tag) {
             this.id = id;
             this.label = label;
             this.levelUnit = levelUnit;
             this.holds = holds;
+            this.tag = tag;
         }
     }
 
@@ -69,39 +72,44 @@ final class Automations {
         map.put("proximity", Arrays.asList(
                 // Android's own words for the sensor (SensorManager: "near/far"); Home
                 // Assistant has no binary class for it, its nearest, occupancy, is about a room.
-                new Event("near", "Near", null, false),
-                new Event("far", "Far", null, false)));
+                new Event("near", "Near", null, false, false),
+                new Event("far", "Far", null, false, false)));
         map.put("light", Arrays.asList(
-                new Event("darker", "Darker than", "lx", true),
-                new Event("brighter", "Brighter than", "lx", false)));
+                new Event("darker", "Darker than", "lx", true, false),
+                new Event("brighter", "Brighter than", "lx", false, false)));
         map.put("movement", Arrays.asList(
-                new Event("picked_up", "Picked up", null, false),
-                new Event("still", "Still again", null, false)));
+                new Event("picked_up", "Picked up", null, false, false),
+                new Event("still", "Still again", null, false, false)));
+        map.put("bluetooth", Arrays.asList(
+                new Event("in_reach", "A beacon comes in reach", null, false, false),
+                new Event("out_of_reach", "The last beacon goes out of reach", null, false, false)));
+        map.put("nfc", Collections.singletonList(
+                new Event("tag", "A tag is read", null, false, true)));
         map.put("audio", Arrays.asList(
-                new Event("playing", "Sound starts playing", null, false),
-                new Event("stopped", "Sound stops", null, false)));
+                new Event("playing", "Sound starts playing", null, false, false),
+                new Event("stopped", "Sound stops", null, false, false)));
         map.put("camera", Arrays.asList(
-                new Event("motion", "Motion in front of the panel", null, false),
+                new Event("motion", "Motion in front of the panel", null, false, false),
                 // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
                 // itself, and read "for for" (review, 2026-10-01).
-                new Event("no_motion", "Nothing moving", null, true)));
+                new Event("no_motion", "Nothing moving", null, true, false)));
         map.put("microphone", Collections.singletonList(
-                new Event("louder", "Louder than", "%", false)));
+                new Event("louder", "Louder than", "%", false, false)));
         map.put("display", Arrays.asList(
-                new Event("on", "Display switched on", null, false),
-                new Event("off", "Display switched off", null, false)));
+                new Event("on", "Display switched on", null, false, false),
+                new Event("off", "Display switched off", null, false, false)));
         map.put("screensaver", Arrays.asList(
-                new Event("started", "Screensaver started", null, false),
-                new Event("ended", "Screensaver ended", null, false)));
+                new Event("started", "Screensaver started", null, false, false),
+                new Event("ended", "Screensaver ended", null, false, false)));
         map.put("battery", Arrays.asList(
-                new Event("below", "Battery below", "%", false),
-                new Event("plugged", "Charger plugged in", null, false),
-                new Event("unplugged", "Charger unplugged", null, false)));
+                new Event("below", "Battery below", "%", false, false),
+                new Event("plugged", "Charger plugged in", null, false, false),
+                new Event("unplugged", "Charger unplugged", null, false, false)));
         map.put("network", Arrays.asList(
-                new Event("connected", "Network connected", null, false),
-                new Event("lost", "Network lost", null, false)));
+                new Event("connected", "Network connected", null, false, false),
+                new Event("lost", "Network lost", null, false, false)));
         map.put("processor", Collections.singletonList(
-                new Event("hotter", "Hotter than", "°C", false)));
+                new Event("hotter", "Hotter than", "°C", false, false)));
         return Collections.unmodifiableMap(map);
     }
 
@@ -146,12 +154,20 @@ final class Automations {
         double level = Double.NaN;
         /** Minutes the condition must hold, 0 for at once. */
         int minutes;
+        /** The tag id an NFC rule waits for, empty for any tag. */
+        String tag = "";
         String action = "";
         String argument = "";
         boolean enabled = true;
         /** Minutes of the day the rule is confined to; -1 for the whole day. */
         int onlyFrom = -1;
         int onlyTo = -1;
+        /**
+         * When the rule last changed, in milliseconds since 1970, set by every store (see
+         * {@link #stamp}); 0 for a rule stored before it was kept. The fleet of 0.7 merges two
+         * copies of a rule by it, the newer winning (2026-09-30).
+         */
+        long changedAt;
 
         Rule copy() {
             Rule other = new Rule();
@@ -161,11 +177,13 @@ final class Automations {
             other.event = event;
             other.level = level;
             other.minutes = minutes;
+            other.tag = tag;
             other.action = action;
             other.argument = argument;
             other.enabled = enabled;
             other.onlyFrom = onlyFrom;
             other.onlyTo = onlyTo;
+            other.changedAt = changedAt;
             return other;
         }
 
@@ -181,7 +199,7 @@ final class Automations {
         boolean sameCondition(Rule other) {
             return sensor.equals(other.sensor) && event.equals(other.event)
                     && (Double.isNaN(level) ? Double.isNaN(other.level) : level == other.level)
-                    && minutes == other.minutes;
+                    && minutes == other.minutes && tag.equals(other.tag);
         }
     }
 
@@ -219,18 +237,7 @@ final class Automations {
                 if (one == null) {
                     continue;
                 }
-                Rule rule = new Rule();
-                rule.id = one.optString("id", "");
-                rule.name = one.optString("name", "");
-                rule.sensor = one.optString("sensor", "");
-                rule.event = one.optString("event", "");
-                rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
-                rule.minutes = one.optInt("minutes", 0);
-                rule.action = one.optString("action", "");
-                rule.argument = one.optString("argument", "");
-                rule.enabled = one.optBoolean("enabled", true);
-                rule.onlyFrom = one.optInt("only_from", -1);
-                rule.onlyTo = one.optInt("only_to", -1);
+                Rule rule = parseRule(one);
                 if (!rule.id.isEmpty()) {
                     rules.add(rule);
                 }
@@ -239,6 +246,25 @@ final class Automations {
             return new ArrayList<>();
         }
         return rules;
+    }
+
+    /** One rule as stored or posted; an empty id is left for the caller to decide on. */
+    static Rule parseRule(JSONObject one) {
+        Rule rule = new Rule();
+        rule.id = one.optString("id", "");
+        rule.name = one.optString("name", "");
+        rule.sensor = one.optString("sensor", "");
+        rule.event = one.optString("event", "");
+        rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
+        rule.minutes = one.optInt("minutes", 0);
+        rule.tag = one.optString("tag", "");
+        rule.action = one.optString("action", "");
+        rule.argument = one.optString("argument", "");
+        rule.enabled = one.optBoolean("enabled", true);
+        rule.onlyFrom = one.optInt("only_from", -1);
+        rule.onlyTo = one.optInt("only_to", -1);
+        rule.changedAt = one.optLong("changed_at", 0);
+        return rule;
     }
 
     static String store(List<Rule> rules) {
@@ -259,11 +285,13 @@ final class Automations {
                     one.put("level", rule.level);
                 }
                 one.put("minutes", rule.minutes);
+                one.put("tag", rule.tag);
                 one.put("action", rule.action);
                 one.put("argument", rule.argument);
                 one.put("enabled", rule.enabled);
                 one.put("only_from", rule.onlyFrom);
                 one.put("only_to", rule.onlyTo);
+                one.put("changed_at", rule.changedAt);
                 if (withSentence) {
                     one.put("sentence", sentence(rule));
                 }
@@ -300,6 +328,15 @@ final class Automations {
             rule.minutes = 0;
         } else if (rule.minutes < 0 || rule.minutes > MAX_MINUTES) {
             return "the minutes must be between 0 and " + MAX_MINUTES;
+        }
+        // A tag id as homeAssistantTagId and the chip ids are shaped, 64 characters at most;
+        // it is written into the sentence and the pages.
+        rule.tag = rule.tag.replaceAll("\\p{Cntrl}", "").trim();
+        if (rule.tag.length() > 64) {
+            return "the tag id is too long";
+        }
+        if (!event.tag) {
+            rule.tag = "";
         }
         Action action = action(rule.action);
         if (action == null) {
@@ -366,6 +403,9 @@ final class Automations {
             if (event.holds && rule.minutes > 0) {
                 text.append(" for ").append(rule.minutes).append(" min");
             }
+            if (event.tag && !rule.tag.isEmpty()) {
+                text.append(": ").append(rule.tag);
+            }
         }
         text.append(", then ");
         text.append(action == null ? rule.action : action.label);
@@ -391,6 +431,8 @@ final class Automations {
     static String baseline(Rule stored) {
         Rule copy = stored.copy();
         copy.enabled = true;
+        // The change time moves with the switch too.
+        copy.changedAt = 0;
         return toJson(Collections.singletonList(copy), false).toString();
     }
 
@@ -465,7 +507,7 @@ final class Automations {
     /** Whether the state the event names holds in this sample; null when the sample cannot say. */
     static Boolean holds(Rule rule, Sample sample) {
         Event event = event(rule.sensor, rule.event);
-        if (event == null) {
+        if (event == null || event.tag) {
             return null;
         }
         boolean flag = Boolean.TRUE.equals(sample.flag);
@@ -666,6 +708,31 @@ final class Automations {
             }
             return due;
         }
+
+        /** A one-shot event with an id: a tag read. */
+        void event(String sensor, String id, int minuteOfDay) {
+            for (Rule rule : dueFor(sensor, id, minuteOfDay)) {
+                runner.run(rule);
+            }
+        }
+
+        private synchronized List<Rule> dueFor(String sensor, String id, int minuteOfDay) {
+            List<Rule> due = new ArrayList<>();
+            for (Rule rule : rules) {
+                if (!rule.sensor.equals(sensor) || !rule.enabled) {
+                    continue;
+                }
+                Event event = Automations.event(rule.sensor, rule.event);
+                if (event == null || !event.tag) {
+                    continue;
+                }
+                if ((rule.tag.isEmpty() || rule.tag.equalsIgnoreCase(id))
+                        && inWindow(rule, minuteOfDay)) {
+                    due.add(rule);
+                }
+            }
+            return due;
+        }
     }
 
     /**
@@ -675,12 +742,17 @@ final class Automations {
      */
     static final Object STORE = new Object();
 
-    /** A short id for a new rule that no existing rule has. */
+    /**
+     * An id for a new rule that no existing rule has. Twelve letters and digits, about 59 bits:
+     * unique across a fleet too, where a rule made on one panel and one pushed from the fleet
+     * console must never share an id; six were unique on one panel only (2026-09-30). Older
+     * ids stay valid.
+     */
     static String newId(List<Rule> existing) {
-        java.util.Random random = new java.util.Random();
+        java.util.Random random = new java.security.SecureRandom();
         while (true) {
             StringBuilder id = new StringBuilder();
-            for (int index = 0; index < 6; index++) {
+            for (int index = 0; index < 12; index++) {
                 id.append("abcdefghjkmnpqrstuvwxyz23456789".charAt(random.nextInt(31)));
             }
             boolean taken = false;
@@ -693,6 +765,67 @@ final class Automations {
                 return id.toString();
             }
         }
+    }
+
+    /** Deletion markers kept, the newest; a marker older than these no longer travels. */
+    static final int MAX_DELETED = 100;
+
+    /**
+     * The list about to be stored, each rule's change time set: now for a rule that is new or
+     * differs from its stored copy, the stored time for one that does not. Every writer of the
+     * rules stores through this (KioskConfig.storeAutomations), so no path can forget it.
+     */
+    static List<Rule> stamp(List<Rule> stored, List<Rule> next, long now) {
+        for (Rule rule : next) {
+            Rule before = find(stored, rule.id);
+            rule.changedAt = before != null && sameRule(before, rule) ? before.changedAt : now;
+        }
+        return next;
+    }
+
+    /** Whether two copies say the same, their change times aside. */
+    private static boolean sameRule(Rule one, Rule other) {
+        Rule a = one.copy();
+        Rule b = other.copy();
+        a.changedAt = 0;
+        b.changedAt = 0;
+        return toJson(Collections.singletonList(a), false).toString()
+                .equals(toJson(Collections.singletonList(b), false).toString());
+    }
+
+    /**
+     * The deletion markers after a store: the stored ones, a marker for every rule the store
+     * leaves out, none for a rule that is back, the newest {@link #MAX_DELETED}. Each is
+     * {"id", "deleted_at"}, so a deletion can travel to the other panels of a fleet as a
+     * change travels (2026-09-30).
+     */
+    static String deleted(String storedMarkers, List<Rule> stored, List<Rule> next, long now) {
+        JSONArray markers = new JSONArray();
+        try {
+            JSONArray old = storedMarkers == null || storedMarkers.isEmpty() ? new JSONArray()
+                    : new JSONArray(storedMarkers);
+            List<JSONObject> kept = new ArrayList<>();
+            for (int index = 0; index < old.length(); index++) {
+                JSONObject one = old.optJSONObject(index);
+                if (one != null && find(next, one.optString("id", "")) == null) {
+                    kept.add(one);
+                }
+            }
+            for (Rule rule : stored) {
+                if (find(next, rule.id) == null) {
+                    JSONObject one = new JSONObject();
+                    one.put("id", rule.id);
+                    one.put("deleted_at", now);
+                    kept.add(one);
+                }
+            }
+            for (int index = Math.max(0, kept.size() - MAX_DELETED); index < kept.size(); index++) {
+                markers.put(kept.get(index));
+            }
+        } catch (JSONException malformed) {
+            return new JSONArray().toString();
+        }
+        return markers.toString();
     }
 
     static Rule find(List<Rule> rules, String id) {

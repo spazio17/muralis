@@ -5,6 +5,7 @@
 package org.json;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -42,6 +43,11 @@ public class JSONObject {
         return this;
     }
 
+    public JSONObject put(String key, long value) throws JSONException {
+        map.put(key, value);
+        return this;
+    }
+
     public JSONObject put(String key, double value) throws JSONException {
         map.put(key, value);
         return this;
@@ -66,6 +72,11 @@ public class JSONObject {
         return value instanceof Number ? ((Number) value).intValue() : fallback;
     }
 
+    public long optLong(String key, long fallback) {
+        Object value = map.get(key);
+        return value instanceof Number ? ((Number) value).longValue() : fallback;
+    }
+
     public double optDouble(String key, double fallback) {
         Object value = map.get(key);
         return value instanceof Number ? ((Number) value).doubleValue() : fallback;
@@ -78,6 +89,18 @@ public class JSONObject {
 
     public boolean optBoolean(String key) {
         return optBoolean(key, false);
+    }
+
+    public JSONArray optJSONArray(String key) {
+        Object value = map.get(key);
+        if (!(value instanceof List)) {
+            return null;
+        }
+        JSONArray array = new JSONArray();
+        for (Object one : (List<?>) value) {
+            array.list.add(one);
+        }
+        return array;
     }
 
     public JSONObject optJSONObject(String key) {

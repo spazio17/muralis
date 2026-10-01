@@ -259,26 +259,38 @@ final class KioskConfig {
         }
 
         /** One sensor's switch; see Sensors. Off until switched on, like the companion app. */
+        // Every sensor setting carries when it changed, under changed_<its key>, for the fleet
+        // of 0.7 to merge by (2026-09-30); see sensorSettingsDocument. Writing the value already
+        // stored is no change and keeps the time.
         Editor sensorEnabled(String id, boolean value) {
+            stampSensor("sensor_" + id, value);
             plain.putBoolean("sensor_" + id, value);
             return this;
         }
 
         /** One setting of a sensor's own page, a word or a number as text; see Sensors. */
         Editor sensorOption(String key, String value) {
+            // A tag read is a fact of this panel, not a setting anybody changes: no change
+            // time, which was one orphan line per tag for ever (review, 2026-10-01).
+            if (!key.startsWith("tag_seen_")) {
+                stampSensor("sensor_option_" + key, value);
+            }
             plain.putString("sensor_option_" + key, value);
             return this;
         }
 
         Editor removeSensorOption(String key) {
+            stampSensor("sensor_option_" + key, null);
             plain.remove("sensor_option_" + key);
             return this;
         }
 
-        /** The whole list of automations as Automations.store writes it. */
-        Editor automations(String json) {
-            plain.putString(AUTOMATIONS, json);
-            return this;
+        private void stampSensor(String key, Object value) {
+            Object stored = storageContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getAll().get(key);
+            if (!java.util.Objects.equals(stored, value)) {
+                plain.putLong("changed_" + key, System.currentTimeMillis());
+            }
         }
 
         /** The ids discovery last announced as automation switches, for the withdrawals. */
@@ -488,11 +500,100 @@ final class KioskConfig {
 
     private static final String AUTOMATIONS = "automations";
     private static final String AUTOMATIONS_ANNOUNCED = "automations_announced";
+    /** The markers of the rules deleted lately; see Automations.deleted. */
+    private static final String AUTOMATIONS_DELETED = "automations_deleted";
 
     static String sensorOption(Context context, String key, String fallback) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString("sensor_option_" + key, fallback);
+    }
+
+    private static final String BEACON_NAMES = "beacon_names";
+    private static final Object BEACON_NAMES_LOCK = new Object();
+
+    /**
+     * The names given to beacons, one NamedList document (2026-09-30, the fleet's shape). The
+     * loose sensor_option_beacon_<id> keys an older build wrote are read into it, and go at
+     * the next change.
+     */
+    static NamedList beaconNames(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        NamedList names = NamedList.parse(prefs.getString(BEACON_NAMES, null));
+        for (java.util.Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+            if (entry.getKey().startsWith("sensor_option_beacon_")
+                    && entry.getValue() instanceof String) {
+                String id = entry.getKey().substring("sensor_option_beacon_".length());
+                if (names.name(id).isEmpty()) {
+                    names.set(id, (String) entry.getValue(), 0);
+                }
+            }
+        }
+        return names;
+    }
+
+    /** Names a beacon, or takes its name away when {@code name} is blank. */
+    static void beaconName(Context context, String id, String name) {
+        synchronized (BEACON_NAMES_LOCK) {
+            android.content.SharedPreferences prefs = storageContext(context)
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+            NamedList names = beaconNames(context);
+            names.set(id, name, System.currentTimeMillis());
+            android.content.SharedPreferences.Editor editor = prefs.edit()
+                    .putString(BEACON_NAMES, names.store());
+            for (String key : prefs.getAll().keySet()) {
+                if (key.startsWith("sensor_option_beacon_")) {
+                    editor.remove(key);
+                }
+            }
+            editor.apply();
+        }
+    }
+
+    /**
+     * The sensor settings as one document, for the web API and the fleet of 0.7: the switches,
+     * the shared settings and this panel's own (SensorSettings), each with its value and when
+     * it changed, 0 when never since change times were kept.
+     */
+    static org.json.JSONObject sensorSettingsDocument(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        org.json.JSONObject switches = new org.json.JSONObject();
+        org.json.JSONObject shared = new org.json.JSONObject();
+        org.json.JSONObject thisPanel = new org.json.JSONObject();
+        try {
+            // Every sensor's switch as it stands, stored or not: the panel's own values start
+            // on with nothing stored, and a document that left them out was not the whole
+            // state (review, 2026-10-01).
+            for (Sensors.Def def : Sensors.ALL) {
+                org.json.JSONObject one = new org.json.JSONObject();
+                one.put("on", Sensors.enabled(context, def));
+                one.put("changed_at", prefs.getLong("changed_sensor_" + def.id, 0));
+                switches.put(def.id, one);
+            }
+            for (java.util.Map.Entry<String, ?> entry : new java.util.TreeMap<>(prefs.getAll())
+                    .entrySet()) {
+                String key = entry.getKey();
+                if (key.startsWith("sensor_option_")) {
+                    String option = key.substring("sensor_option_".length());
+                    if (option.startsWith("beacon_") || option.startsWith("tag_seen_")) {
+                        continue;
+                    }
+                    org.json.JSONObject one = new org.json.JSONObject();
+                    one.put("value", String.valueOf(entry.getValue()));
+                    one.put("changed_at", prefs.getLong("changed_" + key, 0));
+                    (SensorSettings.shared(option) ? shared : thisPanel).put(option, one);
+                }
+            }
+            org.json.JSONObject document = new org.json.JSONObject();
+            document.put("switches", switches);
+            document.put("shared", shared);
+            document.put("this_panel", thisPanel);
+            return document;
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     static int sensorOptionInt(Context context, String key, int fallback) {
@@ -505,6 +606,128 @@ final class KioskConfig {
 
     static boolean sensorOptionOn(Context context, String key, boolean fallback) {
         return "true".equals(sensorOption(context, key, Boolean.toString(fallback)));
+    }
+
+    /**
+     * Drops the settings of the beacon transmitter, which was removed on 2026-10-01: a panel
+     * that ever stored them kept them, and the sensor settings document then carried keys a
+     * post back is refused for. Run at every start; it does nothing once they are gone.
+     */
+    static void dropRetiredSettings(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        android.content.SharedPreferences.Editor editor = null;
+        for (String key : prefs.getAll().keySet()) {
+            for (String retired : new String[] {"beacons_transmit", "beacons_uuid",
+                    "beacons_major", "beacons_minor"}) {
+                if (key.equals("sensor_option_" + retired)
+                        || key.equals("changed_sensor_option_" + retired)) {
+                    if (editor == null) {
+                        editor = prefs.edit();
+                    }
+                    editor.remove(key);
+                }
+            }
+        }
+        if (editor != null) {
+            editor.apply();
+        }
+    }
+
+    /**
+     * Keeps the tags seen down to the newest {@code keep}: a panel in a public place reads tags
+     * all day, and each one is a line in the settings file otherwise. The names a person could
+     * give a tag went on 2026-09-30 (a tag is named in Home Assistant, as the companion app
+     * leaves it), and what an older build stored for them goes here too.
+     */
+    static void pruneSeenTags(Context context, int keep) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        java.util.List<String[]> unnamed = new java.util.ArrayList<>();
+        android.content.SharedPreferences.Editor leftovers = prefs.edit();
+        boolean stale = false;
+        for (java.util.Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+            if (entry.getKey().startsWith("nfc_tag_")
+                    || entry.getKey().startsWith("changed_sensor_option_tag_seen_")) {
+                // The change times an earlier build stamped on tag reads go with the names.
+                leftovers.remove(entry.getKey());
+                stale = true;
+                continue;
+            }
+            if (!entry.getKey().startsWith("sensor_option_tag_seen_")) {
+                continue;
+            }
+            String id = entry.getKey().substring("sensor_option_tag_seen_".length());
+            long at;
+            try {
+                at = Long.parseLong(String.valueOf(entry.getValue()));
+            } catch (NumberFormatException notATime) {
+                at = 0;
+            }
+            unnamed.add(new String[] {String.format(java.util.Locale.ROOT, "%020d", at), id});
+        }
+        if (stale) {
+            leftovers.apply();
+        }
+        if (unnamed.size() <= keep) {
+            return;
+        }
+        // Oldest first; two tags read in the same millisecond stay two (review, 2026-09-27).
+        java.util.Collections.sort(unnamed, (a, b) -> a[0].compareTo(b[0]));
+        android.content.SharedPreferences.Editor editor = prefs.edit();
+        for (int index = 0; index < unnamed.size() - keep; index++) {
+            editor.remove("sensor_option_tag_seen_" + unnamed.get(index)[1]);
+        }
+        editor.apply();
+    }
+
+    /** The tags this panel has read, newest first, id to when (milliseconds). */
+    static java.util.LinkedHashMap<String, Long> seenTags(Context context) {
+        java.util.List<java.util.Map.Entry<String, Long>> seen = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, ?> entry : storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE).getAll().entrySet()) {
+            if (entry.getKey().startsWith("sensor_option_tag_seen_")) {
+                try {
+                    seen.add(new java.util.AbstractMap.SimpleEntry<>(
+                            entry.getKey().substring("sensor_option_tag_seen_".length()),
+                            Long.parseLong(String.valueOf(entry.getValue()))));
+                } catch (NumberFormatException notATime) {
+                    // A value this build did not write.
+                }
+            }
+        }
+        java.util.Collections.sort(seen, (a, b) -> Long.compare(b.getValue(), a.getValue()));
+        java.util.LinkedHashMap<String, Long> ordered = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<String, Long> one : seen) {
+            ordered.put(one.getKey(), one.getValue());
+        }
+        return ordered;
+    }
+
+
+    /**
+     * Stores the whole list of automations, the one way every writer does it: each rule's
+     * change time set (Automations.stamp) and a deletion marker for each rule left out
+     * (Automations.deleted), so the fleet of 0.7 can merge copies and carry deletions. The
+     * caller holds Automations.STORE across its read and this write.
+     */
+    static void storeAutomations(Context context, java.util.List<Automations.Rule> rules) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        java.util.List<Automations.Rule> stored = automationsOf(context);
+        long now = System.currentTimeMillis();
+        Automations.stamp(stored, rules, now);
+        prefs.edit()
+                .putString(AUTOMATIONS, Automations.store(rules))
+                .putString(AUTOMATIONS_DELETED, Automations.deleted(
+                        prefs.getString(AUTOMATIONS_DELETED, "[]"), stored, rules, now))
+                .apply();
+    }
+
+    /** The deletion markers, a JSON array of {"id", "deleted_at"}. */
+    static String automationsDeleted(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(AUTOMATIONS_DELETED, "[]");
     }
 
     /** The stored automations; the shipped default until something is stored. */

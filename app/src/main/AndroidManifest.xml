@@ -38,6 +38,7 @@
          are added to the running service while the camera or microphone sensor is on. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Runtime permission from API 33 for the notification KioskService must
          post to stay alive. Ask for it at runtime; a denial must not be fatal. -->
@@ -71,13 +72,26 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- The sensors (Sensors.java), every one off until a person switches it on. Camera: the
-         IP-camera stream and motion detection. Microphone: a sound level, nothing recorded. Each
-         runtime permission is asked for once from the Sensors page on an ordinary install and
-         granted silently on a device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need
-         their use described in the listing's Data safety form, and the camera and microphone
-         foreground types a declaration with a video each; see
-         ../media/google-play/PLAY-LISTING.md. -->
+    <!-- The sensors (Sensors.java): every one that reads the room off until a person switches it
+         on, the panel's own readings on, as they always were. Bluetooth
+         beacons: the scan alone, never a beacon sent, with the location permission on every
+         version, since Android counts a scan as location use and, told "never for location",
+         hides every iBeacon from Android 12 on; "while using the app" is enough, because the
+         service holds the location foreground type while the sensor is on (Juri, 2026-10-01).
+         No position is ever read. NFC: tags read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
+         motion detection. Microphone: a sound level, nothing recorded. Each runtime permission
+         is asked for once from the Sensors page on an ordinary install and granted silently on a
+         device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need their use described
+         in the listing's Data safety form, and the camera and microphone foreground types a
+         declaration with a video each; see ../media/google-play/PLAY-LISTING.md. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- Both, as Android 12 requires of an app that needs the precise one; the scan hears
+         beacons only with precise location, and the row says so until it is granted. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -121,8 +135,11 @@
          as required and hide the app from any device without a Wi-Fi radio. A wall panel on
          PoE Ethernet is exactly such a device. The service copes with a missing WifiManager. -->
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <application
         android:name=".MuralisApplication"
@@ -214,7 +231,7 @@
             android:name=".KioskService"
             android:directBootAware="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse|camera|microphone">
+            android:foregroundServiceType="specialUse|camera|microphone|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persistent single-purpose kiosk launcher supervising a Home Assistant dashboard on wall-mounted hardware." />
