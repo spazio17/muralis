@@ -4136,7 +4136,8 @@ public final class KioskActivity extends Activity {
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
         text.setTextColor(theme.text);
-        text.setTextSize(15);
+        // Body large, 16: 15 was off Material's type scale (review, 2026-10-01).
+        text.setTextSize(16);
         text.setText(message);
         box.addView(text, matchWrapClose());
         // The question and its buttons are one lone panel: the legal pages' column, centred,
