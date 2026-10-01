@@ -264,6 +264,14 @@ final class ScreensaverPolicy {
                 && WAKE_SCREENSAVER.equals(settings.onWake);
     }
 
+    /**
+     * "Pictures options", and so on: the mode named where its settings are, on both surfaces
+     * and in the web page's own titles for a mode changed without a reload.
+     */
+    static String optionsTitle(String mode) {
+        return modeName(mode) + " options";
+    }
+
     /** Whether the on-wake choice means anything in this mode; false for the film and for off. */
     static boolean wakeChoiceApplies(String mode) {
         return URL.equals(mode) || DIM.equals(mode) || PICTURES.equals(mode);

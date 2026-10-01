@@ -176,6 +176,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 }
             }
             beatWhileDark();
+            Sensors hub = sensors;
+            if (hub != null) {
+                // Refreshed on every tick, not only from a settings surface: every branch is a
+                // no-op while the state matches, and it is what brings back a camera the
+                // platform took, a scan that failed, or beacons switched on while the radio
+                // was still off. Then the block the panel's rows read, with or without MQTT.
+                refreshSensors();
+                hub.poll();
+            }
             telemetryHandler.postDelayed(this, STATS_SAMPLE_INTERVAL_MS);
         }
     };
@@ -256,7 +265,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
         super.onCreate();
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
-        startForeground(NOTIFICATION_ID, buildNotification());
+        // The base type alone, named: the two-argument call asks for every type the manifest
+        // lists, and from Android 14 the camera and microphone types throw a SecurityException
+        // here unless both permissions are already granted, which a fresh install never has
+        // (review, 2026-10-01; seen on the Pixel). refreshForegroundTypes adds them later, while
+        // their sensors are on and allowed.
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, buildNotification(baseForegroundType()),
+                    baseForegroundType());
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification(0));
+        }
+        foregroundTypesNow = baseForegroundType();
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
         android.os.UserManager users = getSystemService(android.os.UserManager.class);
@@ -266,8 +286,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         applyResourceGuarantees();
         acquireRuntimeLocks();
+        // The sensors before the controllers and the telemetry: the first discovery a fast
+        // broker asks for, and the first status document, must see the stored switches and
+        // rules, not an empty hub (review, 2026-09-27).
+        KioskConfig.dropRetiredSettings(this);
+        automations = new Automations.Engine(this::runAutomation);
+        automations.rules(KioskConfig.automationsOf(this));
+        sensors = new Sensors(this, automations);
+        beacons = new Beacons(this);
+        microphone = new Microphone(this);
+        camera = new PanelCamera(this, this::onCameraMotion);
+        sensors.source(Sensors.BLUETOOTH, beacons);
+        sensors.source(Sensors.MICROPHONE, microphone);
+        sensors.source(Sensors.CAMERA, camera);
+        sensors.onEdge(this::sensorEdge);
+        sensors.onReading(this::sensorReading);
+        refreshSensors();
         startControllers();
         startTelemetry();
+        live = this;
         new Handler(Looper.getMainLooper()).postDelayed(
                 () -> ensureDashboardOnScreen("service started"), RelaunchPolicy.SETTLE_MS);
     }
@@ -323,6 +360,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
             publishStateSoon();
+        } else if (intent != null && ACTION_REFRESH_SENSORS.equals(intent.getAction())) {
+            automations.rules(KioskConfig.automationsOf(this));
+            refreshSensors();
+            publishStateSoon();
+        } else if (intent != null && ACTION_TAG_READ.equals(intent.getAction())) {
+            tagRead(intent.getStringExtra(EXTRA_TAG_ID), intent.getStringExtra(EXTRA_TAG_CONTENT));
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
             displayVisualOff();
             // Not a dispatched command, so nothing else republishes: without this the Screensaver
@@ -345,6 +388,21 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         stopControllers();
         stopTelemetry();
+        if (sensors != null) {
+            sensors.stop();
+        }
+        if (beacons != null) {
+            beacons.stop();
+        }
+        if (microphone != null) {
+            microphone.stop();
+        }
+        if (camera != null) {
+            camera.stop();
+        }
+        live = null;
+        stopAudio();
+        stopSpeech();
         releaseRuntimeLocks();
         super.onDestroy();
     }
@@ -414,7 +472,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         manager.createNotificationChannel(channel);
     }
 
-    private Notification buildNotification() {
+    /**
+     * The service's notification; {@code types} are the foreground types held, and the text
+     * says when the camera or the microphone is among them, so a panel with no privacy dot (the
+     * API 26 tablet) still shows what is in use, as Google's foreground-service policy asks.
+     */
+    private Notification buildNotification(int types) {
         PendingIntent openKiosk = PendingIntent.getActivity(
                 this,
                 0,
@@ -422,7 +485,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
                                 | Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this, CHANNEL_ID)
+        java.util.List<String> inUse = new java.util.ArrayList<>();
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0) {
+            inUse.add("Camera on");
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0) {
+            inUse.add("Microphone on");
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0) {
+            inUse.add("Listening for beacons");
+        }
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID);
+        if (!inUse.isEmpty()) {
+            builder.setContentText(android.text.TextUtils.join(" · ", inUse));
+        }
+        return builder
                 .setContentTitle(getString(R.string.service_notification_title))
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(openKiosk)
@@ -525,11 +605,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * it is a hang, and after an unattended reboot it would sit there over the dashboard until
      * somebody noticed. Auto-granting removes that failure mode entirely.
      *
-     * <p>Scope is deliberately narrow: only permissions this app actually declares and needs, and
-     * nothing in a location or privacy-sensitive class. In particular <b>no location permission is
-     * requested</b>, so the Wi-Fi SSID stays unavailable, which remains the right call for a wall
-     * panel and is unchanged from the decision recorded in the ROM repo's
-     * docs/play-store-viability.md. Widening this set is a product decision, not a refactor.
+     * <p>Scope: the permissions this app declares and needs, which since the sensors (2026-09-27,
+     * a product decision) include the camera, the microphone and, for the Bluetooth beacons,
+     * location (Juri, 2026-10-01), granted so a sensor's row shows a switch on a panel nobody
+     * stands at; every sensor stays off until switched on, and neither a position nor the Wi-Fi
+     * SSID is ever read. The ROM repo's docs/play-store-viability.md records the earlier,
+     * narrower set.
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
@@ -547,6 +628,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
                         ? android.Manifest.permission.READ_MEDIA_IMAGES
                         : android.Manifest.permission.READ_EXTERNAL_STORAGE);
+        // The sensors' own permissions (Sensors.permissionsFor), so their rows show a switch on
+        // a panel nobody stands at; every one of them stays off until switched on.
+        for (Sensors.Def def : Sensors.ALL) {
+            for (String permission : Sensors.permissionsFor(def)) {
+                grantOwnPermission(policy, admin, permission);
+            }
+        }
     }
 
     /** Fail soft: KioskActivity still asks the user the ordinary way, and the service runs either way. */
@@ -1001,6 +1089,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
             stats.put("screensaver", screensaverSnapshot(includeAdminDetail));
+            // The sensors the person switched on, with their readings; see Sensors. The block
+            // is kept where the panel's rows and discovery can read it without the service.
+            publishSensorBlock();
+            stats.put("sensors", KioskRuntimeState.sensors());
+            stats.put("automations", KioskRuntimeState.automations());
+            if (includeAdminDetail) {
+                // For the web page, which draws a list again when its key moves: see
+                // Sensors.listKeys. The rules as stored, the same the page is drawn from.
+                stats.put("lists", Sensors.listKeys(KioskRuntimeState.sensors(),
+                        Automations.toJson(KioskConfig.automationsOf(this), true)));
+            }
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
@@ -1378,8 +1477,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } else {
             Log.i(TAG, "Display off: black film (" + choice.why + ")");
         }
+        lastDisplayOffMethod = method;
         sendUiCommand("display.visual_off", method);
     }
+
+    /** What the last Display off did, sleep or film; the test while asleep needs the sleep. */
+    private volatile String lastDisplayOffMethod = "";
 
     /**
      * What ended the previous process, judged from the dark record it left, and remembered when
@@ -1496,6 +1599,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && sleepTestRunning) {
+                // Going to sleep sends a SCREEN_ON too (the Lenovo, 2026-09-08), so the test
+                // ends early only when the display is really on, read twice half a second apart.
+                PowerManager power = getSystemService(PowerManager.class);
+                if (power != null && power.isInteractive()) {
+                    sleepTestHandler.postDelayed(() -> {
+                        if (sleepTestRunning && power.isInteractive()) {
+                            endSleepTestEarly();
+                        }
+                    }, 500);
+                }
+            }
             publishStateSoon();
         }
     };
@@ -1688,6 +1803,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The device's boot counter, or -1 when unreadable; see DarkWatch for what it is for. */
     static int bootCount(Context context) {
         return Settings.Global.getInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+    }
+
+    /**
+     * Whether a rule on this sensor cannot run while the panel sleeps: its test found it not
+     * running, and this panel sleeps rather than darkening with the film, which keeps sensors
+     * running. Said on the rule's row and in its editor, where it matters: "Wake by hand" on
+     * such a panel fails without a word otherwise (Juri, 2026-09-28).
+     */
+    static boolean stopsWhileAsleep(Context context, String sensorId) {
+        Sensors.Def def = Sensors.byId(sensorId == null ? "" : sensorId);
+        return def != null && def.androidType != 0
+                && "silent".equals(KioskConfig.sensorOption(context, def.id + "_asleep", ""))
+                && chooseDisplayOff(context).method == DisplayOffPolicy.Method.SLEEP;
     }
 
     /**
@@ -1918,6 +2046,700 @@ public final class KioskService extends Service implements KioskCommandDispatche
         });
         publishTelemetrySoon(this);
         return refusal;
+    }
+
+    /** The panel's sensors; built in onCreate, dropped in onDestroy. */
+    private Sensors sensors;
+    private Automations.Engine automations;
+    private Beacons beacons;
+    private Microphone microphone;
+    private PanelCamera camera;
+    static final String ACTION_TAG_READ = "org.spazio17.muralis.TAG_READ";
+    static final String EXTRA_TAG_ID = "tag_id";
+    static final String EXTRA_TAG_CONTENT = "tag_content";
+
+    /**
+     * The activity's reader mode saw a tag: the chip's id, and the tag's text and addresses.
+     * The reading, the automations, Home Assistant.
+     */
+    static void tagReadSoon(Context context, String chipId, String content) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_TAG_READ);
+        intent.putExtra(EXTRA_TAG_ID, chipId);
+        intent.putExtra(EXTRA_TAG_CONTENT, content);
+        context.startService(intent);
+    }
+
+    /**
+     * One tag, as Home Assistant's app reports it: the Home Assistant tag id a tag written by
+     * Home Assistant carries, else the chip's id; the tag's text and addresses ride along.
+     */
+    private void tagRead(String chipId, String content) {
+        if (sensors == null || !sensors.on(Sensors.NFC)) {
+            return;
+        }
+        String read = content == null ? "" : content;
+        String homeAssistant = Sensors.homeAssistantTagId(read);
+        String tagId = homeAssistant != null ? homeAssistant : chipId == null ? "" : chipId;
+        if (tagId.isEmpty() && read.isEmpty()) {
+            Log.i(TAG, "Tag read, with nothing to report: no content on it");
+            return;
+        }
+        // The id, and the content's length only: a tag can carry anything.
+        Log.i(TAG, "Tag read: " + (tagId.isEmpty() ? "no id" : tagId)
+                + (read.isEmpty() ? "" : ", content of " + read.length() + " characters"));
+        if (!tagId.isEmpty()) {
+            KioskConfig.edit(this).sensorOption("tag_seen_" + tagId,
+                    Long.toString(System.currentTimeMillis())).apply();
+            KioskConfig.pruneSeenTags(this, 20);
+        }
+        sensors.tagRead(tagId, read);
+        MqttController mqtt = mqttController;
+        if (mqtt != null && !tagId.isEmpty()) {
+            mqtt.publishTagRead(tagId);
+        }
+        publishStateSoon();
+    }
+
+    /** Runs one automation's action; the engine decided it is due. */
+    private void runAutomation(Automations.Rule rule) {
+        if (KioskRuntimeState.wizardOnScreen() || KioskConfig.kioskStopped(this)) {
+            Log.i(TAG, "Automation \"" + rule.name + "\" not run: the panel is being set up "
+                    + "or the kiosk is stopped");
+            return;
+        }
+        Log.i(TAG, "Automation \"" + rule.name + "\": " + rule.action);
+        String problem = null;
+        switch (rule.action) {
+            case "display_on": displayWake(); break;
+            case "display_off": displayVisualOff(); break;
+            case "dashboard": showMainDashboard(); break;
+            case "screensaver": problem = screensaverStart(); break;
+            case "play_sound": problem = playAudio(rule.argument); break;
+            case "say": problem = say(rule.argument); break;
+            case "reload": kioskReload(); break;
+            default: problem = "no action is called " + rule.action;
+        }
+        if (problem != null) {
+            Log.w(TAG, "Automation \"" + rule.name + "\" not done: " + problem);
+        }
+    }
+
+    private void onCameraMotion() {
+        if (KioskConfig.sensorOptionOn(this, "camera_mqtt", false)) {
+            publishPictureSoon();
+        }
+        publishStateSoon();
+    }
+
+    /** A moment after motion, so the frame published is one with the movement in it. */
+    private void publishPictureSoon() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            MqttController mqtt = mqttController;
+            PanelCamera lens = camera;
+            if (mqtt != null && lens != null) {
+                mqtt.publishPicture(lens.snapshot());
+            }
+        }, 400);
+    }
+
+    @Override
+    public String setAutomationEnabled(String id, boolean enabled) {
+        synchronized (Automations.STORE) {
+            java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+            Automations.Rule rule = Automations.find(rules, id);
+            if (rule == null) {
+                return "no automation is called " + id;
+            }
+            rule.enabled = enabled;
+            KioskConfig.storeAutomations(this, rules);
+            automations.rules(rules);
+        }
+        publishStateSoon();
+        return null;
+    }
+
+    @Override
+    public String setCameraMotion(boolean enabled) {
+        if (sensors == null || !sensors.available(Sensors.CAMERA)) {
+            return "this device has no camera";
+        }
+        KioskConfig.edit(this).sensorOption("camera_motion", Boolean.toString(enabled)).apply();
+        publishStateSoon();
+        return null;
+    }
+
+    /** How long the test while asleep keeps the panel asleep. */
+    private static final long SLEEP_TEST_MS = 20_000;
+    /** When, into the sleep, the sensor is registered again; see Sensors.reRegister. */
+    private static final long SLEEP_TEST_ASK_MS = 3_000;
+    /**
+     * How long after the registration the reading is taken as the one to beat: a sensor
+     * answers a registration with a fresh sample, and a light sensor's fresh sample differs
+     * from the last by a lux or two, which read as "Active" with nobody touching it (the
+     * tablet, 2026-09-28). Only a change after this counts.
+     */
+    private static final long SLEEP_TEST_SETTLE_MS = 1_500;
+    private volatile boolean sleepTestRunning;
+    private final Handler sleepTestHandler = new Handler(Looper.getMainLooper());
+
+    /** The screen came on before the test's 20 s: whatever the sensor said, it said awake. */
+    private void endSleepTestEarly() {
+        if (!sleepTestRunning) {
+            return;
+        }
+        sleepTestRunning = false;
+        sleepTestHandler.removeCallbacksAndMessages(null);
+        Log.i(TAG, "Test while asleep ended early: the panel woke");
+        sendUiCommand("sensors.redraw", -1, null);
+    }
+
+    /**
+     * Puts the panel to sleep for {@link #SLEEP_TEST_MS} and notes whether the sensor reported
+     * meanwhile: some devices stop every sensor an app holds while the display sleeps (the
+     * Huawei MediaPad, measured 2026-09-27), and no rule can wake such a panel. Measured on
+     * the device rather than guessed, and told on the sensor's row.
+     */
+    @Override
+    public String sleepTest(String sensorId) {
+        Sensors hub = sensors;
+        Sensors.Def def = Sensors.byId(sensorId == null ? "" : sensorId);
+        if (hub == null || def == null) {
+            return "no sensor is called " + sensorId;
+        }
+        if (!hub.available(def)) {
+            return "not on this device: " + def.name;
+        }
+        if (def.androidType == 0) {
+            return "only the panel's own sensors can be tested";
+        }
+        if (!hub.on(def)) {
+            return def.name + " is off";
+        }
+        if (chooseDisplayOff(this).method != DisplayOffPolicy.Method.SLEEP) {
+            return "this panel darkens with the black film, which keeps its sensors awake";
+        }
+        if (sleepTestRunning) {
+            return "a test is already running";
+        }
+        sleepTestRunning = true;
+        final long start = SystemClock.elapsedRealtime();
+        displayVisualOff();
+        if (!DisplayOffPolicy.SLEEP.equals(lastDisplayOffMethod)) {
+            sleepTestRunning = false;
+            return "the display did not go off";
+        }
+        // Registered again a few seconds in, so a sensor that samples on registration gets a
+        // chance to say something. The verdict needs a value that differs from the one before
+        // the sleep: the MediaPad answers a registration with the value it already had and
+        // reports no change while asleep (measured 2026-09-27), and a repeated value is no
+        // proof of a sensor watching. A live on-change sensor needs the hand the screen asks
+        // for; a continuous one differs on its own.
+        final float[][] baseline = {hub.lastValues(def.id)};
+        final long[] baselineAt = {start + SLEEP_TEST_SETTLE_MS};
+        sleepTestHandler.postDelayed(() -> {
+            if (sleepTestRunning) {
+                hub.reRegister(def);
+            }
+        }, SLEEP_TEST_ASK_MS);
+        sleepTestHandler.postDelayed(() -> {
+            if (sleepTestRunning) {
+                float[] settled = hub.lastValues(def.id);
+                if (settled != null) {
+                    baseline[0] = settled;
+                }
+                baselineAt[0] = SystemClock.elapsedRealtime();
+            }
+        }, SLEEP_TEST_ASK_MS + SLEEP_TEST_SETTLE_MS);
+        Runnable sleepTestVerdict = () -> {
+            if (!sleepTestRunning) {
+                return;
+            }
+            boolean reported = hub.lastEventAt(def.id) > baselineAt[0]
+                    && hub.readingMovedSince(def, baseline[0]);
+            KioskConfig.edit(this).sensorOption(def.id + "_asleep",
+                    reported ? "reports" : "silent").apply();
+            // With the numbers, so a verdict can be checked in the log: the reading to beat,
+            // the last one, and when it came.
+            float[] last = hub.lastValues(def.id);
+            long lastAt = hub.lastEventAt(def.id);
+            Log.i(TAG, def.name + (reported ? " reported" : " was silent")
+                    + " while the panel slept (reading " + firstOf(baseline[0]) + " at +"
+                    + (baselineAt[0] - start) + " ms, last " + firstOf(last) + " at +"
+                    + (lastAt - start) + " ms)");
+            sleepTestRunning = false;
+            displayWake();
+            publishSensorBlock();
+            publishStateSoon();
+            sendUiCommand("sensors.redraw", -1, null);
+        };
+        sleepTestHandler.postDelayed(sleepTestVerdict, SLEEP_TEST_MS);
+        return null;
+    }
+
+    private static String firstOf(float[] values) {
+        return values == null || values.length == 0 ? "none" : Float.toString(values[0]);
+    }
+
+    @Override
+    public String calibrateMicrophone(String step) {
+        Sensors hub = sensors;
+        Microphone ears = microphone;
+        if (hub == null || ears == null || !hub.available(Sensors.MICROPHONE)) {
+            return "this device has no microphone";
+        }
+        if (!hub.on(Sensors.MICROPHONE) || !ears.running()) {
+            return "the microphone is off";
+        }
+        String problem = ears.calibrate(step);
+        if (problem == null) {
+            publishSensorBlock();
+            publishStateSoon();
+        }
+        return problem;
+    }
+
+    /** Coalesces a burst of changes of state into one publish; a hand is slower than this. */
+    private static final long SENSOR_EDGE_DELAY_MS = 100L;
+
+    /**
+     * A sensor changed state (near, moving): the block the rows read is published now, the
+     * panel repaints its readings, and the broker gets the state document, instead of the next
+     * two-second tick and the next telemetry interval. Changes of state only: a light or a
+     * sound level that moves all the time stays on the periodic publish, so a broker is not
+     * sent a document for every flicker.
+     */
+    private void sensorEdge() {
+        Handler handler = telemetryHandler;
+        if (handler == null) {
+            return;
+        }
+        handler.removeCallbacks(sensorEdgeTask);
+        handler.postDelayed(sensorEdgeTask, SENSOR_EDGE_DELAY_MS);
+    }
+
+    /** At most this often the rows hear of a reading that moves all the time. */
+    private static final long SENSOR_READING_EVERY_MS = 250L;
+    private volatile boolean sensorReadingPending;
+
+    /**
+     * A reading that moves all the time moved (light, pressure): the rows repaint within a
+     * quarter of a second while a settings screen is on the panel, and only then; nothing goes
+     * to the broker, which keeps the periodic publish for these.
+     */
+    private void sensorReading() {
+        Handler handler = telemetryHandler;
+        if (handler == null || sensorReadingPending || !KioskRuntimeState.operatorOnScreen()) {
+            return;
+        }
+        sensorReadingPending = true;
+        handler.postDelayed(() -> {
+            sensorReadingPending = false;
+            publishSensorBlock();
+            sendUiCommand("sensors.readings", -1, null);
+        }, SENSOR_READING_EVERY_MS);
+    }
+
+    private final Runnable sensorEdgeTask = () -> {
+        publishSensorBlock();
+        sendUiCommand("sensors.readings", -1, null);
+        publishStateSoon();
+    };
+
+    @Override
+    public String calibrateProximity(String step) {
+        Sensors hub = sensors;
+        if (hub == null || !hub.available(Sensors.PROXIMITY)) {
+            return "this device has no proximity sensor";
+        }
+        if (!hub.on(Sensors.PROXIMITY)) {
+            return "the proximity sensor is off";
+        }
+        String problem = hub.calibrateProximity(step);
+        if (problem == null) {
+            publishStateSoon();
+        }
+        return problem;
+    }
+
+    @Override
+    public String cameraSnapshot() {
+        PanelCamera lens = camera;
+        MqttController mqtt = mqttController;
+        if (lens == null || !lens.open()) {
+            return "the camera is off";
+        }
+        if (!KioskConfig.sensorOptionOn(this, "camera_mqtt", false)) {
+            // A picture of the room goes to the broker, retained, only where "Picture to MQTT"
+            // is on, as the privacy text says; the button is announced only then too (review,
+            // 2026-10-01).
+            return "pictures to MQTT are off";
+        }
+        if (lens.snapshot() == null) {
+            return "the camera has not delivered a picture yet";
+        }
+        if (mqtt == null) {
+            return "MQTT is not configured";
+        }
+        String problem = mqtt.publishProblem();
+        if (problem != null) {
+            return problem;
+        }
+        mqtt.publishPicture(lens.snapshot());
+        return null;
+    }
+
+    /** The camera, for the web admin's stream and snapshot. */
+    PanelCamera camera() {
+        return camera;
+    }
+
+    Beacons beacons() {
+        return beacons;
+    }
+
+    /** The live service, for a screen that needs what only the service holds (the beacons). */
+    private static volatile KioskService live;
+
+    /** The live service, for the panel's calibration steps; null while it is not running. */
+    static KioskService liveService() {
+        return live;
+    }
+
+    static Beacons beaconsOf(Context context) {
+        KioskService service = live;
+        return service == null ? null : service.beacons;
+    }
+    private android.media.MediaPlayer player;
+    private android.speech.tts.TextToSpeech speech;
+    private boolean speechReady;
+
+    @Override
+    public String setSensorEnabled(String id, boolean enabled) {
+        String problem = sensorSwitchProblem(id, enabled);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
+        refreshSensors();
+        publishStateSoon();
+        return null;
+    }
+
+    /** Why a sensor's switch cannot be set so, or null when it can. */
+    String sensorSwitchProblem(String id, boolean enabled) {
+        Sensors.Def def = Sensors.byId(id);
+        if (def == null) {
+            return "no sensor is called " + id;
+        }
+        Sensors hub = sensors;
+        if (hub == null || !hub.available(def)) {
+            return "not on this device: " + def.name;
+        }
+        if (enabled && !hub.permitted(def)) {
+            return "allow " + def.name + " on the panel first";
+        }
+        return null;
+    }
+
+    /** A settings surface changed a sensor's switch: re-register and publish. */
+    static void refreshSensorsSoon(Context context) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_REFRESH_SENSORS);
+        context.startService(intent);
+    }
+
+    static final String ACTION_REFRESH_SENSORS = "org.spazio17.muralis.REFRESH_SENSORS";
+
+    /** The sensors' readings and the rules, where the panel, the web page and discovery read them. */
+    private void publishSensorBlock() {
+        Sensors hub = sensors;
+        KioskRuntimeState.publishSensors(hub == null ? new org.json.JSONObject() : hub.snapshot());
+        KioskRuntimeState.publishAutomations(Automations.toJson(
+                automations == null ? Automations.defaults() : automations.rules(), true));
+    }
+
+    /**
+     * Re-reads the stored switches and settings: on every tick, and at once for a change made
+     * on a settings surface. Always on the telemetry thread (a web or MQTT worker and the main
+     * thread post to it), so two surfaces changing switches at once cannot run it side by side,
+     * and a stop that waits for a thread never waits on the main thread (review, 2026-10-01).
+     * Inline only before the telemetry thread exists, at start, so the first discovery sees
+     * the stored switches.
+     */
+    void refreshSensors() {
+        Handler worker = telemetryHandler;
+        if (worker != null && Looper.myLooper() != worker.getLooper()) {
+            worker.post(this::refreshSensorsNow);
+            return;
+        }
+        refreshSensorsNow();
+    }
+
+    private void refreshSensorsNow() {
+        Sensors hub = sensors;
+        if (hub == null) {
+            return;
+        }
+        hub.refresh();
+        boolean cameraOn = hub.available(Sensors.CAMERA) && hub.on(Sensors.CAMERA);
+        boolean pictures = cameraOn && KioskConfig.sensorOptionOn(this, "camera_mqtt", false);
+        MqttController mqtt = mqttController;
+        if (picturesToBroker && !pictures && mqtt != null) {
+            mqtt.clearPicture();
+        }
+        picturesToBroker = pictures;
+        if (beacons != null) {
+            beacons.refresh(hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH));
+        }
+        if (microphone != null) {
+            if (hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
+                microphone.start();
+            } else {
+                microphone.stop();
+            }
+        }
+        if (camera != null) {
+            camera.refresh(cameraOn);
+        }
+        refreshForegroundTypes();
+        boolean nfcOn = hub.available(Sensors.NFC) && hub.on(Sensors.NFC);
+        if (nfcApplied == null || nfcApplied != nfcOn) {
+            // Reader mode belongs to the activity; told once per change, whichever surface
+            // flipped the switch.
+            nfcApplied = nfcOn;
+            sendUiCommand("sensors.nfc", -1, null);
+        }
+        publishSensorBlock();
+    }
+
+    /** The NFC switch as last told to the activity; see refreshSensors. */
+    private Boolean nfcApplied;
+
+    /** The foreground service types in force; see {@link #refreshForegroundTypes}. */
+    private int foregroundTypesNow;
+    /** Logged once per refusal, not on every tick. */
+    private boolean foregroundTypesRefused;
+
+    private static int baseForegroundType() {
+        return android.os.Build.VERSION.SDK_INT >= 34
+                ? android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+    }
+
+    /**
+     * Adds the camera and microphone foreground types while those sensors are on, and drops
+     * them when they go off: from Android 11 a stopped activity may use either only through a
+     * foreground service of that type, so without this a panel whose screen is off loses its
+     * camera ("disabled by policy", the Pixel, 2026-09-27) and hears silence. Android refuses
+     * the types to an app in the background; the activity asks again when it comes to the
+     * front, which is where the switches are flipped anyway.
+     */
+    private void refreshForegroundTypes() {
+        if (android.os.Build.VERSION.SDK_INT < 29) {
+            return;
+        }
+        Sensors hub = sensors;
+        int wanted = baseForegroundType();
+        if (hub != null && hub.available(Sensors.CAMERA) && hub.on(Sensors.CAMERA)) {
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        }
+        if (hub != null && hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        }
+        if (hub != null && hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH)) {
+            // The Bluetooth scan counts as location use: with this type held, "while using the
+            // app" location is enough for the scan to run with the display off (Juri,
+            // 2026-10-01, in place of the background location permission).
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+        }
+        if (wanted == foregroundTypesNow) {
+            return;
+        }
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification(wanted), wanted);
+            foregroundTypesNow = wanted;
+            foregroundTypesRefused = false;
+            Log.i(TAG, "Foreground service types: " + wanted);
+        } catch (SecurityException | IllegalArgumentException | IllegalStateException refused) {
+            if (!foregroundTypesRefused) {
+                foregroundTypesRefused = true;
+                Log.w(TAG, "Foreground service types " + wanted + " refused for now: "
+                        + refused.getMessage());
+            }
+        }
+    }
+
+    /** The activity came to the front: the types Android refused in the background may pass now. */
+    static void foregroundTypesSoon(Context context) {
+        KioskService service = live;
+        if (service != null) {
+            service.foregroundTypesRefused = false;
+            service.foregroundTypesNow = -1;
+            new Handler(Looper.getMainLooper()).post(service::refreshForegroundTypes);
+        }
+    }
+
+    /** Whether the last refresh had the camera's pictures going to the broker; see clearPicture. */
+    private boolean picturesToBroker;
+
+    @Override
+    public void setMediaVolume(int percent) {
+        android.media.AudioManager audio = getSystemService(android.media.AudioManager.class);
+        if (audio == null) {
+            return;
+        }
+        int max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                Math.round(max * percent / 100f), 0);
+        publishStateSoon();
+    }
+
+    /**
+     * Plays a sound from a URL on the media stream, what Fully's playSound and Dashie's audio
+     * commands do: a doorbell, a chime, a spoken file made elsewhere. One player at a time;
+     * a new URL replaces what is playing, null stops it.
+     */
+    @Override
+    public synchronized String playAudio(String url) {
+        stopAudio();
+        if (url == null) {
+            return null;
+        }
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return "url must start with http:// or https://";
+        }
+        try {
+            android.media.MediaPlayer next = new android.media.MediaPlayer();
+            next.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            next.setDataSource(url);
+            next.setOnPreparedListener(android.media.MediaPlayer::start);
+            next.setOnCompletionListener(done -> stopAudio());
+            next.setOnErrorListener((failed, what, extra) -> {
+                Log.w(TAG, "Audio failed (" + what + "/" + extra + "): "
+                        + AppLog.withoutSecrets(url));
+                stopAudio();
+                return true;
+            });
+            next.prepareAsync();
+            player = next;
+            return null;
+        } catch (java.io.IOException | RuntimeException unplayable) {
+            Log.w(TAG, "Audio refused: " + AppLog.withoutSecrets(url), unplayable);
+            return "the panel cannot play that address";
+        }
+    }
+
+    private synchronized void stopAudio() {
+        if (player != null) {
+            try {
+                player.stop();
+            } catch (IllegalStateException notStarted) {
+                // Stopped before it was prepared: releasing is all that is needed.
+            }
+            player.release();
+            player = null;
+        }
+    }
+
+    /**
+     * Speaks through the device's own text-to-speech engine, the way Fully's textToSpeech does.
+     *
+     * <p>The engine is reached through the manifest's {@code queries} entry for
+     * {@code TTS_SERVICE}, which an app targeting Android 11 or later needs to see one at all.
+     * Where none exists, Android calls the listener with ERROR from inside the constructor,
+     * before the engine is assigned: the listener only notes it, and this shuts the engine
+     * down once the constructor returns and says so. One engine is asked at a time; one that
+     * never answers is let go after {@link #SPEECH_START_MS}, so "not ready" does not last
+     * until the service restarts (review, 2026-10-01). The engine refuses a sentence longer
+     * than {@code getMaxSpeechInputLength()}, and so does this, rather than accepting and
+     * saying nothing.
+     */
+    @Override
+    public synchronized String say(String text) {
+        if (text.length() > android.speech.tts.TextToSpeech.getMaxSpeechInputLength()) {
+            return "the sentence is longer than the speech engine takes ("
+                    + android.speech.tts.TextToSpeech.getMaxSpeechInputLength() + " characters)";
+        }
+        if (speech == null) {
+            if (speechStarting != null) {
+                // One engine at a time: a second request while the first is starting is told
+                // so, rather than starting a second engine that speaks too and is never shut
+                // down (review, 2026-10-01).
+                return "the text-to-speech engine is not ready";
+            }
+            final android.speech.tts.TextToSpeech[] engine = new android.speech.tts.TextToSpeech[1];
+            final boolean[] failedAtOnce = {false};
+            engine[0] = new android.speech.tts.TextToSpeech(this, status -> {
+                synchronized (KioskService.this) {
+                    // Where no engine exists Android calls this inside the constructor, before
+                    // engine[0] is set: noted, and handled after the constructor returns.
+                    if (engine[0] == null) {
+                        failedAtOnce[0] = true;
+                        return;
+                    }
+                    // An engine let go meanwhile is no longer this one.
+                    if (speechStarting != engine[0]) {
+                        return;
+                    }
+                    speechStarting = null;
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        speech = engine[0];
+                        speechReady = true;
+                        speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null,
+                                "muralis-say");
+                    } else {
+                        // Let go, so the next call asks the engine again rather than
+                        // answering "not ready" until the service restarts.
+                        Log.w(TAG, "No text-to-speech engine answered");
+                        engine[0].shutdown();
+                    }
+                }
+            });
+            if (failedAtOnce[0]) {
+                Log.w(TAG, "No text-to-speech engine on this device");
+                engine[0].shutdown();
+                return "this device has no text-to-speech engine";
+            }
+            speechStarting = engine[0];
+            final android.speech.tts.TextToSpeech asked = engine[0];
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                synchronized (KioskService.this) {
+                    if (speechStarting == asked) {
+                        Log.w(TAG, "The text-to-speech engine did not answer");
+                        asked.shutdown();
+                        speechStarting = null;
+                    }
+                }
+            }, SPEECH_START_MS);
+            return null;
+        }
+        if (!speechReady) {
+            return "the text-to-speech engine is not ready";
+        }
+        speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "muralis-say");
+        return null;
+    }
+
+    /** How long an engine has to answer before it is let go. */
+    private static final long SPEECH_START_MS = 10_000;
+
+    /** The engine asked for and not yet answered; see say. */
+    private android.speech.tts.TextToSpeech speechStarting;
+
+    /** Lets the speech engine go with the service: a connection to it leaked per restart. */
+    private synchronized void stopSpeech() {
+        if (speech != null) {
+            speech.shutdown();
+            speech = null;
+        }
+        if (speechStarting != null) {
+            speechStarting.shutdown();
+            speechStarting = null;
+        }
+        speechReady = false;
     }
 
     @Override

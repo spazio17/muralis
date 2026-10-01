@@ -368,6 +368,288 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
+- **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since the sensors, 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
+  lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
+  needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
+  the last 30 on the panel, which grows with them rather than scrolling inside the page. The panel
+  re-reads every three seconds on its own thread while the block is on screen, the web page every
+  five with the stats poll's refusals, and follows the end while the reader is at the end. Above
+  the block, on both surfaces, the row every log reader has (Home Assistant's log page, MatLog):
+  chips Muralis, E, W, All (Muralis, the app's own tags, by default, the way Android Studio's
+  Logcat opens on `package:mine`; `?level=` and `?own=1` on the endpoint, filtered before the
+  tail so errors reach back through an OEM's chatter), a count ("14 of 200"), a search box
+  (`?q=`), pause, copy to the clipboard, download as a file (web only), and clear, which hides
+  what was logged before the press. Lines are painted by level: errors in `bad`, warnings in
+  `warn`, info in `text`, the rest in `subtext`, the time and tag bold; the date and the pid are
+  dropped, the tag kept. Nothing is stored or sent; logd prunes the
+  buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
+  reshaped 2026-09-26 ("it looks poor"); the site's API page documents it with the sensors.
+- **Sensors: one flat list, and a tiny automation controller (2026-09-26, reshaped 2026-09-27
+  on three rounds of sketches in `../media/drafts/sensors/`).** `Sensors` lists every sensor this
+  app knows, alphabetical, the companion app's "Manage sensors" with no groups: every row is the
+  same shape and only its right edge says what kind it is. A switch for the ones a person turns
+  on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
+  beside the switch for the ones with a page of their own (on the panel every hardware sensor,
+  for the test while asleep, plus the camera, the microphone, Bluetooth beacons and NFC; on
+  the web only where the page says more than the row, since the calibration and the test are
+  the panel's); Allow while a permission is missing (camera, microphone, and for the beacons
+  location on every Android and the Bluetooth scan permission from 12, asked once from the
+  Sensors page on an ordinary install and granted silently on a device owner); every row has a switch, and the panel's own
+  values (display, screensaver, battery, power, network, processor, memory: their Home
+  Assistant entities predate this list and are not announced twice) start on where the rest
+  start off; greyed at the end for what this device lacks. Every row's reading is worded once, by the service
+  (`Sensors.describe`, the `reading` field of the `sensors` block), and both surfaces copy it.
+  The settings page's Sensors section lists only what is on, with "More sensor settings" to the
+  page, the Screensaver section's shape. The audio sensor reports playing or idle with the media
+  volume, never the ringer mode, and is the one that also receives: `audio.volume`, `audio.play`,
+  `audio.stop`, `audio.say`. **Automations** (`Automations`, pure) are "When a sensor says this,
+  then do that": one row per rule with a name and a sentence, a switch each (`automation_<id>`
+  switches in discovery, `automation.enabled` with `value=<id>`), an editor of When (the sensor,
+  its event, a level and minutes where the event has them, the tag for NFC), Then (Display on
+  or off, Show the dashboard, Start the screensaver, Play a sound, Say a sentence, Reload the
+  page: each a command the panel already had) and Only (a window of the day). `Automations.Engine`
+  is fed each sensor's reading once, from the sensor's own callback (movement on its edge, the
+  panel's own values on the two-second tick), fires a rule once when its condition becomes true
+  after its minutes, and arms it again when it ends; the tick (`Engine.tick`) only advances the
+  minutes, so a steady room still fires "darker for 10 min", and a reading fed twice from two
+  threads cannot fire a rule twice; the first reading after the rules load, or after a rule's
+  condition was edited, only seeds the state, so a rule made or changed while its condition
+  already holds does not fire on the spot. A rule's id is `Automations.ID_SHAPE` (lowercase
+  letters and digits, 24 at most), checked wherever a rule comes in, since the id is written
+  into page ids, links and discovery templates. The editor's stale-form baseline
+  (`Automations.baseline`) leaves the switch out, so a switch flipped beside an open editor
+  never blocks its Save. The event radios have no caption, a sensor with one event shows it as
+  a line of text, and a rule on a sensor this device lacks keeps that sensor in the menu, marked
+  "(not on this device)". The one rule that ships,
+  on, is "Wake by hand" (proximity near, then Display on); nothing else runs until a person makes
+  it. The rules are one JSON document in KioskConfig, published as the `automations` array. **The
+  camera is an IP camera** (`PanelCamera`, Camera2): an MJPEG stream at `/camera/stream` and a
+  snapshot at `/camera/snapshot.jpg` behind the admin password, a name (the device id until
+  changed), lens, size, frame rate, mirror, upside down, a watermark of name and time, and motion
+  detection on a coarse grid of the brightness plane with a sensitivity and a still time; over
+  MQTT only what Frigate and Blue Iris publish: the motion sensor, a motion-detection switch
+  and, only while "Picture to MQTT" (`camera_mqtt`) is on, a snapshot button and the last
+  picture on motion as raw JPEG on `<prefix>camera` for a camera entity, retained and cleared
+  when the switch or the camera goes off; `camera.snapshot` is refused while the switch is off,
+  since a picture of the room must not reach the broker unasked (review, 2026-10-01). The
+  stream serves at most two viewers and ends a frame's write after ten seconds. The service
+  starts with the special-use type alone and adds camera (and microphone) only while those
+  sensors are on and allowed: the two-argument `startForeground` asks for every manifest type
+  and crashed a fresh install on Android 14+. The notification says "Camera on" while the type
+  is held. On the panel the camera's Stream card is greyed with "Needs the local web admin"
+  while the admin is not listening, and Allow, once Android will not ask again, opens the app's
+  page in Android's settings and says so. **Beacons** (`Beacons`) are the companion app's Beacon Monitor:
+  iBeacons heard within the reach time, named on the page. **Listen only, never send** (Juri,
+  2026-10-01): a transmitter, never asked for, was removed with its permission. **The scan needs
+  the location permission on every Android** (Juri, 2026-10-01): Android counts a scan as
+  location use, and a scan declared "never for location" has every iBeacon hidden from it on 12
+  and later (the platform's denylist names the iBeacon frame; measured as "nothing heard" on the
+  Pixel). "While using the app" is enough, since the service holds the location foreground type
+  while the sensor is on, so no background-location permission is asked; no position is ever
+  read. The heard list keeps at most 100 beacons, the one heard longest ago going first, and
+  forgets one ten minutes after it went out of reach. Bluetooth or NFC switched off in Android
+  reads "Bluetooth is off in Android" / "NFC is off in Android" on the row, and a stopped scan
+  feeds the rules nothing rather than "out of reach". **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
+  the reading, a one-shot event for the automations and a Home Assistant tag event through
+  `homeassistant/tag/<id>/config`; the NFC page lists the tags read lately by id and when, and the automations' Tag menu offers them by id; a tag is named in Home Assistant, which gets each read as a tag scanned, the way the companion app hands one over (Juri, 2026-09-30: names on the panel meant nothing to someone who never used NFC, and one could not be deleted); a tag is reported as Home Assistant's app reports it, always: a tag written by Home Assistant by the id in its address, https://www.home-assistant.io/tag/<id>, any other tag by its chip's id (where the app refuses it), and its text and addresses ride in the attributes and on the row (Juri, 2026-09-30: a choice of what to read went, since doing what Home Assistant does covers it) (reader mode for all four tag
+  types, so a password-protected tag reads like any other;
+  verified on the Pixel with a LEGO Dimensions figure, 2026-09-30, once the phone's NFC spot
+  was found: a tag reads only on the coil, a centimetre or two). **Beacons verified** the same
+  day on the Huawei tablet and phone against the Pixel's Home Assistant transmitter; the
+  Lenovo's Lineage build hears none. **The microphone** is a sound
+  level, 0 to 100, nothing recorded. **This panel** is the section that holds the panel's name
+  (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
+  Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
+  Open dashboard, outlined, on an ordinary install; the readings are on the
+  settings page alone, every sub-page's app bar empty at the right, and the arrow of a page
+  below Sensors or Automations leads one level up, not to the settings (Juri, 2026-09-27). That page's top row
+  is the same on every width and on both surfaces (Juri, 2026-10-01): Muralis with the id under
+  it at 16 sp (Title medium) on the left, the readings at 14 sp on the right, centred on one
+  line; a long id wraps under Muralis.
+  **Kept alive by the service's two-second tick** (review of 2026-09-27): `refreshSensors()`
+  runs on every tick, a no-op while the state matches, so a camera the platform took, a scan
+  that failed or beacons switched on before the radio was recover on their own (the camera
+  waits 15 s after a failure and reopens after 20 s without a frame); the sensor block and the
+  rules are published to `KioskRuntimeState` on the tick with or without MQTT, so the panel's
+  rows never depend on a broker or an open browser; discovery goes again when the set of
+  active sensors, the camera or the rules change (`MqttController.sensorsKey`), the retained
+  picture is cleared when the camera or its MQTT pictures go off, and an automation's switch
+  has its unique id from the rule's id, not its name. `Sensors.checkOption`/`checkBeaconName`
+  is the one rule book for a sensor's settings and beacon names, applied by both surfaces;
+  every sensor has a switch, the panel's own values (display, screensaver, battery, power,
+  network, memory, processor) starting on since they were always reported before, the rest off
+  (Juri, 2026-09-27); the web admin shows neither the calibration nor the test while asleep,
+  both need a hand at the glass and stay the panel's; the Display section's "Display off turns
+  the screen off ..." sentence went from both surfaces, the note shows only as the red warning
+  that a sleep ended badly; the proximity's events read Near and Far, Android's own words, the same as the row (Juri, 2026-09-30; Home Assistant has no binary class for a proximity sensor); **the service takes
+  the camera and microphone foreground types while those sensors are on**
+  (`KioskService.refreshForegroundTypes`, manifest `specialUse|camera|microphone` with the two
+  FOREGROUND_SERVICE_* permissions): from Android 11 a stopped activity may use either only
+  through a foreground service of that type, and the Pixel (Android 17) refused the camera
+  with "disabled by policy" the moment its screen went dark (2026-09-27). Android refuses the
+  types to an app in the background, so the activity asks again on every resume; the Play
+  console's foreground-service declaration must name the two types before the next upload;
+  every writer of the rules JSON, the service, the three web handlers, the panel's switch, Save and
+  Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
+  beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
+  stand-in in the test tree) covers the storage round trip, the rule book, the window and the
+  engine's seed-then-arm, hold-for-minutes, reset and tag events; the dispatcher test covers
+  every sensor and audio command. The readings on the panel's
+  sensor pages follow the one-second tick; on rotation a box that stores on blur stores before
+  the page is rebuilt (`redrawInPlace` clears the focus first). **Three width classes for the
+  Sensors and Automations pages, both surfaces** (Juri, 2026-09-27, the tablet in landscape
+  was one column too wide): compact, under 600 dp, one column as the phone has it; medium, 600
+  to 839 dp, the same column no wider than 640 dp and centred (`paneOf`, the web's `.ld`
+  max-width), for a tablet in portrait and the small tablets; expanded, from 840 dp, list-detail
+  like the settings page: the list at the left (`navPanel`, the web's `section.card.nav`), the
+  chosen sensor's cards or the chosen rule's editor at the right, the text chooses and the
+  switch stays on the row, no chevron, the chosen row a pill (`markChosen`, `li.on`), and Add
+  under the rules opens a blank editor at the right. The cards of a sensor's page and the editor
+  are built once for both shapes (`sensorCards`, `automationEditor`; web `sensorCards`,
+  `automationEditor`), the web page holds list and detail in one `.ld[data-page]` and the
+  stylesheet shows one or both, `admin_listdetail.js` points the rows at `/sensors?id=` and
+  `/automations?id=` on a wide screen, and the detail's own row has `-page` ids so the stats
+  poll follows both. A save lands on `/automations?id=<the rule>`. **Proximity is
+  calibrated by the person, never guessed** (Juri, 2026-09-27, the Huawei MediaPad's driver
+  keeps Android's distance at the range and moves undocumented slots instead; "no guesses and
+  no hardcoding. If some sensors need calibration ... the user can be warned to calibrate the
+  sensor and a procedure inside chooses how to handle it"): Android's rule (distance under the
+  range is near) applies until the Proximity page's Calibrate runs, two steps, the sensor
+  covered then clear (`proximity.calibrate` with covered, clear or reset; the panel's two
+  confirm screens; the web has no calibration). `Sensors.Calibration.derive` picks the event value
+  that moved the most between the two, relative to its size, the line halfway and near on the
+  covered side, and refuses when nothing moved by a fifth; stored as `proximity_slot`,
+  `proximity_threshold`, `proximity_near_high`, read on the tick. An on-change sensor sends
+  nothing while a hand holds still, so a step reads the last event when nothing arrived in the
+  last four seconds. The row says Calibrated or Not calibrated on the panel. **Whether a
+  sensor reports while the panel sleeps is measured, never assumed** (2026-09-27: the Huawei
+  MediaPad delivers no proximity, light or accelerometer event to an app while asleep, drops
+  the registrations, and turns its Wi-Fi off after a few minutes; the phone reports; on
+  2026-09-28 its light sensor was seen sending events while asleep after all, with an unchanged
+  value, so only the test says): every
+  hardware sensor's page has a "While the display is off" card with "Test"
+  (`sensor.sleep_test`, the panel sleeps 20 s by `displayVisualOff`, then notes whether
+  `Sensors.lastEventAt` moved and wakes itself; refused where Display off is the film, since the
+  film keeps sensors awake; every hardware sensor has a page for the card, so it is reachable
+  on a phone too). The verdict, `sensor_option_<id>_asleep` reports or silent, rides
+  in the block as `asleep`, and the sensor's page says it with a glyph and one word, nothing
+  more (Juri: "It works / It doesn't work"): Running, Not running or Not tested, Home
+  Assistant's words for a binary sensor of the running class ("Disabled" read like a switch
+  somebody set, Juri, 2026-09-28), with Material's sensors glyph, the same with a slash, and a
+  question in a circle (`ic_asleep_*`). A panel whose Display off is the film never sleeps, so
+  the card says Running and nothing more, with no test: "The film keeps the display awake" under
+  it told a person nothing to act on, and "sleeps" is Android's word, not the person's (Juri,
+  2026-10-01). **Where it matters, the rules say it too**
+  (`KioskService.stopsWhileAsleep`: the test found the sensor not running and Display off
+  sleeps rather than showing the film): the sentence of a rule on such a sensor starts with the
+  slashed glyph in the warning colour on every list of rules, both surfaces, and the editor
+  says "Not running while the display is off" under the sensor, with "The black film keeps it
+  running"; "Wake by hand" on the MediaPad failed without a word before. **No text names where
+  a sensor sits**: Android does not say, every model differs, and the MediaPad's light sensor is
+  nowhere near its camera; the person finds it (Juri, 2026-09-28). Test and Calibrate are greyed out while their
+  sensor is switched off and come back the moment it is switched on (`sensorActions`), and the
+  confirm screen says what to do to that sensor, five seconds into the dark (`asleepAction`:
+  "Use the sensor" told nobody what to do with a light sensor). The test
+  ends without a verdict when the screen comes on before its 20 s (a hand, a command), counts
+  only a real sleep (the film is refused), registers the sensor again three seconds in, takes
+  the reading 1.5 s later as the one to beat, and counts a sensor as reporting only when an
+  event arrived after that whose reading, the first value Android defines or the calibrated
+  one, differs from it (`Sensors.readingMovedSince`; a light sensor answers a registration
+  with a fresh sample a lux or two off, which read Active with nobody touching it, 2026-09-28;
+  the log line gives both readings and when they came): the MediaPad answers a registration with the reading it
+  already had, with a different raw count in an undefined slot, and reports no change while
+  asleep, so a repeated reading proves nothing, and an on-change sensor needs the hand the
+  screen asks for. `applyOrientation` catches Android 8.0's "Only fullscreen activities can
+  request orientation", thrown while the keyboard is up over a resized page, and applies the
+  request on the next resume; it killed the process on the MediaPad (2026-09-27). Which Display off method to use stays the person's choice. **The settings
+  page's Sensors and Automations sections carry the switches** (Juri, 2026-09-27): a row
+  switched off leaves the section (panel: a redraw; web: the poll removes it, `#sensors-home`,
+  `#automations-home`) and is switched on again on the More page. **The wide web pages switch
+  panes in place**: every sensor's cards and one editor per rule plus a blank one stand on the
+  page (`.pane[data-id]`, editor ids suffixed `-<rule id>` or `-new`, `admin_automation.js`
+  binds per form; Save is the form's first submit button so Enter saves, Delete asks first and
+  comes last in the DOM, ordered by the stylesheet; every editor carries the stored rule's JSON
+  as its baseline, a stale page is refused like the settings boxes, and a rule deleted elsewhere
+  is not brought back), `admin_listdetail.js` shows the chosen pane and rewrites the address (the
+  shell says whether it is the sensors' or the automations' page), no page
+  load, the settings menu's own speed; rows that lead somewhere and the list beside a detail
+  highlight under the mouse like the settings menu's rows, and the panel's rows carry the same
+  ripple. On the two-column pages the grid's gap is the only spacing between cards.
+- **A list follows a change made on another surface (2026-09-28, Juri: "the sort of things a
+  review process should find").** A rule added, renamed or deleted on the web stayed off the
+  panel's Automations page until it was reopened, and the other way round. `Sensors.listKeys`
+  hashes what each list is drawn from: the settings page's two sections (sensors on, rules on),
+  the Sensors page (every sensor, available and permitted) and the Automations page (every rule
+  by name, sensor and sentence; switches follow on their own). The panel compares on its
+  one-second tick (`watchLists`, `checkLists`) and draws the page again, never while a box has
+  the focus; the wide Automations page keeps what its editor holds when it was edited and
+  takes the stored rule when it was not; rule switches follow what is stored
+  (`automationSwitches`). The web page carries the key on each list (`data-lists-kind`,
+  `data-lists`; the rules drawn from storage, like the key), `/api/stats` carries the current
+  ones under `lists`, and `admin_stats.js` fetches the page and swaps the stale list in place,
+  never while something in it is focused or edited; switches apply through a listener on the
+  document (`admin_setting.js`) and swapped editors are bound again
+  (`window.muralisBindEditors`). Measured on the tablet: a sensor switched remotely reaches the
+  settings section about 1.5 s after the command lands, a web edit reaches the panel's pages
+  within its one-second tick after the save.
+- **Automations and sensor settings are ready for the fleet of 0.7** (Juri, 2026-09-30: "prepare
+  automations and sensors now so that when we start with 0.7 we don't have to modify either
+  again"). Every rule carries `changed_at` and a 12-character random id, so rules made on two
+  panels never share one; a deleted rule leaves a marker (`automations_deleted`, the newest 100),
+  and every write goes through `KioskConfig.storeAutomations`, which stamps both, so nothing
+  writes the list any other way. Every sensor switch and setting keeps its change time
+  (`changed_sensor_*`). `SensorSettings` says which settings a fleet may share and which belong to
+  one panel's hardware (the camera's name, lens, size, orientation, mirror and flip,
+  calibrations, sleep tests, tags read); beacon names are a `NamedList` document with
+  change times and deletion markers (moved from `sensor_option_beacon_*` at the next naming). The
+  three documents are served and taken at `/api/automations`, `/api/sensors/settings` and
+  `/api/beacons/names` in the shape GET gives, with a 160 KB body budget of their own, checked in
+  full before anything is written (a rule's id must be `Automations.ID_SHAPE`); the
+  panel writes the times itself and ignores a post's copies, a key of this panel alone and a
+  `beacon_` key under `shared` are refused, the switches document lists every sensor's switch as
+  it stands (the panel's own values on with nothing stored), and a tag read is never stamped with
+  a change time. The site's API page documents them.
+- **A single choice among more than five items is a menu, five or fewer stay radios** (Juri,
+  2026-09-28, from Google's radio-button guidance, "If available options can be collapsed,
+  consider using a dropdown menu because it uses less space", and Nielsen Norman Group's
+  radios for five or fewer, a dropdown for five to fifteen). The panel's `MenuField` is
+  Material's exposed dropdown menu: the outlined field showing the chosen item with a chevron,
+  a menu anchored to it on a tap, opened on the chosen item; the automation editor's Sensor,
+  Action and Tag use it, as the web page's selects do. **The camera picture has an
+  orientation** (`camera_orientation`: `device`, `portrait`, `landscape`, Juri 2026-09-28):
+  turned upright for the display's rotation by Android's JPEG_ORIENTATION rule, then, for
+  portrait or landscape, the middle of the picture in that shape when the panel is the other
+  way (the sensor is fixed, so a tall picture from a wide panel is a crop); mirror and upside
+  down apply to the upright picture.
+- **Lists, the microphone and changes of state (Juri, 2026-09-28).** A list of rows on the
+  panel is the web's `ul.list`: the rows touch with a 1 dp divider between (`addListRow`, the
+  settings page's Sensors and Automations sections and the narrow Sensors and Automations
+  pages), a row is 56 dp with a name alone and 72 dp with a second line (`glyphRow`, Material's
+  list item heights, the web's `li` and `li.two`), and a button under a card's row sits 8 dp
+  below it (`tightParams`); the wide pages' lists keep the settings menu's pills. The proximity
+  glyph is Material's sensor_occupied, on both surfaces. **The microphone hears through the
+  voice-recognition source** at 44.1 kHz: CDD 5.4.2 makes every device capture it with noise
+  reduction and automatic gain control off, and the plain source's gain control lifted an empty
+  room to about 30 of 100. The rules get each half second as it is, so a knock reaches "louder
+  than" at once; the reading on the rows and in the state document is smoothed over about five
+  seconds and moves by 3 dB steps, so it does not flicker and a broker is not sent a new number
+  every breath. The 0 to 100 spans 16-bit audio's whole range until the person calibrates it on
+  the Microphone page (now a page of its own), the proximity's procedure: the room quiet, then
+  the loudest sound that should read 100, each the last three seconds averaged as power,
+  refused under 10 dB apart (`microphone.calibrate` quiet, loud or reset; `microphone_quiet_db`,
+  `microphone_loud_db`); `calibrated` rides in its block. **A change of state reaches everyone
+  at once** (`Sensors.onEdge`, `KioskService.sensorEdge`): proximity near or not, movement
+  started or ended publish the block, repaint the panel's readings and send the state document
+  within 100 ms, where they waited up to three seconds on the panel and a telemetry interval on
+  MQTT; readings that move all the time (light, pressure) repaint the panel's rows within a
+  quarter of a second while a settings screen is up (`Sensors.onReading`,
+  `KioskService.sensorReading`: finding where a panel keeps its light sensor was a guess
+  against a reading three seconds late) and stay on the periodic publish for MQTT, as sound
+  does.
+  The rules were never late, they are fed on the event. Android gives an app no setting of a
+  sensor beyond the sampling rate and batching (proximity is on-change, so neither applies);
+  thresholds and gain live in the driver, so what Muralis can offer is a calibration the person
+  runs.
 - **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
   stock, unprivileged install; a denied path latches off after repeated failures rather than
   retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
@@ -526,8 +808,8 @@ the playlist page was the case that set the rule.
   before the dashboard took the screen, which is exactly where a misconfiguration must not be
   reported. Any new input whose validity is a runtime fact should get a probe here rather than a
   bespoke checker.
-- **Legal documents and app/device facts are shown in-app, not linked externally.** The About
-  screen (tablet) and a matching page (web admin) render the bundled privacy policy and terms
+- **Legal documents and app/device facts are shown in-app, not linked externally.** This panel
+  (tablet) and a matching section (web admin) render the bundled privacy policy and terms
   directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately
   requires the same text at a public URL, which is a listing concern rather than an app one. Each
   surface also states where the public copy lives (plain text on the tablet, a link on the web
@@ -755,7 +1037,14 @@ the playlist page was the case that set the rule.
   and crowd out the name they belong to. And a pair of short labels stays side by side on a phone
   (`pairedButtonRow`, Select all/Select none and Cancel/Save), where `buttonRow` would stack them;
   above 600 dp it defers to `buttonRow`, because stretching two buttons across a 1200 px card is the
-  bar-shaped button that rule exists to prevent. On a phone the Selected rows put the path on its
+  bar-shaped button that rule exists to prevent. **An editor that can also delete puts its three
+  buttons on one row** (`editorButtonRow`, the web `.actions.editor`, 2026-09-28): Delete at the
+  start, apart from the pair it must not be taken for, Cancel then Save at the end, the confirming
+  action last, Material's placement; on the web Save stays first in the DOM so Enter saves. **The
+  first card of a `cardGrid` lane carries no top margin**: the grid is placed with its own 16 dp,
+  and two margins stacked was the gap over the first panels of the Screensaver, Escape sequences
+  and About pages (Juri, 2026-09-28). The Escape sequences page carries no paragraph explaining
+  what a combination is; its cards say it. On a phone the Selected rows put the path on its
   own line above its two buttons, since side by side it was ellipsized to `./Pictures.../pd_1.jpg`
   for two different pictures in different folders.
 - **The migration off document URIs is deliberately unable to lose a selection.** It matches each
@@ -790,9 +1079,7 @@ the playlist page was the case that set the rule.
   table went with it: nobody renames a playlist often enough to spend a column on it. Unlike the
   panel the page applies as it goes rather than collecting a draft behind a Save, because every
   other control in this admin already works that way and a draft would need the whole selection
-  carried in the browser. The three panels are placed by hand rather than left to flow: the options
-  panel is much the tallest, so in document order the playlist list landed in a row that began below
-  it and left a hand's width of nothing under the mode chooser. **A folder is a link**, not a
+  carried in the browser. **A folder is a link**, not a
   form button, with a real `/playlist?id=<id>&at=<path>` address, so a folder can be reloaded,
   bookmarked or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
   folder. That is also what fixed a stale-address 404: a folder used to be a POST to
@@ -909,8 +1196,8 @@ the playlist page was the case that set the rule.
   below 840 dp an accordion no wider than 720 dp with one section open and remembered
   (`admin_menu.js` on the web, UI preference `open_section` on the panel), from 840 dp Material's
   list-detail, the list half the open section with Material's 24 dp gutter between them, so no
-  panel spans a landscape tablet; Quick actions (web only) and About are the last two sections,
-  About holding the legal pages and the version, which links to the repository on the web. The
+  panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
+  This panel holding the legal pages and the version, which links to the repository on the web. The
   summaries carry stored values and nothing the page already says, because the list is a third of
   the column. **Open dashboard is a menu of one entry** under the panel's menu, in the main
   colour, a card's gap below the list, and under the list in the two-column layout. It is the
@@ -922,14 +1209,16 @@ the playlist page was the case that set the rule.
   (`addBesideBox` on the panel, `.beside` on the web). The certificate's SHA-256
   fingerprint and the system stats readout are code blocks on both surfaces, on the lowest
   surface: white on a light theme, near-black on a dark one (`KioskTheme.lowest`, `--lowest`).
-  The privacy policy and the terms are rows of the About section and nowhere else: the panel's
+  The privacy policy and the terms are rows of This panel and nowhere else: the panel's
   Version and device details page carried them a second time until 2026-09-23, and a legal page's
   back arrow returns to the settings. **Back is the arrow in the app
-  bar, once**; the "← Back" buttons at head and foot went. The theme control: the web's is the
-  app bar's (segmented on a wide page, one cycling icon button on a narrow one), because that bar
-  is on every page of it; **the panel's sun and moon is at the right of the Display section's
-  name** (Juri, 2026-09-23), which is the accordion's row or the open card's title, and it is the
-  only section that carries a control beside its name (`Section.action`). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
+  bar, once**; the "← Back" buttons at head and foot went. The theme control is a sun or a moon in
+  the Display section on both surfaces: **the panel's at the right of the section's name**
+  (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
+  that carries a control beside its name (`Section.action`); the web's beside the section's
+  name too, in the accordion's row and, from 840 px, in the open card's top corner, cycling
+  automatic, light and dark, the glyph following the theme in force. The web's app bar carried an Auto/Light/Dark picker until 2026-09-27
+  (Juri: it did not fit there). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
   folders under it opens and closes that branch and leaves the pictures alone, the head's one
   icon button opens or closes every branch, a tap on a folder opens it and its branch and a second tap closes the branch, and the tree
   starts on the top of the volume and the way down to the open folder (`PlaylistPage.expanded`
@@ -975,11 +1264,14 @@ the playlist page was the case that set the rule.
   45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
   cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
   160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
+- **Every delete asks in the same words** (Juri, 2026-10-01): title `Delete "name"?`, text `"name" will be deleted.` followed by what else changes, button Delete (`confirmDelete` on the panel; the web's `confirm()` carries the title and the text). Only things made in Muralis are deleted (playlists, uploaded pictures, automations); settings have no Delete. Fleet words appear only where the fleet is on: a thing the fleet owns is deleted only from the fleet's control panel, and there the text adds "Changes will be synced across all devices.", which they then are.
 - **A button's colour says what it does, on both surfaces.** Juri's rule, 2026-09-11: the main
   colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
   playlist" as the mark that something is enabled); a plain outline is a visible action that saves
   nothing (Open once, Reboot, Reload, Display on and off, Preview, Back); **red deletes
-  something** (Delete a picture, Delete a playlist, and the confirm screen's own button); **green
+  something**: outlined red for a Delete that asks first (an editor's row, `dangerOutlinedButton`,
+  the web's `button.danger`) and filled red for the confirm screen's own Delete alone
+  (`dangerButton`; Juri, 2026-10-01); **green
   adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
   where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better"). **A quick action the panel refuses says so on the page** (2026-09-24): `admin_command.js`
   puts the playlist page's red banner under the pressed button's row, for example "Not done:
@@ -994,39 +1286,43 @@ the playlist page was the case that set the rule.
   across the pictures and screensaver surfaces; everything else it names already followed it.
   Buttons on the web page also take the page's own font, not the browser's button font, which is
   what left the Browse label three pixels taller than the Upload button beside it.
-- **The screensaver page is three panels, on both surfaces, named after what is chosen.**
-  Juri's structure, 2026-09-11: **"Screensaver mode"** holds the mode chooser and nothing else;
-  the second panel is named after the mode (`Dimmed page options`, `Black film option` singular,
-  `Web page options`, `Pictures options`) and holds everything that mode uses, in the order idle,
-  display-off, the mode's own field, the wake choice, then the sentence it all adds up to, then
-  Preview; and **"Playlist"** appears only for the Pictures mode with this panel as the source.
-  **Off has no second panel at all**, his decision and his words: "it is Off so there is no
-  settings for it in any case". The times keep applying the moment a mode is picked. On the web
-  the legend is rewritten from the chooser's own option text (`admin_setting.js`), so a mode
-  changed without a reload renames its panel and the two surfaces cannot drift over a word. The
-  mode is **five radios on both surfaces** (2026-09-11): it is the only chooser on the page whose
-  value changes what else is on the page, so it is worth seeing at once. The settings page's own
-  Screensaver card keeps a menu, because it is one card among a dozen and every other chooser
-  there is a menu; `admin_setting.js` and `admin_stats.js` read and follow both shapes. Web radios
-  are drawn rather than given `accent-color`: Chrome derives an unchecked radio's ring from it and
-  against this purple on a dark scheme the ring came out khaki. **A mode with no wake choice shows
-  none**, rather than a disabled one with a note explaining it: the black film has nothing to look
-  at on waking, and a control that can never be enabled is clutter. This
-  also fixed a real bug he found: with any mode but Pictures the second web panel was still headed
-  "Pictures" and was **empty**, because it held the picture fields alone while the web page's
-  address and the dimmed brightness sat in the first panel.
+- **The screensaver page is two panels, on both surfaces, in the Sensors page's shape.** The
+  mode is chosen in the settings page's Screensaver section alone, radios on the panel and a menu
+  on the web; the page stopped repeating the chooser on 2026-09-28 (Juri: "when the user changes
+  the screensaver mode from the previous page, this is enough"). The page holds **"Playlist"**,
+  at the left from 840 dp/px like a sensors list, and the options panel at the right, one to two
+  (`listDetailPair` on the panel, `.ld` on the web); below that width one under the other,
+  Playlist first. A mode without playlists leaves the options the page's only panel, and it
+  moves to the middle at the legal pages' width (`afterPlaylist` relays it, the web toggles
+  `.ld.one`), live when the mode changes under an open page. The options panel is named after the mode (`ScreensaverPolicy.optionsTitle`,
+  `Dimmed page options`, `Web page options`, `Pictures options`) and holds everything that mode
+  uses, in the order idle, display-off, the mode's own field, the wake choice, then the sentence
+  it all adds up to, then Preview; Playlist appears only for the Pictures mode with this panel as
+  the source. **Off has no options panel at all**, Juri's decision of 2026-09-11 ("it is Off so
+  there is no settings for it in any case"), and so **Off hides "More screensaver settings"** in
+  the section on both surfaces (`moreRow`, `#screensaver-more`): the page would be empty. The
+  times keep applying the moment a mode is picked. A mode changed elsewhere renames the panel
+  live: the panel's `sync` repaints the title, and the web page's shell (`#screensaver-page`)
+  carries `data-mode`, kept current by `admin_stats.js`, and `data-titles`, every mode's title
+  rendered once by the server, so `admin_setting.js` never holds a second copy of a word. **A
+  mode with no wake choice shows none**, rather than a disabled one with a note explaining it:
+  the black film has nothing to look at on waking, and a control that can never be enabled is
+  clutter.
 - **The web browser has the panel's "nothing opened yet" state.** It used to open the top of the
   volume on arrival, so it had no way to say "pick a folder"; the top of the volume is a folder
   like any other and is now reached by tapping it. Absent and empty are different answers for the
   `at` parameter, which is why `browseTarget` returns null rather than "" when it is missing.
-- **The screensaver page does not use the settings page's multicol.** `.saver` is an explicit grid
-  of `auto-fill` columns with a 30 rem floor and a 72 rem cap, so the page is two equal columns at
-  any desktop size and one on a phone, and the Playlist panel spans the pair rather than the
-  window. Multicol balances by height, and with two boxes in four columns it put one at the far
-  left and one at the far right with a hand's width of nothing between them, and moved the right
-  one every time a scrollbar changed the width by a pixel (Juri, 2026-09-11, with a screenshot).
-  The playlist table is sized to its content rather than stretched, for the same reason: at full
-  width the Rename cell took every spare pixel and pushed Delete to the far edge of the card.
+- **A page's only panel sits in the middle at the legal pages' width**, never at one side of a
+  grid with an empty column beside it (Juri, 2026-09-28): 640 dp centred from 720 dp on the panel
+  (`singlePanelWidth`, `singlePanelParams`), `max-width:640px` centred on the web (`.one`). The
+  privacy and terms pages, every confirm screen (`showConfirm`, its buttons in the same column) and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
+- **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid the
+  Sensors and Automations pages use, explicit columns placed by hand. Multicol balances by
+  height, and with two boxes in four columns it put one at the far left and one at the far right
+  with a hand's width of nothing between them, and moved the right one every time a scrollbar
+  changed the width by a pixel (Juri, 2026-09-11, with a screenshot). The playlist table is
+  sized to its content rather than stretched, for the same reason: at full width the Rename cell
+  took every spare pixel and pushed Delete to the far edge of the card.
 - **Two things the screensaver page deliberately does not have.** There is no "Back to the page"
   button beside "Preview": it ends a showing screensaver, which is what Display on already does
   to a lit panel, and on a dark panel it ends one without lighting the panel, which nobody presses a
@@ -1148,6 +1444,19 @@ the playlist page was the case that set the rule.
   `WindowInsetsController`-family APIs arrived at 28/30; `scripts/test-host.sh` fails the build if
   such a call appears with no `SDK_INT` check nearby, specifically so this can't be forgotten
   silently.
+- **Three window worlds, and the phone that shows the third is Juri's Pixel, installed from Play.**
+  A device-owner panel is `FLAG_FULLSCREEN` with both bars hidden; an ordinary install below
+  Android 15 shows its bars and its window starts below them; from Android 15 an ordinary install
+  is laid out edge to edge, the bars are transparent over the page and `setDecorFitsSystemWindows`
+  is ignored, so nothing but the app's own padding keeps a page out from under the clock. Every
+  page of the app's own sits in `KioskActivity.PageScroll`, which turns the system-bar and cutout
+  insets (API 30 and up) into its padding and folds the keyboard's measured inset into the same
+  bottom, and `applyBarIconContrast` darkens the bar icons over a light-themed page from Android
+  15 only (below it the theme paints the bars black). Found 2026-09-25 on the Pixel 9 Pro XL
+  (Android 17), whose Muralis is the Play build, so a fix there is seen at the next Play upload,
+  never by installing a debug build over it. The two Huawei devices (Android 8 and 9) and the
+  Lenovo (10) cannot show any of this; a change to insets, immersive flags or the keyboard is not
+  done until it has been reasoned through for that third world.
 - **No privileged permissions are available at all.** `DEVICE_POWER`, `REBOOT`, `STATUS_BAR`,
   `WRITE_SECURE_SETTINGS` are all unobtainable outside a signature/platform build. Device-owner
   status (via `dpm set-device-owner` over adb, or QR provisioning during setup) is the ceiling of

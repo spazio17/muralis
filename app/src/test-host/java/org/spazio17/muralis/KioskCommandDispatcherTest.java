@@ -26,6 +26,7 @@ public final class KioskCommandDispatcherTest {
         testTelemetryPublishTellsTheTruth();
         testEnabledFlagParsing();
         testScreensaverCommands();
+        testSensorCommands();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
                 "display.brightness", new KioskCommandDispatcher.CommandArgs(150, null), executor);
@@ -371,6 +372,89 @@ public final class KioskCommandDispatcherTest {
                 "the refusal must name the allowed characters");
     }
 
+    /** The sensors' commands: the arguments each needs, and a refusal that reaches the reply. */
+    private static void testSensorCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        KioskCommandDispatcher.Result r;
+        r = KioskCommandDispatcher.dispatch("sensor.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "light"), executor);
+        require(r.status.equals("rejected"), "sensor.enabled without enabled accepted");
+        r = KioskCommandDispatcher.dispatch("sensor.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, true, null), executor);
+        require(r.status.equals("rejected"), "sensor.enabled without a sensor accepted");
+        r = KioskCommandDispatcher.dispatch("sensor.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, true, "light"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setSensorEnabled:light:true"),
+                "sensor.enabled did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("automation.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "wake"), executor);
+        require(r.status.equals("rejected"), "automation.enabled without enabled accepted");
+        r = KioskCommandDispatcher.dispatch("automation.enabled",
+                new KioskCommandDispatcher.CommandArgs(-1, null, false, "wake"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setAutomationEnabled:wake:false"),
+                "automation.enabled did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("camera.motion",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("rejected"), "camera.motion without enabled accepted");
+        r = KioskCommandDispatcher.dispatch("camera.motion",
+                new KioskCommandDispatcher.CommandArgs(-1, null, true), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setCameraMotion:true"),
+                "camera.motion did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("camera.snapshot",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("cameraSnapshot"),
+                "camera.snapshot did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("proximity.calibrate",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
+                "proximity.calibrate did not carry its step");
+        r = KioskCommandDispatcher.dispatch("microphone.calibrate",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "quiet"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("calibrateMicrophone:quiet"),
+                "microphone.calibrate did not carry its step");
+        r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "proximity"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("sleepTest:proximity"),
+                "sensor.sleep_test did not carry its sensor");
+        r = KioskCommandDispatcher.dispatch("audio.volume",
+                new KioskCommandDispatcher.CommandArgs(101, null), executor);
+        require(r.status.equals("rejected") && !executor.calls.contains("setMediaVolume:101"),
+                "audio.volume over 100 accepted");
+        r = KioskCommandDispatcher.dispatch("audio.volume",
+                new KioskCommandDispatcher.CommandArgs(30, null), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setMediaVolume:30"),
+                "audio.volume did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("audio.play",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("rejected"), "audio.play without a url accepted");
+        r = KioskCommandDispatcher.dispatch("audio.play",
+                new KioskCommandDispatcher.CommandArgs(-1, "https://example.net/a.mp3"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("playAudio:https://example.net/a.mp3"),
+                "audio.play did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("audio.stop",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("playAudio:null"),
+                "audio.stop did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("audio.say",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "  "), executor);
+        require(r.status.equals("rejected"), "audio.say with nothing to say accepted");
+        r = KioskCommandDispatcher.dispatch("audio.say",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, " Hello "), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("say:Hello"),
+                "audio.say did not carry its sentence trimmed");
+        // A refusal from the executor reaches the reply as the reason.
+        RecordingExecutor refusing = new RecordingExecutor() {
+            @Override
+            public String sleepTest(String sensorId) {
+                return "the panel did not sleep";
+            }
+        };
+        r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "light"), refusing);
+        require(r.status.equals("rejected") && r.detail.equals("the panel did not sleep"),
+                "the executor's refusal did not reach the reply");
+    }
+
     private static void require(boolean condition, String message) {
         if (!condition) {
             throw new AssertionError(message);
@@ -566,7 +650,7 @@ public final class KioskCommandDispatcherTest {
                 "an unknown playlist must be refused with the names that exist: " + refused.detail);
     }
 
-    private static final class RecordingExecutor implements KioskCommandDispatcher.Executor {
+    private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
         final List<String> calls = new ArrayList<>();
         int lastBrightness = -1;
         String lastUrl;
@@ -711,6 +795,61 @@ public final class KioskCommandDispatcherTest {
         String telemetryProblem = null;
 
         @Override
+        public String setSensorEnabled(String id, boolean enabled) {
+            calls.add("setSensorEnabled:" + id + ":" + enabled);
+            return null;
+        }
+
+        public void setMediaVolume(int percent) {
+            calls.add("setMediaVolume:" + percent);
+        }
+
+        public String playAudio(String url) {
+            calls.add("playAudio:" + url);
+            return null;
+        }
+
+        public String setAutomationEnabled(String id, boolean enabled) {
+            calls.add("setAutomationEnabled:" + id + ":" + enabled);
+            return null;
+        }
+
+        @Override
+        public String setCameraMotion(boolean enabled) {
+            calls.add("setCameraMotion:" + enabled);
+            return null;
+        }
+
+        @Override
+        public String cameraSnapshot() {
+            calls.add("cameraSnapshot");
+            return null;
+        }
+
+        @Override
+        public String calibrateMicrophone(String step) {
+            calls.add("calibrateMicrophone:" + step);
+            return null;
+        }
+
+        @Override
+        public String calibrateProximity(String step) {
+            calls.add("calibrateProximity:" + step);
+            return null;
+        }
+
+        @Override
+        public String sleepTest(String sensorId) {
+            calls.add("sleepTest:" + sensorId);
+            return null;
+        }
+
+        @Override
+        public String say(String text) {
+            calls.add("say:" + text);
+            return null;
+        }
+
         public String publishTelemetry() {
             calls.add("publishTelemetry");
             return telemetryProblem;

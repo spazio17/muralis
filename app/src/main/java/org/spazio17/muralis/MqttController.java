@@ -272,12 +272,88 @@ final class MqttController implements MqttCallbackExtended {
         String names = PictureLibrary.get(appContext).playlists().namesKey();
         if (names != null && !names.equals(announcedPlaylists)) {
             publishDiscovery();
+        } else if (!sensorsKey().equals(announcedSensors)) {
+            // Same rule for the sensors, the camera and the automations: a sensor switched on
+            // has its entity at once, one switched off loses it, and a rule added, renamed or
+            // deleted is announced or withdrawn before the state that mentions it.
+            publishDiscovery();
         }
         publish(topicPrefix + "state", state.toString(), 0, true);
     }
 
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
     private volatile String announcedPlaylists = null;
+
+    /** The sensors, camera and automations discovery last announced; see {@link #sensorsKey}. */
+    private volatile String announcedSensors = null;
+
+    /** What discovery would announce right now for the sensors and the rules, as one string. */
+    private static String sensorsKey() {
+        StringBuilder key = new StringBuilder();
+        org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
+            if (one != null && one.optBoolean("active")) {
+                key.append(def.id).append(',');
+            }
+        }
+        // The snapshot button comes and goes with the camera's pictures-to-MQTT switch.
+        org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
+        org.json.JSONObject cameraAttributes = cameraState == null ? null
+                : cameraState.optJSONObject("attributes");
+        if (cameraAttributes != null && cameraAttributes.optBoolean("pictures")) {
+            key.append("pictures,");
+        }
+        org.json.JSONArray rules = KioskRuntimeState.automations();
+        for (int index = 0; index < rules.length(); index++) {
+            JSONObject rule = rules.optJSONObject(index);
+            if (rule != null) {
+                key.append(rule.optString("id", "")).append('=')
+                        .append(rule.optString("name", "")).append(',');
+            }
+        }
+        return key.toString();
+    }
+
+    /** A tag held to the panel, as Home Assistant's tag scanned event expects it. */
+    void publishTagRead(String tagId) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("tag_id", tagId);
+            publish(topicPrefix + "tag", payload.toString(), 1, false);
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** A picture from the camera, raw JPEG bytes, what an MQTT camera entity shows. */
+    void publishPicture(byte[] jpeg) {
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected() || jpeg == null) {
+            return;
+        }
+        try {
+            activeClient.publish(topicPrefix + "camera", jpeg, 0, true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "MQTT picture publish failed", exception);
+        }
+    }
+
+    /**
+     * Takes the retained picture off the broker: the camera went off, or its pictures are no
+     * longer wanted there, and a stale frame must not be what a fresh Home Assistant shows.
+     */
+    void clearPicture() {
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected()) {
+            return;
+        }
+        try {
+            activeClient.publish(topicPrefix + "camera", new byte[0], 0, true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "MQTT picture clear failed", exception);
+        }
+    }
 
     void publishCommandResult(String id, String status, String detail) {
         JSONObject result = new JSONObject();
@@ -780,6 +856,123 @@ final class MqttController implements MqttCallbackExtended {
             components.put("screensaver_picture", sensor(
                     "Screensaver picture", null, null, null,
                     "{{ value_json.screensaver.picture.title | default('', true) }}"));
+            // The panel's sensors (see Sensors): one entity each, under the panel's device, named
+            // as the companion app names its own. A sensor that is off, or that this device does
+            // not have, is announced as a withdrawal, so switching one off in the settings takes
+            // its entity away rather than stranding it, and a panel without the hardware never
+            // shows a row for it.
+            org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+            for (Sensors.Def def : Sensors.ALL) {
+                if (def.kind == Sensors.Kind.PANEL) {
+                    // Battery, power, network and the rest have had their entities since
+                    // before the sensors list existed; announcing them again would be the same
+                    // reading twice.
+                    continue;
+                }
+                org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
+                String key = "sensor_" + def.id;
+                if (one == null || !one.optBoolean("active")) {
+                    components.put(key, new JSONObject().put("p", def.platform));
+                    continue;
+                }
+                JSONObject entity = new JSONObject();
+                entity.put("p", def.platform);
+                entity.put("name", def.name);
+                entity.put("unique_id", uniqueId(def.name));
+                if (def.deviceClass != null && !"enum".equals(def.deviceClass)) {
+                    entity.put("device_class", def.deviceClass);
+                }
+                if (def.unit != null) {
+                    entity.put("unit_of_measurement", def.unit);
+                }
+                if (def.stateClass != null) {
+                    entity.put("state_class", def.stateClass);
+                }
+                if (Sensors.BINARY.equals(def.platform)) {
+                    entity.put("payload_on", "ON");
+                    entity.put("payload_off", "OFF");
+                    entity.put("value_template", "{{ 'ON' if value_json.sensors." + def.id
+                            + ".value else 'OFF' }}");
+                } else {
+                    entity.put("value_template", "{{ value_json.sensors." + def.id + ".value }}");
+                }
+                if (def == Sensors.AUDIO || def == Sensors.BLUETOOTH || def == Sensors.NFC
+                        || def == Sensors.CAMERA) {
+                    entity.put("json_attributes_topic", topicPrefix + "state");
+                    entity.put("json_attributes_template",
+                            "{{ value_json.sensors." + def.id + ".attributes | tojson }}");
+                }
+                components.put(key, entity);
+            }
+            // The camera's controls and its picture, the set Frigate and Blue Iris publish:
+            // motion detection as a switch, a snapshot button, and the last picture on motion
+            // as a camera entity, all only while the camera is on.
+            org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
+            boolean cameraOn = cameraState != null && cameraState.optBoolean("active");
+            org.json.JSONObject cameraAttributes = cameraState == null ? null
+                    : cameraState.optJSONObject("attributes");
+            // The snapshot button and the picture entity only while pictures may go to the
+            // broker ("Picture to MQTT", camera_mqtt): a photo of the room is retained there,
+            // and the privacy text says it goes only when that is switched on (review,
+            // 2026-10-01).
+            boolean pictures = cameraOn && cameraAttributes != null
+                    && cameraAttributes.optBoolean("pictures");
+            if (cameraOn) {
+                components.put("camera_motion", toggle(
+                        "Camera motion detection",
+                        "{\"command\":\"camera.motion\",\"args\":{\"enabled\":true}}",
+                        "{\"command\":\"camera.motion\",\"args\":{\"enabled\":false}}",
+                        "{{ 'ON' if value_json.sensors.camera.attributes.detecting else 'OFF' }}"));
+            } else {
+                components.put("camera_motion", new JSONObject().put("p", "switch"));
+            }
+            if (pictures) {
+                components.put("camera_snapshot", button("Camera snapshot", "camera.snapshot"));
+                JSONObject picture = new JSONObject();
+                picture.put("p", "camera");
+                picture.put("name", "Camera picture");
+                picture.put("unique_id", uniqueId("Camera picture"));
+                picture.put("topic", topicPrefix + "camera");
+                components.put("camera_picture", picture);
+            } else {
+                components.put("camera_snapshot", new JSONObject().put("p", "button"));
+                components.put("camera_picture", new JSONObject().put("p", "camera"));
+                if (!cameraOn) {
+                    clearPicture();
+                }
+            }
+            // One switch per automation, so a rule can be paused from Home Assistant; a rule
+            // that was deleted is withdrawn by the id discovery last announced.
+            org.json.JSONArray rules = KioskRuntimeState.automations();
+            java.util.Set<String> current = new java.util.TreeSet<>();
+            for (int index = 0; index < rules.length(); index++) {
+                JSONObject rule = rules.optJSONObject(index);
+                if (rule == null) {
+                    continue;
+                }
+                String id = rule.optString("id", "");
+                current.add(id);
+                JSONObject ruleSwitch = toggle(
+                        rule.optString("name", id),
+                        "{\"command\":\"automation.enabled\",\"args\":{\"enabled\":true,\"value\":\""
+                                + id + "\"}}",
+                        "{\"command\":\"automation.enabled\",\"args\":{\"enabled\":false,\"value\":\""
+                                + id + "\"}}",
+                        "{{ 'ON' if (value_json.automations | selectattr('id', 'eq', '" + id
+                                + "') | map(attribute='enabled') | first) else 'OFF' }}");
+                // By the id, not the name: two rules may share a name, and a rename must keep
+                // the entity rather than strand one under the old unique id.
+                ruleSwitch.put("unique_id", uniqueId("automation " + id));
+                components.put("automation_" + id, ruleSwitch);
+            }
+            for (String old : KioskConfig.announcedAutomations(appContext).split(",")) {
+                if (!old.isEmpty() && !current.contains(old)) {
+                    components.put("automation_" + old, new JSONObject().put("p", "switch"));
+                }
+            }
+            KioskConfig.edit(appContext).announcedAutomations(
+                    android.text.TextUtils.join(",", current)).apply();
+            announcedSensors = sensorsKey();
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
@@ -844,6 +1037,7 @@ final class MqttController implements MqttCallbackExtended {
             }
 
             publishMqttStateEntity(device, origin);
+            publishTagDiscovery(device);
 
             String topic = "homeassistant/device/" + config.deviceId + "/config";
 
@@ -868,6 +1062,19 @@ final class MqttController implements MqttCallbackExtended {
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /**
+     * Tags are not a component of the device document: Home Assistant discovers them on their
+     * own topic, one per panel, and a read on the state topic named here fires its tag scanned
+     * event, so its tag automations work as they do with the companion app.
+     */
+    private void publishTagDiscovery(JSONObject device) throws JSONException {
+        JSONObject tag = new JSONObject();
+        tag.put("topic", topicPrefix + "tag");
+        tag.put("value_template", "{{ value_json.tag_id }}");
+        tag.put("device", device);
+        publish("homeassistant/tag/" + config.deviceId + "/config", tag.toString(), 1, true);
     }
 
     /**

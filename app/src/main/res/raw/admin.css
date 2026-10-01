@@ -8,7 +8,7 @@ Two layouts, one document. Below 840 px the settings are one accordion (a <detai
 one open at a time, no wider than 720 px); from 840 px, and only with scripting, the same
 sections stand in a list on the left and the open one on the right, Material's list-detail. No
 panel ever spans the screen: content lives in a centred column of at most 1016 px, which the app
-bar shares, so the title sits over the list's left edge and the theme picker over the panel's
+bar shares, so the title sits over the list's left edge and the readings over the panel's
 right edge (Juri, 2026-09-23).
 */
 :root{color-scheme:light dark;
@@ -38,7 +38,7 @@ html[data-theme=dark]{color-scheme:dark;
 body{margin:0;padding:12px 0 40px;background:var(--base);color:var(--text);font-family:Roboto,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:20px}
 /* The column, centred, with a gutter each side: 5% of the window, whatever the shape of it
    (Juri, 2026-09-23, with the drawing in media/drafts/material3/). The app bar spans exactly
-   that column, which is what puts the theme picker over the panel's right edge rather than
+   that column, which is what puts the readings over the panel's right edge rather than
    the window's. It stops growing at 1000 px: past that the gutters take the rest,
    because a field drawn across a very wide monitor is a bar. */
 main{width:90%;max-width:1000px;margin:0 auto}
@@ -47,7 +47,8 @@ code{overflow-wrap:anywhere}
 /* ---- type ---- */
 h1{font-size:24px;line-height:32px;font-weight:400;margin:0;color:var(--text)}
 h2{font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0 0 4px}
-.sub{color:var(--subtext);font-size:12px;line-height:16px;margin:-2px 0 0;overflow-wrap:anywhere}
+/* The panel's id under Muralis, the only subtitle: Title medium, as on the panel (2026-10-01). */
+.sub{color:var(--subtext);font-size:16px;line-height:24px;margin:0;overflow-wrap:anywhere}
 .hint{color:var(--subtext);font-size:12px;line-height:16px;letter-spacing:.4px;margin:8px 0 0}
 .hint.bad{color:var(--bad)}
 .gone{display:none!important}
@@ -57,27 +58,38 @@ header.appbar .titles{flex:1;min-width:0}
 header.appbar .titlerow{display:flex;align-items:center;gap:4px;min-width:0}
 header.appbar .titlerow h1{overflow-wrap:anywhere;min-width:0}
 /* The chip: one glyph per row, monochrome, matching StatusIcon on the tablet glyph for glyph. */
-.chip{display:none;flex-direction:column;align-items:flex-end;gap:2px;line-height:18px;font-size:12px;color:var(--subtext);margin-right:8px}
-.chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:16px;height:16px;flex:none;color:var(--text)}
-/* Segmented button for the theme on wide screens; one cycling icon button where there is no room
-   for three words beside the title. */
-.themepick{display:none;border:1px solid var(--outline);border-radius:999px;overflow:hidden;height:40px}
-.themepick button{margin:0;padding:0 16px;border:0;border-right:1px solid var(--outline);border-radius:0;background:transparent;color:var(--text);font-size:14px;font-weight:500;height:100%;box-shadow:none;display:inline-flex;align-items:center;gap:6px}
-.themepick button:last-child{border-right:0}
-.themepick button[aria-pressed=true]{background:var(--secondary-container);color:var(--on-secondary-container)}
-.themepick button[aria-pressed=true]::before{content:"\2713";font-size:13px}
+/* At the right on every width, as on the panel; 14 px like its 14 sp readings. */
+.chip{display:flex;flex:none;flex-direction:column;align-items:flex-end;gap:2px;line-height:20px;font-size:14px;color:var(--subtext);margin-right:8px}
+.chip .row{display:flex;align-items:center;gap:6px}.chip .row.pair{gap:14px}.ico{width:17px;height:17px;flex:none;color:var(--text)}
+/* The theme: one cycling icon button beside the Display section's name, and from 840 px the
+   same button in the open card's top corner (the app bar's three-word picker went 2026-09-27). */
 .themecycle{display:inline-flex}
-@media (min-width:840px){.chip{display:flex}.themepick{display:inline-flex}.ib.themecycle{display:none}}
+.themecycle svg{width:24px;height:24px;fill:currentColor;stroke:none}
+.themecycle .sun{color:var(--warn)}.themecycle .moon{color:var(--subtext)}
+details.box>.body{position:relative}
+.body>.themecycle.sectionaction{display:none;position:absolute;top:8px;right:8px}
+/* A button inside <summary> is a control inside a control, and without scripting it does nothing:
+   it shows only where the script runs and takes the click. Likewise a Save that scripting
+   replaces with storing on change (the panel's name) is for the no-script page alone. */
+html:not(.js) summary .themecycle{display:none}
+html.js .actions.nojs{display:none}
+.themecycle .sun{display:none}.themecycle .moon{display:inline-flex}
+html[data-theme=dark] .themecycle .sun{display:inline-flex}html[data-theme=dark] .themecycle .moon{display:none}
+@media (prefers-color-scheme:dark){html:not([data-theme=light]) .themecycle .sun{display:inline-flex}html:not([data-theme=light]) .themecycle .moon{display:none}}
+.field select option{background:var(--card);color:var(--text)}
 /* ---- buttons: filled for a card's one main action, tonal for the second, outlined for a command
    that acts now and stores nothing, text for navigation, and a 40 px icon button for anything
-   repeated in a row. Never red outside a confirmation. ---- */
+   repeated in a row. Red only for Delete: outlined in an editor's row, filled on the confirm
+   screen alone (Juri, 2026-10-01). ---- */
 button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 24px;margin:0;border-radius:999px;border:1px solid var(--outline);background:transparent;color:var(--accent);font-family:inherit;font-size:14px;font-weight:500;letter-spacing:.1px;line-height:20px;cursor:pointer;white-space:nowrap;text-decoration:none}
 button:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 button.primary:hover{background:color-mix(in srgb,var(--accent) 92%,black)}
-button.tonal,label.filebutton{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
-button.tonal:hover,label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
-button.text{border-color:transparent;padding:0 12px}
+button.tonal,a.btn.tonal,label.filebutton{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
+button.tonal:hover,a.btn.tonal:hover,label.filebutton:hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
+button.text,a.btn.text{border-color:transparent;padding:0 12px}
+button.danger{border-color:var(--bad);color:var(--bad)}
+button.danger:hover{background:color-mix(in srgb,var(--bad) 8%,transparent)}
 button:disabled{opacity:.38;cursor:default}
 .field select:disabled,.field select:disabled+label{opacity:.38;cursor:default}
 button svg,.btn svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-left:-8px}
@@ -121,7 +133,7 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
    nor a helper line under it counts, which is why the button is placed from the top: 24 px for the
    field's own margin and 8 px for half the difference between the 56 px box and the 40 px button. */
 .beside{display:flex;align-items:flex-start;gap:8px;margin-top:8px;flex-wrap:wrap}
-.beside .field{flex:1 1 200px}
+.beside .field{flex:1 1 120px}
 .beside button{margin-top:32px}
 /* ---- selection controls ---- */
 label.check{display:flex;align-items:center;gap:12px;min-height:48px;color:var(--text);cursor:pointer;margin:0}
@@ -161,7 +173,14 @@ ul.list li.two{min-height:72px}
 .lead{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;color:var(--subtext)}
 .lead svg,.trail svg,.sections svg,summary svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .text{flex:1;min-width:0}
+/* A rule whose sensor is not running while the display sleeps: the panel's mark and note */
+.text .s .stops{display:inline-flex;vertical-align:-3px;margin-right:6px;color:var(--warn)}
+.text .s .stops svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.stopsnote .lead{color:var(--warn)}
 .text .h,.text .s{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A name wraps rather than ends in dots: "Bluetooth ..." on a 360 px phone said nothing; so does
+   a second line a person has to read or copy whole (an address, a tag's id). */
+.text .h,.text .s.wrap{white-space:normal;overflow-wrap:anywhere}
 .text .h{font-size:16px;line-height:24px;color:var(--text)}
 .text .s{font-size:14px;line-height:20px;color:var(--subtext)}
 .trail{display:inline-flex;align-items:center;flex:none;gap:0;color:var(--subtext);font-size:12px}
@@ -200,21 +219,35 @@ html.js details.box:not([open]){display:none}
 html.js details.box>summary{display:none}
 html.js details.box>.body{padding:16px 16px 20px}
 html.js details.box>.body::before{content:attr(data-title);display:block;font-size:16px;line-height:24px;font-weight:500;letter-spacing:.15px;margin:0 0 4px}
+html.js .body>.themecycle.sectionaction{display:inline-flex}
 }
 /* ---- pages with two columns ---- */
 .two{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
 .two>*{min-width:0}
+.two>.card+.card{margin-top:0}
 @media (min-width:840px){
 .two{grid-template-columns:1fr 1fr}
-.two.modes{grid-template-rows:min-content 1fr}
-#screensaver-mode-box{grid-column:1;grid-row:1}#screensaver-options{grid-column:2;grid-row:1/span 2}#screensaver-library{grid-column:1;grid-row:2}
 .two.playlist{grid-template-rows:min-content 1fr}
 #playlist-folders{grid-column:1;grid-row:1}#playlist-content{grid-column:2;grid-row:1/span 2}#playlist-held{grid-column:1;grid-row:2}
 }
 /* ---- stats readout ---- */
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;background:var(--lowest);border-radius:8px;padding:12px 14px;color:var(--subtext);margin:8px 0 0}
 .mono.wrap{overflow-wrap:anywhere}
-#stats{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
+#stats,#log{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--lowest);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--subtext);margin:8px 0 0}
+#log{max-height:320px;min-height:72px;overflow:auto;overflow-wrap:anywhere;color:var(--subtext)}
+#log .lv-W{color:var(--warn)}#log .lv-E,#log .lv-F{color:var(--bad)}#log .lv-I{color:var(--text)}
+#log b{font-weight:600}
+.logcount{font-size:12px;color:var(--subtext);white-space:nowrap}
+.logbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+/* Paused, the button shows the play glyph and is named Follow, as on the panel. */
+#log-pause svg+svg,#log-pause.on svg:first-child{display:none}#log-pause.on svg+svg{display:block}
+.levels{display:inline-flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
+.lvl{height:40px;min-width:44px;padding:0 12px;border:0;background:transparent;color:var(--subtext);font:inherit;font-size:14px;cursor:pointer}
+.lvl+.lvl{border-left:1px solid var(--outline)}.lvl[aria-pressed=true]{background:var(--secondary-container);color:var(--on-secondary-container)}
+.logsearch{display:flex;align-items:center;gap:8px;flex:1;min-width:120px;height:40px;padding:0 10px;border:1px solid var(--outline);border-radius:20px;color:var(--subtext)}
+.logsearch svg{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.logsearch input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font:inherit;font-size:14px;outline:none}
+.ib.on{background:var(--secondary-container);color:var(--on-secondary-container)}
 /* ---- the rename pencil beside the title: a <details>, so it works with no scripting ---- */
 details.rename{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 1 auto;min-width:0}
 details.rename[open]{flex:1 1 20rem}
@@ -327,7 +360,72 @@ input.offscreen:focus-visible+label.filebutton{outline:2px solid var(--accent-al
 .banner.bad{background:var(--error-container);color:var(--on-error-container)}
 .banner .dismiss{flex:none;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;font-size:18px;line-height:1}
 .banner .dismiss:hover{background:color-mix(in srgb,var(--text) 10%,transparent)}
+/* ---- a page's only panel: centred at the legal pages' width (2026-09-28) ---- */
+.one{max-width:640px;margin-left:auto;margin-right:auto}
 /* ---- the legal pages ---- */
-div.doc{max-width:640px;margin:0 auto}
 div.doc h2{color:var(--accent);font-size:13px;letter-spacing:.1em;margin:26px 0 6px;font-weight:500}
 p.doc{margin:8px 0}
+
+ul.list.gap{margin-top:16px}
+
+/* ---- sensors and automations (2026-09-27) ---- */
+ul.list li.dim{opacity:.55}
+ul.list .text .s:empty{display:none}
+a.rowlink.plain .h{color:var(--text)}
+.trail .divider{width:1px;height:32px;background:var(--outline-variant);margin:0 12px 0 4px}
+input.sw{appearance:none;-webkit-appearance:none;width:52px;height:32px;margin:0;flex:none;border-radius:16px;border:2px solid var(--outline);background:var(--surface-alt);position:relative;cursor:pointer;display:inline-block}
+input.sw::after{content:"";position:absolute;top:6px;left:6px;width:16px;height:16px;border-radius:50%;background:var(--outline);transition:left .12s,width .12s,height .12s,top .12s}
+input.sw:checked{background:var(--accent);border-color:var(--accent)}
+input.sw:checked::after{left:22px;top:4px;width:20px;height:20px;background:var(--on-accent)}
+input.sw:disabled{opacity:.38;cursor:default}
+.trail .allow{font-size:13px;color:var(--subtext);white-space:nowrap}
+.card .count{font-size:12px;color:var(--subtext)}
+.actions.tight{margin-top:8px}
+/* A refused switch: the border red, and the reason on a line under its row for a few seconds,
+   where the title a phone never shows could not say it (review, 2026-10-01). */
+input.sw.check-bad{border-color:var(--bad)}
+ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16px;padding:4px 16px 8px;min-height:0}
+/* The detail's own row beside the list carries no switch, so it says the sensor's name, not the
+   switch's words (the panel's rule: one switch per sensor on a page). */
+.pagename{display:none}
+/* A choice of five or fewer as radios, with its label over them, the panel's shape. */
+.choice{margin-top:16px}.choice>.label{font-size:12px;line-height:16px;font-weight:500;color:var(--subtext);margin:0 0 4px}
+.actions .btn.text{flex:0 0 auto}
+/* The editor's row: Delete at the start, Cancel then Save at the end; Save is first in the DOM so Enter saves */
+.actions.editor{justify-content:flex-end}.actions.editor .danger{order:0;margin-right:auto}.actions.editor .text{order:1}.actions.editor .primary{order:2}
+.card.gap{margin-top:16px}
+/* The chosen sensor's events alone where the script runs; every group without it, so a rule
+   can still be made (review, 2026-10-01). A sensor with one event shows it as a line, the radio
+   there for the form alone. Words for a screen reader only, where a glyph has a tooltip. */
+html.js .events{display:none}html.js .events.on{display:block}
+label.radio.one input{position:absolute;opacity:0;pointer-events:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.text .field{margin-top:8px}
+.text .field .support{margin-top:2px}
+
+/* ---- list-detail pages: Sensors, Automations (2026-09-27) and Screensaver (2026-09-28) ---- */
+.ld{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+.ld[data-page=list] .detail{display:none}
+.ld[data-page=detail] .nav{display:none}
+@media (min-width:600px) and (max-width:839px){.ld{max-width:640px;margin:0 auto}}
+@media (min-width:840px){
+.ld{grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px}
+.ld[data-page] .nav,.ld[data-page] .detail{display:block}
+.ld .detail{grid-column:2}
+.ld.one{grid-template-columns:minmax(0,1fr)}.ld.one .detail{grid-column:1}
+.ld .nav{padding:8px}
+/* The list's name and count stay at the head of the list from 840 px too, as on the panel. */
+.ld .nav .cardhead{padding:8px 12px 4px}
+.ld .nav ul.list li.refusal,.ld .nav ul.list li.refusal:hover{min-height:0;padding:4px 16px 8px;border-radius:0;cursor:default;background:none}
+.ld .nav .chev,.ld .nav .divider{display:none}
+.ld .nav ul.list li,.ld .nav ul.list li.two{min-height:64px;padding:4px 12px;border-bottom:0;border-radius:999px}
+.ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,transparent);cursor:pointer}
+.ld .nav ul.list li.on{background:var(--secondary-container)}
+.ld .nav ul.list li.on .h{color:var(--on-secondary-container);font-weight:500}
+.ld .nav .actions{padding:8px 12px 4px}
+.ld .detail .pageswitch{display:none}
+.ld .detail .pagename{display:inline}.ld .detail .switchname{display:none}
+.ld .detail>.pane>section.card:first-child,.ld .detail>.pane>form>.field:first-of-type{margin-top:0}
+.pane[hidden]{display:none}
+}
+ul.list li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:12px}
