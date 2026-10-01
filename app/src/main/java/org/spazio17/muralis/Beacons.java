@@ -278,10 +278,11 @@ final class Beacons implements Sensors.Reading {
         }
         JSONObject attributes = new JSONObject();
         org.json.JSONArray list = new org.json.JSONArray();
+        NamedList names = KioskConfig.beaconNames(context);
         for (Seen beacon : reach) {
             JSONObject entry = new JSONObject();
             entry.put("id", beacon.id);
-            String name = KioskConfig.sensorOption(context, "beacon_" + beacon.id, "");
+            String name = names.name(beacon.id);
             if (!name.isEmpty()) {
                 entry.put("name", name);
             }

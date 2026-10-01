@@ -3556,7 +3556,7 @@ public final class KioskActivity extends Activity {
                 Automations.Rule stored = Automations.find(fresh, rule.id);
                 if (stored != null) {
                     stored.enabled = checked;
-                    KioskConfig.edit(this).automations(Automations.store(fresh)).apply();
+                    KioskConfig.storeAutomations(this, fresh);
                 }
             }
             KioskService.refreshSensorsSoon(this);
@@ -4295,10 +4295,10 @@ public final class KioskActivity extends Activity {
                 card.addView(none, noneParams);
             } else {
                 java.util.List<Beacons.Seen> reach = beacons.inReach();
+                NamedList beaconNames = KioskConfig.beaconNames(this);
                 for (Beacons.Seen seen : heard) {
                     // Words, not a machine value: the prose box (review, 2026-10-01).
-                    EditText name = proseInput(theme,
-                            KioskConfig.sensorOption(this, "beacon_" + seen.id, ""));
+                    EditText name = proseInput(theme, beaconNames.name(seen.id));
                     addField(card, theme, "Name", name, seen.id + ", " + (reach.contains(seen)
                             ? "in reach" + (Double.isNaN(seen.distance()) ? ""
                                     : ", " + seen.distance() + " m")
@@ -4320,7 +4320,7 @@ public final class KioskActivity extends Activity {
                             return;
                         }
                         nameProblem.setVisibility(View.GONE);
-                        KioskConfig.edit(this).sensorOption("beacon_" + seen.id, typed).apply();
+                        KioskConfig.beaconName(this, seen.id, typed);
                         KioskService.publishTelemetrySoon(this);
                     };
                     name.setOnFocusChangeListener((view, focused) -> {
@@ -4785,7 +4785,7 @@ public final class KioskActivity extends Activity {
                     draft.enabled = stored.enabled;
                     rules.set(rules.indexOf(stored), draft);
                 }
-                KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+                KioskConfig.storeAutomations(this, rules);
             }
             selectedAutomation = draft.id;
             KioskService.refreshSensorsSoon(this);
@@ -4804,7 +4804,7 @@ public final class KioskActivity extends Activity {
                     Automations.Rule stored = Automations.find(rules, draft.id);
                     if (stored != null) {
                         rules.remove(stored);
-                        KioskConfig.edit(this).automations(Automations.store(rules)).apply();
+                        KioskConfig.storeAutomations(this, rules);
                     }
                 }
                 KioskService.refreshSensorsSoon(this);
