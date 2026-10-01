@@ -165,7 +165,21 @@ final class Automations {
         boolean windowed() {
             return onlyFrom >= 0 && onlyTo >= 0;
         }
+
+        /**
+         * Whether the other rule waits for the same thing: the sensor, its event, the level
+         * and the minutes. A rule whose condition changed starts over in the engine, so an edit
+         * that makes it true at once does not fire at once (review, 2026-10-01).
+         */
+        boolean sameCondition(Rule other) {
+            return sensor.equals(other.sensor) && event.equals(other.event)
+                    && (Double.isNaN(level) ? Double.isNaN(other.level) : level == other.level)
+                    && minutes == other.minutes;
+        }
     }
+
+    /** The shape of a rule's id: newId's alphabet, the shipped "wake" and the old six-letter ids. */
+    static final String ID_SHAPE = "[a-z0-9]{1,24}";
 
     static final int MAX_RULES = 64;
     static final int MAX_NAME = 60;
@@ -256,6 +270,11 @@ final class Automations {
 
     /** Why a rule cannot be stored, or null. Also fills the name from the sentence when blank. */
     static String validate(Rule rule, Map<String, String> sensorNames) {
+        // The id is written into the pages' ids and links, the discovery templates and a
+        // comma-joined list, so only newId's shape passes (review, 2026-10-01).
+        if (!rule.id.isEmpty() && !rule.id.matches(ID_SHAPE)) {
+            return "the id may only use lowercase letters and digits, 24 at most";
+        }
         if (rule.sensor.isEmpty() || !sensorNames.containsKey(rule.sensor)) {
             return "choose a sensor";
         }
@@ -306,7 +325,9 @@ final class Automations {
             rule.onlyFrom = -1;
             rule.onlyTo = -1;
         }
-        rule.name = rule.name.trim();
+        // Control characters out of the name, which is logged on every run: an embedded
+        // newline would forge a log line.
+        rule.name = rule.name.replaceAll("\\p{Cntrl}", " ").trim();
         if (rule.name.isEmpty()) {
             rule.name = sentence(rule, sensorNames);
         }
@@ -340,10 +361,28 @@ final class Automations {
         text.append(", then ");
         text.append(action == null ? rule.action : action.label);
         if (action != null && action.argumentLabel != null && !rule.argument.isEmpty()) {
-            text.append(" \"").append(rule.argument.length() > 40
-                    ? rule.argument.substring(0, 40) + "…" : rule.argument).append('"');
+            text.append(" \"").append(shortened(rule.argument, 40)).append('"');
         }
         return text.toString();
+    }
+
+    /** The first {@code max} characters as a person counts them, so an emoji is never split. */
+    static String shortened(String text, int max) {
+        if (text.codePointCount(0, text.length()) <= max) {
+            return text;
+        }
+        return text.substring(0, text.offsetByCodePoints(0, max)) + "…";
+    }
+
+    /**
+     * The stored rule as the editors' stale-form baseline: everything but the switch, which is
+     * flipped beside an open editor on any surface and must not block its Save (review,
+     * 2026-10-01).
+     */
+    static String baseline(Rule stored) {
+        Rule copy = stored.copy();
+        copy.enabled = true;
+        return toJson(Collections.singletonList(copy), false).toString();
     }
 
     static String number(double value) {
@@ -428,9 +467,7 @@ final class Automations {
             case "started": case "plugged": case "connected":
                 return hasFlag ? flag : null;
             case "far": case "still": case "stopped": case "off": case "ended":
-            case "unplugged": case "lost":
-                return hasFlag ? !flag : null;
-            case "no_motion":
+            case "unplugged": case "lost": case "no_motion":
                 return hasFlag ? !flag : null;
             case "darker": case "below":
                 return hasNumber ? sample.number < rule.level : null;
@@ -474,8 +511,47 @@ final class Automations {
         }
 
         synchronized void rules(List<Rule> fresh) {
+            // A rule whose condition changed is seeded again on its next sample, as a new rule
+            // is: "darker than 5 lx" edited to 50 lx in a 20 lx room fired the moment it was
+            // saved (review, 2026-10-01).
+            for (Rule rule : fresh) {
+                Rule before = find(rules, rule.id);
+                if (before != null && !before.sameCondition(rule)) {
+                    states.remove(rule.id);
+                }
+            }
             rules = new ArrayList<>(fresh);
             states.keySet().retainAll(ids(fresh));
+        }
+
+        /**
+         * The clock's tick without a reading: advances "for N minutes" for every rule whose
+         * condition held at its last sample, so a steady room, which sends no light event,
+         * still fires "darker for 10 min". Nothing else changes; a reading comes from the
+         * sensor's own callback, once, so a tick cannot hand the engine an older reading than
+         * the callback did and fire a rule twice (review, 2026-10-01).
+         */
+        void tick(long nowMs, int minuteOfDay) {
+            for (Rule rule : due(nowMs, minuteOfDay)) {
+                runner.run(rule);
+            }
+        }
+
+        private synchronized List<Rule> due(long nowMs, int minuteOfDay) {
+            List<Rule> due = new ArrayList<>();
+            for (Rule rule : rules) {
+                State state = states.get(rule.id);
+                if (state == null || !state.seeded || !state.was || state.fired
+                        || rule.minutes <= 0
+                        || nowMs - state.trueSinceMs < rule.minutes * 60_000L) {
+                    continue;
+                }
+                state.fired = true;
+                if (rule.enabled && inWindow(rule, minuteOfDay)) {
+                    due.add(rule);
+                }
+            }
+            return due;
         }
 
         private static List<String> ids(List<Rule> list) {

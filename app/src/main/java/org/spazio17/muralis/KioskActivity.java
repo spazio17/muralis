@@ -3589,7 +3589,7 @@ public final class KioskActivity extends Activity {
             mark.setTint(theme.warn);
             mark.setBounds(0, 0, dp(16), dp(16));
             sentence.setCompoundDrawablesRelative(mark, null, null, null);
-            sentence.setCompoundDrawablePadding(dp(6));
+            sentence.setCompoundDrawablePadding(dp(8));
             sentence.setContentDescription("Not running while the display is off. "
                     + sentence.getText());
         }
@@ -4160,20 +4160,9 @@ public final class KioskActivity extends Activity {
             selectedAutomation = draft.id;
         }
         LinearLayout list = wide ? navPanel(theme) : card(theme, null);
-        if (!wide) {
-            LinearLayout head = new LinearLayout(this);
-            head.setOrientation(LinearLayout.HORIZONTAL);
-            head.setGravity(Gravity.CENTER_VERTICAL);
-            head.addView(cardTitle(theme, "Automations"), new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            TextView count = new FlushText(this);
-            count.setText(automationsSummary());
-            count.setTextColor(theme.subtext);
-            count.setTextSize(12);
-            head.addView(count, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            list.addView(head, matchWrap());
-        }
+        TextView count = new FlushText(this);
+        count.setText(automationsSummary());
+        list.addView(listHead(theme, "Automations", count), listHeadParams(wide));
         if (rules.isEmpty()) {
             TextView none = new FlushText(this);
             none.setText("No automations yet.");
@@ -4303,6 +4292,13 @@ public final class KioskActivity extends Activity {
             }
             sensorMenu.add(def.name, def.id);
         }
+        if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
+            // A rule on a sensor this device lacks keeps it: opening and saving the rule for
+            // its name must not move it to the first sensor in the menu (review, 2026-10-01).
+            Sensors.Def missing = Sensors.byId(draft.sensor);
+            sensorMenu.add((missing == null ? draft.sensor : missing.name)
+                    + " (not on this device)", draft.sensor);
+        }
         // Under the sensors, for a sensor whose test found it not running while the display
         // sleeps: the rule cannot run then, and the black film is what keeps it running.
         LinearLayout stopsNote = glyphRow(theme, R.drawable.ic_asleep_disabled,
@@ -4310,13 +4306,20 @@ public final class KioskActivity extends Activity {
                 null, false);
         ((ImageView) stopsNote.getChildAt(0)).setImageTintList(ColorStateList.valueOf(theme.warn));
         whenCard.addView(stopsNote, matchWrapClose());
-        TextView eventCaption = fieldCaption(theme, "Notices");
-        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        captionParams.topMargin = dp(16);
-        whenCard.addView(eventCaption, captionParams);
+        // The events follow the menu with no caption over them, as on the web ("Notices" was
+        // a word nobody says, review of 2026-10-01); a sensor with one event shows it as a
+        // line of text, since a choice of one is no choice.
         RadioGroup eventGroup = new RadioGroup(this);
-        whenCard.addView(eventGroup, matchWrapClose());
+        LinearLayout.LayoutParams eventParams = matchWrapClose();
+        eventParams.topMargin = dp(8);
+        whenCard.addView(eventGroup, eventParams);
+        TextView onlyEvent = new FlushText(this);
+        onlyEvent.setTextColor(theme.text);
+        onlyEvent.setTextSize(16);
+        onlyEvent.setMinHeight(dp(48));
+        onlyEvent.setGravity(Gravity.CENTER_VERTICAL);
+        onlyEvent.setVisibility(View.GONE);
+        whenCard.addView(onlyEvent, matchWrapClose());
         EditText levelInput = themedInput(theme,
                 Double.isNaN(draft.level) ? "" : Automations.number(draft.level), false);
         levelInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -4325,7 +4328,7 @@ public final class KioskActivity extends Activity {
         EditText minutesInput = themedInput(theme,
                 draft.minutes == 0 ? "" : Integer.toString(draft.minutes), false);
         minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(whenCard, theme, "For, minutes", minutesInput);
+        addField(whenCard, theme, "For (minutes)", minutesInput);
         View minutesBox = (View) minutesInput.getParent();
 
         Runnable paintEvent = () -> {
@@ -4336,7 +4339,7 @@ public final class KioskActivity extends Activity {
             boolean level = event != null && event.levelUnit != null;
             levelBox.setVisibility(level ? View.VISIBLE : View.GONE);
             if (level) {
-                levelCaption.setText("Level, " + event.levelUnit);
+                levelCaption.setText("Level (" + event.levelUnit + ")");
             }
             minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
         };
@@ -4352,6 +4355,13 @@ public final class KioskActivity extends Activity {
                 }
                 checkRadioIfChanged(eventGroup, sensor.equals(draft.sensor) ? draft.event
                         : events.get(0).id);
+                boolean one = events.size() == 1;
+                eventGroup.setVisibility(one ? View.GONE : View.VISIBLE);
+                onlyEvent.setText(one ? events.get(0).label : "");
+                onlyEvent.setVisibility(one ? View.VISIBLE : View.GONE);
+            } else {
+                eventGroup.setVisibility(View.GONE);
+                onlyEvent.setVisibility(View.GONE);
             }
             paintEvent.run();
         };
@@ -4389,12 +4399,16 @@ public final class KioskActivity extends Activity {
         LinearLayout onlyCard = card(theme, "Only");
         CompoundButton onlySwitch = themedSwitch(theme, "Between these times", draft.windowed());
         onlyCard.addView(onlySwitch, matchWrap());
+        // The time keyboard, as the web's time fields have; a full keyboard for "07:00" was
+        // the wrong tool (review, 2026-10-01).
         EditText fromInput = themedInput(theme,
                 draft.windowed() ? Automations.clock(draft.onlyFrom) : "07:00", false);
+        fromInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
         addField(onlyCard, theme, "From", fromInput);
         View fromBox = (View) fromInput.getParent();
         EditText toInput = themedInput(theme,
                 draft.windowed() ? Automations.clock(draft.onlyTo) : "22:00", false);
+        toInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
         addField(onlyCard, theme, "To", toInput);
         View toBox = (View) toInput.getParent();
         Runnable paintOnly = () -> {
@@ -4434,7 +4448,10 @@ public final class KioskActivity extends Activity {
                 draft.level = Double.NaN;
             }
             String minutes = minutesInput.getText().toString().trim();
-            draft.minutes = minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : 0;
+            // Blank is "at once"; anything else that is not a number is refused by validate,
+            // as the web refuses it, rather than quietly meaning 0.
+            draft.minutes = minutes.isEmpty() ? 0
+                    : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
             draft.action = actionMenu.value();
             draft.argument = argumentInput.getText().toString();
             boolean only = onlySwitch.isChecked();
@@ -4443,17 +4460,26 @@ public final class KioskActivity extends Activity {
         };
         Button cancel = textButton(theme, "Cancel");
         cancel.setOnClickListener(view -> done.run());
+        // Why a save was refused, in red under the buttons, where the web page has it: a
+        // toast was too quick to read (review, 2026-10-01).
+        TextView refused = new FlushText(this);
+        refused.setTextColor(theme.bad);
+        refused.setTextSize(12);
+        refused.setVisibility(View.GONE);
+        java.util.function.Consumer<String> refuse = why -> {
+            refused.setText("Not saved: " + why + ".");
+            refused.setVisibility(View.VISIBLE);
+        };
         Button save = primaryButton(theme, "Save");
         save.setOnClickListener(view -> {
             collect.run();
             if (onlySwitch.isChecked() && (draft.onlyFrom < 0 || draft.onlyTo < 0)) {
-                Toast.makeText(this, "Not saved: the times must be like 07:00.",
-                        Toast.LENGTH_LONG).show();
+                refuse.accept("the times must be like 07:00");
                 return;
             }
             String problem = Automations.validate(draft, Sensors.names());
             if (problem != null) {
-                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                refuse.accept(problem);
                 return;
             }
             synchronized (Automations.STORE) {
@@ -4461,13 +4487,12 @@ public final class KioskActivity extends Activity {
                 Automations.Rule stored = Automations.find(rules, draft.id);
                 if (stored == null) {
                     if (!draft.id.isEmpty()) {
-                        Toast.makeText(this, "Not saved: that automation was deleted.",
-                                Toast.LENGTH_LONG).show();
+                        refuse.accept("that automation was deleted");
                         return;
                     }
                     if (rules.size() >= Automations.MAX_RULES) {
-                        Toast.makeText(this, "Not saved: there are already " + Automations.MAX_RULES
-                                + " automations.", Toast.LENGTH_LONG).show();
+                        refuse.accept("there are already " + Automations.MAX_RULES
+                                + " automations");
                         return;
                     }
                     draft.id = Automations.newId(rules);
@@ -4486,8 +4511,12 @@ public final class KioskActivity extends Activity {
         });
         Button delete = null;
         if (!fresh) {
-            delete = dangerButton(theme, "Delete");
-            delete.setOnClickListener(view -> confirmDelete(draft.name, null, () -> {
+            delete = dangerOutlinedButton(theme, "Delete");
+            delete.setOnClickListener(view -> {
+                // The stored name, not the draft's: what is typed in the Name box and never
+                // saved is not what is deleted.
+                Automations.Rule named = Automations.find(KioskConfig.automationsOf(this), draft.id);
+                confirmDelete(named != null ? named.name : draft.name, null, () -> {
                 synchronized (Automations.STORE) {
                     java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
                     Automations.Rule stored = Automations.find(rules, draft.id);
@@ -4498,9 +4527,11 @@ public final class KioskActivity extends Activity {
                 }
                 KioskService.refreshSensorsSoon(this);
                 done.run();
-            }, reopen));
+            }, reopen);
+            });
         }
         into.addView(editorButtonRow(delete, cancel, save), matchWrap());
+        into.addView(refused, matchWrapClose());
         return collect;
     }
 
@@ -4539,9 +4570,18 @@ public final class KioskActivity extends Activity {
                     getDrawable(R.drawable.ic_expand_more).mutate();
             chevron.setTint(theme.subtext);
             box.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, chevron, null);
-            box.setContentDescription(label);
             box.setOnClickListener(view -> open());
             caption = addField(parent, theme, label, box);
+            this.label = label;
+            describe();
+        }
+
+        private final String label;
+
+        /** "Sensor, Proximity": the field's name and its choice, for a screen reader. */
+        private void describe() {
+            box.setContentDescription(box.getText().length() == 0 ? label
+                    : label + ", " + box.getText());
         }
 
         void add(String label, String itemValue) {
@@ -4557,6 +4597,7 @@ public final class KioskActivity extends Activity {
             }
             value = index < 0 ? "" : values.get(index);
             box.setText(index < 0 ? "" : labels.get(index));
+            describe();
         }
 
         String value() {
@@ -9816,11 +9857,24 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Red: this button deletes something, and it appears only on the confirm screen, where the
-     * one wrong tap that costs the most is the one the colour has to warn about.
+     * Filled red: the confirm screen's own Delete, the one tap that costs the most, where the
+     * colour has to warn. Nowhere else is a button filled red.
      */
     private Button dangerButton(KioskTheme theme, String label) {
         return filledButton(theme, label, theme.bad);
+    }
+
+    /**
+     * Outlined red: the Delete in an editor's row, which only asks (the confirm screen comes
+     * next), the web's {@code button.danger}. Outlined so it does not compete with Save as
+     * the row's main action (Juri, 2026-10-01).
+     */
+    private Button dangerOutlinedButton(KioskTheme theme, String label) {
+        Button button = pillShaped(new Button(this), label, 24);
+        button.setTextColor(theme.bad);
+        button.setBackground(theme.ripple(theme.pillOutlined(dp(1), theme.bad),
+                theme.pill(Color.WHITE), theme.bad));
+        return button;
     }
 
     /**

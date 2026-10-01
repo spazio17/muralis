@@ -24,6 +24,9 @@ public final class AutomationsTest {
         testEngineSeedsThenArms();
         testEngineHoldsForMinutes();
         testEngineResetAndDisabled();
+        testEngineReseedsAnEditedRule();
+        testEngineTickAdvancesTheMinutes();
+        testIdShape();
         System.out.println("AutomationsTest passed");
     }
 
@@ -162,6 +165,60 @@ public final class AutomationsTest {
         engine.sample("light", Automations.Sample.of(2), T0 + 201_000, 600);
         engine.sample("light", Automations.Sample.of(2), T0 + 230_000, 600);
         require(runs.ran.size() == 1, "a new dark spell starts its own count");
+    }
+
+    private static void testEngineReseedsAnEditedRule() {
+        Runs runs = new Runs();
+        Automations.Engine engine = new Automations.Engine(runs);
+        Automations.Rule dark = rule("light", "darker", "display_off");
+        dark.level = 5;
+        engine.rules(Collections.singletonList(dark));
+        engine.sample("light", Automations.Sample.of(20), T0, 600);
+        engine.sample("light", Automations.Sample.of(20), T0 + 1000, 600);
+        Automations.Rule edited = dark.copy();
+        edited.level = 50;
+        engine.rules(Collections.singletonList(edited));
+        engine.sample("light", Automations.Sample.of(20), T0 + 2000, 600);
+        require(runs.ran.isEmpty(), "an edited rule whose condition now holds is seeded, not fired");
+        engine.sample("light", Automations.Sample.of(80), T0 + 3000, 600);
+        engine.sample("light", Automations.Sample.of(20), T0 + 4000, 600);
+        require(runs.ran.equals(Collections.singletonList("r1")), "and fires on the next false-to-true");
+        Automations.Rule renamed = edited.copy();
+        renamed.name = "Another name";
+        engine.rules(Collections.singletonList(renamed));
+        engine.sample("light", Automations.Sample.of(20), T0 + 5000, 600);
+        require(runs.ran.size() == 1, "a rename keeps the state: the same true does not fire again");
+    }
+
+    private static void testEngineTickAdvancesTheMinutes() {
+        Runs runs = new Runs();
+        Automations.Engine engine = new Automations.Engine(runs);
+        Automations.Rule dark = rule("light", "darker", "display_off");
+        dark.level = 5;
+        dark.minutes = 2;
+        engine.rules(Collections.singletonList(dark));
+        engine.sample("light", Automations.Sample.of(100), T0, 600);
+        engine.sample("light", Automations.Sample.of(2), T0 + 1000, 600);
+        engine.tick(T0 + 60_000, 600);
+        require(runs.ran.isEmpty(), "a tick before the minutes have passed fires nothing");
+        engine.tick(T0 + 1000 + 2 * 60_000, 600);
+        require(runs.ran.equals(Collections.singletonList("r1")),
+                "a steady room sends no event, so the tick fires the rule once its minutes held");
+        engine.tick(T0 + 1000 + 3 * 60_000, 600);
+        require(runs.ran.size() == 1, "and not again on the next tick");
+    }
+
+    private static void testIdShape() {
+        Automations.Rule rule = rule("proximity", "near", "display_on");
+        rule.id = "x\" onfocus=\"alert(1)";
+        require(Automations.validate(rule, names()) != null, "an id with quotes is refused");
+        rule.id = "wake";
+        require(Automations.validate(rule, names()) == null, "the shipped id passes");
+        rule.id = "";
+        rule.name = "line\nbreak";
+        require(Automations.validate(rule, names()) == null && rule.name.equals("line break"),
+                "a control character in the name becomes a space");
+        require(Automations.shortened("ab😀cd", 3).equals("ab😀…"), "the cut never splits an emoji");
     }
 
     private static void testEngineResetAndDisabled() {

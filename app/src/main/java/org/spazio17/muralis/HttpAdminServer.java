@@ -1667,9 +1667,11 @@ final class HttpAdminServer {
      * sleeps, the panel's own: the sensor with a slash, small, in the warning colour.
      */
     private String stopsMark(String sensorId) {
+        // The words for a screen reader too, not only in a tooltip (review, 2026-10-01).
         return KioskService.stopsWhileAsleep(context, sensorId)
                 ? "<span class=\"stops\" title=\"Not running while the display is off\">"
-                        + glyph("asleep_off") + "</span>"
+                        + glyph("asleep_off") + "<span class=\"sr\">Not running while the display"
+                        + " is off. </span></span>"
                 : "";
     }
 
@@ -2019,10 +2021,12 @@ final class HttpAdminServer {
         }
         StringBuilder rows = new StringBuilder();
         for (Automations.Rule each : rules) {
-            rows.append(navRow(linkRow("/automation?id=" + each.id, "automations",
+            // Ids pass Automations.ID_SHAPE on the way in; escaped here all the same.
+            String id = escapeHtml(each.id);
+            rows.append(navRow(linkRow("/automation?id=" + urlEncode(each.id), "automations",
                     each.name, Automations.sentence(each), null,
-                    "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + each.id
-                            + "\" data-setting=\"automation_" + each.id + "\" aria-label=\""
+                    "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
+                            + "\" data-setting=\"automation_" + id + "\" aria-label=\""
                             + escapeHtml(each.name) + "\"" + (each.enabled ? " checked" : "") + ">",
                     stopsMark(each.sensor)),
                     each.id, each.id.equals(rule.id)));
@@ -2087,25 +2091,39 @@ final class HttpAdminServer {
         // The stored rule as the baseline, so a page left open cannot overwrite a change made
         // on the panel or in Home Assistant meanwhile: the Save-button forms' rule.
         Automations.Rule stored = Automations.find(KioskConfig.automationsOf(context), rule.id);
-        String baseline = stored == null ? "" : Automations.toJson(
-                Collections.singletonList(stored), false).toString();
+        String baseline = stored == null ? "" : Automations.baseline(stored);
         // Ids of its own per editor: several stand on one page, one per rule.
-        String sfx = "-" + (fresh ? "new" : rule.id);
+        String sfx = "-" + (fresh ? "new" : escapeHtml(rule.id));
         org.json.JSONObject block = KioskRuntimeState.sensors();
         StringBuilder sensorOptions = new StringBuilder();
         StringBuilder events = new StringBuilder();
+        // A new rule starts on the proximity sensor where there is one, as on the panel, so
+        // the two surfaces offer the same first rule; a chosen option is always rendered, so
+        // the stats poll never takes a fresh editor for one being edited (review, 2026-10-01).
+        String chosenSensor = rule.sensor;
+        if (chosenSensor.isEmpty()) {
+            org.json.JSONObject proximity = block.optJSONObject("proximity");
+            chosenSensor = proximity != null && proximity.optBoolean("available") ? "proximity"
+                    : firstAvailableSensor(block);
+        }
+        boolean offered = false;
         for (Sensors.Def def : Sensors.ALL) {
             java.util.List<Automations.Event> list = Automations.EVENTS.get(def.id);
             org.json.JSONObject one = block.optJSONObject(def.id);
             if (list == null || one == null || !one.optBoolean("available")) {
                 continue;
             }
-            sensorOptions.append(selectOption(def.id, def.name, rule.sensor));
+            offered |= def.id.equals(chosenSensor);
+            sensorOptions.append(selectOption(def.id, def.name, chosenSensor));
+            // One event is a line of text, not a choice: the radio is there for the form and
+            // hidden by the stylesheet (label.radio.one).
+            String one_ = list.size() == 1 ? " one" : "";
             events.append("<div class=\"radios events\" data-sensor=\"").append(def.id)
-                    .append("\" role=\"radiogroup\">");
+                    .append("\" role=\"radiogroup\" aria-label=\"What ").append(escapeHtml(def.name))
+                    .append(" notices\">");
             for (Automations.Event event : list) {
                 boolean checked = def.id.equals(rule.sensor) && event.id.equals(rule.event);
-                events.append("<label class=\"radio\"><input type=\"radio\" name=\"event_")
+                events.append("<label class=\"radio").append(one_).append("\"><input type=\"radio\" name=\"event_")
                         .append(def.id).append("\" value=\"").append(event.id).append("\"")
                         .append(checked ? " checked" : "")
                         .append(" data-level=\"").append(event.levelUnit == null ? "" : event.levelUnit)
@@ -2114,10 +2132,19 @@ final class HttpAdminServer {
             }
             events.append("</div>");
         }
+        if (!offered && !rule.sensor.isEmpty()) {
+            // A rule on a sensor this device lacks keeps it: saving the rule for its name must
+            // not move it to the first sensor of the menu (review, 2026-10-01).
+            Sensors.Def missing = Sensors.byId(rule.sensor);
+            sensorOptions.append(selectOption(rule.sensor,
+                    (missing == null ? rule.sensor : missing.name) + " (not on this device)",
+                    rule.sensor));
+        }
+        String chosenAction = rule.action.isEmpty() ? "display_on" : rule.action;
         StringBuilder actionOptions = new StringBuilder();
         for (Automations.Action action : Automations.ACTIONS) {
             actionOptions.append("<option value=\"").append(action.id).append("\"")
-                    .append(action.id.equals(rule.action) ? " selected" : "")
+                    .append(action.id.equals(chosenAction) ? " selected" : "")
                     .append(" data-argument=\"")
                     .append(action.argumentLabel == null ? "" : escapeHtml(action.argumentLabel))
                     .append("\">").append(escapeHtml(action.label)).append("</option>");
@@ -2127,7 +2154,9 @@ final class HttpAdminServer {
                 + "<input type=\"hidden\" name=\"id\" value=\"" + escapeHtml(rule.id) + "\">"
                 + baselineField(baseline)
                 + "<section class=\"card\">"
+                // Words, not a machine value: capitals and the keyboard's corrections stay on.
                 + fieldWithId("a-name" + sfx, "text", "name", "Name", rule.name, "", null)
+                        .replace(MACHINE_TEXT, "")
                 + "</section>"
                 + "<section class=\"card gap\"><h2>When</h2>"
                 + selectField("a-sensor" + sfx, "sensor", "Sensor", null, sensorOptions.toString(), null)
@@ -2136,13 +2165,14 @@ final class HttpAdminServer {
                 + fieldWithId("a-level" + sfx, "number", "level", "Level",
                         Double.isNaN(rule.level) ? "" : Automations.number(rule.level),
                         " step=\"any\" min=\"0\"", null)
-                + fieldWithId("a-minutes" + sfx, "number", "minutes", "For, minutes",
+                + fieldWithId("a-minutes" + sfx, "number", "minutes", "For (minutes)",
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
                 + "</section>"
                 + "<section class=\"card\"><h2>Then</h2>"
                 + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
                 + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence", rule.argument, "", null)
+                        .replace(MACHINE_TEXT, "")
                 + "</section>"
                 + "<section class=\"card\"><h2>Only</h2>"
                 + switchRow("a-only" + sfx, "Between these times", " name=\"only\" value=\"1\"",
@@ -2167,6 +2197,18 @@ final class HttpAdminServer {
                         + " data-confirm=\"" + escapeHtml(deleteQuestion(
                                 stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
+    }
+
+    /** The first sensor the editor offers, for a new rule on a panel with no proximity sensor. */
+    private static String firstAvailableSensor(org.json.JSONObject block) {
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = block.optJSONObject(def.id);
+            if (Automations.EVENTS.containsKey(def.id) && one != null
+                    && one.optBoolean("available")) {
+                return def.id;
+            }
+        }
+        return "";
     }
 
     /**
@@ -2202,8 +2244,7 @@ final class HttpAdminServer {
         }
         Automations.Rule rule = existing == null ? new Automations.Rule() : existing.copy();
         if (existing != null) {
-            String stale = staleFormRefusal(form, Automations.toJson(
-                    Collections.singletonList(existing), false).toString());
+            String stale = staleFormRefusal(form, Automations.baseline(existing));
             if (stale != null) {
                 writeResponse(output, 200, "text/html; charset=utf-8",
                         bytes(buildAutomationPage(existing, stale)));

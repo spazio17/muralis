@@ -405,9 +405,19 @@ the playlist page was the case that set the rule.
   its event, a level and minutes where the event has them), Then (Display on
   or off, Show the dashboard, Start the screensaver, Play a sound, Say a sentence, Reload the
   page: each a command the panel already had) and Only (a window of the day). `Automations.Engine`
-  is fed every reading, fires a rule once when its condition becomes true after its minutes, and
-  arms it again when it ends; the first reading after the rules load only seeds the state, so a
-  rule made while its condition already holds does not fire on the spot. The one rule that ships,
+  is fed each sensor's reading once, from the sensor's own callback (movement on its edge, the
+  panel's own values on the two-second tick), fires a rule once when its condition becomes true
+  after its minutes, and arms it again when it ends; the tick (`Engine.tick`) only advances the
+  minutes, so a steady room still fires "darker for 10 min", and a reading fed twice from two
+  threads cannot fire a rule twice; the first reading after the rules load, or after a rule's
+  condition was edited, only seeds the state, so a rule made or changed while its condition
+  already holds does not fire on the spot. A rule's id is `Automations.ID_SHAPE` (lowercase
+  letters and digits, 24 at most), checked wherever a rule comes in, since the id is written
+  into page ids, links and discovery templates. The editor's stale-form baseline
+  (`Automations.baseline`) leaves the switch out, so a switch flipped beside an open editor
+  never blocks its Save. The event radios have no caption, a sensor with one event shows it as
+  a line of text, and a rule on a sensor this device lacks keeps that sensor in the menu, marked
+  "(not on this device)". The one rule that ships,
   on, is "Wake by hand" (proximity near, then Display on); nothing else runs until a person makes
   it. The rules are one JSON document in KioskConfig, published as the `automations` array. **This panel** is the section that holds the panel's name
   (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
@@ -1178,7 +1188,9 @@ the playlist page was the case that set the rule.
   colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
   playlist" as the mark that something is enabled); a plain outline is a visible action that saves
   nothing (Open once, Reboot, Reload, Display on and off, Preview, Back); **red deletes
-  something** (Delete a picture, Delete a playlist, and the confirm screen's own button); **green
+  something**: outlined red for a Delete that asks first (an editor's row, `dangerOutlinedButton`,
+  the web's `button.danger`) and filled red for the confirm screen's own Delete alone
+  (`dangerButton`; Juri, 2026-10-01); **green
   adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
   where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better"). **A quick action the panel refuses says so on the page** (2026-09-24): `admin_command.js`
   puts the playlist page's red banner under the pressed button's row, for example "Not done:

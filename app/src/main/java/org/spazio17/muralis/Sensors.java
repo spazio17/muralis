@@ -256,7 +256,7 @@ final class Sensors implements SensorEventListener {
     // Far in the past, not minus the hold: elapsed time is small right after a boot, and a
     // start at minus the hold read as "Moving" until the hold had passed (review, 2026-09-27).
     private volatile long movedAtMs = Long.MIN_VALUE / 2;
-    private boolean near;
+    private volatile boolean near;
     /** Told when a sensor changes state (near, moving), so nobody waits for the next tick. */
     private volatile Runnable onEdge;
     /** Told when a reading that moves all the time moved (light, pressure), for the rows. */
@@ -299,6 +299,9 @@ final class Sensors implements SensorEventListener {
             wasMoving = now;
         }
         if (changed) {
+            // The rules hear of it on the edge, as the rows do: fed only on the poll, "picked
+            // up" ran up to two seconds late (review, 2026-10-01).
+            feed(MOVEMENT, Automations.Sample.of(now));
             edge();
         }
     }
@@ -686,8 +689,11 @@ final class Sensors implements SensorEventListener {
         if (engine == null) {
             return;
         }
+        // The hardware sensors and movement feed the engine from their own events, once each;
+        // feeding their last reading again here handed it an older sample after the newer one
+        // and could fire a rule twice (review, 2026-10-01). The tick advances their minutes.
         for (Def def : ALL) {
-            if (!available(def) || !on(def)) {
+            if (def.androidType != 0 || !available(def) || !on(def)) {
                 continue;
             }
             Automations.Sample sample = sampleOf(def);
@@ -695,6 +701,7 @@ final class Sensors implements SensorEventListener {
                 feed(def, sample);
             }
         }
+        engine.tick(SystemClock.elapsedRealtime(), minuteOfDay());
     }
 
     private Automations.Sample sampleOf(Def def) {
