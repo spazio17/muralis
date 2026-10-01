@@ -493,6 +493,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0) {
             inUse.add("Microphone on");
         }
+        if (android.os.Build.VERSION.SDK_INT >= 29
+                && (types & android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0) {
+            inUse.add("Listening for beacons");
+        }
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID);
         if (!inUse.isEmpty()) {
             builder.setContentText(android.text.TextUtils.join(" · ", inUse));
@@ -601,10 +605,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * somebody noticed. Auto-granting removes that failure mode entirely.
      *
      * <p>Scope: the permissions this app declares and needs, which since the sensors (2026-09-27,
-     * a product decision) include the camera and the microphone, granted so a sensor's row shows
-     * a switch on a panel nobody stands at; every sensor stays off until switched on, and the
-     * Wi-Fi SSID is still never read. The ROM repo's docs/play-store-viability.md records the
-     * earlier, narrower set.
+     * a product decision) include the camera, the microphone and, for the Bluetooth beacons,
+     * location (Juri, 2026-10-01), granted so a sensor's row shows a switch on a panel nobody
+     * stands at; every sensor stays off until switched on, and neither a position nor the Wi-Fi
+     * SSID is ever read. The ROM repo's docs/play-store-viability.md records the earlier,
+     * narrower set.
      */
     private void grantOwnRuntimePermissions(
             DevicePolicyManager policy, android.content.ComponentName admin) {
@@ -2530,6 +2535,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         if (hub != null && hub.available(Sensors.MICROPHONE) && hub.on(Sensors.MICROPHONE)) {
             wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        }
+        if (hub != null && hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH)) {
+            // The Bluetooth scan counts as location use: with this type held, "while using the
+            // app" location is enough for the scan to run with the display off (Juri,
+            // 2026-10-01, in place of the background location permission).
+            wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         }
         if (wanted == foregroundTypesNow) {
             return;

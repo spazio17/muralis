@@ -5059,7 +5059,7 @@ public final class KioskActivity extends Activity {
         if (nfc == null) {
             return;
         }
-        boolean wanted = inFront && KioskConfig.sensorEnabled(this, Sensors.NFC.id);
+        boolean wanted = inFront && Sensors.enabled(this, Sensors.NFC);
         Log.i(TAG, "NFC reader mode " + (wanted ? "on" : "off") + (nfc.isEnabled() ? "" : ", adapter off"));
         // The contents are read too, for the Home Assistant tag id a tag written by Home
         // Assistant carries; a password-protected tag still gives its chip's id (a LEGO

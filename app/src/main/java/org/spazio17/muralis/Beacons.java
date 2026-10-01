@@ -62,7 +62,16 @@ final class Beacons implements Sensors.Reading {
     }
 
     private final Context context;
+    /** Heard beacons by id, in the order first heard; see {@link #MAX_SEEN}. */
     private final Map<String, Seen> seen = new LinkedHashMap<>();
+    /**
+     * How many beacons are kept: anyone in radio range can advertise a new id every second
+     * (a phone app, an ESP32), and an unbounded list grew the page and the heap with nobody
+     * signed in (review, 2026-10-01). The one heard longest ago goes first.
+     */
+    static final int MAX_SEEN = 100;
+    /** A beacon out of reach this long is forgotten, name box and all. */
+    private static final long FORGET_MS = 10 * 60_000L;
     private BluetoothLeScanner scanner;
     private boolean scanning;
     /** Not before this moment after a failed scan: Android throttles five starts in 30 s. */
@@ -174,6 +183,17 @@ final class Beacons implements Sensors.Reading {
         synchronized (seen) {
             Seen one = seen.get(id);
             if (one == null) {
+                if (seen.size() >= MAX_SEEN) {
+                    Seen oldest = null;
+                    for (Seen each : seen.values()) {
+                        if (oldest == null || each.heardAtMs < oldest.heardAtMs) {
+                            oldest = each;
+                        }
+                    }
+                    if (oldest != null) {
+                        seen.remove(oldest.id);
+                    }
+                }
                 one = new Seen(id);
                 seen.put(id, one);
             }
@@ -187,7 +207,7 @@ final class Beacons implements Sensors.Reading {
         return KioskConfig.sensorOptionInt(context, "beacons_reach_s", 30) * 1000L;
     }
 
-    /** The beacons heard within the reach time, newest signal first. */
+    /** The beacons heard within the reach time, in the order first heard. */
     List<Seen> inReach() {
         long now = SystemClock.elapsedRealtime();
         long reach = reachMs();
@@ -198,12 +218,18 @@ final class Beacons implements Sensors.Reading {
                 Seen one = each.next();
                 if (now - one.heardAtMs <= reach) {
                     list.add(one);
-                } else if (now - one.heardAtMs > 24 * 3_600_000L) {
+                } else if (now - one.heardAtMs > reach + FORGET_MS) {
                     each.remove();
                 }
             }
         }
         return list;
+    }
+
+    /** Whether the radio is off in Android: the scan cannot run, and the row says so. */
+    boolean radioOff() {
+        BluetoothAdapter adapter = adapter();
+        return adapter == null || !adapter.isEnabled();
     }
 
     /** Every beacon heard since the scan began, for the page where one is named. */
@@ -217,6 +243,9 @@ final class Beacons implements Sensors.Reading {
     public void fill(JSONObject one) throws JSONException {
         List<Seen> reach = inReach();
         one.put("value", reach.size());
+        if (radioOff()) {
+            one.put("radio_off", true);
+        }
         JSONObject attributes = new JSONObject();
         org.json.JSONArray list = new org.json.JSONArray();
         for (Seen beacon : reach) {
@@ -238,6 +267,13 @@ final class Beacons implements Sensors.Reading {
 
     @Override
     public Automations.Sample sample() {
+        // Nothing to say while not listening: Bluetooth switched off in Android used to read
+        // as "the last beacon went out of reach" and fire those rules (review, 2026-10-01).
+        synchronized (this) {
+            if (!scanning) {
+                return null;
+            }
+        }
         return Automations.Sample.of(inReach().size());
     }
 }

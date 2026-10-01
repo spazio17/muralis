@@ -392,8 +392,8 @@ the playlist page was the case that set the rule.
   beside the switch for the ones with a page of their own (on the panel every hardware sensor,
   for the test while asleep, plus the camera, the microphone, Bluetooth beacons and NFC; on
   the web only where the page says more than the row, since the calibration and the test are
-  the panel's); Allow while a permission is missing (camera, microphone, and for the beacons the
-  location permission before Android 12 and the Bluetooth scan one from it, asked once from the
+  the panel's); Allow while a permission is missing (camera, microphone, and for the beacons
+  location on every Android and the Bluetooth scan permission from 12, asked once from the
   Sensors page on an ordinary install and granted silently on a device owner); every row has a switch, and the panel's own
   values (display, screensaver, battery, power, network, processor, memory: their Home
   Assistant entities predate this list and are not announced twice) start on where the rest
@@ -440,7 +440,16 @@ the playlist page was the case that set the rule.
   while the admin is not listening, and Allow, once Android will not ask again, opens the app's
   page in Android's settings and says so. **Beacons** (`Beacons`) are the companion app's Beacon Monitor:
   iBeacons heard within the reach time, named on the page. **Listen only, never send** (Juri,
-  2026-10-01): a transmitter, never asked for, was removed with its permission. **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
+  2026-10-01): a transmitter, never asked for, was removed with its permission. **The scan needs
+  the location permission on every Android** (Juri, 2026-10-01): Android counts a scan as
+  location use, and a scan declared "never for location" has every iBeacon hidden from it on 12
+  and later (the platform's denylist names the iBeacon frame; measured as "nothing heard" on the
+  Pixel). "While using the app" is enough, since the service holds the location foreground type
+  while the sensor is on, so no background-location permission is asked; no position is ever
+  read. The heard list keeps at most 100 beacons, the one heard longest ago going first, and
+  forgets one ten minutes after it went out of reach. Bluetooth or NFC switched off in Android
+  reads "Bluetooth is off in Android" / "NFC is off in Android" on the row, and a stopped scan
+  feeds the rules nothing rather than "out of reach". **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
   the reading, a one-shot event for the automations and a Home Assistant tag event through
   `homeassistant/tag/<id>/config`; the NFC page lists the tags read lately by id and when, and the automations' Tag menu offers them by id; a tag is named in Home Assistant, which gets each read as a tag scanned, the way the companion app hands one over (Juri, 2026-09-30: names on the panel meant nothing to someone who never used NFC, and one could not be deleted); a tag is reported as Home Assistant's app reports it, always: a tag written by Home Assistant by the id in its address, https://www.home-assistant.io/tag/<id>, any other tag by its chip's id (where the app refuses it), and its text and addresses ride in the attributes and on the row (Juri, 2026-09-30: a choice of what to read went, since doing what Home Assistant does covers it) (reader mode for all four tag
   types, so a password-protected tag reads like any other;

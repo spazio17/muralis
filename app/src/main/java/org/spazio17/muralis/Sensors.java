@@ -466,11 +466,17 @@ final class Sensors implements SensorEventListener {
             return new String[] {android.Manifest.permission.RECORD_AUDIO};
         }
         if (def == BLUETOOTH) {
-            // Scan results are a location signal, so before Android 12 a scan needs the
-            // location permission; from 12 the Bluetooth scan permission, declared as never
-            // for location, replaces it. Listening only: nothing is ever sent.
+            // Scan results are a location signal in Android's eyes, so a scan needs the
+            // location permission on every version, and from 12 the Bluetooth scan permission
+            // with it. Declared "never for location", Android hid every iBeacon from the scan
+            // on 12 and later (its denylist names the iBeacon frame), so the flag went and the
+            // location permission came, "while using the app" only: the service holds the
+            // location foreground type while the sensor is on, so the scan runs with the
+            // display off without the background permission (Juri, 2026-10-01). Listening only:
+            // nothing is ever sent, and no position is ever read.
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                return new String[] {android.Manifest.permission.BLUETOOTH_SCAN};
+                return new String[] {android.Manifest.permission.BLUETOOTH_SCAN,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION};
             }
             return new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION};
         }
@@ -1036,6 +1042,14 @@ final class Sensors implements SensorEventListener {
                 if (on) {
                     fill(def, one);
                 }
+                if (def == NFC && on) {
+                    // Switched off in Android, a tag held to the panel does nothing, and the
+                    // row has to say why (review, 2026-10-01).
+                    android.nfc.NfcAdapter nfc = android.nfc.NfcAdapter.getDefaultAdapter(context);
+                    if (nfc != null && !nfc.isEnabled()) {
+                        one.put("radio_off", true);
+                    }
+                }
                 String reading = describe(def, one);
                 if (def.androidType != 0) {
                     // What the test while asleep found: "reports", "silent", or nothing yet.
@@ -1252,6 +1266,10 @@ final class Sensors implements SensorEventListener {
         }
         if (def == MEMORY) {
             return value + "% used";
+        }
+        if (one.optBoolean("radio_off")) {
+            // Android's own words for its switch, so a person knows where to look.
+            return def == NFC ? "NFC is off in Android" : "Bluetooth is off in Android";
         }
         if (def == NFC) {
             String content = attributes == null ? "" : attributes.optString("content", "");

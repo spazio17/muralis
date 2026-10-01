@@ -38,6 +38,7 @@
          are added to the running service while the camera or microphone sensor is on. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Runtime permission from API 33 for the notification KioskService must
          post to stay alive. Ask for it at runtime; a denial must not be fatal. -->
@@ -72,9 +73,11 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <!-- The sensors (Sensors.java), every one off until a person switches it on. Bluetooth
-         beacons: the scan alone, declared as never for location from Android 12 and needing the
-         location permission before it, as the companion app does; nothing is ever sent. NFC: tags
-         read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
+         beacons: the scan alone, never a beacon sent, with the location permission on every
+         version, since Android counts a scan as location use and, told "never for location",
+         hides every iBeacon from Android 12 on; "while using the app" is enough, because the
+         service holds the location foreground type while the sensor is on (Juri, 2026-10-01).
+         No position is ever read. NFC: tags read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
          motion detection. Microphone: a sound level, nothing recorded. Each runtime permission
          is asked for once from the Sensors page on an ordinary install and granted silently on a
          device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need their use described
@@ -82,10 +85,8 @@
          declaration with a video each; see ../media/google-play/PLAY-LISTING.md. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -226,7 +227,7 @@
             android:name=".KioskService"
             android:directBootAware="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse|camera|microphone">
+            android:foregroundServiceType="specialUse|camera|microphone|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persistent single-purpose kiosk launcher supervising a Home Assistant dashboard on wall-mounted hardware." />
