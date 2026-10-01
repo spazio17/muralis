@@ -6453,6 +6453,8 @@ public final class KioskActivity extends Activity {
             chips[i].setOnClickListener(v -> {
                 view.level = level;
                 view.own = own;
+                // Another view: a Clear made on the last one does not carry over, as on the web.
+                view.since = "";
                 paintChips.run();
                 worker.removeCallbacks(read[0]);
                 worker.post(read[0]);
