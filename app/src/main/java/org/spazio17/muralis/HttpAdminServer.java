@@ -1638,7 +1638,9 @@ final class HttpAdminServer {
      */
     private String listDetail(String kind, boolean detailPage, String nav, String detail) {
         return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
-                + (detailPage ? "detail" : "list") + "\"" + listsAttributes(kind + "_page") + ">"
+                + (detailPage ? "detail" : "list") + "\" data-title=\""
+                + escapeHtml(Character.toUpperCase(kind.charAt(0)) + kind.substring(1)) + "\""
+                + listsAttributes(kind + "_page") + ">"
                 + nav + "<div class=\"detail\">" + detail + "</div></div>" + listDetailScript;
     }
 
@@ -1669,7 +1671,7 @@ final class HttpAdminServer {
         }
         return "<div id=\"sensors-body\"" + listsAttributes("sensors_home") + ">"
                 + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"sensors-home\">" + rows + "</ul>")
-                + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                + "<div class=\"actions" + (rows.length() == 0 ? " tight" : "") + "\">"
                 + "<a class=\"btn text\" href=\"/sensors\">More sensor settings" + glyph("next")
                 + "</a></div></div>";
     }
@@ -1737,11 +1739,12 @@ final class HttpAdminServer {
             boolean on = def == chosen;
             if (!one.optBoolean("available")) {
                 absent.append(navRow(listRow(def.glyph, def.name, null, reading, null,
-                        "<input type=\"checkbox\" class=\"sw\" disabled>", true), def.id, on));
+                        "<input type=\"checkbox\" class=\"sw\" disabled aria-label=\""
+                                + escapeHtml(def.name) + "\">", true), def.id, on));
                 continue;
             }
             String row;
-            if (def.page) {
+            if (webPage(def)) {
                 row = linkRow("/sensor?id=" + def.id, def.glyph, def.name, reading, readingId,
                         "<span class=\"chev\">" + glyph("next") + "</span><span class=\"divider\"></span>"
                                 + sensorSwitch(def, one.optBoolean("enabled")));
@@ -1769,6 +1772,36 @@ final class HttpAdminServer {
         return pageStart(detailPage && chosen != null ? chosen.name : "Sensors", null,
                 detailPage ? "/sensors" : "/")
                 + listDetail("sensors", detailPage, nav, detail.toString()) + pageEnd();
+    }
+
+    /**
+     * Whether the sensor's page says anything on this surface beyond its row: the calibration
+     * and the test while asleep are the panel's alone, so a chevron to a page that only
+     * repeats the row is left off here (review, 2026-10-01).
+     */
+    private static boolean webPage(Sensors.Def def) {
+        return def.page && def == Sensors.MOVEMENT;
+    }
+
+    /**
+     * A choice of five or fewer as radios, the panel's shape for the same settings, each one
+     * stored the moment it is picked through admin_setting.js (a menu here and radios on the
+     * panel broke the mirror, review of 2026-10-01).
+     */
+    private static String optionRadios(String key, String label, String current,
+            String... valuesAndLabels) {
+        StringBuilder html = new StringBuilder("<div class=\"choice\"><p class=\"label\" id=\"opt-")
+                .append(key).append("-label\">").append(escapeHtml(label))
+                .append("</p><div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-")
+                .append(key).append("-label\">");
+        for (int index = 0; index + 1 < valuesAndLabels.length; index += 2) {
+            String value = valuesAndLabels[index];
+            html.append("<label class=\"radio\"><input type=\"radio\" name=\"opt-").append(key)
+                    .append("\" value=\"").append(escapeHtml(value)).append("\" data-setting=\"sensor_option_")
+                    .append(key).append("\"").append(value.equals(current) ? " checked" : "")
+                    .append(">").append(escapeHtml(valuesAndLabels[index + 1])).append("</label>");
+        }
+        return html.append("</div></div>").toString();
     }
 
     private static String optionSelect(String key, String label, String current,
@@ -1813,14 +1846,23 @@ final class HttpAdminServer {
         String trailing;
         String label = switchLabel(def);
         if (!one.optBoolean("available")) {
-            trailing = "<input type=\"checkbox\" class=\"sw\" disabled>";
+            trailing = "<input type=\"checkbox\" class=\"sw\" disabled aria-label=\""
+                    + escapeHtml(def.name) + "\">";
             label = def.name;
         } else {
             trailing = sensorSwitch(def, on, "-page").replace("class=\"sw\"", "class=\"sw pageswitch\"");
         }
-        String head = "<section class=\"card\"><h2>" + escapeHtml(def.name) + "</h2><ul class=\"list\">"
+        // No title on the first card: the app bar and the row already name the sensor (review,
+        // 2026-10-01). From 840 px the switch hides with the list beside it, and the row then
+        // says the name, not the switch's words (the stylesheet's .pageswitch and .pagename).
+        String words = label.equals(def.name) ? escapeHtml(def.name)
+                : "<span class=\"switchname\">" + escapeHtml(label) + "</span><span class=\"pagename\">"
+                        + escapeHtml(def.name) + "</span>";
+        String head = "<section class=\"card\"><ul class=\"list\">"
                 + listRow(def.glyph, label, null, reading, "sensor-" + def.id + "-page-value",
-                        trailing, !one.optBoolean("available")) + "</ul>";
+                        trailing, !one.optBoolean("available"))
+                        .replaceFirst("<span class=\"h\">" + java.util.regex.Matcher.quoteReplacement(escapeHtml(label)),
+                                java.util.regex.Matcher.quoteReplacement("<span class=\"h\">" + words)) + "</ul>";
         // The calibration and the test while asleep are the panel's alone: both need a hand
         // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
         if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL) {
@@ -1828,11 +1870,12 @@ final class HttpAdminServer {
         } else if (def == Sensors.PROXIMITY) {
             html.append(head).append("</section>");
         } else if (def == Sensors.MOVEMENT) {
+            // Low to High, as the camera says it; a light push is the most sensitive setting.
             html.append(head)
-                    .append(optionSelect("movement_sensitivity", "Sensitivity",
+                    .append(optionRadios("movement_sensitivity", "Sensitivity",
                             KioskConfig.sensorOption(context, "movement_sensitivity", "normal"),
-                            "light", "Light", "normal", "Normal", "heavy", "Heavy"))
-                    .append(optionField("movement_still_s", "Still after, seconds",
+                            "heavy", "Low", "normal", "Normal", "light", "High"))
+                    .append(optionField("movement_still_s", "Still after (seconds)",
                             KioskConfig.sensorOption(context, "movement_still_s", "5"), "number"))
                     .append("</section>");
         } else {

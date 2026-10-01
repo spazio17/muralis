@@ -369,6 +369,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         live = null;
         stopAudio();
+        stopSpeech();
         releaseRuntimeLocks();
         super.onDestroy();
     }
@@ -1533,8 +1534,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
-                endSleepTestEarly();
+            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && sleepTestRunning) {
+                // Going to sleep sends a SCREEN_ON too (the Lenovo, 2026-09-08), so the test
+                // ends early only when the display is really on, read twice half a second apart.
+                PowerManager power = getSystemService(PowerManager.class);
+                if (power != null && power.isInteractive()) {
+                    sleepTestHandler.postDelayed(() -> {
+                        if (sleepTestRunning && power.isInteractive()) {
+                            endSleepTestEarly();
+                        }
+                    }, 500);
+                }
             }
             publishStateSoon();
         }
@@ -1976,7 +1986,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private static final long SLEEP_TEST_SETTLE_MS = 1_500;
     private volatile boolean sleepTestRunning;
     private final Handler sleepTestHandler = new Handler(Looper.getMainLooper());
-    private Runnable sleepTestVerdict;
 
     /** The screen came on before the test's 20 s: whatever the sensor said, it said awake. */
     private void endSleepTestEarly() {
@@ -1999,14 +2008,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
     public String sleepTest(String sensorId) {
         Sensors hub = sensors;
         Sensors.Def def = Sensors.byId(sensorId == null ? "" : sensorId);
-        if (hub == null || def == null || !hub.available(def)) {
+        if (hub == null || def == null) {
             return "no sensor is called " + sensorId;
+        }
+        if (!hub.available(def)) {
+            return "not on this device: " + def.name;
         }
         if (def.androidType == 0) {
             return "only the panel's own sensors can be tested";
         }
         if (!hub.on(def)) {
-            return "the " + def.name.toLowerCase(java.util.Locale.ROOT) + " is off";
+            return def.name + " is off";
         }
         if (chooseDisplayOff(this).method != DisplayOffPolicy.Method.SLEEP) {
             return "this panel darkens with the black film, which keeps its sensors awake";
@@ -2028,7 +2040,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // proof of a sensor watching. A live on-change sensor needs the hand the screen asks
         // for; a continuous one differs on its own.
         final float[][] baseline = {hub.lastValues(def.id)};
-        final long[] baselineAt = {start + 1_500};
+        final long[] baselineAt = {start + SLEEP_TEST_SETTLE_MS};
         sleepTestHandler.postDelayed(() -> {
             if (sleepTestRunning) {
                 hub.reRegister(def);
@@ -2043,7 +2055,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 baselineAt[0] = SystemClock.elapsedRealtime();
             }
         }, SLEEP_TEST_ASK_MS + SLEEP_TEST_SETTLE_MS);
-        sleepTestVerdict = () -> {
+        Runnable sleepTestVerdict = () -> {
             if (!sleepTestRunning) {
                 return;
             }
@@ -2156,7 +2168,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         Sensors hub = sensors;
         if (hub == null || !hub.available(def)) {
-            return "this device has no " + def.name.toLowerCase(java.util.Locale.ROOT) + " sensor";
+            return "not on this device: " + def.name;
         }
         KioskConfig.edit(this).sensorEnabled(id, enabled).apply();
         refreshSensors();
@@ -2179,8 +2191,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
         KioskRuntimeState.publishSensors(hub == null ? new org.json.JSONObject() : hub.snapshot());
     }
 
-    /** Re-reads the stored switches and settings, for a change made on a settings surface. */
+    /**
+     * Re-reads the stored switches and settings: on every tick, and at once for a change made
+     * on a settings surface. Always on the telemetry thread (a web or MQTT worker and the main
+     * thread post to it), so two surfaces changing switches at once cannot run it side by side,
+     * and a stop that waits for a thread never waits on the main thread (review, 2026-10-01).
+     * Inline only before the telemetry thread exists, at start, so the first discovery sees
+     * the stored switches.
+     */
     void refreshSensors() {
+        Handler worker = telemetryHandler;
+        if (worker != null && Looper.myLooper() != worker.getLooper()) {
+            worker.post(this::refreshSensorsNow);
+            return;
+        }
+        refreshSensorsNow();
+    }
+
+    private void refreshSensorsNow() {
         Sensors hub = sensors;
         if (hub == null) {
             return;
@@ -2225,7 +2253,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             next.setOnPreparedListener(android.media.MediaPlayer::start);
             next.setOnCompletionListener(done -> stopAudio());
             next.setOnErrorListener((failed, what, extra) -> {
-                Log.w(TAG, "Audio failed (" + what + "/" + extra + "): " + url);
+                Log.w(TAG, "Audio failed (" + what + "/" + extra + "): "
+                        + AppLog.withoutSecrets(url));
                 stopAudio();
                 return true;
             });
@@ -2233,7 +2262,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             player = next;
             return null;
         } catch (java.io.IOException | RuntimeException unplayable) {
-            Log.w(TAG, "Audio refused: " + url, unplayable);
+            Log.w(TAG, "Audio refused: " + AppLog.withoutSecrets(url), unplayable);
             return "the panel cannot play that address";
         }
     }
@@ -2250,22 +2279,42 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
     }
 
-    /** Speaks through the device's own text-to-speech engine, the way Fully's textToSpeech does. */
+    /**
+     * Speaks through the device's own text-to-speech engine, the way Fully's textToSpeech does.
+     *
+     * <p>The engine is reached through the manifest's {@code queries} entry for
+     * {@code TTS_SERVICE}, which an app targeting Android 11 or later needs to see one at all.
+     * Where none exists, Android calls the listener with ERROR from inside the constructor,
+     * before the field is assigned, so the listener shuts down the engine it was handed and
+     * never the field (review, 2026-10-01). The engine refuses a sentence longer than
+     * {@code getMaxSpeechInputLength()}, and so does this, rather than accepting and saying
+     * nothing.
+     */
     @Override
     public synchronized String say(String text) {
+        if (text.length() > android.speech.tts.TextToSpeech.getMaxSpeechInputLength()) {
+            return "the sentence is longer than the speech engine takes ("
+                    + android.speech.tts.TextToSpeech.getMaxSpeechInputLength() + " characters)";
+        }
         if (speech == null) {
-            speech = new android.speech.tts.TextToSpeech(this, status -> {
+            final android.speech.tts.TextToSpeech[] engine = new android.speech.tts.TextToSpeech[1];
+            engine[0] = new android.speech.tts.TextToSpeech(this, status -> {
                 synchronized (KioskService.this) {
-                    speechReady = status == android.speech.tts.TextToSpeech.SUCCESS;
-                    if (speechReady) {
+                    boolean ready = status == android.speech.tts.TextToSpeech.SUCCESS;
+                    if (ready && engine[0] != null) {
+                        speech = engine[0];
+                        speechReady = true;
                         speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null,
                                 "muralis-say");
                     } else {
                         // Let go, so the next call asks the engine again rather than
                         // answering "not ready" until the service restarts.
                         Log.w(TAG, "No text-to-speech engine answered");
-                        speech.shutdown();
+                        if (engine[0] != null) {
+                            engine[0].shutdown();
+                        }
                         speech = null;
+                        speechReady = false;
                     }
                 }
             });
@@ -2276,6 +2325,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "muralis-say");
         return null;
+    }
+
+    /** Lets the speech engine go with the service: a connection to it leaked per restart. */
+    private synchronized void stopSpeech() {
+        if (speech != null) {
+            speech.shutdown();
+            speech = null;
+            speechReady = false;
+        }
     }
 
     @Override

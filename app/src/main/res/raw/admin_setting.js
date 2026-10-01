@@ -35,6 +35,12 @@ if(el.tagName==='INPUT'&&el.type!=='checkbox'&&el.type!=='radio'&&el.closest){va
 if(field){var why=field.querySelector('.support.refused');
 if(rejected){if(!why){why=document.createElement('p');why.className='support bad refused';field.appendChild(why);}why.textContent=/^Not saved:/.test(detail)?detail:'Not saved: '+detail;}
 else if(why){why.parentNode.removeChild(why);}}}
+// A switch on a list row says why under the row, for five seconds; a tooltip a phone never
+// shows was the only word before (review, 2026-10-01).
+if(rejected&&el.classList.contains('sw')&&el.closest){var row=el.closest('li');
+if(row){var old=row.nextElementSibling;if(old&&old.classList.contains('refusal')){old.parentNode.removeChild(old);}
+var why=document.createElement('li');why.className='refusal';why.textContent='Not done: '+detail;
+row.parentNode.insertBefore(why,row.nextSibling);setTimeout(function(){if(why.parentNode){why.parentNode.removeChild(why);}},5000);}}
 if(!rejected){
 // Stored: every other control of the same setting on the page (a sensor's row in the list and
 // in its detail) shows it at once, and the poll leaves this setting alone until the panel's

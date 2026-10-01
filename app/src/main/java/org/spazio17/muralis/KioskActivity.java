@@ -3539,21 +3539,12 @@ public final class KioskActivity extends Activity {
             }
         }
         LinearLayout list = wide ? navPanel(theme) : card(theme, null);
-        if (!wide) {
-            LinearLayout head = new LinearLayout(this);
-            head.setOrientation(LinearLayout.HORIZONTAL);
-            head.setGravity(Gravity.CENTER_VERTICAL);
-            head.addView(cardTitle(theme, "Sensors"), new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            TextView count = new FlushText(this);
-            count.setText(sensorsSummary());
-            count.setTextColor(theme.subtext);
-            count.setTextSize(12);
-            sensorCountView = count;
-            head.addView(count, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            list.addView(head, matchWrap());
-        }
+        // The list's name and "n of m on" at its head on both widths, as the web's list has
+        // them (review, 2026-10-01).
+        TextView count = new FlushText(this);
+        count.setText(sensorsSummary());
+        sensorCountView = count;
+        list.addView(listHead(theme, "Sensors", count), listHeadParams(wide));
         java.util.List<LinearLayout> absent = new java.util.ArrayList<>();
         // The narrow list's rows touch with a divider between, the web's ul.list; the wide
         // list is the settings menu's pills, which never had dividers.
@@ -3744,13 +3735,19 @@ public final class KioskActivity extends Activity {
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
         text.setTextColor(theme.text);
-        text.setTextSize(15);
+        text.setTextSize(16);
         text.setText(message);
         box.addView(text, matchWrapClose());
-        page.addView(box, matchWrap());
-        Button ok = primaryButton(theme, "OK");
+        // The confirm screen's shape: the box and its button one lone panel in the legal
+        // pages' column, and OK tonal, since it stores nothing (review, 2026-10-01).
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.addView(column, singlePanelParams());
+        Button ok = tonalButton(theme, "OK");
         ok.setOnClickListener(view -> back.run());
-        page.addView(buttonRow(ok), matchWrap());
+        column.addView(buttonRow(ok), matchWrap());
         setContentView(scrollPage(theme, page));
         currentScreen = () -> showNotice(title, message, back);
     }
@@ -3765,6 +3762,9 @@ public final class KioskActivity extends Activity {
         return service == null ? "the service is not running" : service.calibrateProximity(step);
     }
 
+    /** A little over the service's two-second tick, so the block holds the new state. */
+    private static final long REDRAW_AFTER_TICK_MS = 2_200;
+
     /** The screen again, once the service's next tick has the new state in the block. */
     private void redrawSoon() {
         mainHandler.postDelayed(() -> {
@@ -3772,7 +3772,7 @@ public final class KioskActivity extends Activity {
             if (screen != null) {
                 redrawInPlace(screen);
             }
-        }, 2_200);
+        }, REDRAW_AFTER_TICK_MS);
     }
 
     /**
@@ -3837,6 +3837,15 @@ public final class KioskActivity extends Activity {
             input.setInputType(InputType.TYPE_CLASS_NUMBER);
         }
         addField(card, theme, label, input);
+        // The reason a value is refused, in red under the box, where the web page shows it; a
+        // toast was too quick to read (review, 2026-10-01).
+        TextView problem = new FlushText(this);
+        problem.setTextColor(theme.bad);
+        problem.setTextSize(12);
+        problem.setVisibility(View.GONE);
+        LinearLayout.LayoutParams problemParams = matchWrapClose();
+        problemParams.leftMargin = dp(16);
+        card.addView(problem, problemParams);
         Runnable store = () -> {
             String value = input.getText().toString().trim();
             if (value.isEmpty()) {
@@ -3848,12 +3857,14 @@ public final class KioskActivity extends Activity {
             }
             // The same rule book as the web admin's form; a refused value is put back to what
             // is stored, with the reason.
-            String problem = Sensors.checkOption(key, value);
-            if (problem != null) {
-                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+            String refusal = Sensors.checkOption(key, value);
+            if (refusal != null) {
+                problem.setText("Not saved: " + refusal + ".");
+                problem.setVisibility(View.VISIBLE);
                 input.setText(stored);
                 return;
             }
+            problem.setVisibility(View.GONE);
             KioskConfig.edit(this).sensorOption(key, Sensors.cleanOption(key, value)).apply();
             KioskService.refreshSensorsSoon(this);
         };
@@ -3863,7 +3874,7 @@ public final class KioskActivity extends Activity {
             }
         });
         input.setOnEditorActionListener((view, actionId, event) -> {
-            store.run();
+            // hideKeyboard clears the focus, and the focus listener stores.
             hideKeyboard(view);
             return true;
         });
@@ -3946,7 +3957,9 @@ public final class KioskActivity extends Activity {
         if (one == null) {
             one = new org.json.JSONObject();
         }
-        LinearLayout card = card(theme, def.name);
+        // No title on the first card: the app bar and the row already name the sensor, and
+        // three times in a column was two too many (review, 2026-10-01).
+        LinearLayout card = card(theme, null);
         String switchLabel = def == Sensors.MOVEMENT ? "Report movement" : def.name;
         View trailing;
         if (!one.optBoolean("available")) {
@@ -3958,7 +3971,9 @@ public final class KioskActivity extends Activity {
             trailing = sensorSwitch(theme, def, one);
         }
         if (beside) {
+            // The switch's words go with the switch: without one the row says the name.
             trailing = null;
+            switchLabel = def.name;
         }
         card.addView(glyphRow(theme, sensorGlyph(def.glyph), switchLabel,
                 one.optString("reading", ""), trailing, null, !one.optBoolean("available")),
@@ -3973,9 +3988,11 @@ public final class KioskActivity extends Activity {
             cards.add(asleepCard(theme, def, one));
         }
         if (def == Sensors.MOVEMENT) {
+            // Low to High, the camera's words, and the way round a person reads them: the
+            // stored values stay light, normal and heavy, a light push being the most sensitive.
             addOptionRadios(card, theme, "Sensitivity", "movement_sensitivity", "normal",
-                    "light", "Light", "normal", "Normal", "heavy", "Heavy");
-            addOptionField(card, theme, "Still after, seconds", "movement_still_s", "5", true);
+                    "heavy", "Low", "normal", "Normal", "light", "High");
+            addOptionField(card, theme, "Still after (seconds)", "movement_still_s", "5", true);
         } else if (def == Sensors.PROXIMITY) {
             // Calibration: the person shows the panel the sensor covered and clear, and the
             // panel learns how this device's driver reports the two (Juri, 2026-09-27: no
@@ -8470,6 +8487,32 @@ public final class KioskActivity extends Activity {
         holder.addView(content, new FrameLayout.LayoutParams(dp(640),
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
         return holder;
+    }
+
+    /** A list's name and its count side by side, the web's {@code .cardhead}. */
+    private LinearLayout listHead(KioskTheme theme, String title, TextView count) {
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(cardTitle(theme, title), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        count.setTextColor(theme.subtext);
+        count.setTextSize(12);
+        head.addView(count, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return head;
+    }
+
+    /** The head's place: a card's own margin, or inside the nav panel's 8 dp with the pills. */
+    private LinearLayout.LayoutParams listHeadParams(boolean wide) {
+        LinearLayout.LayoutParams params = matchWrap();
+        if (wide) {
+            params.topMargin = dp(8);
+            params.bottomMargin = dp(8);
+            params.leftMargin = dp(16);
+            params.rightMargin = dp(16);
+        }
+        return params;
     }
 
     /** The list at the left of a list-detail page: the settings menu's own panel. */

@@ -242,6 +242,8 @@ final class Sensors implements SensorEventListener {
     private volatile Calibration proximityCalibration;
     /** The proximity events of the last seconds, each {time, values...}, for a calibration. */
     private final java.util.ArrayDeque<float[]> proximityRecent = new java.util.ArrayDeque<>();
+    /** The last proximity events the calibration reads: a few seconds at any sensor rate. */
+    private static final int PROXIMITY_RECENT_MAX = 64;
     private static final long RECENT_MS = 4_000;
     private final Map<String, Boolean> registered = new HashMap<>();
     private float lastMagnitude = Float.NaN;
@@ -335,7 +337,7 @@ final class Sensors implements SensorEventListener {
                 return null;
             case "movement_still_s":
                 if (!clean.matches("\\d{1,5}") || Integer.parseInt(clean) < 1) {
-                    return "the seconds must be a number from 1";
+                    return "the seconds must be 1 or more";
                 }
                 return null;
             default:
@@ -373,25 +375,36 @@ final class Sensors implements SensorEventListener {
             if (wanted == have) {
                 continue;
             }
-            Sensor sensor = manager.getDefaultSensor(def.androidType);
             if (wanted) {
-                // The wake-up variant where there is one, so proximity still answers while the
-                // panel sleeps; the ordinary one otherwise, which works under the black film.
-                Sensor waking = manager.getDefaultSensor(def.androidType, true);
-                manager.registerListener(this, waking != null ? waking : sensor,
-                        def == MOVEMENT ? SensorManager.SENSOR_DELAY_UI
-                                : SensorManager.SENSOR_DELAY_NORMAL);
+                register(def);
                 Log.i(TAG, def.name + " on");
             } else {
-                manager.unregisterListener(this, sensor);
-                Sensor waking = manager.getDefaultSensor(def.androidType, true);
-                if (waking != null) {
-                    manager.unregisterListener(this, waking);
-                }
+                unregister(def);
                 readings.remove(def.id);
                 Log.i(TAG, def.name + " off");
             }
             registered.put(def.id, wanted);
+        }
+    }
+
+    /**
+     * Registers the sensor's listener: the wake-up variant where there is one, so proximity
+     * still answers while the panel sleeps; the ordinary one otherwise, which works under the
+     * black film.
+     */
+    private void register(Def def) {
+        Sensor sensor = manager.getDefaultSensor(def.androidType);
+        Sensor waking = manager.getDefaultSensor(def.androidType, true);
+        manager.registerListener(this, waking != null ? waking : sensor,
+                def == MOVEMENT ? SensorManager.SENSOR_DELAY_UI : SensorManager.SENSOR_DELAY_NORMAL);
+    }
+
+    /** Drops both variants' listeners, whichever one register took. */
+    private void unregister(Def def) {
+        manager.unregisterListener(this, manager.getDefaultSensor(def.androidType));
+        Sensor waking = manager.getDefaultSensor(def.androidType, true);
+        if (waking != null) {
+            manager.unregisterListener(this, waking);
         }
     }
 
@@ -404,14 +417,8 @@ final class Sensors implements SensorEventListener {
         if (manager == null || def.androidType == 0 || !Boolean.TRUE.equals(registered.get(def.id))) {
             return;
         }
-        Sensor sensor = manager.getDefaultSensor(def.androidType);
-        Sensor waking = manager.getDefaultSensor(def.androidType, true);
-        manager.unregisterListener(this, sensor);
-        if (waking != null) {
-            manager.unregisterListener(this, waking);
-        }
-        manager.registerListener(this, waking != null ? waking : sensor,
-                def == MOVEMENT ? SensorManager.SENSOR_DELAY_UI : SensorManager.SENSOR_DELAY_NORMAL);
+        unregister(def);
+        register(def);
     }
 
     /** Drops every listener, for the service going away. */
@@ -436,7 +443,7 @@ final class Sensors implements SensorEventListener {
                     raw[0] = now;
                     System.arraycopy(event.values, 0, raw, 1, event.values.length);
                     proximityRecent.addLast(raw);
-                    while (proximityRecent.size() > 64) {
+                    while (proximityRecent.size() > PROXIMITY_RECENT_MAX) {
                         proximityRecent.removeFirst();
                     }
                 }
@@ -656,9 +663,9 @@ final class Sensors implements SensorEventListener {
     }
 
     /**
-     * The block the status document carries: one object per sensor this device has, with its
-     * kind, whether it is on and, when it is, its reading, its attributes and the one line a row
-     * shows.
+     * The block the status document carries: one object per sensor this app knows, with its
+     * kind, whether this device has it, whether it is on and, when it is, its reading, its
+     * attributes and the one line a row shows.
      */
     JSONObject snapshot() {
         JSONObject block = new JSONObject();
@@ -893,23 +900,6 @@ final class Sensors implements SensorEventListener {
             throw new IllegalStateException(impossible);
         }
         return keys;
-    }
-
-    /** The ids of every sensor that is on, for a summary line. */
-    static List<String> enabledIds(JSONObject block) {
-        List<String> on = new ArrayList<>();
-        if (block == null) {
-            return on;
-        }
-        java.util.Iterator<String> keys = block.keys();
-        while (keys.hasNext()) {
-            String key = keys.next();
-            JSONObject one = block.optJSONObject(key);
-            if (one != null && one.optBoolean("active")) {
-                on.add(key);
-            }
-        }
-        return on;
     }
 
     /** "4 of 12 on", counting every sensor this device has, for the summary lines. */

@@ -389,11 +389,12 @@ the playlist page was the case that set the rule.
   app knows, alphabetical, the companion app's "Manage sensors" with no groups: every row is the
   same shape and only its right edge says what kind it is. A switch for the ones a person turns
   on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
-  beside the switch for the ones with a page of their own (every hardware sensor since the
-  test while asleep); the reading alone
-  for what the panel always reports (display, screensaver, battery, power, network, processor,
-  memory: their Home Assistant entities predate this list and are not announced twice); greyed at
-  the end for what this device lacks. Every row's reading is worded once, by the service
+  beside the switch for the ones with a page of their own (on the panel every hardware sensor,
+  for the test while asleep; on the web only where the page says more than the row, since
+  the calibration and the test are the panel's); every row has a switch, and the panel's own
+  values (display, screensaver, battery, power, network, processor, memory: their Home
+  Assistant entities predate this list and are not announced twice) start on where the rest
+  start off; greyed at the end for what this device lacks. Every row's reading is worded once, by the service
   (`Sensors.describe`, the `reading` field of the `sensors` block), and both surfaces copy it.
   The settings page's Sensors section lists only what is on, with "More sensor settings" to the
   page, the Screensaver section's shape. The audio sensor reports playing or idle with the media
@@ -440,12 +441,12 @@ the playlist page was the case that set the rule.
   sensor and a procedure inside chooses how to handle it"): Android's rule (distance under the
   range is near) applies until the Proximity page's Calibrate runs, two steps, the sensor
   covered then clear (`proximity.calibrate` with covered, clear or reset; the panel's two
-  confirm screens, the web's three buttons). `Sensors.Calibration.derive` picks the event value
+  confirm screens; the web has no calibration). `Sensors.Calibration.derive` picks the event value
   that moved the most between the two, relative to its size, the line halfway and near on the
   covered side, and refuses when nothing moved by a fifth; stored as `proximity_slot`,
   `proximity_threshold`, `proximity_near_high`, read on the tick. An on-change sensor sends
   nothing while a hand holds still, so a step reads the last event when nothing arrived in the
-  last four seconds. The row says Calibrated or Not calibrated on both surfaces. **Whether a
+  last four seconds. The row says Calibrated or Not calibrated on the panel. **Whether a
   sensor reports while the panel sleeps is measured, never assumed** (2026-09-27: the Huawei
   MediaPad delivers no proximity, light or accelerometer event to an app while asleep, drops
   the registrations, and turns its Wi-Fi off after a few minutes; the phone reports; on

@@ -171,6 +171,8 @@ ul.list li.two{min-height:72px}
 .lead svg,.trail svg,.sections svg,summary svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .text{flex:1;min-width:0}
 .text .h,.text .s{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A name wraps rather than ends in dots: "Bluetooth ..." on a 360 px phone said nothing. */
+.text .h{white-space:normal;overflow-wrap:anywhere}
 .text .h{font-size:16px;line-height:24px;color:var(--text)}
 .text .s{font-size:14px;line-height:20px;color:var(--subtext)}
 .trail{display:inline-flex;align-items:center;flex:none;gap:0;color:var(--subtext);font-size:12px}
@@ -369,7 +371,16 @@ input.sw:checked{background:var(--accent);border-color:var(--accent)}
 input.sw:checked::after{left:22px;top:4px;width:20px;height:20px;background:var(--on-accent)}
 input.sw:disabled{opacity:.38;cursor:default}
 .card .count{font-size:12px;color:var(--subtext)}
-.actions.top0{margin-top:8px}
+.actions.tight{margin-top:8px}
+/* A refused switch: the border red, and the reason on a line under its row for a few seconds,
+   where the title a phone never shows could not say it (review, 2026-10-01). */
+input.sw.check-bad{border-color:var(--bad)}
+ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16px;padding:4px 16px 8px;min-height:0}
+/* The detail's own row beside the list carries no switch, so it says the sensor's name, not the
+   switch's words (the panel's rule: one switch per sensor on a page). */
+.pagename{display:none}
+/* A choice of five or fewer as radios, with its label over them, the panel's shape. */
+.choice{margin-top:16px}.choice>.label{font-size:12px;line-height:16px;font-weight:500;color:var(--subtext);margin:0 0 4px}
 .actions .btn.text{flex:0 0 auto}
 
 /* ---- list-detail pages: Sensors (2026-09-27) and Screensaver (2026-09-28) ---- */
@@ -391,6 +402,7 @@ input.sw:disabled{opacity:.38;cursor:default}
 .ld .nav ul.list li.on .h{color:var(--on-secondary-container);font-weight:500}
 .ld .nav .actions{padding:8px 12px 4px}
 .ld .detail .pageswitch{display:none}
+.ld .detail .pagename{display:inline}.ld .detail .switchname{display:none}
 .ld .detail>.pane>section.card:first-child,.ld .detail>.pane>form>.field:first-of-type{margin-top:0}
 .pane[hidden]{display:none}
 }

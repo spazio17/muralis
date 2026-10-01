@@ -80,8 +80,10 @@ if(home&&!one.active){home.remove();}
 if(out){out.textContent=one.reading||'';}});
 });
 var ss=document.getElementById('sum-sensors');
+// Counted as Sensors.summary counts, every sensor this device has, the panel's own included;
+// leaving those out read "5 of 7" five seconds after the page said "12 of 14" (2026-10-01).
 if(ss){var have=0,on=0;Object.keys(sensors).forEach(function(id){var one=sensors[id]||{};
-if(!one.available||one.kind==='panel'){return;}have++;if(one.active){on++;}});
+if(!one.available){return;}have++;if(one.active){on++;}});
 ss.textContent=have?on+' of '+have+' on':'None on this device';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);

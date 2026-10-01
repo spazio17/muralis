@@ -91,6 +91,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- The speech engine "Say a sentence" and audio.say speak through: from Android 11 an
+             app sees no engine it has not declared here (review, 2026-10-01). -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="true" />

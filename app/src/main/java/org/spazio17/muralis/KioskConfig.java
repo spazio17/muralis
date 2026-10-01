@@ -464,11 +464,10 @@ final class KioskConfig {
         return Math.max(min, Math.min(max, value));
     }
 
-    /** Whether the sensor with this id is switched on; every sensor starts off. */
-    static boolean sensorEnabled(Context context, String id) {
-        return sensorEnabled(context, id, false);
-    }
-
+    /**
+     * Whether the sensor with this id is switched on, {@code fallback} when nothing is stored:
+     * Sensors.enabled knows which start on (the panel's own values) and which start off.
+     */
     static boolean sensorEnabled(Context context, String id, boolean fallback) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
