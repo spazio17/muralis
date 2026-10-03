@@ -4,7 +4,7 @@
  */
 package org.spazio17.muralis;
 
-/** The beacon distance: the trimmed average, the curve, and the panel's correction. */
+/** The beacon distance: the trimmed average, the model, and the two calibration steps. */
 public final class BeaconDistanceTest {
     private BeaconDistanceTest() {
     }
@@ -15,18 +15,29 @@ public final class BeaconDistanceTest {
         int[] tenWithOutliers = {-90, -60, -60, -60, -60, -60, -60, -60, -60, -30};
         require(BeaconDistance.average(tenWithOutliers) == -60,
                 "the highest and lowest tenth are left out");
-        double atOne = BeaconDistance.metres(-59, -59, 0);
-        require(Math.abs(atOne - 1.0) < 0.05, "heard as announced, one metre: " + atOne);
-        require(BeaconDistance.metres(-75, -59, 0) > 2,
-                "16 dB weaker than announced is a few metres (2.8)");
-        // The Huaweis: a phone 30 cm away heard at about -75 dBm against an announced -59. Held
-        // at one metre it read, say, -78: the correction is -19, and -75 is then under a metre.
-        double correction = BeaconDistance.correction(-78, -59);
-        require(correction == -19, "the correction is heard minus announced");
-        require(BeaconDistance.metres(-75, -59, correction) < 1,
-                "with the panel's correction the near phone reads near");
-        require(Double.isNaN(BeaconDistance.metres(-60, 0, 0)), "no announced power, no distance");
-        require(Double.isNaN(BeaconDistance.metres(Double.NaN, -59, 0)), "nothing heard, no distance");
+        double nan = Double.NaN;
+        require(BeaconDistance.metres(-59, -59, nan, nan) == 1.0, "heard as announced: 1 m");
+        require(BeaconDistance.metres(-70, -59, nan, nan) == 2.8,
+                "uncalibrated, 11 dB weaker than announced is 2.8 m");
+        // Measured on the Huawei tablet, 2026-10-03: the Pixel on high power heard at -58 dBm
+        // at one metre and -70 at three, announcing -59.
+        require(BeaconDistance.metres(-70, -59, -58, -70) == 3.0, "both steps: 3 m reads 3.0");
+        require(BeaconDistance.metres(-58, -59, -58, -70) == 1.0, "both steps: 1 m reads 1.0");
+        require(BeaconDistance.farProblem(-58, -70) == null, "a room's fade is kept");
+        // The Pixel on low power: -79.4 at one metre, -86 at three, a fade of 1.4.
+        require(BeaconDistance.metres(-79.4, -59, -79.4, nan) == 1.0,
+                "a beacon announcing too much reads right once calibrated at 1 m");
+        require(BeaconDistance.farProblem(-79.4, -86) != null, "too weak a fade is refused");
+        require(BeaconDistance.farProblem(-58, -95) != null, "too steep a fade is refused");
+        require(BeaconDistance.metres(-70, -59, -58, -59) == BeaconDistance.metres(-70, -59,
+                -58, nan), "a three-metre step no room gives is left out");
+        require(BeaconDistance.farProblem(nan, -70) != null, "no power known, no far step");
+        require(BeaconDistance.metres(-60, 0, -60, nan) == 1.0,
+                "no announced power, calibrated at 1 m: a distance");
+        require(Double.isNaN(BeaconDistance.metres(-60, 0, nan, nan)),
+                "no announced power, uncalibrated: no distance");
+        require(Double.isNaN(BeaconDistance.metres(nan, -59, nan, nan)),
+                "nothing heard, no distance");
         System.out.println("BeaconDistanceTest passed");
     }
 

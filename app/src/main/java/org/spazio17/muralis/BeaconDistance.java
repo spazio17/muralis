@@ -7,21 +7,18 @@ package org.spazio17.muralis;
 import java.util.Arrays;
 
 /**
- * How far a beacon is, from its signal: the way Home Assistant's companion app estimates it,
- * through the AltBeacon library, plus a correction for the panel that hears it (Juri,
- * 2026-10-01: the Huaweis read 9 m and 23 m for a phone 30 cm away).
+ * How far a beacon is, from its signal. The signal is averaged over the last
+ * {@link #WINDOW_MS}, the highest and the lowest tenth of the readings thrown out first, so one
+ * reflected packet does not move the distance (AltBeacon's running average, which Home
+ * Assistant's companion app uses).
  *
- * <p>The signal is averaged over the last {@link #WINDOW_MS}, the highest and the lowest tenth
- * of the readings thrown out first, so one reflected packet does not move the distance
- * (AltBeacon's running average). The distance is AltBeacon's default curve, d = A (r/t)^B + C,
- * r the averaged signal and t the signal at one metre (Android Beacon Library, "Distance
- * estimates"; coefficients of its default model, model-distance-calculations.json).
- *
- * <p>t is what the beacon announces it sends at one metre, corrected by how much weaker or
- * stronger this panel hears than that: AltBeacon says each receiving model needs its own
- * curve, and Home Assistant's iBeacon page says to calibrate at one metre. The panel learns
- * the correction once, a beacon held at one metre (Beacons.calibrate); until then it is 0.
- * Pure, for the host tests.
+ * <p>The distance is the log-distance model, d = 10^((t - r) / (10 n)): r the averaged signal,
+ * t the signal at one metre, n how fast the signal fades with distance. Each beacon can be
+ * calibrated on each panel, both steps optional (Juri, 2026-10-03): held at one metre, the
+ * panel learns t; held at three metres too, it learns n for that room. Without a calibration t
+ * is what the beacon announces and n is {@link #ROOM_FADE}. AltBeacon's curve, which this
+ * replaced, takes no second point, and on the Huawei tablet it read 2.1 m for a beacon three
+ * metres away. Pure, for the host tests.
  */
 final class BeaconDistance {
     private BeaconDistance() {
@@ -31,10 +28,16 @@ final class BeaconDistance {
     static final long WINDOW_MS = 20_000;
     /** The share of readings dropped at each end before averaging. */
     static final double TRIM = 0.1;
-    /** AltBeacon's default curve (its Nexus 5 model). */
-    static final double A = 0.42093;
-    static final double B = 6.9476;
-    static final double C = 0.54992;
+    /**
+     * How fast the signal fades in a room until the panel learns it: 2 in open air, more
+     * indoors; 2.5 is what the Huawei tablet measured on 2026-10-03, the Pixel on high power.
+     */
+    static final double ROOM_FADE = 2.5;
+    /** The fade a three-metre step may give: outside it, a distance was wrong or the beacon weak. */
+    static final double LEAST_FADE = 1.5;
+    static final double MOST_FADE = 5;
+    /** Where the second calibration step holds the beacon. */
+    static final double FAR_METRES = 3;
 
     /**
      * The average of the signal readings, in dBm, the highest and lowest tenth left out; NaN
@@ -57,27 +60,59 @@ final class BeaconDistance {
     }
 
     /**
-     * The distance in metres, to a tenth, from the averaged signal, the power the beacon
-     * announces at one metre, and this panel's correction in dB; NaN where the beacon announces
-     * no power or nothing was heard.
+     * The signal at one metre: as heard there when calibrated, else as the beacon announces;
+     * NaN when neither is known.
      */
-    static double metres(double rssi, int announcedAtOneMetre, double correctionDb) {
-        if (Double.isNaN(rssi) || rssi == 0 || announcedAtOneMetre == 0) {
-            return Double.NaN;
+    static double atOneMetre(int announced, double heardAtOneMetre) {
+        if (!Double.isNaN(heardAtOneMetre)) {
+            return heardAtOneMetre;
         }
-        double atOneMetre = announcedAtOneMetre + correctionDb;
-        if (atOneMetre >= 0) {
-            return Double.NaN;
-        }
-        double metres = A * Math.pow(rssi / atOneMetre, B) + C;
-        return Math.round(metres * 10) / 10.0;
+        return announced == 0 ? Double.NaN : announced;
+    }
+
+    /** How fast the signal fades, from the signal at one metre and at three. */
+    static double fade(double atOneMetre, double heardAtThreeMetres) {
+        return (atOneMetre - heardAtThreeMetres) / (10 * Math.log10(FAR_METRES));
     }
 
     /**
-     * The correction for a beacon held at one metre: how much stronger (positive) or weaker
-     * (negative) this panel hears it than it announces.
+     * Why a three-metre step cannot be kept, or null: the signal at one metre unknown, or a
+     * fade no room gives (the Pixel on low power faded 1.4, too weak to tell).
      */
-    static double correction(double heardAtOneMetre, int announcedAtOneMetre) {
-        return heardAtOneMetre - announcedAtOneMetre;
+    static String farProblem(double atOneMetre, double heardAtThreeMetres) {
+        if (Double.isNaN(atOneMetre)) {
+            return "the beacon announces no power; calibrate it at 1 m first";
+        }
+        double fade = fade(atOneMetre, heardAtThreeMetres);
+        if (fade < LEAST_FADE) {
+            return "the signal at 3 m is hardly weaker than at 1 m: check both distances, or "
+                    + "raise the beacon's transmit power";
+        }
+        if (fade > MOST_FADE) {
+            return "the signal at 3 m is far weaker than at 1 m: check both distances, and "
+                    + "that nothing stands between the beacon and the panel";
+        }
+        return null;
+    }
+
+    /**
+     * The distance in metres, to a tenth, from the averaged signal, the power the beacon
+     * announces at one metre, and what the panel heard at one and three metres (NaN for a step
+     * not done); NaN when nothing was heard or the signal at one metre is unknown.
+     */
+    static double metres(double rssi, int announced, double heardAtOneMetre,
+            double heardAtThreeMetres) {
+        if (Double.isNaN(rssi) || rssi == 0) {
+            return Double.NaN;
+        }
+        double atOneMetre = atOneMetre(announced, heardAtOneMetre);
+        if (Double.isNaN(atOneMetre) || atOneMetre >= 0) {
+            return Double.NaN;
+        }
+        double fade = Double.isNaN(heardAtThreeMetres)
+                || farProblem(atOneMetre, heardAtThreeMetres) != null
+                ? ROOM_FADE : fade(atOneMetre, heardAtThreeMetres);
+        double metres = Math.pow(10, (atOneMetre - rssi) / (10 * fade));
+        return Math.round(metres * 10) / 10.0;
     }
 }

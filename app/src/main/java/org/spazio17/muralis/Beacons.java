@@ -74,30 +74,101 @@ final class Beacons implements Sensors.Reading {
         }
     }
 
-    /** This panel's correction of what beacons announce, in dB; see BeaconDistance. */
-    private volatile double correctionDb;
+    /**
+     * What this panel heard of each calibrated beacon, by id: {at one metre, at three}, NaN
+     * for a step not done; see BeaconDistance. Kept as one JSON setting of this panel alone.
+     */
+    private final Map<String, double[]> calibrations = new LinkedHashMap<>();
 
-    private void loadCorrection() {
-        try {
-            correctionDb = Double.parseDouble(
-                    KioskConfig.sensorOption(context, CORRECTION_KEY, "0"));
-        } catch (NumberFormatException none) {
-            correctionDb = 0;
+    /** Where the calibrations are kept: a setting of this panel alone (SensorSettings). */
+    static final String CALIBRATION_KEY = "beacons_calibration";
+
+    private void loadCalibrations() {
+        synchronized (calibrations) {
+            calibrations.clear();
+            try {
+                JSONObject stored = new JSONObject(
+                        KioskConfig.sensorOption(context, CALIBRATION_KEY, "{}"));
+                java.util.Iterator<String> ids = stored.keys();
+                while (ids.hasNext()) {
+                    String id = ids.next();
+                    JSONObject one = stored.optJSONObject(id);
+                    if (one != null) {
+                        calibrations.put(id, new double[] {
+                            one.optDouble("near", Double.NaN), one.optDouble("far", Double.NaN)});
+                    }
+                }
+            } catch (JSONException unreadable) {
+                Log.w(TAG, "Beacon calibrations unreadable, left out", unreadable);
+            }
         }
     }
 
-    /** Where the correction is kept: a setting of this panel alone (SensorSettings). */
-    static final String CORRECTION_KEY = "beacons_correction_db";
-
-    /** Whether this panel was calibrated with a beacon at one metre. */
-    boolean calibrated() {
-        return !KioskConfig.sensorOption(context, CORRECTION_KEY, "").isEmpty();
+    private void storeCalibrations() {
+        JSONObject stored = new JSONObject();
+        synchronized (calibrations) {
+            try {
+                for (Map.Entry<String, double[]> entry : calibrations.entrySet()) {
+                    JSONObject one = new JSONObject();
+                    if (!Double.isNaN(entry.getValue()[0])) {
+                        one.put("near", Math.round(entry.getValue()[0] * 10) / 10.0);
+                    }
+                    if (!Double.isNaN(entry.getValue()[1])) {
+                        one.put("far", Math.round(entry.getValue()[1] * 10) / 10.0);
+                    }
+                    stored.put(entry.getKey(), one);
+                }
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            if (calibrations.isEmpty()) {
+                KioskConfig.edit(context).removeSensorOption(CALIBRATION_KEY).apply();
+            } else {
+                KioskConfig.edit(context).sensorOption(CALIBRATION_KEY, stored.toString())
+                        .apply();
+            }
+        }
     }
 
-    /** The beacon's distance in metres with this panel's correction; NaN when unknown. */
+    /** What this panel heard of a beacon at one and three metres, NaN for a step not done. */
+    private double[] calibration(String id) {
+        synchronized (calibrations) {
+            double[] one = calibrations.get(id);
+            return one == null ? new double[] {Double.NaN, Double.NaN} : one.clone();
+        }
+    }
+
+    /** Whether any beacon was calibrated on this panel. */
+    boolean calibrated() {
+        synchronized (calibrations) {
+            return !calibrations.isEmpty();
+        }
+    }
+
+    /** The calibrated beacons with their steps, "Dog at 1 m and 3 m"; empty for none. */
+    String calibratedSummary(NamedList names) {
+        List<String> parts = new ArrayList<>();
+        synchronized (calibrations) {
+            for (Map.Entry<String, double[]> entry : calibrations.entrySet()) {
+                String name = names.name(entry.getKey());
+                parts.add((name.isEmpty() ? entry.getKey() : name) + " at "
+                        + steps(entry.getValue()));
+            }
+        }
+        return String.join(", ", parts);
+    }
+
+    private static String steps(double[] calibration) {
+        boolean near = !Double.isNaN(calibration[0]);
+        boolean far = !Double.isNaN(calibration[1]);
+        return near && far ? "1 m and 3 m" : near ? "1 m" : "3 m";
+    }
+
+    /** The beacon's distance in metres with this panel's calibration of it; NaN when unknown. */
     double distance(Seen one) {
+        double[] calibration = calibration(one.id);
         synchronized (seen) {
-            return BeaconDistance.metres(one.rssi(), one.txPower, correctionDb);
+            return BeaconDistance.metres(one.rssi(), one.txPower, calibration[0], calibration[1]);
         }
     }
 
@@ -127,52 +198,78 @@ final class Beacons implements Sensors.Reading {
     /** The fewest packets in the window a calibration takes, so one packet cannot set it. */
     static final int CALIBRATION_READINGS = 5;
 
+    /** The id of the beacon the last calibration step was kept for, for the panel to name. */
+    private volatile String lastCalibrated;
+
+    String lastCalibrated() {
+        return lastCalibrated;
+    }
+
     /**
-     * One step of the calibration: "near", a beacon held at one metre, takes the strongest
-     * beacon in reach and keeps how much stronger or weaker this panel hears it than it
-     * announces; "reset" forgets that. The reason when refused.
+     * One step of a beacon's calibration on this panel: "near", the beacon held at one metre;
+     * "far", at three; "reset", the calibration forgotten. {@code beaconId} names the beacon,
+     * or null for the strongest in reach (for reset, every beacon). The reason when refused.
      */
-    String calibrate(String step) {
-        switch (step == null ? "" : step) {
-            case "reset":
-                KioskConfig.edit(context).removeSensorOption(CORRECTION_KEY).apply();
-                loadCorrection();
-                return null;
-            case "near": {
-                Seen strongest = null;
-                double strongestRssi = Double.NaN;
-                synchronized (seen) {
-                    for (Seen one : inReach()) {
-                        double rssi = one.rssi();
-                        if (Double.isNaN(rssi) || one.txPower == 0) {
-                            continue;
-                        }
-                        if (strongest == null || rssi > strongestRssi) {
-                            strongest = one;
-                            strongestRssi = rssi;
-                        }
-                    }
-                    if (strongest == null) {
-                        return "no beacon is in reach";
-                    }
-                    if (strongest.readings() < CALIBRATION_READINGS) {
-                        return "the beacon has not been heard long enough; hold it there a few "
-                                + "seconds more";
-                    }
+    String calibrate(String step, String beaconId) {
+        String wanted = beaconId == null || beaconId.trim().isEmpty() ? null : beaconId.trim();
+        String kind = step == null ? "" : step;
+        if (kind.equals("reset")) {
+            synchronized (calibrations) {
+                if (wanted == null) {
+                    calibrations.clear();
+                } else if (calibrations.remove(wanted) == null) {
+                    return "that beacon is not calibrated on this panel";
                 }
-                double correction = BeaconDistance.correction(strongestRssi, strongest.txPower);
-                KioskConfig.edit(context).sensorOption(CORRECTION_KEY,
-                        String.format(java.util.Locale.ROOT, "%.1f", correction)).apply();
-                loadCorrection();
-                Log.i(TAG, String.format(java.util.Locale.ROOT,
-                        "Beacons calibrated on %s: heard %.1f dBm at one metre, announced %d, "
-                                + "correction %.1f dB", strongest.id, strongestRssi,
-                        strongest.txPower, correction));
-                return null;
             }
-            default:
-                return "the step must be near or reset";
+            storeCalibrations();
+            Log.i(TAG, "Beacon calibration reset: " + (wanted == null ? "every beacon" : wanted));
+            return null;
         }
+        if (!kind.equals("near") && !kind.equals("far")) {
+            return "the step must be near, far or reset";
+        }
+        Seen chosen = null;
+        double heard = Double.NaN;
+        synchronized (seen) {
+            for (Seen one : inReach()) {
+                double rssi = one.rssi();
+                if (Double.isNaN(rssi)) {
+                    continue;
+                }
+                if (wanted != null ? one.id.equals(wanted)
+                        : chosen == null || rssi > heard) {
+                    chosen = one;
+                    heard = rssi;
+                }
+            }
+            if (chosen == null) {
+                return wanted == null ? "no beacon is in reach" : "that beacon is not in reach";
+            }
+            if (chosen.readings() < CALIBRATION_READINGS) {
+                return "the beacon has not been heard long enough; hold it there a few seconds "
+                        + "more";
+            }
+        }
+        double[] calibration = calibration(chosen.id);
+        if (kind.equals("near")) {
+            calibration[0] = heard;
+        } else {
+            String problem = BeaconDistance.farProblem(
+                    BeaconDistance.atOneMetre(chosen.txPower, calibration[0]), heard);
+            if (problem != null) {
+                return problem;
+            }
+            calibration[1] = heard;
+        }
+        synchronized (calibrations) {
+            calibrations.put(chosen.id, calibration);
+        }
+        storeCalibrations();
+        lastCalibrated = chosen.id;
+        Log.i(TAG, String.format(java.util.Locale.ROOT,
+                "Beacon %s calibrated at %s: heard %.1f dBm, announcing %d", chosen.id,
+                kind.equals("near") ? "1 m" : "3 m", heard, chosen.txPower));
+        return null;
     }
 
     private final Context context;
@@ -196,7 +293,7 @@ final class Beacons implements Sensors.Reading {
 
     Beacons(Context context) {
         this.context = context;
-        loadCorrection();
+        loadCalibrations();
     }
 
     private BluetoothAdapter adapter() {
@@ -407,6 +504,17 @@ final class Beacons implements Sensors.Reading {
             double metres = distance(beacon);
             if (!Double.isNaN(metres)) {
                 entry.put("distance_m", metres);
+            }
+            double[] calibration = calibration(beacon.id);
+            org.json.JSONArray steps = new org.json.JSONArray();
+            if (!Double.isNaN(calibration[0])) {
+                steps.put(1);
+            }
+            if (!Double.isNaN(calibration[1])) {
+                steps.put(3);
+            }
+            if (steps.length() > 0) {
+                entry.put("calibrated_m", steps);
             }
             list.put(entry);
         }

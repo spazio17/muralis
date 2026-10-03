@@ -3897,28 +3897,62 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The beacons' one step: a beacon held one metre from the panel, nothing between them,
-     * long enough for the signal's average (BeaconDistance.WINDOW_MS) to settle.
+     * The beacons' Calibration card: which beacons are calibrated and at which distance, and a
+     * button per step, both optional (Juri, 2026-10-03: for some, a beacon heard is enough).
+     * A new step replaces the old, so nothing to reset; the reset stays in the command.
      */
-    private void calibrateBeacons() {
+    private LinearLayout beaconCalibrationCard(KioskTheme theme, Sensors.Def def,
+            org.json.JSONObject one, Beacons beacons) {
+        boolean calibrated = one.optBoolean("calibrated");
+        LinearLayout calibration = card(theme, "Calibration");
+        calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune,
+                calibrated ? "Calibrated" : "Not calibrated",
+                beacons == null ? "" : beacons.calibratedSummary(KioskConfig.beaconNames(this)),
+                null, null, false), matchWrapClose());
+        Button near = tonalButton(theme, "At 1 m");
+        near.setOnClickListener(view -> calibrateBeacons("near"));
+        Button far = tonalButton(theme, "At 3 m");
+        far.setOnClickListener(view -> calibrateBeacons("far"));
+        viewsOf(sensorActions, def.id).add(near);
+        viewsOf(sensorActions, def.id).add(far);
+        paintSensorActions(def.id, Sensors.enabled(this, def));
+        calibration.addView(buttonRow(near, far), tightParams());
+        return calibration;
+    }
+
+    /**
+     * One step of a beacon's calibration: the beacon held one or three metres from the panel,
+     * nothing between them, long enough for the signal's average (BeaconDistance.WINDOW_MS) to
+     * settle. The panel then names the beacon it kept the step for.
+     */
+    private void calibrateBeacons(String step) {
         final Runnable screen = currentScreen;
         Runnable back = () -> {
             if (screen != null) {
                 screen.run();
             }
         };
-        showConfirm("Hold a beacon 1 m away", "Hold one beacon 1 m from the panel, with "
-                + "nothing between them, for 20 seconds, then tap Calibrate. The strongest "
-                + "beacon in reach is the one used.", "Calibrate", false, () -> {
+        String metres = step.equals("near") ? "1 m" : "3 m";
+        showConfirm("Hold a beacon " + metres + " away", "Hold one beacon " + metres
+                + " from the panel, with nothing between them, for 20 seconds, then tap "
+                + "Calibrate. The strongest beacon in reach is the one calibrated.", "Calibrate",
+                false, () -> {
                     KioskService service = KioskService.liveService();
                     String problem = service == null ? "the service is not running"
-                            : service.calibrateBeacons("near");
+                            : service.calibrateBeacons(step, null);
                     if (problem != null) {
                         showNotice("Not done", capital(problem) + ".", back);
                         return;
                     }
-                    back.run();
-                    redrawSoon();
+                    Beacons beacons = KioskService.beaconsOf(this);
+                    String id = beacons == null ? null : beacons.lastCalibrated();
+                    if (id == null) {
+                        back.run();
+                        return;
+                    }
+                    String name = KioskConfig.beaconNames(this).name(id);
+                    showNotice("Calibrated", "\"" + (name.isEmpty() ? id : name)
+                            + "\" is calibrated at " + metres + ".", back);
                 }, back);
     }
 
@@ -4359,10 +4393,10 @@ public final class KioskActivity extends Activity {
                     });
                 }
             }
-            // A beacon held at one metre teaches this panel how strongly it hears, the way
-            // Home Assistant's iBeacon page calibrates (Juri, 2026-10-01): the distance is a
-            // guess until then.
-            cards.add(calibrationCard(theme, def, one, this::calibrateBeacons));
+            // A beacon held at one metre, then three, teaches this panel how strongly it hears
+            // that beacon and how fast its signal fades in the room (Juri, 2026-10-03): the
+            // distance is a guess until then.
+            cards.add(beaconCalibrationCard(theme, def, one, beacons));
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
                     false, true);

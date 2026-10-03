@@ -447,17 +447,7 @@ the playlist page was the case that set the rule.
   Pixel). "While using the app" is enough, since the service holds the location foreground type
   while the sensor is on, so no background-location permission is asked; no position is ever
   read. The heard list keeps at most 100 beacons, the one heard longest ago going first, and
-  forgets one ten minutes after it went out of reach. **The distance is Home Assistant's** (Juri, 2026-10-01,
-  the Huaweis read 9 and 23 m for a phone 30 cm away): `BeaconDistance`, pure and host-tested,
-  averages the signal over 20 s with the highest and lowest tenth dropped (AltBeacon's running
-  average, which the companion app uses) and applies AltBeacon's default curve, d = 0.42093
-  (r/t)^6.9476 + 0.54992, t the beacon's announced power at one metre plus this panel's
-  correction. The correction is learnt once on the Bluetooth beacons page's Calibration card,
-  a beacon held at one metre (`beacons.calibrate` near or reset, the strongest beacon in reach,
-  five packets at least), the way Home Assistant's iBeacon page calibrates; it is a setting of
-  this panel alone (`beacons_correction_db`). Both surfaces word a beacon's state once
-  (`Beacons.describe`): "in reach, 1.2 m, -63 dBm", the averaged signal beside the distance.
-  The calibration is the panel's alone, like the proximity's and the microphone's. Bluetooth or NFC switched off in Android
+  forgets one ten minutes after it went out of reach. **The distance** (Juri, 2026-10-01, the Huaweis read 9 and 23 m for a phone 30 cm away; remodelled 2026-10-03 from measurements on the tablet): `BeaconDistance`, pure and host-tested, averages the signal over 20 s with the highest and lowest tenth dropped (AltBeacon's running average, which the companion app uses) and applies the log-distance model, d = 10^((t - r) / (10 n)), t the signal at one metre and n how fast it fades. **Each beacon is calibrated on each panel, both steps optional** (Juri: for some, a beacon heard is enough): held at 1 m the panel keeps t, held at 3 m too it learns n for the room; uncalibrated, t is the beacon's announced power and n is 2.5. AltBeacon's curve, the first version, takes no second point and read 2.1 m at 3 m; and one correction per panel was wrong, because a beacon announcing the wrong power (the Pixel on low power, 20 dB under its claim) threw it off for every other beacon. A 3 m step whose fade falls outside 1.5 to 5 is refused with the reason (the Pixel on low power faded 1.4, too weak to tell). The Calibration card on the Bluetooth beacons page has At 1 m and At 3 m, each a confirm screen, the strongest beacon in reach calibrated and then named on a notice; `beacons.calibrate` takes near, far or reset and an optional `beacon` id (reset without one forgets them all). Kept as one JSON setting of this panel alone (`beacons_calibration`, {id: {near, far}} in dBm). Both surfaces word a beacon's state once (`Beacons.describe`): "in reach, 1.2 m, -63 dBm", the averaged signal beside the distance. The calibration is the panel's alone, like the proximity's and the microphone's. Bluetooth or NFC switched off in Android
   reads "Bluetooth is off in Android" / "NFC is off in Android" on the row, and a stopped scan
   feeds the rules nothing rather than "out of reach". **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
   the reading, a one-shot event for the automations and a Home Assistant tag event through

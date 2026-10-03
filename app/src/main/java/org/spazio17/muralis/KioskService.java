@@ -1410,7 +1410,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 arguments.optInt("percent", -1),
                 arguments.optString("url", null),
                 enabled,
-                arguments.has("value") ? arguments.optString("value", null) : null);
+                arguments.has("value") ? arguments.optString("value", null) : null,
+                arguments.has("beacon") ? arguments.optString("beacon", null) : null);
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -2282,7 +2283,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     @Override
-    public String calibrateBeacons(String step) {
+    public String calibrateBeacons(String step, String beacon) {
         Sensors hub = sensors;
         Beacons ears = beacons;
         if (hub == null || ears == null || !hub.available(Sensors.BLUETOOTH)) {
@@ -2291,7 +2292,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!hub.on(Sensors.BLUETOOTH)) {
             return Sensors.BLUETOOTH.name + " is off";
         }
-        String problem = ears.calibrate(step);
+        String problem = ears.calibrate(step, beacon);
         if (problem == null) {
             publishSensorBlock();
             publishStateSoon();

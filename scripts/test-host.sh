@@ -137,7 +137,7 @@ javac -d "${test_dir}/automations" \
     "${host_test_dir}/AutomationsTest.java"
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
 
-# The beacon distance: the trimmed running average and the curve, with the panel's correction.
+# The beacon distance: the trimmed running average, the model and the two calibration steps.
 javac -d "${test_dir}/beacons" \
     "${pure_java_dir}/BeaconDistance.java" \
     "${host_test_dir}/BeaconDistanceTest.java"

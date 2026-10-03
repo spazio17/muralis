@@ -838,6 +838,7 @@ final class HttpAdminServer {
         String url = null;
         Boolean enabled = null;
         String value = null;
+        String beacon = null;
 
         String contentType = headers.getOrDefault("content-type", "");
         if (method.equals("POST") && contentType.contains("application/json") && body.length > 0) {
@@ -849,6 +850,7 @@ final class HttpAdminServer {
                     percent = args.optInt("percent", -1);
                     url = args.has("url") ? args.optString("url", null) : null;
                     value = args.has("value") ? args.optString("value", null) : null;
+                    beacon = args.has("beacon") ? args.optString("beacon", null) : null;
                     if (args.has("enabled")) {
                         // Shared parser, shared refusal: optBoolean(..., false) coerced any
                         // non-boolean, the number 1 included, to false, so the JSON and query
@@ -892,6 +894,7 @@ final class HttpAdminServer {
                 url = params.get("dashboard_url");
             }
             value = params.get("value");
+            beacon = params.get("beacon");
             if (params.containsKey("enabled")) {
                 // The same parser the JSON path uses. The old spelling list here treated every
                 // unrecognized value as false, so ?enabled=yes silently turned things off.
@@ -912,7 +915,8 @@ final class HttpAdminServer {
         }
 
         KioskCommandDispatcher.Result result = kioskService.dispatch(
-                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value));
+                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value,
+                        beacon));
         JSONObject response = new JSONObject();
         try {
             response.put("status", result.status);

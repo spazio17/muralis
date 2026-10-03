@@ -25,7 +25,7 @@ final class SensorSettings {
 
     /** Settings of one panel alone, by their whole key. */
     static final Set<String> THIS_PANEL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-            "beacons_correction_db",
+            "beacons_calibration",
             "camera_name", "camera_lens", "camera_size", "camera_orientation", "camera_mirror",
             "camera_flip")));
 

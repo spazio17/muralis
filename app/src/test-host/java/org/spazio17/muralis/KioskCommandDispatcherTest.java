@@ -413,9 +413,10 @@ public final class KioskCommandDispatcherTest {
         require(r.status.equals("accepted") && executor.calls.contains("calibrateMicrophone:quiet"),
                 "microphone.calibrate did not carry its step");
         r = KioskCommandDispatcher.dispatch("beacons.calibrate",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "near"), executor);
-        require(r.status.equals("accepted") && executor.calls.contains("calibrateBeacons:near"),
-                "beacons.calibrate did not carry its step");
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "far", "u:1:2"), executor);
+        require(r.status.equals("accepted")
+                && executor.calls.contains("calibrateBeacons:far:u:1:2"),
+                "beacons.calibrate did not carry its step and beacon");
         r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "proximity"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("sleepTest:proximity"),
@@ -837,8 +838,8 @@ public final class KioskCommandDispatcherTest {
         }
 
         @Override
-        public String calibrateBeacons(String step) {
-            calls.add("calibrateBeacons:" + step);
+        public String calibrateBeacons(String step, String beacon) {
+            calls.add("calibrateBeacons:" + step + ":" + beacon);
             return null;
         }
 
