@@ -1186,8 +1186,8 @@ the playlist page was the case that set the rule.
   the second, outlined for a command that acts now and stores nothing, text for navigation, and
   red only inside a confirmation; **anything repeated in a row is a 40 dp icon button** with a
   48 dp target, a tooltip and a spoken name (edit, delete, remove, save the name, the pager's
-  chevrons, the view); on/off settings are switches drawn from the palette, a 52 by 32 dp track with a 20 dp
-  handle on both surfaces (the panel's come from `switchTrack`/`switchThumb`, because the
+  chevrons, the view); on/off settings are switches drawn from the palette as Pixel Settings draws them, a 52 by 28 dp
+  track with no outline and a 20 dp handle that only slides (Juri, 2026-10-04: Material's 52 by 32 felt too big), on both surfaces (the panel's come from `switchTrack`/`switchThumb`, because the
   platform's track is translucent and turned the accent into a muddy purple), the playlist in use
   is a radio, pictures in
   a playlist are check boxes on rows and check circles on tiles, and the header box over a page

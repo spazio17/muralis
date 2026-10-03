@@ -10116,8 +10116,9 @@ public final class KioskActivity extends Activity {
      *
      * <p>Track and handle are drawn from the palette instead of being the platform's tinted: the
      * stock track is a translucent bar, so the accent reached the screen as a muddy purple beside
-     * check boxes in the bright one (Juri, 2026-09-23). These are Material's own measurements, a
-     * 52 by 32 dp track with a 20 dp handle, which is also what the web admin's switch is.
+     * check boxes in the bright one (Juri, 2026-09-23). Drawn as Pixel Settings draws them, a 52
+     * by 28 dp track with no outline and a 20 dp handle that only slides (Juri, 2026-10-04:
+     * Material's 52 by 32 felt too big), which is also what the web admin's switch is.
      */
     private Switch themedSwitch(KioskTheme theme, String label, boolean checked) {
         Switch toggle = new Switch(this);
@@ -10141,7 +10142,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The switch's track: the accent filled when it is on, a hollow pill when it is off.
+     * The switch's track: the accent when it is on, the quiet surface when it is off.
      *
      * <p>Its side padding is how the platform's Switch is told where the handle may travel, so
      * 4 dp of track shows at each end. The width the Switch measures for itself from the handle,
@@ -10159,10 +10160,7 @@ public final class KioskActivity extends Activity {
     private android.graphics.drawable.Drawable switchTrackPill(KioskTheme theme, boolean on) {
         android.graphics.drawable.GradientDrawable pill =
                 theme.pill(on ? theme.accent : theme.surfaceAlt);
-        if (!on) {
-            pill.setStroke(dp(2), theme.border);
-        }
-        pill.setSize(dp(52), dp(32));
+        pill.setSize(dp(52), dp(28));
         android.graphics.drawable.LayerDrawable held =
                 new android.graphics.drawable.LayerDrawable(
                         new android.graphics.drawable.Drawable[] {pill});
@@ -10170,34 +10168,44 @@ public final class KioskActivity extends Activity {
         return held;
     }
 
-    /** The switch's handle: 20 dp, the colour that reads on the track it is standing on. */
+    /**
+     * The switch's handle: 20 dp, the colour that reads on the track it is standing on, with a
+     * check when on and a cross when off, in the track's colour, as the Pixel's Settings draws
+     * it (Juri, 2026-10-04).
+     */
     private android.graphics.drawable.Drawable switchThumb(KioskTheme theme) {
         android.graphics.drawable.StateListDrawable thumb =
                 new android.graphics.drawable.StateListDrawable();
-        thumb.addState(new int[] {android.R.attr.state_checked}, switchHandle(theme.onAccent()));
-        thumb.addState(new int[0], switchHandle(theme.border));
+        thumb.addState(new int[] {android.R.attr.state_checked},
+                switchHandle(theme.onAccent(), R.drawable.ic_check, theme.accent));
+        thumb.addState(new int[0],
+                switchHandle(theme.subtext, R.drawable.ic_close, theme.surfaceAlt));
         return thumb;
     }
 
     /**
-     * One state of the handle, held in 6 dp of nothing above and below: the Switch hands the
+     * One state of the handle, held in 4 dp of nothing above and below: the Switch hands the
      * handle the whole height of the track to draw in, and a bare oval there comes out as an
      * ellipse as tall as the track.
      *
      * <p>A layer with an inset and not an {@code InsetDrawable}, which reports its inset as
      * padding: the Switch takes a thumb's padding off the track it draws, and the track came out
-     * 20 dp tall instead of 32. A layer's inset is invisible to it, so only the handle shrinks.
+     * 20 dp tall instead of the track's height. A layer's inset is invisible to it, so only the
+     * handle shrinks. The glyph is a second layer, 14 dp in the handle's middle.
      */
-    private android.graphics.drawable.Drawable switchHandle(int fill) {
+    private android.graphics.drawable.Drawable switchHandle(int fill, int glyph, int ink) {
         android.graphics.drawable.GradientDrawable handle =
                 new android.graphics.drawable.GradientDrawable();
         handle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         handle.setColor(fill);
         handle.setSize(dp(20), dp(20));
+        android.graphics.drawable.Drawable mark = getDrawable(glyph).mutate();
+        mark.setTint(ink);
         android.graphics.drawable.LayerDrawable held =
                 new android.graphics.drawable.LayerDrawable(
-                        new android.graphics.drawable.Drawable[] {handle});
-        held.setLayerInset(0, 0, dp(6), 0, dp(6));
+                        new android.graphics.drawable.Drawable[] {handle, mark});
+        held.setLayerInset(0, 0, dp(4), 0, dp(4));
+        held.setLayerInset(1, dp(3), dp(7), dp(3), dp(7));
         return held;
     }
 
