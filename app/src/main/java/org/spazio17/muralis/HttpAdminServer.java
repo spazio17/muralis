@@ -838,6 +838,7 @@ final class HttpAdminServer {
         String url = null;
         Boolean enabled = null;
         String value = null;
+        String beacon = null;
 
         String contentType = headers.getOrDefault("content-type", "");
         if (method.equals("POST") && contentType.contains("application/json") && body.length > 0) {
@@ -849,6 +850,7 @@ final class HttpAdminServer {
                     percent = args.optInt("percent", -1);
                     url = args.has("url") ? args.optString("url", null) : null;
                     value = args.has("value") ? args.optString("value", null) : null;
+                    beacon = args.has("beacon") ? args.optString("beacon", null) : null;
                     if (args.has("enabled")) {
                         // Shared parser, shared refusal: optBoolean(..., false) coerced any
                         // non-boolean, the number 1 included, to false, so the JSON and query
@@ -892,6 +894,7 @@ final class HttpAdminServer {
                 url = params.get("dashboard_url");
             }
             value = params.get("value");
+            beacon = params.get("beacon");
             if (params.containsKey("enabled")) {
                 // The same parser the JSON path uses. The old spelling list here treated every
                 // unrecognized value as false, so ?enabled=yes silently turned things off.
@@ -912,7 +915,8 @@ final class HttpAdminServer {
         }
 
         KioskCommandDispatcher.Result result = kioskService.dispatch(
-                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value));
+                command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value,
+                        beacon));
         JSONObject response = new JSONObject();
         try {
             response.put("status", result.status);
@@ -2034,6 +2038,10 @@ final class HttpAdminServer {
             html.append(head)
                     .append(optionField("beacons_reach_s", "Out of reach after (seconds)",
                             KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
+                    .append(optionRadios(Beacons.LISTENING_KEY, "Listening",
+                            KioskConfig.sensorOption(context, Beacons.LISTENING_KEY, "low"),
+                            "low", "Low, saves battery", "high", "High, listens all the time"))
+                    .append("</section><section class=\"card\"><h2>Beacons</h2>")
                     .append(beaconRows()).append("</section>");
         } else if (def == Sensors.CAMERA) {
             StringBuilder sizes = new StringBuilder();
@@ -2137,7 +2145,7 @@ final class HttpAdminServer {
     private String beaconRows() {
         Beacons beacons = kioskService.beacons();
         java.util.List<Beacons.Seen> heard = beacons == null
-                ? Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+                ? Collections.<Beacons.Seen>emptyList() : beacons.listed();
         if (heard.isEmpty()) {
             return "<p class=\"hint\">No beacon has been heard yet.</p>";
         }
@@ -2146,15 +2154,12 @@ final class HttpAdminServer {
         NamedList names = KioskConfig.beaconNames(context);
         for (Beacons.Seen one : heard) {
             String name = names.name(one.id);
-            String state = reach.contains(one)
-                    ? "In reach" + (Double.isNaN(one.distance()) ? "" : ", " + one.distance() + " m")
-                    : "Out of reach";
+            String state = beacons.describe(one, reach.contains(one));
             rows.append("<li class=\"two\"><span class=\"lead\">").append(glyph("bluetooth"))
                     .append("</span><span class=\"text\">")
                     .append(fieldWithId("beacon-" + one.id.hashCode(), "text", null, "Name", name,
                             " data-setting=\"sensor_option_beacon_" + escapeHtml(one.id) + "\"",
-                            one.id + ", " + state.substring(0, 1).toLowerCase(Locale.ROOT)
-                                    + state.substring(1)))
+                            one.id + ", " + state))
                     .append("</span></li>");
         }
         return rows.append("</ul>").toString();

@@ -609,8 +609,9 @@ final class KioskConfig {
     }
 
     /**
-     * Drops the settings of the beacon transmitter, which was removed on 2026-10-01: a panel
-     * that ever stored them kept them, and the sensor settings document then carried keys a
+     * Drops the settings of the beacon transmitter, which was removed on 2026-10-01, and the
+     * one-number beacon correction the per-beacon calibration replaced: a panel that ever
+     * stored them kept them, and the sensor settings document then carried keys a
      * post back is refused for. Run at every start; it does nothing once they are gone.
      */
     static void dropRetiredSettings(Context context) {
@@ -619,7 +620,7 @@ final class KioskConfig {
         android.content.SharedPreferences.Editor editor = null;
         for (String key : prefs.getAll().keySet()) {
             for (String retired : new String[] {"beacons_transmit", "beacons_uuid",
-                    "beacons_major", "beacons_minor"}) {
+                    "beacons_major", "beacons_minor", "beacons_correction_db"}) {
                 if (key.equals("sensor_option_" + retired)
                         || key.equals("changed_sensor_option_" + retired)) {
                     if (editor == null) {

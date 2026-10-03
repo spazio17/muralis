@@ -1410,7 +1410,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 arguments.optInt("percent", -1),
                 arguments.optString("url", null),
                 enabled,
-                arguments.has("value") ? arguments.optString("value", null) : null);
+                arguments.has("value") ? arguments.optString("value", null) : null,
+                arguments.has("beacon") ? arguments.optString("beacon", null) : null);
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -2279,6 +2280,29 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     private static String firstOf(float[] values) {
         return values == null || values.length == 0 ? "none" : Float.toString(values[0]);
+    }
+
+    @Override
+    public String calibrateBeacons(String step, String beacon) {
+        return calibrateBeacons(step, beacon, 0);
+    }
+
+    /** The same, counting only the packets heard from {@code sinceMs} on; see Beacons. */
+    String calibrateBeacons(String step, String beacon, long sinceMs) {
+        Sensors hub = sensors;
+        Beacons ears = beacons;
+        if (hub == null || ears == null || !hub.available(Sensors.BLUETOOTH)) {
+            return "not on this device: " + Sensors.BLUETOOTH.name;
+        }
+        if (!hub.on(Sensors.BLUETOOTH)) {
+            return Sensors.BLUETOOTH.name + " is off";
+        }
+        String problem = ears.calibrate(step, beacon, sinceMs);
+        if (problem == null) {
+            publishSensorBlock();
+            publishStateSoon();
+        }
+        return problem;
     }
 
     @Override

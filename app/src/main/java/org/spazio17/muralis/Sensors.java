@@ -529,6 +529,11 @@ final class Sensors implements SensorEventListener {
                     return "the seconds must be 1 or more";
                 }
                 return null;
+            case "beacons_listening":
+                if (!clean.equals("low") && !clean.equals("high")) {
+                    return "listening must be low or high";
+                }
+                return null;
             case "camera_lens":
                 if (!clean.equals("front") && !clean.equals("back")) {
                     return "the lens is front or back";
