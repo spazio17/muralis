@@ -378,6 +378,10 @@ input.sw{appearance:none;-webkit-appearance:none;width:52px;height:28px;margin:0
 input.sw::after{content:"";position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:var(--subtext);transition:left .12s}
 input.sw:checked{background:var(--accent)}
 input.sw:checked::after{left:28px;top:4px;width:20px;height:20px;border:0;transform:none;background:var(--on-accent)}
+/* The handle's mark, a cross when off and a check when on, as the Pixel's Settings draws it
+   (Juri, 2026-10-04): a mask over the handle, so its colour follows the palette. */
+label.switch input::before,input.sw::before{content:"";position:absolute;top:7px;left:7px;width:14px;height:14px;z-index:1;background:var(--surface-alt);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 7l10 10M17 7L7 17' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") center/14px no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 7l10 10M17 7L7 17' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") center/14px no-repeat;transition:left .12s}
+label.switch input:checked::before,input.sw:checked::before{left:31px;background:var(--accent);-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12l5 5L20 7' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12l5 5L20 7' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 input.sw:disabled{opacity:.38;cursor:default}
 .trail .allow{font-size:13px;color:var(--subtext);white-space:nowrap}
 .card .count{font-size:12px;color:var(--subtext)}

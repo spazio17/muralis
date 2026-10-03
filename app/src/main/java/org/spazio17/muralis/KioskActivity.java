@@ -10168,12 +10168,18 @@ public final class KioskActivity extends Activity {
         return held;
     }
 
-    /** The switch's handle: 20 dp, the colour that reads on the track it is standing on. */
+    /**
+     * The switch's handle: 20 dp, the colour that reads on the track it is standing on, with a
+     * check when on and a cross when off, in the track's colour, as the Pixel's Settings draws
+     * it (Juri, 2026-10-04).
+     */
     private android.graphics.drawable.Drawable switchThumb(KioskTheme theme) {
         android.graphics.drawable.StateListDrawable thumb =
                 new android.graphics.drawable.StateListDrawable();
-        thumb.addState(new int[] {android.R.attr.state_checked}, switchHandle(theme.onAccent()));
-        thumb.addState(new int[0], switchHandle(theme.subtext));
+        thumb.addState(new int[] {android.R.attr.state_checked},
+                switchHandle(theme.onAccent(), R.drawable.ic_check, theme.accent));
+        thumb.addState(new int[0],
+                switchHandle(theme.subtext, R.drawable.ic_close, theme.surfaceAlt));
         return thumb;
     }
 
@@ -10184,18 +10190,22 @@ public final class KioskActivity extends Activity {
      *
      * <p>A layer with an inset and not an {@code InsetDrawable}, which reports its inset as
      * padding: the Switch takes a thumb's padding off the track it draws, and the track came out
-     * 20 dp tall instead of the track's height. A layer's inset is invisible to it, so only the handle shrinks.
+     * 20 dp tall instead of the track's height. A layer's inset is invisible to it, so only the
+     * handle shrinks. The glyph is a second layer, 14 dp in the handle's middle.
      */
-    private android.graphics.drawable.Drawable switchHandle(int fill) {
+    private android.graphics.drawable.Drawable switchHandle(int fill, int glyph, int ink) {
         android.graphics.drawable.GradientDrawable handle =
                 new android.graphics.drawable.GradientDrawable();
         handle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         handle.setColor(fill);
         handle.setSize(dp(20), dp(20));
+        android.graphics.drawable.Drawable mark = getDrawable(glyph).mutate();
+        mark.setTint(ink);
         android.graphics.drawable.LayerDrawable held =
                 new android.graphics.drawable.LayerDrawable(
-                        new android.graphics.drawable.Drawable[] {handle});
+                        new android.graphics.drawable.Drawable[] {handle, mark});
         held.setLayerInset(0, 0, dp(4), 0, dp(4));
+        held.setLayerInset(1, dp(3), dp(7), dp(3), dp(7));
         return held;
     }
 
