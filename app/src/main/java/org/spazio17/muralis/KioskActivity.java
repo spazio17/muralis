@@ -3897,9 +3897,10 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The beacons' Calibration card: each calibrated beacon, by name, with its steps and a
-     * Reset (Juri, 2026-10-04), and a button per step, both optional (Juri, 2026-10-03: for
-     * some, a beacon heard is enough).
+     * The beacons' Calibration card: each calibrated beacon, by name, with its steps, and a
+     * button per step, both optional (Juri, 2026-10-03: for some, a beacon heard is enough). A
+     * new step replaces the old, so nothing to reset (Juri, 2026-09-27, kept 2026-10-04); the
+     * reset stays in the command for scripts.
      */
     private LinearLayout beaconCalibrationCard(KioskTheme theme, Sensors.Def def,
             Beacons beacons) {
@@ -3914,11 +3915,8 @@ public final class KioskActivity extends Activity {
         for (String id : ids) {
             String name = names.name(id);
             String shown = name.isEmpty() ? id : name;
-            Button reset = textButton(theme, "Reset");
-            reset.setOnClickListener(view -> resetBeaconCalibration(id, shown));
-            viewsOf(sensorActions, def.id).add(reset);
             calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune, shown,
-                    "Calibrated at " + beacons.calibratedSteps(id), reset, null, false),
+                    "Calibrated at " + beacons.calibratedSteps(id), null, null, false),
                     matchWrapClose());
         }
         Button near = tonalButton(theme, "At 1 m");
@@ -3930,28 +3928,6 @@ public final class KioskActivity extends Activity {
         paintSensorActions(def.id, Sensors.enabled(this, def));
         calibration.addView(buttonRow(near, far), tightParams());
         return calibration;
-    }
-
-    /** Asks, then forgets one beacon's calibration on this panel. */
-    private void resetBeaconCalibration(String id, String shown) {
-        final Runnable screen = currentScreen;
-        Runnable back = () -> {
-            if (screen != null) {
-                screen.run();
-            }
-        };
-        String quoted = "\"" + shown + "\"";
-        showConfirm("Reset " + quoted + "?", "The calibration of " + quoted + " will be "
-                + "forgotten, and its distance estimated without it.", "Reset", false, () -> {
-                    KioskService service = KioskService.liveService();
-                    String problem = service == null ? "the service is not running"
-                            : service.calibrateBeacons("reset", id);
-                    if (problem != null) {
-                        showNotice("Not done", capital(problem) + ".", back);
-                        return;
-                    }
-                    back.run();
-                }, back);
     }
 
     /**
@@ -4479,6 +4455,10 @@ public final class KioskActivity extends Activity {
             // (Juri, 2026-10-04: in words a person knows, low and high).
             addOptionRadios(card, theme, "Listening", Beacons.LISTENING_KEY, "low",
                     "low", "Low, saves battery", "high", "High, listens all the time");
+            // The beacons in a card of their own, as the NFC page's tags: a name box under the
+            // sensor's own settings read as one of them, and Juri could not find where a
+            // beacon is renamed (2026-10-04).
+            LinearLayout list = card(theme, "Beacons");
             Beacons beacons = KioskService.beaconsOf(this);
             java.util.List<Beacons.Seen> heard = beacons == null
                     ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.listed();
@@ -4488,15 +4468,14 @@ public final class KioskActivity extends Activity {
                 none.setTextColor(theme.subtext);
                 none.setTextSize(14);
                 LinearLayout.LayoutParams noneParams = matchWrap();
-                noneParams.topMargin = dp(16);
-                card.addView(none, noneParams);
+                list.addView(none, noneParams);
             } else {
                 java.util.List<Beacons.Seen> reach = beacons.inReach();
                 NamedList beaconNames = KioskConfig.beaconNames(this);
                 for (Beacons.Seen seen : heard) {
                     // Words, not a machine value: the prose box (review, 2026-10-01).
                     EditText name = proseInput(theme, beaconNames.name(seen.id));
-                    addField(card, theme, "Name", name,
+                    addField(list, theme, "Name", name,
                             seen.id + ", " + beacons.describe(seen, reach.contains(seen)));
                     // Why a name is refused, in red under its box, as on the other fields.
                     TextView nameProblem = new FlushText(this);
@@ -4505,7 +4484,7 @@ public final class KioskActivity extends Activity {
                     nameProblem.setVisibility(View.GONE);
                     LinearLayout.LayoutParams nameProblemParams = matchWrapClose();
                     nameProblemParams.leftMargin = dp(16);
-                    card.addView(nameProblem, nameProblemParams);
+                    list.addView(nameProblem, nameProblemParams);
                     Runnable store = () -> {
                         String typed = name.getText().toString().trim();
                         String problem = Sensors.checkBeaconName(seen.id, typed);
@@ -4533,6 +4512,7 @@ public final class KioskActivity extends Activity {
             // A beacon held at one metre, then three, teaches this panel how strongly it hears
             // that beacon and how fast its signal fades in the room (Juri, 2026-10-03): the
             // distance is a guess until then.
+            cards.add(list);
             cards.add(beaconCalibrationCard(theme, def, beacons));
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),

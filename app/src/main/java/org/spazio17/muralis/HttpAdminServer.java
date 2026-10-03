@@ -2041,6 +2041,7 @@ final class HttpAdminServer {
                     .append(optionRadios(Beacons.LISTENING_KEY, "Listening",
                             KioskConfig.sensorOption(context, Beacons.LISTENING_KEY, "low"),
                             "low", "Low, saves battery", "high", "High, listens all the time"))
+                    .append("</section><section class=\"card\"><h2>Beacons</h2>")
                     .append(beaconRows()).append("</section>");
         } else if (def == Sensors.CAMERA) {
             StringBuilder sizes = new StringBuilder();
