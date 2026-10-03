@@ -86,7 +86,7 @@ final class BeaconDistance {
         double fade = fade(atOneMetre, heardAtThreeMetres);
         if (fade < LEAST_FADE) {
             return "the signal at 3 m is hardly weaker than at 1 m: check both distances, or "
-                    + "raise the beacon's transmit power";
+                    + "raise the beacon's transmit power and calibrate all distances again";
         }
         if (fade > MOST_FADE) {
             return "the signal at 3 m is far weaker than at 1 m: check both distances, and "
