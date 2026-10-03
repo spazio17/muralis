@@ -370,9 +370,11 @@ the playlist page was the case that set the rule.
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
 - **The stats overlay moves with a finger** (Juri, 2026-10-04): pressed and held for the long-press
   time it is picked up (a haptic tick, lifted a little), follows the finger anywhere on the
-  screen, and where it is dropped is kept for this panel as shares of the free space
-  (`stats_overlay_x`/`_y`, `KioskConfig.statsOverlayPlace`), so it stays on the screen whichever
-  way the panel is turned; until moved it sits one pixel under the status bar at the top right,
+  screen, and where it is dropped is kept for this panel, measured from the edges it is nearest
+  to as shares of the screen (`stats_overlay_anchor`, `_x`, `_y`, `KioskConfig.statsOverlayPlace`),
+  so it stays on the screen whichever way the panel is turned, and never as shares of the room
+  left over: the block's size changes with every line it draws and the place then moved a few
+  pixels every second; until moved it sits one pixel under the status bar at the top right,
   as decided 2026-09-07. A tap or a scroll on it still reaches the dashboard: the touch down is
   passed on and only arms a timer, a move beyond the slop cancels it, and once picked up the
   dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first

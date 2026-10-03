@@ -1359,19 +1359,27 @@ public final class KioskActivity extends Activity {
         block.setTranslationY(top - block.getTop());
     }
 
-    /** Keeps where the block was dropped, as shares of the room it had, and lays it there. */
+    /**
+     * Keeps where the block was dropped and lays it there: measured from the edges it is
+     * nearest to, so a line that grows or shrinks moves its far side and never the side the
+     * eye fixes on.
+     */
     private void dropOverlay() {
         TextView block = statsOverlay;
         if (block == null || !(block.getParent() instanceof View)) {
             return;
         }
         View parent = (View) block.getParent();
-        float freeX = parent.getWidth() - block.getWidth();
-        float freeY = parent.getHeight() - block.getHeight();
-        float x = freeX <= 0 ? 0 : (block.getLeft() + block.getTranslationX()) / freeX;
-        float y = freeY <= 0 ? 0 : (block.getTop() + block.getTranslationY()) / freeY;
-        KioskConfig.edit(this).statsOverlayPlace(Math.max(0f, Math.min(1f, x)),
-                Math.max(0f, Math.min(1f, y))).apply();
+        float left = block.getLeft() + block.getTranslationX();
+        float top = block.getTop() + block.getTranslationY();
+        boolean right = left + block.getWidth() / 2f > parent.getWidth() / 2f;
+        boolean bottom = top + block.getHeight() / 2f > parent.getHeight() / 2f;
+        float gapX = right ? parent.getWidth() - left - block.getWidth() : left;
+        float gapY = bottom ? parent.getHeight() - top - block.getHeight() : top;
+        float x = parent.getWidth() <= 0 ? 0 : gapX / parent.getWidth();
+        float y = parent.getHeight() <= 0 ? 0 : gapY / parent.getHeight();
+        KioskConfig.edit(this).statsOverlayPlace(right, bottom,
+                Math.max(0f, Math.min(1f, x)), Math.max(0f, Math.min(1f, y))).apply();
         block.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(120).start();
         block.setTranslationX(0);
         block.setTranslationY(0);
@@ -10878,15 +10886,14 @@ public final class KioskActivity extends Activity {
             return insets;
         });
         statsOverlay.post(this::placeStatsOverlay);
-        // A dragged block keeps its place as a share of the room it has, so it is laid out
-        // again when that room changes (a rotation) or its own size does (a longer line).
-        View.OnLayoutChangeListener resized = (view, l, t, r, b, ol, ot, or, ob) -> {
+        // A dragged block keeps its place as shares of the screen, so it is laid out again
+        // when the screen's room changes (a rotation). Not on its own size: that changes with
+        // every line it draws, and re-placing it then made it flicker (Juri, 2026-10-04).
+        dashboard.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) {
                 view.post(this::placeStatsOverlay);
             }
-        };
-        dashboard.addOnLayoutChangeListener(resized);
-        statsOverlay.addOnLayoutChangeListener(resized);
+        });
 
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
@@ -10911,20 +10918,30 @@ public final class KioskActivity extends Activity {
             return;
         }
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) statsOverlay.getLayoutParams();
-        float[] place = KioskConfig.statsOverlayPlace(this);
+        KioskConfig.OverlayPlace place = KioskConfig.statsOverlayPlace(this);
         if (place != null) {
-            // Dragged somewhere once: that place, as shares of the room the block has, so it
-            // stays on the screen whichever way the panel is turned (Juri, 2026-10-04).
+            // Dragged somewhere once: that place, measured from the nearest edges as shares of
+            // the screen, so it stays on the screen whichever way the panel is turned (Juri,
+            // 2026-10-04) and does not depend on the block's own size, which changes with
+            // every line it draws.
             View parent = (View) statsOverlay.getParent();
-            int left = Math.round(place[0] * Math.max(0, parent.getWidth() - statsOverlay.getWidth()));
-            int top = Math.round(place[1] * Math.max(0, parent.getHeight() - statsOverlay.getHeight()));
-            int gravity = Gravity.TOP | Gravity.START;
-            if (params.gravity != gravity || params.leftMargin != left || params.topMargin != top
-                    || params.rightMargin != 0) {
+            int gapX = Math.round(place.x * parent.getWidth());
+            int gapY = Math.round(place.y * parent.getHeight());
+            if (statsOverlay.getWidth() > 0) {
+                gapX = Math.max(0, Math.min(parent.getWidth() - statsOverlay.getWidth(), gapX));
+                gapY = Math.max(0, Math.min(parent.getHeight() - statsOverlay.getHeight(), gapY));
+            }
+            int gravity = (place.right ? Gravity.END : Gravity.START)
+                    | (place.bottom ? Gravity.BOTTOM : Gravity.TOP);
+            int leftMargin = place.right ? 0 : gapX;
+            int rightMargin = place.right ? gapX : 0;
+            int topMargin = place.bottom ? 0 : gapY;
+            int bottomMargin = place.bottom ? gapY : 0;
+            if (params.gravity != gravity || params.leftMargin != leftMargin
+                    || params.rightMargin != rightMargin || params.topMargin != topMargin
+                    || params.bottomMargin != bottomMargin) {
                 params.gravity = gravity;
-                params.leftMargin = left;
-                params.topMargin = top;
-                params.rightMargin = 0;
+                params.setMargins(leftMargin, topMargin, rightMargin, bottomMargin);
                 statsOverlay.setLayoutParams(params);
             }
             return;
