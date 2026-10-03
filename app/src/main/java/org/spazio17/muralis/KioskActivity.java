@@ -3897,6 +3897,14 @@ public final class KioskActivity extends Activity {
     }
 
     /**
+     * The name lines of the Calibration card's rows by beacon id, so a beacon renamed in the
+     * Beacons card above shows its new name there the moment its box lets go (Juri,
+     * 2026-10-04), without leaving the page.
+     */
+    private final java.util.Map<String, TextView> calibratedBeaconNames =
+            new java.util.HashMap<>();
+
+    /**
      * The beacons' Calibration card: each calibrated beacon, by name, with its steps, and a
      * button per step, both optional (Juri, 2026-10-03: for some, a beacon heard is enough). A
      * new step replaces the old, so nothing to reset (Juri, 2026-09-27, kept 2026-10-04); the
@@ -3904,6 +3912,7 @@ public final class KioskActivity extends Activity {
      */
     private LinearLayout beaconCalibrationCard(KioskTheme theme, Sensors.Def def,
             Beacons beacons) {
+        calibratedBeaconNames.clear();
         LinearLayout calibration = card(theme, "Calibration");
         java.util.List<String> ids = beacons == null
                 ? java.util.Collections.<String>emptyList() : beacons.calibratedIds();
@@ -3915,9 +3924,12 @@ public final class KioskActivity extends Activity {
         for (String id : ids) {
             String name = names.name(id);
             String shown = name.isEmpty() ? id : name;
-            calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune, shown,
-                    "Calibrated at " + beacons.calibratedSteps(id), null, null, false),
-                    matchWrapClose());
+            LinearLayout row = glyphRow(theme, R.drawable.ic_sensor_tune, shown,
+                    "Calibrated at " + beacons.calibratedSteps(id), null, null, false);
+            // The row's name, the first line of its words, so a rename shows here at once.
+            calibratedBeaconNames.put(id,
+                    (TextView) ((LinearLayout) row.getChildAt(1)).getChildAt(0));
+            calibration.addView(row, matchWrapClose());
         }
         Button near = tonalButton(theme, "At 1 m");
         near.setOnClickListener(view -> calibrateBeacons("near"));
@@ -4495,6 +4507,10 @@ public final class KioskActivity extends Activity {
                         }
                         nameProblem.setVisibility(View.GONE);
                         KioskConfig.beaconName(this, seen.id, typed);
+                        TextView calibrated = calibratedBeaconNames.get(seen.id);
+                        if (calibrated != null) {
+                            calibrated.setText(typed.isEmpty() ? seen.id : typed);
+                        }
                         KioskService.publishTelemetrySoon(this);
                     };
                     name.setOnFocusChangeListener((view, focused) -> {
