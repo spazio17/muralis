@@ -641,11 +641,12 @@ the playlist page was the case that set the rule.
   at once** (`Sensors.onEdge`, `KioskService.sensorEdge`): proximity near or not, movement
   started or ended publish the block, repaint the panel's readings and send the state document
   within 100 ms, where they waited up to three seconds on the panel and a telemetry interval on
-  MQTT; readings that move all the time (light, pressure) repaint the panel's rows within a
-  quarter of a second while a settings screen is up (`Sensors.onReading`,
-  `KioskService.sensorReading`: finding where a panel keeps its light sensor was a guess
-  against a reading three seconds late) and stay on the periodic publish for MQTT, as sound
-  does.
+  MQTT; readings that move all the time (light, pressure, temperature, humidity) are shown on every
+  surface at most every 3 s (`Sensors.SHOWN_EVERY_MS`, Juri 2026-10-04: a light value changing
+  several times a second was of no use; it had been a quarter of a second since 2026-09-28, to
+  find a panel's light sensor by hand), the next one brought to the panel's rows on time by
+  `Sensors.onReading` and `KioskService.sensorReading`, and stay on the periodic publish for
+  MQTT, as sound does.
   The rules were never late, they are fed on the event. Android gives an app no setting of a
   sensor beyond the sampling rate and batching (proximity is on-change, so neither applies);
   thresholds and gain live in the driver, so what Muralis can offer is a calibration the person
