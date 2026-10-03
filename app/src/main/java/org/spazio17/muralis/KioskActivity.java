@@ -3897,18 +3897,30 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The beacons' Calibration card: which beacons are calibrated and at which distance, and a
-     * button per step, both optional (Juri, 2026-10-03: for some, a beacon heard is enough).
-     * A new step replaces the old, so nothing to reset; the reset stays in the command.
+     * The beacons' Calibration card: each calibrated beacon, by name, with its steps and a
+     * Reset (Juri, 2026-10-04), and a button per step, both optional (Juri, 2026-10-03: for
+     * some, a beacon heard is enough).
      */
     private LinearLayout beaconCalibrationCard(KioskTheme theme, Sensors.Def def,
-            org.json.JSONObject one, Beacons beacons) {
-        boolean calibrated = one.optBoolean("calibrated");
+            Beacons beacons) {
         LinearLayout calibration = card(theme, "Calibration");
-        calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune,
-                calibrated ? "Calibrated" : "Not calibrated",
-                beacons == null ? "" : beacons.calibratedSummary(KioskConfig.beaconNames(this)),
-                null, null, false), matchWrapClose());
+        java.util.List<String> ids = beacons == null
+                ? java.util.Collections.<String>emptyList() : beacons.calibratedIds();
+        if (ids.isEmpty()) {
+            calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune, "Not calibrated", "",
+                    null, null, false), matchWrapClose());
+        }
+        NamedList names = KioskConfig.beaconNames(this);
+        for (String id : ids) {
+            String name = names.name(id);
+            String shown = name.isEmpty() ? id : name;
+            Button reset = textButton(theme, "Reset");
+            reset.setOnClickListener(view -> resetBeaconCalibration(id, shown));
+            viewsOf(sensorActions, def.id).add(reset);
+            calibration.addView(glyphRow(theme, R.drawable.ic_sensor_tune, shown,
+                    "Calibrated at " + beacons.calibratedSteps(id), reset, null, false),
+                    matchWrapClose());
+        }
         Button near = tonalButton(theme, "At 1 m");
         near.setOnClickListener(view -> calibrateBeacons("near"));
         Button far = tonalButton(theme, "At 3 m");
@@ -3918,6 +3930,28 @@ public final class KioskActivity extends Activity {
         paintSensorActions(def.id, Sensors.enabled(this, def));
         calibration.addView(buttonRow(near, far), tightParams());
         return calibration;
+    }
+
+    /** Asks, then forgets one beacon's calibration on this panel. */
+    private void resetBeaconCalibration(String id, String shown) {
+        final Runnable screen = currentScreen;
+        Runnable back = () -> {
+            if (screen != null) {
+                screen.run();
+            }
+        };
+        String quoted = "\"" + shown + "\"";
+        showConfirm("Reset " + quoted + "?", "The calibration of " + quoted + " will be "
+                + "forgotten, and its distance estimated without it.", "Reset", false, () -> {
+                    KioskService service = KioskService.liveService();
+                    String problem = service == null ? "the service is not running"
+                            : service.calibrateBeacons("reset", id);
+                    if (problem != null) {
+                        showNotice("Not done", capital(problem) + ".", back);
+                        return;
+                    }
+                    back.run();
+                }, back);
     }
 
     /**
@@ -3934,16 +3968,22 @@ public final class KioskActivity extends Activity {
         String metres = step.equals("near") ? "1 m" : "3 m";
         showConfirm("Place a beacon " + metres + " away", "Place one beacon " + metres
                 + " from the panel, with nothing between them, then tap Start and keep it "
-                + "still for 20 seconds. The strongest beacon in reach is the one calibrated.",
-                "Start", false,
-                () -> showBeaconCountdown(step, android.os.SystemClock.elapsedRealtime(), back),
-                back);
+                + "still for 10 seconds. The strongest beacon in reach is the one calibrated.",
+                "Start", false, () -> {
+                    // All the time while the countdown runs; Beacons goes back by itself after.
+                    Beacons beacons = KioskService.beaconsOf(this);
+                    if (beacons != null) {
+                        beacons.listenClosely(Beacons.CALIBRATION_MS + 2_000);
+                    }
+                    showBeaconCountdown(step, android.os.SystemClock.elapsedRealtime(), back);
+                }, back);
     }
 
     /**
      * The countdown of a beacon's calibration step (Juri, 2026-10-04: sketch A, the ring): the
-     * panel counts only what it hears from the tap on (Beacons.calibrate), so the beacon's
-     * way to its place is left out, and keeps the step when the ring empties. Read from where
+     * panel listens all the time for those 10 seconds and counts only what it hears from the
+     * tap on (Beacons.calibrate), so the beacon's way to its place is left out, and keeps the
+     * step when the ring empties. Read from where
      * the beacon is, so the ring is as large as the screen allows; the signal under it says
      * the beacon is heard at all. Cancel keeps nothing. Redrawn on a turn of the screen, it
      * goes on from the same tap.
@@ -3982,12 +4022,18 @@ public final class KioskActivity extends Activity {
         page.addView(signal, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         Button cancel = secondaryButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> back.run());
+        cancel.setOnClickListener(view -> {
+            Beacons beacons = KioskService.beaconsOf(this);
+            if (beacons != null) {
+                beacons.listenClosely(0);
+            }
+            back.run();
+        });
         LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cancelParams.topMargin = dp(24);
         page.addView(cancel, cancelParams);
-        long total = BeaconDistance.WINDOW_MS;
+        long total = Beacons.CALIBRATION_MS;
         Runnable tick = new Runnable() {
             private int shown = -1;
 
@@ -4021,6 +4067,10 @@ public final class KioskActivity extends Activity {
 
     /** Keeps the step the countdown listened for, and says for which beacon or why not. */
     private void finishBeaconStep(String step, long startedAt, Runnable back) {
+        Beacons listening = KioskService.beaconsOf(this);
+        if (listening != null) {
+            listening.listenClosely(0);
+        }
         KioskService service = KioskService.liveService();
         String problem = service == null ? "the service is not running"
                 : service.calibrateBeacons(step, null, startedAt);
@@ -4425,9 +4475,13 @@ public final class KioskActivity extends Activity {
         } else if (def == Sensors.BLUETOOTH) {
             addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_s", "30",
                     true);
+            // How the panel listens: Android's low-power scan in short bursts, or all the time
+            // (Juri, 2026-10-04: in words a person knows, low and high).
+            addOptionRadios(card, theme, "Listening", Beacons.LISTENING_KEY, "low",
+                    "low", "Low, saves battery", "high", "High, listens all the time");
             Beacons beacons = KioskService.beaconsOf(this);
             java.util.List<Beacons.Seen> heard = beacons == null
-                    ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+                    ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.listed();
             if (heard.isEmpty()) {
                 TextView none = new FlushText(this);
                 none.setText("No beacon has been heard yet.");
@@ -4479,7 +4533,7 @@ public final class KioskActivity extends Activity {
             // A beacon held at one metre, then three, teaches this panel how strongly it hears
             // that beacon and how fast its signal fades in the room (Juri, 2026-10-03): the
             // distance is a guess until then.
-            cards.add(beaconCalibrationCard(theme, def, one, beacons));
+            cards.add(beaconCalibrationCard(theme, def, beacons));
         } else if (def == Sensors.CAMERA) {
             addOptionField(card, theme, "Name", "camera_name", PanelCamera.defaultName(this),
                     false, true);

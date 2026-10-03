@@ -158,17 +158,19 @@ final class Beacons implements Sensors.Reading {
         }
     }
 
-    /** The calibrated beacons with their steps, "Dog at 1 m and 3 m"; empty for none. */
-    String calibratedSummary(NamedList names) {
-        List<String> parts = new ArrayList<>();
+    /** The ids of the beacons calibrated on this panel, in the order first calibrated. */
+    List<String> calibratedIds() {
         synchronized (calibrations) {
-            for (Map.Entry<String, double[]> entry : calibrations.entrySet()) {
-                String name = names.name(entry.getKey());
-                parts.add((name.isEmpty() ? entry.getKey() : name) + " at "
-                        + steps(entry.getValue()));
-            }
+            return new ArrayList<>(calibrations.keySet());
         }
-        return String.join(", ", parts);
+    }
+
+    /** A calibrated beacon's steps in words, "1 m and 3 m"; empty when not calibrated. */
+    String calibratedSteps(String id) {
+        synchronized (calibrations) {
+            double[] one = calibrations.get(id);
+            return one == null ? "" : steps(one);
+        }
     }
 
     private static String steps(double[] calibration) {
@@ -318,6 +320,18 @@ final class Beacons implements Sensors.Reading {
     private static final long FORGET_MS = 10 * 60_000L;
     private BluetoothLeScanner scanner;
     private boolean scanning;
+    /** The scan mode the running scan was started with. */
+    private int scanMode = -1;
+    /** The sensor's switch as the last refresh saw it, for a refresh of the panel's own. */
+    private boolean sensorOnLast;
+    /** Until when the scan listens all the time for a calibration, elapsed time; see listenClosely. */
+    private long closeUntilMs;
+    private final android.os.Handler main =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    /** Where the person chooses how the panel listens: low, in short bursts, or high. */
+    static final String LISTENING_KEY = "beacons_listening";
+    /** How long the panel's calibration countdown listens. */
+    static final long CALIBRATION_MS = 10_000;
     /** When the scan began, so the rules hear nothing before one reach time has passed. */
     private long scanStartedAtMs;
     /** Not before this moment after a failed scan: Android throttles five starts in 30 s. */
@@ -334,8 +348,21 @@ final class Beacons implements Sensors.Reading {
         return manager == null ? null : manager.getAdapter();
     }
 
-    /** Starts or stops the scan to match the sensor's switch. */
+    /**
+     * The scan mode wanted now: all the time during a calibration, else as the person chose,
+     * low (Android's low-power scan, short bursts) unless high (Juri, 2026-10-04).
+     */
+    private int wantedMode() {
+        if (SystemClock.elapsedRealtime() < closeUntilMs
+                || "high".equals(KioskConfig.sensorOption(context, LISTENING_KEY, "low"))) {
+            return ScanSettings.SCAN_MODE_LOW_LATENCY;
+        }
+        return ScanSettings.SCAN_MODE_LOW_POWER;
+    }
+
+    /** Starts or stops the scan to match the sensor's switch, in the mode wanted now. */
     synchronized void refresh(boolean sensorOn) {
+        sensorOnLast = sensorOn;
         BluetoothAdapter adapter = adapter();
         if (adapter == null || !adapter.isEnabled() || locationOff()) {
             // Location switched off in Android stops a scan that is not declared "never for
@@ -343,12 +370,42 @@ final class Beacons implements Sensors.Reading {
             stopScan();
             return;
         }
+        boolean ready = SystemClock.elapsedRealtime() >= retryAtMs;
         if (sensorOn && !scanning) {
-            if (SystemClock.elapsedRealtime() >= retryAtMs) {
+            if (ready) {
                 startScan(adapter);
+            }
+        } else if (sensorOn && scanMode != wantedMode()) {
+            if (ready) {
+                // A new mode is a new scan; what was heard stays, the calibration needs it, and
+                // the rules keep hearing it without the wait a first start has.
+                long startedAt = scanStartedAtMs;
+                stopScanOnly();
+                startScan(adapter);
+                scanStartedAtMs = startedAt;
+            } else {
+                // Android refuses a sixth start within 30 s, so starts are spaced; try again
+                // once allowed.
+                main.postDelayed(() -> refresh(sensorOnLast),
+                        retryAtMs - SystemClock.elapsedRealtime() + 100);
             }
         } else if (!sensorOn && scanning) {
             stopScan();
+        }
+    }
+
+    /**
+     * Listens all the time for {@code durationMs}, for a calibration step, then goes back to
+     * the mode the person chose by itself, so a countdown that never ends (the panel went away
+     * mid-way) cannot leave it on; 0 ends it now.
+     */
+    void listenClosely(long durationMs) {
+        synchronized (this) {
+            closeUntilMs = durationMs <= 0 ? 0 : SystemClock.elapsedRealtime() + durationMs;
+        }
+        refresh(sensorOnLast);
+        if (durationMs > 0) {
+            main.postDelayed(() -> refresh(sensorOnLast), durationMs + 100);
         }
     }
 
@@ -390,12 +447,15 @@ final class Beacons implements Sensors.Reading {
         filters.add(new ScanFilter.Builder().setManufacturerData(APPLE,
                 new byte[] {0x02, 0x15}, new byte[] {(byte) 0xff, (byte) 0xff}).build());
         try {
-            scanner.startScan(filters, new ScanSettings.Builder()
-                    .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build(), scanCallback);
+            int mode = wantedMode();
+            scanner.startScan(filters, new ScanSettings.Builder().setScanMode(mode).build(),
+                    scanCallback);
             scanning = true;
+            scanMode = mode;
             scanStartedAtMs = SystemClock.elapsedRealtime();
             retryAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
-            Log.i(TAG, "Listening for beacons");
+            Log.i(TAG, "Listening for beacons"
+                    + (scanMode == ScanSettings.SCAN_MODE_LOW_LATENCY ? ", all the time" : ""));
         } catch (SecurityException | IllegalStateException refused) {
             Log.w(TAG, "Cannot scan for beacons", refused);
             retryAtMs = SystemClock.elapsedRealtime() + RETRY_MS;
@@ -403,6 +463,14 @@ final class Beacons implements Sensors.Reading {
     }
 
     private void stopScan() {
+        stopScanOnly();
+        synchronized (seen) {
+            seen.clear();
+        }
+    }
+
+    /** Stops the scan and keeps what was heard. */
+    private void stopScanOnly() {
         if (scanning && scanner != null) {
             try {
                 scanner.stopScan(scanCallback);
@@ -412,9 +480,7 @@ final class Beacons implements Sensors.Reading {
             Log.i(TAG, "Stopped listening for beacons");
         }
         scanning = false;
-        synchronized (seen) {
-            seen.clear();
-        }
+        scanMode = -1;
     }
 
     private void heard(ScanResult result) {
@@ -506,11 +572,24 @@ final class Beacons implements Sensors.Reading {
         }
     }
 
-    /** Every beacon heard since the scan began, for the page where one is named. */
-    List<Seen> everHeard() {
+    /**
+     * The beacons the page lists, to be named: every one heard since the scan began, then
+     * every calibrated one not heard lately, so a calibrated beacon can always be renamed
+     * (Juri, 2026-10-04); those read out of reach.
+     */
+    List<Seen> listed() {
+        List<Seen> list;
+        java.util.Set<String> ids = new java.util.HashSet<>();
         synchronized (seen) {
-            return new ArrayList<>(seen.values());
+            list = new ArrayList<>(seen.values());
+            ids.addAll(seen.keySet());
         }
+        for (String id : calibratedIds()) {
+            if (!ids.contains(id)) {
+                list.add(new Seen(id));
+            }
+        }
+        return list;
     }
 
     @Override

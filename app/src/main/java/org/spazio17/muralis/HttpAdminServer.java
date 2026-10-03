@@ -2038,6 +2038,9 @@ final class HttpAdminServer {
             html.append(head)
                     .append(optionField("beacons_reach_s", "Out of reach after (seconds)",
                             KioskConfig.sensorOption(context, "beacons_reach_s", "30"), "number"))
+                    .append(optionRadios(Beacons.LISTENING_KEY, "Listening",
+                            KioskConfig.sensorOption(context, Beacons.LISTENING_KEY, "low"),
+                            "low", "Low, saves battery", "high", "High, listens all the time"))
                     .append(beaconRows()).append("</section>");
         } else if (def == Sensors.CAMERA) {
             StringBuilder sizes = new StringBuilder();
@@ -2141,7 +2144,7 @@ final class HttpAdminServer {
     private String beaconRows() {
         Beacons beacons = kioskService.beacons();
         java.util.List<Beacons.Seen> heard = beacons == null
-                ? Collections.<Beacons.Seen>emptyList() : beacons.everHeard();
+                ? Collections.<Beacons.Seen>emptyList() : beacons.listed();
         if (heard.isEmpty()) {
             return "<p class=\"hint\">No beacon has been heard yet.</p>";
         }
