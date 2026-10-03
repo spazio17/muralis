@@ -368,6 +368,15 @@ the playlist page was the case that set the rule.
   display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
   withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
   elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
+- **The stats overlay moves with a finger** (Juri, 2026-10-04): pressed and held for the long-press
+  time it is picked up (a haptic tick, lifted a little), follows the finger anywhere on the
+  screen, and where it is dropped is kept for this panel as shares of the free space
+  (`stats_overlay_x`/`_y`, `KioskConfig.statsOverlayPlace`), so it stays on the screen whichever
+  way the panel is turned; until moved it sits one pixel under the status bar at the top right,
+  as decided 2026-09-07. A tap or a scroll on it still reaches the dashboard: the touch down is
+  passed on and only arms a timer, a move beyond the slop cancels it, and once picked up the
+  dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first
+  and work under it. There is no settings control for the place: the finger is the control.
 - **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since the sensors, 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
   lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
   needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
