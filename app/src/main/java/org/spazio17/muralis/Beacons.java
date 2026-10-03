@@ -60,17 +60,30 @@ final class Beacons implements Sensors.Reading {
 
         /** The signal averaged over the window, the outliers left out; NaN for none. */
         double rssi() {
-            int[] values = new int[readings.size()];
+            return rssi(Long.MIN_VALUE);
+        }
+
+        /** The same, of the packets heard from {@code sinceMs} (elapsed time) on. */
+        double rssi(long sinceMs) {
+            int[] values = new int[readings(sinceMs)];
             int index = 0;
             for (long[] one : readings) {
-                values[index++] = (int) one[1];
+                if (one[0] >= sinceMs) {
+                    values[index++] = (int) one[1];
+                }
             }
             return BeaconDistance.average(values);
         }
 
-        /** How many packets the average holds. */
-        int readings() {
-            return readings.size();
+        /** How many packets were heard in the window from {@code sinceMs} on. */
+        int readings(long sinceMs) {
+            int count = 0;
+            for (long[] one : readings) {
+                if (one[0] >= sinceMs) {
+                    count++;
+                }
+            }
+            return count;
         }
     }
 
@@ -206,11 +219,31 @@ final class Beacons implements Sensors.Reading {
     }
 
     /**
+     * The strongest beacon's signal heard from {@code sinceMs} on, in whole dBm, for the
+     * panel's countdown to show the beacon is heard at all; 0 for none.
+     */
+    int strongestSignal(long sinceMs) {
+        double strongest = Double.NaN;
+        synchronized (seen) {
+            for (Seen one : inReach()) {
+                double rssi = one.rssi(sinceMs);
+                if (!Double.isNaN(rssi) && (Double.isNaN(strongest) || rssi > strongest)) {
+                    strongest = rssi;
+                }
+            }
+        }
+        return Double.isNaN(strongest) ? 0 : (int) Math.round(strongest);
+    }
+
+    /**
      * One step of a beacon's calibration on this panel: "near", the beacon held at one metre;
      * "far", at three; "reset", the calibration forgotten. {@code beaconId} names the beacon,
-     * or null for the strongest in reach (for reset, every beacon). The reason when refused.
+     * or null for the strongest in reach (for reset, every beacon). Only the packets heard
+     * from {@code sinceMs} (elapsed time) on count: the panel's countdown passes when it
+     * began, so the beacon's way there is left out; the command passes 0, the whole window.
+     * The reason when refused.
      */
-    String calibrate(String step, String beaconId) {
+    String calibrate(String step, String beaconId, long sinceMs) {
         String wanted = beaconId == null || beaconId.trim().isEmpty() ? null : beaconId.trim();
         String kind = step == null ? "" : step;
         if (kind.equals("reset")) {
@@ -232,7 +265,7 @@ final class Beacons implements Sensors.Reading {
         double heard = Double.NaN;
         synchronized (seen) {
             for (Seen one : inReach()) {
-                double rssi = one.rssi();
+                double rssi = one.rssi(sinceMs);
                 if (Double.isNaN(rssi)) {
                     continue;
                 }
@@ -245,9 +278,9 @@ final class Beacons implements Sensors.Reading {
             if (chosen == null) {
                 return wanted == null ? "no beacon is in reach" : "that beacon is not in reach";
             }
-            if (chosen.readings() < CALIBRATION_READINGS) {
-                return "the beacon has not been heard long enough; hold it there a few seconds "
-                        + "more";
+            if (chosen.readings(sinceMs) < CALIBRATION_READINGS) {
+                return "the beacon was heard too few times to calibrate; keep it in place and "
+                        + "try again";
             }
         }
         double[] calibration = calibration(chosen.id);

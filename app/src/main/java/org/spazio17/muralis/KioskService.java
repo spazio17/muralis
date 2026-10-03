@@ -2284,6 +2284,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public String calibrateBeacons(String step, String beacon) {
+        return calibrateBeacons(step, beacon, 0);
+    }
+
+    /** The same, counting only the packets heard from {@code sinceMs} on; see Beacons. */
+    String calibrateBeacons(String step, String beacon, long sinceMs) {
         Sensors hub = sensors;
         Beacons ears = beacons;
         if (hub == null || ears == null || !hub.available(Sensors.BLUETOOTH)) {
@@ -2292,7 +2297,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!hub.on(Sensors.BLUETOOTH)) {
             return Sensors.BLUETOOTH.name + " is off";
         }
-        String problem = ears.calibrate(step, beacon);
+        String problem = ears.calibrate(step, beacon, sinceMs);
         if (problem == null) {
             publishSensorBlock();
             publishStateSoon();
