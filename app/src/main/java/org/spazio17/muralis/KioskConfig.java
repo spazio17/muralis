@@ -22,6 +22,10 @@ final class KioskConfig {
     /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
     private static final String ESCAPE_PIN_HASH = "escape_pin_hash";
     private static final String STATS_OVERLAY = "stats_overlay";
+    /** Where the stats overlay was dragged to; see statsOverlayPlace and KioskActivity. */
+    private static final String STATS_OVERLAY_X = "stats_overlay_x";
+    private static final String STATS_OVERLAY_Y = "stats_overlay_y";
+    private static final String STATS_OVERLAY_ANCHOR = "stats_overlay_anchor";
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
     private static final String SCREENSAVER_MODE = "screensaver_mode";
@@ -314,6 +318,14 @@ final class KioskConfig {
 
         Editor screensaverMode(String value) {
             plain.putString(SCREENSAVER_MODE, value);
+            return this;
+        }
+
+        /** Where the stats overlay sits; the shape is statsOverlayPlace's. */
+        Editor statsOverlayPlace(boolean right, boolean bottom, float x, float y) {
+            plain.putString(STATS_OVERLAY_ANCHOR, (bottom ? "b" : "t") + (right ? "r" : "l"));
+            plain.putFloat(STATS_OVERLAY_X, x);
+            plain.putFloat(STATS_OVERLAY_Y, y);
             return this;
         }
 
@@ -747,6 +759,42 @@ final class KioskConfig {
      * Reads just the overlay switch. The dashboard ticker consults it on every redraw, and going
      * through {@link #load} for that would decrypt every secret in {@link SecretStore} each time.
      */
+    /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */
+    static final class OverlayPlace {
+        /** Which edges the block is measured from: the ones it was dropped nearest to. */
+        final boolean right;
+        final boolean bottom;
+        /** The gap from those edges, as shares of the screen's width and height. */
+        final float x;
+        final float y;
+
+        OverlayPlace(boolean right, boolean bottom, float x, float y) {
+            this.right = right;
+            this.bottom = bottom;
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    /**
+     * Where the stats overlay was dragged to, or null while it was never moved and sits in
+     * its default place. Measured from the edges it was dropped nearest to, as shares of the
+     * screen, not of the room left over: the block's own size changes with every line it
+     * draws, and a place that depended on it moved a few pixels every second (the flicker
+     * Juri saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
+     */
+    static OverlayPlace statsOverlayPlace(Context context) {
+        android.content.SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (!prefs.contains(STATS_OVERLAY_ANCHOR) || !prefs.contains(STATS_OVERLAY_X)
+                || !prefs.contains(STATS_OVERLAY_Y)) {
+            return null;
+        }
+        String anchor = prefs.getString(STATS_OVERLAY_ANCHOR, "tl");
+        return new OverlayPlace(anchor.endsWith("r"), anchor.startsWith("b"),
+                prefs.getFloat(STATS_OVERLAY_X, 0f), prefs.getFloat(STATS_OVERLAY_Y, 0f));
+    }
+
     static boolean statsOverlayEnabled(Context context) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)

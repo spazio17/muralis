@@ -1232,7 +1232,158 @@ public final class KioskActivity extends Activity {
                 dismissKeyboardIfTapOutsideInput(event);
             }
         }
+        if (overlayTouch(event)) {
+            return true;
+        }
         return super.dispatchTouchEvent(event);
+    }
+
+    /** Armed on a touch down over the stats overlay; fires as a long press and picks it up. */
+    private Runnable overlayPickUp;
+    private boolean overlayDragging;
+    /** Where the finger went down, on screen, and where it holds the block once picked up. */
+    private float overlayDownX;
+    private float overlayDownY;
+    private float overlayGrabDx;
+    private float overlayGrabDy;
+
+    /**
+     * Moves the stats overlay with a finger: pressed and held for the long-press time, it is
+     * picked up and follows the finger anywhere on the screen, and where it is dropped is kept
+     * for this panel (Juri, 2026-10-04). A tap or a scroll on it still reaches the dashboard
+     * underneath, as it always has: the touch down is passed on and the hold only arms a timer,
+     * which a move cancels; once the block is picked up the dashboard is sent a cancel, so a
+     * hold that became a drag is not also a long press on the page. The escape corners are
+     * read before this and still work under the block.
+     */
+    private boolean overlayTouch(MotionEvent event) {
+        TextView block = statsOverlay;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN: {
+                if (block == null || !block.isShown() || !touchInside(block, event)) {
+                    return false;
+                }
+                overlayDownX = event.getRawX();
+                overlayDownY = event.getRawY();
+                final long downTime = event.getDownTime();
+                overlayPickUp = () -> pickUpOverlay(downTime);
+                mainHandler.postDelayed(overlayPickUp,
+                        android.view.ViewConfiguration.getLongPressTimeout());
+                return false;
+            }
+            case MotionEvent.ACTION_POINTER_DOWN:
+                // A second finger is a pinch or a two-finger scroll on the page, not a hold.
+                cancelOverlayPickUp();
+                return overlayDragging;
+            case MotionEvent.ACTION_MOVE: {
+                if (overlayDragging) {
+                    moveOverlay(event.getRawX(), event.getRawY());
+                    return true;
+                }
+                if (overlayPickUp != null) {
+                    float slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+                    if (Math.hypot(event.getRawX() - overlayDownX,
+                            event.getRawY() - overlayDownY) > slop) {
+                        cancelOverlayPickUp();
+                    }
+                }
+                return false;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                cancelOverlayPickUp();
+                if (overlayDragging) {
+                    overlayDragging = false;
+                    dropOverlay();
+                    return true;
+                }
+                return false;
+            }
+            default:
+                return overlayDragging;
+        }
+    }
+
+    private static boolean touchInside(View view, MotionEvent event) {
+        int[] origin = new int[2];
+        view.getLocationOnScreen(origin);
+        float x = event.getRawX();
+        float y = event.getRawY();
+        return x >= origin[0] && x <= origin[0] + view.getWidth()
+                && y >= origin[1] && y <= origin[1] + view.getHeight();
+    }
+
+    private void cancelOverlayPickUp() {
+        if (overlayPickUp != null) {
+            mainHandler.removeCallbacks(overlayPickUp);
+            overlayPickUp = null;
+        }
+    }
+
+    private void pickUpOverlay(long downTime) {
+        overlayPickUp = null;
+        TextView block = statsOverlay;
+        if (block == null || !block.isShown()) {
+            return;
+        }
+        overlayDragging = true;
+        // The dashboard had the touch so far: told it is over, so the page under the block
+        // neither scrolls nor opens a long-press menu while the block moves.
+        MotionEvent cancel = MotionEvent.obtain(downTime, android.os.SystemClock.uptimeMillis(),
+                MotionEvent.ACTION_CANCEL, overlayDownX, overlayDownY, 0);
+        super.dispatchTouchEvent(cancel);
+        cancel.recycle();
+        block.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        // Lifted a little, so the hand knows it has it.
+        block.animate().scaleX(1.04f).scaleY(1.04f).alpha(0.85f).setDuration(120).start();
+        int[] origin = new int[2];
+        block.getLocationOnScreen(origin);
+        overlayGrabDx = overlayDownX - origin[0];
+        overlayGrabDy = overlayDownY - origin[1];
+    }
+
+    /** The block follows the finger where it was grabbed, kept whole on the screen. */
+    private void moveOverlay(float rawX, float rawY) {
+        TextView block = statsOverlay;
+        if (block == null || !(block.getParent() instanceof View)) {
+            return;
+        }
+        View parent = (View) block.getParent();
+        int[] origin = new int[2];
+        parent.getLocationOnScreen(origin);
+        float left = Math.max(0, Math.min(parent.getWidth() - block.getWidth(),
+                rawX - overlayGrabDx - origin[0]));
+        float top = Math.max(0, Math.min(parent.getHeight() - block.getHeight(),
+                rawY - overlayGrabDy - origin[1]));
+        block.setTranslationX(left - block.getLeft());
+        block.setTranslationY(top - block.getTop());
+    }
+
+    /**
+     * Keeps where the block was dropped and lays it there: measured from the edges it is
+     * nearest to, so a line that grows or shrinks moves its far side and never the side the
+     * eye fixes on.
+     */
+    private void dropOverlay() {
+        TextView block = statsOverlay;
+        if (block == null || !(block.getParent() instanceof View)) {
+            return;
+        }
+        View parent = (View) block.getParent();
+        float left = block.getLeft() + block.getTranslationX();
+        float top = block.getTop() + block.getTranslationY();
+        boolean right = left + block.getWidth() / 2f > parent.getWidth() / 2f;
+        boolean bottom = top + block.getHeight() / 2f > parent.getHeight() / 2f;
+        float gapX = right ? parent.getWidth() - left - block.getWidth() : left;
+        float gapY = bottom ? parent.getHeight() - top - block.getHeight() : top;
+        float x = parent.getWidth() <= 0 ? 0 : gapX / parent.getWidth();
+        float y = parent.getHeight() <= 0 ? 0 : gapY / parent.getHeight();
+        KioskConfig.edit(this).statsOverlayPlace(right, bottom,
+                Math.max(0f, Math.min(1f, x)), Math.max(0f, Math.min(1f, y))).apply();
+        block.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(120).start();
+        block.setTranslationX(0);
+        block.setTranslationY(0);
+        placeStatsOverlay();
     }
 
     /**
@@ -10735,6 +10886,14 @@ public final class KioskActivity extends Activity {
             return insets;
         });
         statsOverlay.post(this::placeStatsOverlay);
+        // A dragged block keeps its place as shares of the screen, so it is laid out again
+        // when the screen's room changes (a rotation). Not on its own size: that changes with
+        // every line it draws, and re-placing it then made it flicker (Juri, 2026-10-04).
+        dashboard.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l != or - ol || b - t != ob - ot) {
+                view.post(this::placeStatsOverlay);
+            }
+        });
 
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
@@ -10753,6 +10912,40 @@ public final class KioskActivity extends Activity {
      */
     private void placeStatsOverlay() {
         if (statsOverlay == null || statsOverlay.getParent() == null) {
+            return;
+        }
+        if (overlayDragging) {
+            return;
+        }
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) statsOverlay.getLayoutParams();
+        KioskConfig.OverlayPlace place = KioskConfig.statsOverlayPlace(this);
+        if (place != null) {
+            // Dragged somewhere once: that place, measured from the nearest edges as shares of
+            // the screen, so it stays on the screen whichever way the panel is turned (Juri,
+            // 2026-10-04) and does not depend on the block's own size, which changes with
+            // every line it draws.
+            View parent = (View) statsOverlay.getParent();
+            int gapX = Math.round(place.x * parent.getWidth());
+            int gapY = Math.round(place.y * parent.getHeight());
+            // Kept whole on the screen by its natural size, measured unconstrained: its laid-out
+            // width is what the last margins left it, and clamping by that squeezed a block at
+            // the edge into a narrow column of wrapped lines.
+            statsOverlay.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+            gapX = Math.max(0, Math.min(parent.getWidth() - statsOverlay.getMeasuredWidth(), gapX));
+            gapY = Math.max(0, Math.min(parent.getHeight() - statsOverlay.getMeasuredHeight(), gapY));
+            int gravity = (place.right ? Gravity.END : Gravity.START)
+                    | (place.bottom ? Gravity.BOTTOM : Gravity.TOP);
+            int leftMargin = place.right ? 0 : gapX;
+            int rightMargin = place.right ? gapX : 0;
+            int topMargin = place.bottom ? 0 : gapY;
+            int bottomMargin = place.bottom ? gapY : 0;
+            if (params.gravity != gravity || params.leftMargin != leftMargin
+                    || params.rightMargin != rightMargin || params.topMargin != topMargin
+                    || params.bottomMargin != bottomMargin) {
+                params.gravity = gravity;
+                params.setMargins(leftMargin, topMargin, rightMargin, bottomMargin);
+                statsOverlay.setLayoutParams(params);
+            }
             return;
         }
         View content = findViewById(android.R.id.content);
@@ -10777,7 +10970,6 @@ public final class KioskActivity extends Activity {
             bar = id == 0 ? dp(24) : getResources().getDimensionPixelSize(id);
         }
         int margin = bar + 1;
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) statsOverlay.getLayoutParams();
         if (params.topMargin != margin) {
             params.topMargin = margin;
             statsOverlay.setLayoutParams(params);
@@ -10866,6 +11058,8 @@ public final class KioskActivity extends Activity {
 
     private void destroyWebView() {
         mainHandler.removeCallbacks(overlayTask);
+        cancelOverlayPickUp();
+        overlayDragging = false;
         mainHandler.removeCallbacks(dashboardSupervisor);
         mainHandler.removeCallbacks(frozenPageCheckTask);
         mainHandler.removeCallbacks(serverProbeTask);
