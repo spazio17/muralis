@@ -177,6 +177,16 @@ final class Sensors implements SensorEventListener {
     private final SensorManager manager;
     private final Automations.Engine engine;
     private final Map<String, Float> readings = new HashMap<>();
+    /**
+     * The readings as every surface shows them, and when each was last taken from
+     * {@link #readings}: a light reading that changed several times a second was of no use
+     * on a screen (Juri, 2026-10-04), so what the panel, the web and the broker see moves at
+     * most every {@link #SHOWN_EVERY_MS}. The rules still hear every event.
+     */
+    private final Map<String, Float> shown = new HashMap<>();
+    private final Map<String, Long> shownAtMs = new HashMap<>();
+    /** How often a reading that moves all the time changes on the surfaces. */
+    static final long SHOWN_EVERY_MS = 3_000L;
 
     /**
      * How the proximity sensor's events are read on this device once a person has calibrated
@@ -342,9 +352,10 @@ final class Sensors implements SensorEventListener {
     }
 
     /**
-     * Who hears of a new reading from a sensor that moves all the time: the panel's rows, so
-     * a hand over the light sensor shows at once; finding where a panel keeps its light
-     * sensor was a guess against a reading two or three seconds late (Juri, 2026-09-28).
+     * Who hears of a new reading from a sensor that moves all the time: the panel's rows. It
+     * was at once, to find where a panel keeps its light sensor (Juri, 2026-09-28); since
+     * 2026-10-04 the surfaces show such a reading every {@link #SHOWN_EVERY_MS} instead, and
+     * this is what brings the next one to the rows on time rather than on the next tick.
      */
     void onReading(Runnable listener) {
         onReading = listener;
@@ -656,6 +667,8 @@ final class Sensors implements SensorEventListener {
             } else {
                 unregister(def);
                 readings.remove(def.id);
+                shown.remove(def.id);
+                shownAtMs.remove(def.id);
                 Log.i(TAG, def.name + " off");
             }
             registered.put(def.id, wanted);
@@ -703,6 +716,28 @@ final class Sensors implements SensorEventListener {
         }
         registered.clear();
         readings.clear();
+        shown.clear();
+        shownAtMs.clear();
+    }
+
+    /**
+     * The reading the surfaces show: the latest one, taken again only once
+     * {@link #SHOWN_EVERY_MS} has passed since the last time. Called with the lock held.
+     */
+    private Float shownReading(String id) {
+        Float latest = readings.get(id);
+        if (latest == null) {
+            shown.remove(id);
+            shownAtMs.remove(id);
+            return null;
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        Long at = shownAtMs.get(id);
+        if (at == null || now - at >= SHOWN_EVERY_MS) {
+            shown.put(id, latest);
+            shownAtMs.put(id, now);
+        }
+        return shown.get(id);
     }
 
     @Override
@@ -1219,7 +1254,9 @@ final class Sensors implements SensorEventListener {
         }
         Float reading;
         synchronized (this) {
-            reading = readings.get(def.id);
+            // Proximity is a change of state, near or far, shown at once; the others move all
+            // the time and are shown every few seconds.
+            reading = def == PROXIMITY ? readings.get(def.id) : shownReading(def.id);
         }
         if (reading == null) {
             one.put("value", JSONObject.NULL);

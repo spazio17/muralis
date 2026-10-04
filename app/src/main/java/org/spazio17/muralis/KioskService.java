@@ -2318,8 +2318,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         handler.postDelayed(sensorEdgeTask, SENSOR_EDGE_DELAY_MS);
     }
 
-    /** At most this often the rows hear of a reading that moves all the time. */
-    private static final long SENSOR_READING_EVERY_MS = 250L;
+    /**
+     * At most this often the rows hear of a reading that moves all the time: as often as the
+     * surfaces show one (Sensors.SHOWN_EVERY_MS).
+     */
+    private static final long SENSOR_READING_EVERY_MS = Sensors.SHOWN_EVERY_MS;
     private volatile boolean sensorReadingPending;
 
     /**
