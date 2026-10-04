@@ -786,7 +786,8 @@ final class KioskConfig {
     static OverlayPlace statsOverlayPlace(Context context) {
         android.content.SharedPreferences prefs = storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!prefs.contains(STATS_OVERLAY_X) || !prefs.contains(STATS_OVERLAY_Y)) {
+        if (!prefs.contains(STATS_OVERLAY_ANCHOR) || !prefs.contains(STATS_OVERLAY_X)
+                || !prefs.contains(STATS_OVERLAY_Y)) {
             return null;
         }
         String anchor = prefs.getString(STATS_OVERLAY_ANCHOR, "tl");

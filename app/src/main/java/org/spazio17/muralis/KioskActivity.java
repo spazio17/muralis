@@ -10927,10 +10927,12 @@ public final class KioskActivity extends Activity {
             View parent = (View) statsOverlay.getParent();
             int gapX = Math.round(place.x * parent.getWidth());
             int gapY = Math.round(place.y * parent.getHeight());
-            if (statsOverlay.getWidth() > 0) {
-                gapX = Math.max(0, Math.min(parent.getWidth() - statsOverlay.getWidth(), gapX));
-                gapY = Math.max(0, Math.min(parent.getHeight() - statsOverlay.getHeight(), gapY));
-            }
+            // Kept whole on the screen by its natural size, measured unconstrained: its laid-out
+            // width is what the last margins left it, and clamping by that squeezed a block at
+            // the edge into a narrow column of wrapped lines.
+            statsOverlay.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+            gapX = Math.max(0, Math.min(parent.getWidth() - statsOverlay.getMeasuredWidth(), gapX));
+            gapY = Math.max(0, Math.min(parent.getHeight() - statsOverlay.getMeasuredHeight(), gapY));
             int gravity = (place.right ? Gravity.END : Gravity.START)
                     | (place.bottom ? Gravity.BOTTOM : Gravity.TOP);
             int leftMargin = place.right ? 0 : gapX;
