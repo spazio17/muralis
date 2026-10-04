@@ -50,6 +50,8 @@ final class KioskCommandDispatcher {
         final Boolean enabled;
         /** A named choice, for commands whose argument is a vocabulary rather than a flag. */
         final String value;
+        /** A beacon's uuid:major:minor, for beacons.calibrate; null when not given. */
+        final String beacon;
 
         CommandArgs(int brightnessPercent, String url) {
             this(brightnessPercent, url, null, null);
@@ -60,10 +62,16 @@ final class KioskCommandDispatcher {
         }
 
         CommandArgs(int brightnessPercent, String url, Boolean enabled, String value) {
+            this(brightnessPercent, url, enabled, value, null);
+        }
+
+        CommandArgs(int brightnessPercent, String url, Boolean enabled, String value,
+                String beacon) {
             this.brightnessPercent = brightnessPercent;
             this.url = url;
             this.enabled = enabled;
             this.value = value;
+            this.beacon = beacon;
         }
     }
 
@@ -196,6 +204,12 @@ final class KioskCommandDispatcher {
 
         /** One step of the microphone calibration, quiet, loud or reset; see Microphone. */
         String calibrateMicrophone(String step);
+
+        /**
+         * One step of a beacon's calibration, near (one metre), far (three) or reset, for the
+         * beacon named or the strongest in reach; see Beacons.
+         */
+        String calibrateBeacons(String step, String beacon);
 
         /** Sleeps the panel for a moment and notes whether the sensor reported; see Sensors. */
         String sleepTest(String sensorId);
@@ -457,6 +471,10 @@ final class KioskCommandDispatcher {
             }
             case "microphone.calibrate": {
                 String problem = executor.calibrateMicrophone(args.value);
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "beacons.calibrate": {
+                String problem = executor.calibrateBeacons(args.value, args.beacon);
                 return problem == null ? accepted() : rejected(problem);
             }
             case "sensor.sleep_test": {
