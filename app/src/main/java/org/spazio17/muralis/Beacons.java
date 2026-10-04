@@ -497,12 +497,12 @@ final class Beacons implements Sensors.Reading {
         stopScan();
     }
 
-    /** Whether the scan listens all the time now, as a calibration's countdown needs. */
     /** Whether the Bluetooth beacons sensor was last switched on. */
     synchronized boolean sensorOn() {
         return sensorOnLast;
     }
 
+    /** Whether the scan listens all the time now, as a calibration's countdown needs. */
     synchronized boolean listeningAllTheTime() {
         return scanning && scanMode == ScanSettings.SCAN_MODE_LOW_LATENCY;
     }

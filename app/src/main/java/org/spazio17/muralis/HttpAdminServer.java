@@ -1959,11 +1959,6 @@ final class HttpAdminServer {
     }
 
     /**
-     * A choice of five or fewer as radios, the panel's shape for the same settings, each one
-     * stored the moment it is picked through admin_setting.js (a menu here and radios on the
-     * panel broke the mirror, review of 2026-10-01).
-     */
-    /**
      * The look of this panel, as the panel's This panel has it (Juri, 2026-10-04): Colour with
      * its dot, Separators. Each stores the moment it is chosen
      * (admin_setting.js), which also re-colours the page at once.
@@ -2009,7 +2004,12 @@ final class HttpAdminServer {
                 + (value.equals(current) ? " checked" : "") + ">" + labelHtml + "</label>";
     }
 
-    /** A sensor option as radios: the same builders as This panel's look (choice, radioOf). */
+    /**
+     * A sensor option of five or fewer choices as radios, the panel's shape for the same
+     * settings, each one stored the moment it is picked through admin_setting.js (a menu here
+     * and radios on the panel broke the mirror, review of 2026-10-01); the same builders as
+     * This panel's look (choice, radioOf).
+     */
     private static String optionRadios(String key, String label, String current,
             String... valuesAndLabels) {
         StringBuilder radios = new StringBuilder();
@@ -2664,14 +2664,14 @@ final class HttpAdminServer {
         writeJson(output, 200, KioskConfig.sensorSettingsDocument(context));
     }
 
+    /** Names in one post: twice the beacons the panel keeps (Beacons.MAX_SEEN). */
+    private static final int MAX_BEACON_NAMES = 200;
+
     /**
      * Applies {"names": [{"id": "<uuid:major:minor>", "name": "..."}]}, the shape GET gives; a
      * blank name takes it away, a beacon left out keeps its name. changed_at and deleted are
      * the panel's own and ignored.
      */
-    /** Names in one post: twice the beacons the panel keeps (Beacons.MAX_SEEN). */
-    private static final int MAX_BEACON_NAMES = 200;
-
     private void applyBeaconNames(Map<String, String> headers, byte[] body, OutputStream output)
             throws IOException {
         JSONObject document = jsonBody(headers, body, output);
