@@ -238,6 +238,47 @@ the playlist page was the case that set the rule.
   against a publicly-trusted certificate on a matching hostname, useless for the home-broker
   audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
   fingerprint machinery to back it.
+- **The look is the person's choice, on This panel** (Juri, 2026-10-04): Colour (Purple, Blue,
+  Orange, a seed each, a dot before each name) and Separators (Lines, the hairline; Segments,
+  every row of a list its own rounded surface with 2 dp of the card between, 16 dp corners at
+  the ends and 4 inside, as the Pixel's settings draw a list; None), with the day and night
+  toggle beside the section's name. **No second axis of the colour**: Material's variants were
+  tried and on a dark panel the three gave the same primary (Material pins it at tone 80 and
+  every saturation clips there, measured), then its contrast levels, which did not look good;
+  Android, Home Assistant, Telegram and Signal offer a colour and day or night, nothing more,
+  and Tasmota's 19 editable colours are a console feature for tinkerers. The three schemes are
+  **generated, not drawn**: `scripts/gen-palettes.py` runs Google's material-color-utilities
+  (HCT) with Material's Vibrant recipe at its standard tones and writes `Palettes.java` (pure,
+  host-tested) and `res/raw/admin_palettes.css`, both committed, so the build needs neither
+  Python nor the library; edit the script, never the outputs. A scheme is fifteen colours: the
+  thirteen of `KioskTheme`'s constructor (surface, surface-container-lowest, -high, -highest,
+  outline, on-surface, on-surface-variant, primary, secondary, ok, warn, error,
+  on-secondary-container; ok and warn are the fixed status greens and yellows, no scheme's
+  business), then on-primary and the lowest surface. **Purple with Lines is the default** and
+  stands in for any stored value nothing offers; the hand-drawn palettes `KioskTheme` carried
+  went with them (a missing scheme is a broken build and throws). Stored as plain settings of this panel alone (`appearance_colour`,
+  `separators`, `KioskConfig.checkAppearance`), posted by the web admin as instant settings and
+  carried in the state document so every page of it follows a change made on the panel
+  (`followLook`, `data-palette` and `data-separators` on `html`; a page without the radios
+  follows too); every settings screen of the panel redraws in place when the look it was drawn
+  in no longer matches the stored one (`setContentView` stamps `drawnAppearance`, `lookWatch`
+  compares every 1.5 s), keeping what was typed, except the PIN prompt, which keeps its look so
+  the digits typed stay. The two settings are read through a cache the Editor writes through.
+  Segments apply to the lists the panel segments and no others, on the web the `ul.list seg`
+  ones (the settings' Sensors and Automations, the Sensors and Automations pages, the tags, the
+  playlists).
+  **The internal pages' left menus are one style** (Juri, 2026-10-04, sketch `media/drafts/left-menus`,
+  its B): Sensors, Automations and the Screensaver's playlists list glyph rows beside the detail
+  through `addMenuRow`, kept apart as the Separators say, 64 dp rows in every mode as on the web
+  (`sizeMenuRow`); the chosen row is the pill the menus always had with no hairline against it,
+  and with Segments a tinted segment (`secondaryContainer`), as Android marks a selected row.
+  Below 840 dp the playlists are list rows (`addListRow`), as the Sensors page's are. A
+  playlist's row is the screensaver glyph, the name over "7 pictures · in use", and the Use radio
+  at the end; a tap opens the playlist's page, where Delete lives as the outlined red button every
+  editor has (the pencil and the trash left the row, on the web too, whose Delete asks first
+  through one `data-confirm` listener in `admin_command.js`, posts natively and is answered with a
+  redirect to /screensaver once the playlist is gone, deleted then or before; any other refusal,
+  a failed save, is answered on the playlist's page with its reason). Sketch: `media/drafts/theme-colours`.
 - **Dashboard self-recovery is one clock, not scattered callbacks, and its decisions are pure.**
   Every retry/timeout/frozen-page decision lives in `RecoveryPolicy` (no Android imports,
   host-tested, with each historical recovery bug pinned as a test); `KioskActivity` only wires it
@@ -1226,7 +1267,7 @@ the playlist page was the case that set the rule.
   Version and device details page carried them a second time until 2026-09-23, and a legal page's
   back arrow returns to the settings. **Back is the arrow in the app
   bar, once**; the "← Back" buttons at head and foot went. The theme control is a sun or a moon in
-  the Display section on both surfaces: **the panel's at the right of the section's name**
+  the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices): **the panel's at the right of the section's name**
   (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
   that carries a control beside its name (`Section.action`); the web's beside the section's
   name too, in the accordion's row and, from 840 px, in the open card's top corner, cycling

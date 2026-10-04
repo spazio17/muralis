@@ -47,8 +47,6 @@ if(argument){if(opt&&opt.value==='play_sound'){argument.setAttribute('inputmode'
 var windowed=only&&only.checked;
 show(from,!!windowed);show(to,!!windowed);}
 Array.prototype.forEach.call(form.querySelectorAll('select,input[type=radio],input[type=checkbox]'),function(el){el.addEventListener('change',paint);});
-var del=form.querySelector('[data-confirm]');
-if(del){del.addEventListener('click',function(e){if(!window.confirm(del.getAttribute('data-confirm'))){e.preventDefault();}});}
 paint();
 });}
 window.muralisBindEditors=bind;

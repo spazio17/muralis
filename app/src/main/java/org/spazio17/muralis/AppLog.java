@@ -107,14 +107,6 @@ final class AppLog {
     }
 
     /**
-     * A URL as it may be logged: scheme, host, port and path, with the user:password part and
-     * the query taken off, because the log leaves the panel now (Copy, Download, /api/log, "for
-     * a support mail") and a dashboard or sound address often carries a token in its query or
-     * credentials before its host. An address Java will not parse (a space in its path, an
-     * underscore in its host) is cut by hand the same way, rather than logged whole (review,
-     * 2026-10-01).
-     */
-    /**
      * Free text with every address in it cut as {@link #withoutSecrets} cuts one: a page's
      * console error often quotes the address that failed, query and all (review, 2026-10-01).
      */
@@ -133,6 +125,14 @@ final class AppLog {
         return out.toString();
     }
 
+    /**
+     * A URL as it may be logged: scheme, host, port and path, with the user:password part and
+     * the query taken off, because the log leaves the panel now (Copy, Download, /api/log, "for
+     * a support mail") and a dashboard or sound address often carries a token in its query or
+     * credentials before its host. An address Java will not parse (a space in its path, an
+     * underscore in its host) is cut by hand the same way, rather than logged whole (review,
+     * 2026-10-01).
+     */
     static String withoutSecrets(String url) {
         if (url == null) {
             return "";

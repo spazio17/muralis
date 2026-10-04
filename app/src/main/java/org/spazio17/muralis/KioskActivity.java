@@ -1628,6 +1628,7 @@ public final class KioskActivity extends Activity {
         page.addView(panel, panelParams);
         setContentView(scrollPage(theme, page));
         currentScreen = thisPrompt;
+        pinPrompt = thisPrompt;
         input.requestFocus();
     }
 
@@ -1920,6 +1921,62 @@ public final class KioskActivity extends Activity {
     }
 
 
+    /**
+     * The look of this panel (Juri, 2026-10-04), under its name: the Colour (a seed, each with
+     * its dot) and the Separators between a list's rows; a second axis of the colour went
+     * twice the same day, see Palettes. Each applies the
+     * moment it is tapped and the screen is drawn again in it, in place, as the theme button
+     * does; the web admin mirrors both.
+     */
+    private void addAppearanceControls(LinearLayout card, KioskTheme theme, KioskConfig config) {
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        captionParams.topMargin = dp(14);
+        card.addView(fieldCaption(theme, "Colour"), captionParams);
+        RadioGroup colours = new RadioGroup(this);
+        for (String colour : Palettes.COLOURS) {
+            RadioButton radio = radioChoice(theme, colours, capital(colour), colour);
+            // The colour itself before its name: its primary in this theme.
+            String[] scheme = Palettes.colours(colour, !theme.light);
+            android.graphics.drawable.GradientDrawable dot =
+                    new android.graphics.drawable.GradientDrawable();
+            dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+            dot.setColor(scheme == null ? theme.accent : Color.parseColor(scheme[7]));
+            dot.setSize(dp(18), dp(18));
+            radio.setCompoundDrawablesRelativeWithIntrinsicBounds(dot, null, null, null);
+            radio.setCompoundDrawablePadding(dp(12));
+        }
+        checkRadioIfChanged(colours, config.appearanceColour);
+        colours.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            applyLiveSetting(editor -> editor.appearanceColour((String) checked.getTag()));
+            redrawThisScreen();
+        });
+        card.addView(colours, matchWrapClose());
+
+        LinearLayout.LayoutParams separatorsCaption = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        separatorsCaption.topMargin = dp(14);
+        card.addView(fieldCaption(theme, "Separators"), separatorsCaption);
+        RadioGroup separators = new RadioGroup(this);
+        radioChoice(theme, separators, "Lines", KioskConfig.SEPARATORS_LINES);
+        radioChoice(theme, separators, "Segments", KioskConfig.SEPARATORS_SEGMENTS);
+        radioChoice(theme, separators, "None", KioskConfig.SEPARATORS_NONE);
+        checkRadioIfChanged(separators, config.separators);
+        separators.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            applyLiveSetting(editor -> editor.separators((String) checked.getTag()));
+            redrawThisScreen();
+        });
+        card.addView(separators, matchWrapClose());
+    }
+
     /** One radio option, carrying its stored spelling as the tag the listener reads back. */
     private RadioButton radioChoice(
             KioskTheme theme, RadioGroup group, String label, String value) {
@@ -1961,7 +2018,64 @@ public final class KioskActivity extends Activity {
     private KioskTheme currentTheme() {
         return KioskTheme.of(KioskConfig.storageContext(this)
                 .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
-                .getBoolean(LIGHT_CONFIGURATION_THEME, false));
+                .getBoolean(LIGHT_CONFIGURATION_THEME, false),
+                KioskConfig.appearanceColourOf(this));
+    }
+
+    /** The look the screen on show was drawn with, so a change from another surface redraws. */
+    private String drawnAppearance = "";
+
+    /** The PIN prompt on show, if it is, which a look change leaves as it is. */
+    private Runnable pinPrompt;
+
+    /**
+     * Every screen is set through here: the look it is drawn in is noted, and while a settings
+     * screen is up, {@link #lookWatch} compares it with the stored one. Stamped here and not in
+     * currentTheme, which the ticker and the bar painter call too; for every screen and not the
+     * settings page alone, since an open Sensors or Screensaver page kept the old look until
+     * it was left (review, 2026-10-04).
+     */
+    @Override
+    public void setContentView(View view) {
+        super.setContentView(view);
+        drawnAppearance = appearanceKey();
+        mainHandler.removeCallbacks(lookWatch);
+        if (configurationVisible) {
+            mainHandler.postDelayed(lookWatch, LOOK_WATCH_MS);
+        }
+    }
+
+    private static final long LOOK_WATCH_MS = 1_500L;
+
+    /** Draws the screen on show again, in place, when the look was changed on the web admin. */
+    private final Runnable lookWatch = new Runnable() {
+        @Override
+        public void run() {
+            if (!configurationVisible) {
+                return;
+            }
+            // The PIN prompt keeps its look: drawn again it lost the digits typed (review,
+            // 2026-10-04); the screen behind it is drawn in the new look.
+            if (!drawnAppearance.equals(appearanceKey()) && currentScreen != pinPrompt) {
+                // Drawn again through setContentView, which stamps the new look and watches on.
+                redrawSettingsSoon();
+                return;
+            }
+            mainHandler.postDelayed(this, LOOK_WATCH_MS);
+        }
+    };
+
+    /**
+     * Whether a hairline is drawn between rows at all: Separators = None takes every one away,
+     * on the web too (the settings menu's, the picture lists', the folder tree's), where the
+     * lists with segments are addListRow's and addMenuRow's business.
+     */
+    private boolean hairlines() {
+        return !KioskConfig.SEPARATORS_NONE.equals(KioskConfig.separatorsOf(this));
+    }
+
+    private String appearanceKey() {
+        return KioskConfig.appearanceColourOf(this) + "|" + KioskConfig.separatorsOf(this);
     }
 
     /**
@@ -2668,6 +2782,7 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
+        addAppearanceControls(aboutCard, theme, config);
         // The web's row: the stats glyph and the overlay's state under the name (review,
         // 2026-10-01).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
@@ -2748,17 +2863,17 @@ public final class KioskActivity extends Activity {
                 new Section(R.drawable.ic_web, "Local web admin", webAdminSummary(config), httpCard),
                 new Section(R.drawable.ic_escape, "Escape sequences", sequencesSummary(config),
                         escapeCard),
-                // The one section with a control of its own beside its name: the day and night
-                // toggle, which is what this screen looks like and belongs with the brightness
-                // and the orientation rather than in the app bar (Juri, 2026-09-23).
-                new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard,
-                        themeToggle(theme)),
+                new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard),
                 new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
                         screensaverCard),
                 new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
                 new Section(R.drawable.ic_automations, "Automations", automationsSummary(),
                         automationsCard),
-                new Section(R.drawable.ic_sensor_panel, "This panel", config.deviceId, aboutCard));
+                // The one section with a control of its own beside its name: the day and night
+                // toggle, which is what this screen looks like. Beside Display from 2026-09-23,
+                // beside This panel since 2026-10-04 (Juri), where the look's other choices are.
+                new Section(R.drawable.ic_sensor_panel, "This panel", config.deviceId, aboutCard,
+                        themeToggle(theme)));
 
         Runnable openDashboard = () -> {
             String url = normalizeUrl(urlInput.getText().toString());
@@ -3128,7 +3243,7 @@ public final class KioskActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             menu.addView(body, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            if (index < sections.size() - 1) {
+            if (index < sections.size() - 1 && hairlines()) {
                 View rule = new View(this);
                 rule.setBackgroundColor(theme.outlineVariant);
                 menu.addView(rule, new LinearLayout.LayoutParams(
@@ -3316,10 +3431,7 @@ public final class KioskActivity extends Activity {
                     .edit()
                     .putBoolean(LIGHT_CONFIGURATION_THEME, !theme.light)
                     .apply();
-            // Loaded fresh, not the snapshot this screen was built from; same rule the rotation
-            // redraw and the save button follow. In place, so a new palette does not take the
-            // reader away from where they were.
-            redrawInPlace(() -> showConfiguration(KioskConfig.load(this)));
+            redrawThisScreen();
         });
         return toggle;
     }
@@ -3753,6 +3865,17 @@ public final class KioskActivity extends Activity {
         });
     }
 
+    /**
+     * The settings page drawn again in place after a change of its look, through its own redraw
+     * so the half-typed boxes ride across as on a rotation (review, 2026-10-04: a tap on Blue
+     * emptied a typed broker address). Loaded fresh, not the snapshot the screen was built from,
+     * and in place, so a new palette does not take the reader away from where they were.
+     */
+    private void redrawThisScreen() {
+        Runnable screen = currentScreen;
+        redrawInPlace(screen != null ? screen : () -> showConfiguration(KioskConfig.load(this)));
+    }
+
     private static <V> java.util.List<V> viewsOf(java.util.Map<String, java.util.List<V>> map,
             String id) {
         java.util.List<V> list = map.get(id);
@@ -3853,12 +3976,14 @@ public final class KioskActivity extends Activity {
         sensorCountView = count;
         list.addView(listHead(theme, "Sensors", count), listHeadParams(wide));
         java.util.List<LinearLayout> absent = new java.util.ArrayList<>();
-        // The narrow list's rows touch with a divider between, the web's ul.list; the wide
-        // list is the settings menu's pills, which never had dividers.
+        // The narrow list is the web's ul.list; the wide one is the left menu beside the
+        // chosen sensor's cards, both kept apart as This panel's Separators say.
         final boolean[] firstRow = {true};
         java.util.function.Consumer<LinearLayout> addRow = row -> {
             if (wide) {
-                list.addView(row, navRowParams());
+                addMenuRow(list, theme, row, firstRow[0],
+                        Boolean.TRUE.equals(row.getTag(R.id.menu_chosen)),
+                        (Runnable) row.getTag(R.id.menu_open));
             } else {
                 addListRow(list, theme, row, firstRow[0]);
             }
@@ -3875,22 +4000,27 @@ public final class KioskActivity extends Activity {
                 redrawInPlace(this::showSensorsPage);
             } : def.page ? () -> showSensorPage(def) : null;
             LinearLayout row;
+            boolean here = true;
             if (!one.optBoolean("available")) {
                 CompoundButton off = themedSwitch(theme, "", false);
                 off.setEnabled(false);
                 row = sensorRow(theme, def, one, off, open, !wide);
-                absent.add(row);
+                here = false;
             } else if (def.kind == Sensors.Kind.PERMISSION && !permittedNow(def)) {
                 Button allow = secondaryButton(theme, "Allow");
                 allow.setOnClickListener(view -> requestSensorPermission(def));
                 row = sensorRow(theme, def, one, allow, open, !wide);
-                addRow.accept(row);
             } else {
                 row = sensorRow(theme, def, one, sensorSwitch(theme, def, one), open, !wide);
-                addRow.accept(row);
             }
             if (wide) {
-                markChosen(theme, row, def == chosen, open);
+                row.setTag(R.id.menu_chosen, def == chosen);
+                row.setTag(R.id.menu_open, open);
+            }
+            if (here) {
+                addRow.accept(row);
+            } else {
+                absent.add(row);
             }
         }
         for (LinearLayout row : absent) {
@@ -4866,8 +4996,7 @@ public final class KioskActivity extends Activity {
             } : () -> showAutomationEditor(rule);
             LinearLayout row = automationRow(theme, rule, toggle, open, !wide);
             if (wide) {
-                markChosen(theme, row, rule.id.equals(draft.id), open);
-                list.addView(row, navRowParams());
+                addMenuRow(list, theme, row, rule == rules.get(0), rule.id.equals(draft.id), open);
             } else {
                 addListRow(list, theme, row, rule == rules.get(0));
             }
@@ -5546,7 +5675,7 @@ public final class KioskActivity extends Activity {
         optionsTitle.setTextColor(theme.text);
         optionsTitle.setTextSize(18);
         optionsCard.addView(optionsTitle);
-        LinearLayout playlistCard = card(theme, "Playlist");
+        LinearLayout playlistCard = card(theme, "Playlists");
         boolean wide = widthClass() == 2;
         ScreensaverControls controls =
                 addScreensaverControls(null, optionsCard, playlistCard, theme, true);
@@ -6256,13 +6385,19 @@ public final class KioskActivity extends Activity {
             group.addView(none, matchWrapClose());
         }
         for (int index = 0; index < all.size(); index++) {
-            group.addView(playlistRow(theme, all.get(index)), new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            if (index < all.size() - 1) {
-                View rule = new View(this);
-                rule.setBackgroundColor(theme.outlineVariant);
-                group.addView(rule, new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            PlaylistDocument.Playlist playlist = all.get(index);
+            // The left menu's row where the page is wide, a list row where it is not, as the
+            // Sensors page has it (Juri, 2026-10-04): a tap opens the playlist's pictures,
+            // where Delete also lives now.
+            LinearLayout row = playlistRow(theme, playlist);
+            if (widthClass() == 2) {
+                addMenuRow(group, theme, row, index == 0, false, () -> editPlaylist(playlist));
+            } else {
+                row.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
+                        Color.TRANSPARENT), new android.graphics.drawable.ColorDrawable(
+                                Color.WHITE), theme.text));
+                row.setOnClickListener(view -> editPlaylist(playlist));
+                addListRow(group, theme, row, index == 0);
             }
         }
 
@@ -6308,16 +6443,14 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * One playlist as a Material list row: the radio in front says which one plays and is the
-     * control that switches it, then the name over its count, then Edit and Delete as icon
-     * buttons at the end (Juri, 2026-09-23: Use is not a button any more, tap the circle).
+     * One playlist as a row of the Screensaver page's left menu, the Sensors page's shape
+     * (Juri, 2026-10-04): the screensaver's glyph, the name over its count, "in use" in green,
+     * and the Use radio at the end where a sensor has its switch, the control that switches
+     * which playlist plays (Juri, 2026-09-23: Use is not a button, tap the circle). Edit and
+     * Delete left the row: a tap on it opens the playlist's own page, which has Delete as
+     * every editor does.
      */
     private LinearLayout playlistRow(KioskTheme theme, PlaylistDocument.Playlist playlist) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setMinimumHeight(dp(72));
-
         RadioButton use = new RadioButton(this);
         use.setChecked(playlist.active);
         use.setButtonTintList(selectionTint(theme));
@@ -6333,50 +6466,27 @@ public final class KioskActivity extends Activity {
                 return null;
             });
         });
-        row.addView(use, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        TextView name = new FlushText(this);
-        name.setText(playlist.name);
-        name.setTextColor(theme.text);
-        name.setTextSize(16);
-        name.setSingleLine(true);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        texts.addView(name);
-        TextView count = new FlushText(this);
         int pictures = playlist.items.size();
         String countText = pictures + (pictures == 1 ? " picture" : " pictures");
+        LinearLayout row = glyphRow(theme, R.drawable.ic_screensaver, playlist.name,
+                countText + (playlist.active ? " · in use" : ""), use, null, false, false);
         if (playlist.active) {
+            TextView count = (TextView) row.getChildAt(1).getTag();
             SpannableString styled = new SpannableString(countText + " · in use");
             styled.setSpan(new android.text.style.ForegroundColorSpan(theme.ok),
                     countText.length() + 3, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             count.setText(styled);
-        } else {
-            count.setText(countText);
         }
-        count.setTextColor(theme.subtext);
-        count.setTextSize(14);
-        texts.addView(count);
-        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        textParams.leftMargin = dp(8);
-        row.addView(texts, textParams);
-
-        ImageButton edit = iconButton(theme, R.drawable.ic_pencil, "Edit " + playlist.name);
-        edit.setOnClickListener(view -> {
-            PlaylistDraft draft = new PlaylistDraft();
-            draft.id = playlist.id;
-            draft.name = playlist.name;
-            draft.items.addAll(playlist.items);
-            showPlaylistPage(draft);
-        });
-        row.addView(edit, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        ImageButton delete = iconButton(theme, R.drawable.ic_trash, "Delete " + playlist.name);
-        delete.setOnClickListener(view -> confirmDeletePlaylist(playlist));
-        row.addView(delete, new LinearLayout.LayoutParams(dp(48), dp(48)));
         return row;
+    }
+
+    /** Opens a playlist's own page, its name and its pictures, with a draft of it. */
+    private void editPlaylist(PlaylistDocument.Playlist playlist) {
+        PlaylistDraft draft = new PlaylistDraft();
+        draft.id = playlist.id;
+        draft.name = playlist.name;
+        draft.items.addAll(playlist.items);
+        showPlaylistPage(draft);
     }
 
     /**
@@ -6440,13 +6550,14 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Asks before deleting, and names the playlist while asking.
+     * Asks before deleting a playlist, and names it while asking; {@code back} is the screen a
+     * No returns to.
      *
      * <p>Deleting the one in use leaves nothing in use, which the Pictures sentence then says out
      * loud ("No playlist is in use."), because a screensaver that goes black without explanation is
      * the worse failure.
      */
-    private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist) {
+    private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist, Runnable back) {
         confirmDelete(playlist.name,
                 playlist.active
                         ? "It is the playlist in use, so the screensaver will have none until you "
@@ -6459,7 +6570,7 @@ public final class KioskActivity extends Activity {
                         return null;
                     });
                 },
-                this::showScreensaverSettings);
+                back);
     }
 
     /** One edit of the stored playlists, off the main thread, with the screen redrawn after it. */
@@ -6746,9 +6857,36 @@ public final class KioskActivity extends Activity {
         cancel.setOnClickListener(view -> leavePlaylistPage(draft));
         Button save = primaryButton(theme, "Save");
         save.setOnClickListener(view -> savePlaylist(draft));
-        // Paired rather than stacked: two short labels fit across a phone's card, and stacking
-        // them read as two separate decisions instead of one either-or (Juri, 2026-09-10, B4).
-        page.addView(pairedButtonRow(cancel, save), matchWrap());
+        // Delete at the start for a stored playlist, outlined red as in every editor (the delete
+        // rules, 2026-10-01); it left the list's row on 2026-10-04. Cancel then Save at the end,
+        // paired rather than stacked (Juri, 2026-09-10, B4).
+        Button delete = null;
+        if (draft.id != null) {
+            delete = dangerOutlinedButton(theme, "Delete");
+            delete.setOnClickListener(view -> {
+                // Looked up on the library's worker, as every read of the document is, for the
+                // question's wording (in use or not); gone meanwhile, from the web, it says so.
+                PictureLibrary library = PictureLibrary.get(this);
+                // The answer comes back only to the page that asked: a Cancel or Back meanwhile
+                // would have it ask over the Screensaver page (review, 2026-10-04).
+                final Runnable asking = currentScreen;
+                library.run(() -> {
+                    PlaylistDocument.Playlist stored = library.playlists().load().byId(draft.id);
+                    library.onMain(() -> {
+                        if (isFinishing() || isDestroyed() || currentScreen != asking) {
+                            return;
+                        }
+                        if (stored == null) {
+                            showNotice("Not done", "\"" + draft.name + "\" is already gone.",
+                                    this::showScreensaverSettings);
+                            return;
+                        }
+                        confirmDeletePlaylist(stored, () -> showPlaylistPage(draft));
+                    });
+                });
+            });
+        }
+        page.addView(editorButtonRow(delete, cancel, save), matchWrap());
 
         setContentView(scrollPage(theme, page));
         currentScreen = () -> showPlaylistPage(draft);
@@ -7180,7 +7318,7 @@ public final class KioskActivity extends Activity {
                 screen.pictures.body.addView(pictureRow(screen, entry, details),
                         new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.WRAP_CONTENT));
-                if (index < listing.entries.size() - 1) {
+                if (index < listing.entries.size() - 1 && hairlines()) {
                     View rule = new View(this);
                     rule.setBackgroundColor(theme.outlineVariant);
                     screen.pictures.body.addView(rule, new LinearLayout.LayoutParams(
@@ -7486,6 +7624,7 @@ public final class KioskActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         View rule = new View(this);
         rule.setBackgroundColor(theme.outlineVariant);
+        rule.setVisibility(hairlines() ? View.VISIBLE : View.GONE);
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
         wrapper.addView(row, new LinearLayout.LayoutParams(
@@ -7695,7 +7834,7 @@ public final class KioskActivity extends Activity {
             String uri = items.get(index);
             LinearLayout entry = new LinearLayout(this);
             entry.setOrientation(LinearLayout.VERTICAL);
-            if (index > 0) {
+            if (index > 0 && hairlines()) {
                 View rule = new View(this);
                 rule.setBackgroundColor(theme.outlineVariant);
                 entry.addView(rule, new LinearLayout.LayoutParams(
@@ -10015,22 +10154,119 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * A row of a list the web draws as {@code ul.list}: the rows touch and a 1 dp divider
-     * stands between two, the web's border and the playlist panel's rule (Juri, 2026-09-28:
-     * the Sensors section's rows sat 16 dp apart with nothing between, and in landscape a name
-     * and its switch did not read as one row). Material's list, two-line items with dividers.
-     * The first row keeps a small gap to what is above it.
+     * Adds a row to a list the web draws as {@code ul.list seg}, the way This panel's
+     * Separators says (Juri, 2026-10-04): Lines, a 1 dp hairline between rows (Juri,
+     * 2026-09-28: the Sensors section's rows sat 16 dp apart with nothing between, and in
+     * landscape a name and its switch did not read as one row); Segments, each row its own
+     * rounded surface with 2 dp of the card between them, 16 dp corners at the list's ends and
+     * 4 dp inside, as the Pixel's settings draw a list; None, the rows touching. The first row
+     * keeps a small gap to what is above it.
      */
     private void addListRow(LinearLayout list, KioskTheme theme, View row, boolean first) {
-        if (!first) {
+        String separators = KioskConfig.separatorsOf(this);
+        LinearLayout.LayoutParams params = navRowParams();
+        params.topMargin = first ? dp(8) : 0;
+        if (KioskConfig.SEPARATORS_SEGMENTS.equals(separators)) {
+            // The row before this one was the list's last until now: its bottom corners close.
+            View previous = list.getTag() instanceof View ? (View) list.getTag() : null;
+            if (previous != null && previous.getParent() == list) {
+                paintSegment(theme, previous, false);
+            }
+            // {first, fill}: the fill a menu row chose (addMenuRow), or null for the card's.
+            Object[] state = row.getTag(R.id.segment_state) instanceof Object[]
+                    ? (Object[]) row.getTag(R.id.segment_state) : new Object[] {first, null};
+            state[0] = first;
+            row.setTag(R.id.segment_state, state);
+            paintSegment(theme, row, true);
+            // A segment's contents stand 16 dp in from its edges, as the Pixel's do; a row that
+            // pads itself already keeps its own.
+            if (row.getPaddingLeft() == 0 && row.getPaddingRight() == 0) {
+                row.setPadding(dp(16), row.getPaddingTop(), dp(16), row.getPaddingBottom());
+            }
+            if (!first) {
+                params.topMargin = dp(2);
+            }
+            list.setTag(row);
+        } else if (!first && KioskConfig.SEPARATORS_LINES.equals(separators)) {
             View rule = new View(this);
             rule.setBackgroundColor(theme.outlineVariant);
             list.addView(rule, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
         }
-        LinearLayout.LayoutParams params = navRowParams();
-        params.topMargin = first ? dp(8) : 0;
         list.addView(row, params);
+    }
+
+    /** Paints a segment row from its state tag, with a ripple when a tap opens it. */
+    private void paintSegment(KioskTheme theme, View row, boolean last) {
+        Object[] state = (Object[]) row.getTag(R.id.segment_state);
+        boolean first = Boolean.TRUE.equals(state[0]);
+        int fill = state[1] instanceof Integer ? (Integer) state[1] : theme.cardHigh;
+        android.graphics.drawable.Drawable shape = segment(theme, first, last, fill);
+        row.setBackground(row.hasOnClickListeners()
+                ? theme.ripple(shape, segment(theme, first, last, Color.WHITE), theme.text)
+                : shape);
+    }
+
+    /**
+     * Adds a row to an internal page's left menu, the list beside its detail (Juri,
+     * 2026-10-04: one style for Sensors, Automations and the Screensaver's playlists). The rows
+     * are kept apart as This panel's Separators say; the chosen row is the pill the menus always
+     * had, with no hairline against it, and with Segments a tinted segment instead, as Android
+     * marks a selected row (sketch B, media/drafts/left-menus).
+     */
+    private void addMenuRow(LinearLayout list, KioskTheme theme, LinearLayout row,
+            boolean first, boolean chosen, Runnable open) {
+        String separators = KioskConfig.separatorsOf(this);
+        if (KioskConfig.SEPARATORS_SEGMENTS.equals(separators)) {
+            // The menu's 64 dp row and padding, as markChosen gives the pills, and the web's.
+            sizeMenuRow(row);
+            row.setTag(R.id.segment_state,
+                    new Object[] {first, chosen ? theme.secondaryContainer : theme.cardHigh});
+            if (open != null) {
+                row.setOnClickListener(view -> open.run());
+            }
+            TextView name = (TextView) ((ViewGroup) row.getChildAt(1)).getChildAt(0);
+            name.setTextColor(chosen ? theme.onSecondaryContainer : theme.text);
+            name.setTypeface(chosen ? MEDIUM : Typeface.DEFAULT);
+            addListRow(list, theme, row, first);
+            return;
+        }
+        markChosen(theme, row, chosen, open);
+        boolean previousChosen = Boolean.TRUE.equals(list.getTag(R.id.menu_chosen));
+        if (!first && KioskConfig.SEPARATORS_LINES.equals(separators) && !chosen
+                && !previousChosen) {
+            View rule = new View(this);
+            rule.setBackgroundColor(theme.outlineVariant);
+            list.addView(rule, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        }
+        list.addView(row, navRowParams());
+        list.setTag(R.id.menu_chosen, chosen);
+    }
+
+    /**
+     * A menu row's size: the settings menu's own, 64 dp and 16 by 8 of padding (sectionRow), not
+     * the 72 dp list row, which read as a gap between the items (Juri, 2026-09-27, the tablet).
+     */
+    private void sizeMenuRow(LinearLayout row) {
+        row.setMinimumHeight(dp(64));
+        row.setPadding(dp(16), dp(8), dp(16), dp(8));
+        row.getChildAt(1).setMinimumHeight(dp(48));
+        ((LinearLayout.LayoutParams) row.getChildAt(0).getLayoutParams()).rightMargin = dp(20);
+    }
+
+    /** One segment of a list: 16 dp corners where it ends the list, 4 dp where another follows. */
+    private android.graphics.drawable.Drawable segment(KioskTheme theme, boolean first,
+            boolean last, int fill) {
+        android.graphics.drawable.GradientDrawable shape =
+                new android.graphics.drawable.GradientDrawable();
+        shape.setColor(fill);
+        float big = dp(16);
+        float small = dp(4);
+        shape.setCornerRadii(new float[] {first ? big : small, first ? big : small,
+            first ? big : small, first ? big : small, last ? big : small, last ? big : small,
+            last ? big : small, last ? big : small});
+        return shape;
     }
 
     /** A nav row's params: no margin, the rows of the settings menu touch. */
@@ -10041,15 +10277,12 @@ public final class KioskActivity extends Activity {
 
     /** Marks a glyphRow as the chosen one of a list, the settings menu's pill. */
     private void markChosen(KioskTheme theme, LinearLayout row, boolean on, Runnable open) {
-        // The settings menu's own row: 64 dp and 16 by 8 of padding (sectionRow), not the 72 dp
-        // list row, which read as a gap between the items (Juri, 2026-09-27, the tablet).
-        row.setMinimumHeight(dp(64));
-        row.setPadding(dp(16), dp(8), dp(16), dp(8));
-        row.getChildAt(1).setMinimumHeight(dp(48));
-        ((LinearLayout.LayoutParams) row.getChildAt(0).getLayoutParams()).rightMargin = dp(20);
+        sizeMenuRow(row);
         row.setBackground(theme.ripple(theme.pill(on ? theme.secondaryContainer
                 : Color.TRANSPARENT), theme.pill(Color.WHITE), theme.text));
-        row.setOnClickListener(view -> open.run());
+        if (open != null) {
+            row.setOnClickListener(view -> open.run());
+        }
         TextView name = (TextView) ((ViewGroup) row.getChildAt(1)).getChildAt(0);
         name.setTextColor(on ? theme.onSecondaryContainer : theme.text);
         name.setTypeface(on ? MEDIUM : Typeface.DEFAULT);
@@ -11120,7 +11353,9 @@ public final class KioskActivity extends Activity {
     private void addNetworkWaitLabel(FrameLayout dashboard) {
         networkWaitLabel = new FlushText(this);
         networkWaitLabel.setText("Waiting for the network");
-        networkWaitLabel.setTextColor(KioskTheme.darkPalette().subtext);
+        // The dark scheme of the chosen colour: this label sits on the dark dashboard plate.
+        networkWaitLabel.setTextColor(
+                KioskTheme.of(false, KioskConfig.appearanceColourOf(this)).subtext);
         networkWaitLabel.setTextSize(18);
         networkWaitLabel.setGravity(Gravity.CENTER);
         networkWaitLabel.setClickable(false);

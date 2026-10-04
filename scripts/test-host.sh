@@ -143,6 +143,12 @@ javac -d "${test_dir}/beacons" \
     "${host_test_dir}/BeaconDistanceTest.java"
 java -cp "${test_dir}/beacons" org.spazio17.muralis.BeaconDistanceTest
 
+# The generated colour schemes a person chooses on This panel: fifteen colours each, dark and light.
+javac -d "${test_dir}/palettes" \
+    "${pure_java_dir}/Palettes.java" \
+    "${host_test_dir}/PalettesTest.java"
+java -cp "${test_dir}/palettes" org.spazio17.muralis.PalettesTest
+
 # The shapes the fleet of 0.7 builds on: shared or one-panel settings, and named lists.
 mkdir -p "${test_dir}/fleetshape"
 javac -d "${test_dir}/fleetshape" \

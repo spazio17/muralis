@@ -351,7 +351,8 @@ if(moveHeld(list,from,from+(event.key==='ArrowUp'?-1:1))){grab.focus();paintHeld
 
 main.addEventListener('submit',function(event){
 var form=event.target;
-if(form.tagName!=='FORM'||form.id==='picture-upload'){return;}
+// A form marked native is the browser's: the playlist page's Delete, answered with a redirect.
+if(form.tagName!=='FORM'||form.id==='picture-upload'||form.hasAttribute('data-native')){return;}
 // A GET form is navigation, not a change: Edit opens the playlist's page and must be left alone.
 if((form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
 event.preventDefault();
