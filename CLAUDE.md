@@ -1186,8 +1186,8 @@ the playlist page was the case that set the rule.
   the second, outlined for a command that acts now and stores nothing, text for navigation, and
   red only inside a confirmation; **anything repeated in a row is a 40 dp icon button** with a
   48 dp target, a tooltip and a spoken name (edit, delete, remove, save the name, the pager's
-  chevrons, the view); on/off settings are switches drawn from the palette, a 52 by 32 dp track with a 20 dp
-  handle on both surfaces (the panel's come from `switchTrack`/`switchThumb`, because the
+  chevrons, the view); on/off settings are switches drawn from the palette as the Pixel draws them (measured on Juri's, Android 17, 2026-10-04): Material 3's switch with icons, a 52 by 32 dp
+  track outlined and dark (`surface`) when off, a 24 dp handle in both states with a 16 dp check or cross (the mark layer sized by hand: its 24 dp vector once widened the handle and the Switch sized its track from it, 72 dp wide), the on handle `onAccent` with the check `onPrimaryContainer`, the off handle `subtext` with the cross in the track's colour, on both surfaces (the panel's come from `switchTrack`/`switchThumb`, because the
   platform's track is translucent and turned the accent into a muddy purple), the playlist in use
   is a radio, pictures in
   a playlist are check boxes on rows and check circles on tiles, and the header box over a page

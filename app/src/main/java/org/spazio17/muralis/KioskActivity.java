@@ -10116,8 +10116,13 @@ public final class KioskActivity extends Activity {
      *
      * <p>Track and handle are drawn from the palette instead of being the platform's tinted: the
      * stock track is a translucent bar, so the accent reached the screen as a muddy purple beside
-     * check boxes in the bright one (Juri, 2026-09-23). These are Material's own measurements, a
-     * 52 by 32 dp track with a 20 dp handle, which is also what the web admin's switch is.
+     * check boxes in the bright one (Juri, 2026-09-23). Drawn as the Pixel draws them, measured
+     * on his on 2026-10-04 (Android 17): Material 3's switch with icons, outlined and dark when
+     * off, a handle in both states with a check or cross in it, each part in Material's colour
+     * role: a 52 by 32 dp track, a 24 dp handle, a 16 dp mark. The web admin's switch is the
+     * same. (The first build of this drew 72 dp wide, "humongous" on the tablet: the mark's
+     * 24 dp vector set the handle layer's width, and the Switch sizes its track from the
+     * handle. The mark layer is sized explicitly now.)
      */
     private Switch themedSwitch(KioskTheme theme, String label, boolean checked) {
         Switch toggle = new Switch(this);
@@ -10141,12 +10146,13 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The switch's track: the accent filled when it is on, a hollow pill when it is off.
+     * The switch's track: the accent when it is on, the dark surface with the outline when off.
      *
      * <p>Its side padding is how the platform's Switch is told where the handle may travel, so
-     * 4 dp of track shows at each end. The width the Switch measures for itself from the handle,
-     * 2 x 20 + 4 + 4, comes to less than {@code switchMinWidth}, so the minimum decides it and
-     * the track is Material's 52 dp.
+     * 4 dp of track shows at each end, as Material has it. The Switch sizes itself from the
+     * handle, twice the handle layer's width plus this padding, and takes the larger of that
+     * and {@code switchMinWidth}: the handle layer is 22 dp wide (switchHandle) so that comes to
+     * Material's 52 exactly (a 24 dp layer made 56, measured on the tablet 2026-10-04).
      */
     private android.graphics.drawable.Drawable switchTrack(KioskTheme theme) {
         android.graphics.drawable.StateListDrawable track =
@@ -10158,7 +10164,7 @@ public final class KioskActivity extends Activity {
 
     private android.graphics.drawable.Drawable switchTrackPill(KioskTheme theme, boolean on) {
         android.graphics.drawable.GradientDrawable pill =
-                theme.pill(on ? theme.accent : theme.surfaceAlt);
+                theme.pill(on ? theme.accent : theme.surface);
         if (!on) {
             pill.setStroke(dp(2), theme.border);
         }
@@ -10170,34 +10176,50 @@ public final class KioskActivity extends Activity {
         return held;
     }
 
-    /** The switch's handle: 20 dp, the colour that reads on the track it is standing on. */
+    /**
+     * The switch's handle: 24 dp, with a check when on and a cross when off (Juri, 2026-10-04,
+     * as his Pixel draws it). On, the handle is the accent's ink and the check the primary
+     * container's ink, Material's roles; off, the handle is the subtext grey and the cross the
+     * track's colour.
+     */
     private android.graphics.drawable.Drawable switchThumb(KioskTheme theme) {
         android.graphics.drawable.StateListDrawable thumb =
                 new android.graphics.drawable.StateListDrawable();
-        thumb.addState(new int[] {android.R.attr.state_checked}, switchHandle(theme.onAccent()));
-        thumb.addState(new int[0], switchHandle(theme.border));
+        thumb.addState(new int[] {android.R.attr.state_checked},
+                switchHandle(theme.onAccent(), R.drawable.ic_check, theme.onPrimaryContainer));
+        thumb.addState(new int[0],
+                switchHandle(theme.subtext, R.drawable.ic_close, theme.surface));
         return thumb;
     }
 
     /**
-     * One state of the handle, held in 6 dp of nothing above and below: the Switch hands the
+     * One state of the handle, held in 4 dp of nothing above and below: the Switch hands the
      * handle the whole height of the track to draw in, and a bare oval there comes out as an
      * ellipse as tall as the track.
      *
      * <p>A layer with an inset and not an {@code InsetDrawable}, which reports its inset as
      * padding: the Switch takes a thumb's padding off the track it draws, and the track came out
-     * 20 dp tall instead of 32. A layer's inset is invisible to it, so only the handle shrinks.
+     * 20 dp tall instead of the track's height. A layer's inset is invisible to it, so only the
+     * handle shrinks. The handle's layer is a dp narrower at each side than the handle, which
+     * draws past it: the Switch makes its track twice the layer's width plus the track's
+     * padding, and 22 is what makes that 52. The glyph is a second layer, 16 dp in the handle's
+     * middle, sized by hand: left to its own 24 dp it widened the layer, and with it the whole
+     * switch (72 dp, "humongous" on the tablet).
      */
-    private android.graphics.drawable.Drawable switchHandle(int fill) {
+    private android.graphics.drawable.Drawable switchHandle(int fill, int glyph, int ink) {
         android.graphics.drawable.GradientDrawable handle =
                 new android.graphics.drawable.GradientDrawable();
         handle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         handle.setColor(fill);
-        handle.setSize(dp(20), dp(20));
+        handle.setSize(dp(24), dp(24));
+        android.graphics.drawable.Drawable mark = getDrawable(glyph).mutate();
+        mark.setTint(ink);
         android.graphics.drawable.LayerDrawable held =
                 new android.graphics.drawable.LayerDrawable(
-                        new android.graphics.drawable.Drawable[] {handle});
-        held.setLayerInset(0, 0, dp(6), 0, dp(6));
+                        new android.graphics.drawable.Drawable[] {handle, mark});
+        held.setLayerInset(0, -dp(1), dp(4), -dp(1), dp(4));
+        held.setLayerSize(1, dp(16), dp(16));
+        held.setLayerGravity(1, Gravity.CENTER);
         return held;
     }
 
