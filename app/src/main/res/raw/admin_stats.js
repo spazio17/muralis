@@ -46,6 +46,19 @@ if(!local){return false;}
 var same=el.type==='checkbox'?((value===true||value==='1'||value==='true')===(local.value==='1')):String(value)===String(local.value);
 if(same){delete window.muralisLocal[el.dataset.setting];return false;}
 return local.at>requestedAt||Date.now()-local.at<20000;}
+// One of the look's radio groups follows the panel by checking the radio whose value is the
+// panel's, and the page's own look (the html attribute the stylesheet reads) follows with it,
+// unless a choice here is still on its way (data-pending on the group) or was made lately
+// (localWins): the radio and the page then stay together either way (review, 2026-10-04).
+function followLook(key,value,attr){if(value==null){return;}
+var radio=document.querySelector('[data-setting="'+key+'"][value="'+value+'"]');
+// A page without the radios (Sensors, Screensaver, a playlist) has no local choice to keep:
+// its look simply follows the panel (review, 2026-10-04).
+if(!radio){if(document.documentElement.getAttribute(attr)!==value){document.documentElement.setAttribute(attr,value);}return;}
+var group=radio.closest?radio.closest('.radios'):null;
+if((group&&group.dataset.pending)||localWins(radio,value)){return;}
+radio.checked=true;
+if(document.documentElement.getAttribute(attr)!==value){document.documentElement.setAttribute(attr,value);}}
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.disabled||el.dataset.pending||value==null||localWins(el,value)){return;}
 var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
@@ -96,6 +109,8 @@ if(sa){var aon=autos.filter(function(rule){return rule.enabled;}).length;
 sa.textContent=autos.length?aon+' of '+autos.length+' on':'None yet';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
+// The look chosen on the panel: its radios and the page's own colours and rows follow.
+followLook('appearance_colour',cfg.appearance_colour,'data-palette');followLook('separators',cfg.separators,'data-separators');
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');

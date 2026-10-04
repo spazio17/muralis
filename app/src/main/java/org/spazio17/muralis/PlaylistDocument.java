@@ -36,6 +36,8 @@ final class PlaylistDocument {
     /** Per playlist, matching what the picture browser will offer. */
     static final int MAX_PICTURES = 1000;
     static final int MAX_NAME_LENGTH = 60;
+    /** The refusal for an id no playlist has (any more); the web's Delete tells it apart. */
+    static final String GONE = "that playlist is gone";
     private static final int VERSION = 1;
 
     static final class Playlist {
@@ -228,7 +230,7 @@ final class PlaylistDocument {
     String rename(String id, String name, long now) {
         Playlist playlist = byId(id);
         if (playlist == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         String problem = nameProblem(name, id);
         if (problem != null) {
@@ -247,7 +249,7 @@ final class PlaylistDocument {
     String delete(String id) {
         Playlist playlist = byId(id);
         if (playlist == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         playlists.remove(playlist);
         return null;
@@ -256,7 +258,7 @@ final class PlaylistDocument {
     /** Makes one playlist the only active one; a null id clears the choice. */
     String activate(String id) {
         if (id != null && byId(id) == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         for (Playlist playlist : playlists) {
             playlist.active = id != null && playlist.id.equals(id);
@@ -268,7 +270,7 @@ final class PlaylistDocument {
     String add(String id, List<String> uris, long now) {
         Playlist playlist = byId(id);
         if (playlist == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         Set<String> present = new LinkedHashSet<>(playlist.items);
         int added = 0;
@@ -294,7 +296,7 @@ final class PlaylistDocument {
     String remove(String id, List<String> uris, long now) {
         Playlist playlist = byId(id);
         if (playlist == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         if (playlist.items.removeAll(uris)) {
             playlist.updatedAt = now;
@@ -312,7 +314,7 @@ final class PlaylistDocument {
     String reorder(String id, List<String> uris, long now) {
         Playlist playlist = byId(id);
         if (playlist == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         Set<String> arrived = new LinkedHashSet<>(uris);
         if (arrived.size() != uris.size()) {
@@ -358,7 +360,7 @@ final class PlaylistDocument {
     String repoint(String id, String from, String to, long now) {
         Playlist playlist = byId(id);
         if (playlist == null) {
-            return "that playlist is gone";
+            return GONE;
         }
         int at = playlist.items.indexOf(from);
         if (at < 0) {

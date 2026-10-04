@@ -48,6 +48,10 @@ if(!rejected){
 // tablet behind a slow link, the two rows disagreeing meanwhile).
 window.muralisLocal=window.muralisLocal||{};
 window.muralisLocal[el.dataset.setting]={value:value,at:Date.now()};
+// The look applies to this page at once, the way the panel redraws itself: the scheme from the
+// colour, the rows from the separators.
+if(el.dataset.setting==='appearance_colour'){document.documentElement.setAttribute('data-palette',value);}
+if(el.dataset.setting==='separators'){document.documentElement.setAttribute('data-separators',value);}
 Array.prototype.forEach.call(document.querySelectorAll('[data-setting="'+el.dataset.setting+'"]'),function(other){
 if(other===el){return;}
 if(other.type==='checkbox'){other.checked=el.checked;}else if(other.type!=='radio'){other.value=el.value;}});

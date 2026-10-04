@@ -395,6 +395,30 @@ ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16p
 .pagename{display:none}
 /* A choice of five or fewer as radios, with its label over them, the panel's shape. */
 .choice{margin-top:16px}.choice>.label{font-size:12px;line-height:16px;font-weight:500;color:var(--subtext);margin:0 0 4px}
+/* The look's radios (This panel, Juri 2026-10-04): a colour's dot before its name, in the colour's
+   own primary for the page's theme. */
+label.radio .dot{width:18px;height:18px;border-radius:50%;flex:none;background:var(--dot-light)}
+label.radio .text{display:flex;flex-direction:column}label.radio .s{font-size:14px;line-height:20px;color:var(--subtext)}
+@media (prefers-color-scheme:dark){html:not([data-theme=light]) label.radio .dot{background:var(--dot-dark)}}
+html[data-theme=dark] label.radio .dot{background:var(--dot-dark)}
+/* Separators, as This panel says: Lines is the stylesheet's own hairline; Segments draws every row
+   of a list as its own surface with 2 px of the card between, 16 px corners at the ends and 4 px
+   inside, as the Pixel's settings do, on the lists marked seg, the ones the panel segments
+   (addListRow, addMenuRow); None lets the rows touch. */
+html[data-separators=segments] ul.list.seg li{border-bottom:0;background:var(--card-high);border-radius:4px;margin-top:2px;padding:4px 16px}
+html[data-separators=segments] ul.list.seg li:first-child{border-radius:16px 16px 4px 4px;margin-top:0}
+html[data-separators=segments] ul.list.seg li:last-child{border-radius:4px 4px 16px 16px}
+html[data-separators=segments] ul.list.seg li:only-child{border-radius:16px}
+/* A hovered row keeps its segment's shape (the rowlink hover below would round it to 12 px), and
+   a refusal line under the last row takes no shape of its own, the row above it keeping the ends. */
+html[data-separators=segments] ul.list.seg li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,var(--card-high));border-radius:4px}
+html[data-separators=segments] ul.list.seg li:first-child:has(>a.rowlink):hover{border-radius:16px 16px 4px 4px}
+html[data-separators=segments] ul.list.seg li:last-child:has(>a.rowlink):hover{border-radius:4px 4px 16px 16px}
+html[data-separators=segments] ul.list.seg li:only-child:has(>a.rowlink):hover{border-radius:16px}
+html[data-separators=segments] ul.list.seg li.refusal{background:none;border-radius:0;margin-top:0;padding:4px 16px 8px}
+html[data-separators=segments] ul.list.seg li:has(+ li.refusal:last-child){border-radius:4px 4px 16px 16px}
+html[data-separators=segments] ul.list.seg li:first-child:has(+ li.refusal:last-child){border-radius:16px}
+html[data-separators=none] ul.list li,html[data-separators=none] label.switch,html[data-separators=none] label.radio,html[data-separators=none] ul.pictures li,html[data-separators=none] ul.folders li,html[data-separators=none] details.box{border-bottom:0}
 .actions .btn.text{flex:0 0 auto}
 /* The editor's row: Delete at the start, Cancel then Save at the end; Save is first in the DOM so Enter saves */
 .actions.editor{justify-content:flex-end}.actions.editor .danger{order:0;margin-right:auto}.actions.editor .text{order:1}.actions.editor .primary{order:2}
@@ -423,9 +447,22 @@ label.radio.one input{position:absolute;opacity:0;pointer-events:none}
 .ld .nav .cardhead{padding:8px 12px 4px}
 .ld .nav ul.list li.refusal,.ld .nav ul.list li.refusal:hover{min-height:0;padding:4px 16px 8px;border-radius:0;cursor:default;background:none}
 .ld .nav .chev,.ld .nav .divider{display:none}
-.ld .nav ul.list li,.ld .nav ul.list li.two{min-height:64px;padding:4px 12px;border-bottom:0;border-radius:999px}
-.ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,transparent);cursor:pointer}
-.ld .nav ul.list li.on{background:var(--secondary-container)}
+.ld .nav ul.list li,.ld .nav ul.list li.two{min-height:64px;padding:4px 12px;cursor:pointer}
+/* The Screensaver page's playlists are the panel's left menu there (addMenuRow): 64 px rows, and
+   with Lines or None the hovered row is the menus' pill. */
+#playlist-table ul.list li.two{min-height:64px}
+html:not([data-separators=segments]) #playlist-table ul.list li:hover{border-radius:999px;border-bottom-color:transparent}
+/* The left menu's rows follow the Separators as the panel's do (addMenuRow): with Lines the
+   hairline between rows but none against the chosen pill; with Segments the chosen row is a
+   tinted segment, as Android marks a selected row; None has no lines. */
+/* :has() is in WebView 138, Chrome 105+, Firefox 121+ and Safari 15.4+; an older browser keeps a
+   hairline against the chosen pill, nothing worse. */
+html:not([data-separators=segments]) .ld .nav ul.list li.on,html:not([data-separators=segments]) .ld .nav ul.list li:has(+ li.on){border-bottom:0}
+html:not([data-separators=segments]) .ld .nav ul.list li.on{border-radius:999px;background:var(--secondary-container)}
+html:not([data-separators=segments]) .ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:999px;border-bottom-color:transparent}
+html[data-separators=segments] .ld .nav ul.list li.on{background:var(--secondary-container)}
+html[data-separators=segments] .ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,var(--card-high))}
+html[data-separators=segments] .ld .nav ul.list li.on:hover{background:var(--secondary-container)}
 .ld .nav ul.list li.on .h{color:var(--on-secondary-container);font-weight:500}
 .ld .nav .actions{padding:8px 12px 4px}
 .ld .detail .pageswitch{display:none}

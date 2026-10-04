@@ -91,3 +91,8 @@ timer=setTimeout(function(){
 send('cmnd=display.brightness&percent='+slider.value,'display.brightness',slider)
 .then(function(){setTimeout(function(){delete slider.dataset.pending;},1500);});},250);});}
 })();
+// A button that destroys something asks first, in the words its data-confirm carries (the
+// panel's confirmDelete): one listener for every page, the automation editor's and the
+// playlist page's Delete alike (2026-10-04).
+document.addEventListener('click',function(e){var b=e.target&&e.target.closest?e.target.closest('[data-confirm]'):null;
+if(b&&!window.confirm(b.getAttribute('data-confirm'))){e.preventDefault();e.stopImmediatePropagation();}},true);

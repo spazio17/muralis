@@ -211,7 +211,8 @@ final class HttpAdminServer {
         pictureScript = script(R.raw.admin_pictures);
         playlistScript = script(R.raw.admin_playlists);
         menuScript = script(R.raw.admin_menu);
-        pageCss = readRawText(R.raw.admin);
+        // The chosen scheme's colours ride along: html[data-palette] picks them (Palettes).
+        pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
 
     /** One raw JavaScript resource, wrapped in the tag the page splices it in with. */
@@ -1148,6 +1149,23 @@ final class HttpAdminServer {
                             .statsOverlay(isTrue(form.get("stats_overlay")))
                             .apply();
                 }
+                for (String key : new String[] {"appearance_colour", "separators"}) {
+                    if (!form.containsKey(key)) {
+                        continue;
+                    }
+                    String value = form.get(key).trim();
+                    String problem = KioskConfig.checkAppearance(key, value);
+                    if (problem != null) {
+                        return "Not saved: " + problem + ".";
+                    }
+                    KioskConfig.Editor editor = KioskConfig.edit(context);
+                    if (key.equals("appearance_colour")) {
+                        editor.appearanceColour(value);
+                    } else {
+                        editor.separators(value);
+                    }
+                    editor.apply();
+                }
                 if (form.containsKey("device_id")) {
                     // The panel's name stores when its box lets go of the focus, as on the panel
                     // since 2026-09-27; the Save button stays only for a browser without
@@ -1385,7 +1403,11 @@ final class HttpAdminServer {
      * only where scripting runs and every other browser gets the accordion, which works with none.
      */
     private String pageStartWith(String titles, String backTo, boolean chip) {
-        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        // The look chosen on This panel, read by the stylesheet (the scheme) and its rules for
+        // the rows of a list; the page follows a change from the panel on the next stats poll.
+        return "<!doctype html><html lang=\"en\" data-palette=\""
+                + KioskConfig.appearanceColourOf(context) + "\" data-separators=\""
+                + KioskConfig.separatorsOf(context) + "\"><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                 + "<title>Muralis admin</title><style>" + pageCss + "</style>"
                 + "<script>document.documentElement.className+=' js';</script></head>"
@@ -1588,10 +1610,11 @@ final class HttpAdminServer {
             nav.append("<a class=\"item\" href=\"#box-").append(key).append("\" data-box=\"box-")
                     .append(key).append("\">").append(summaryRow(section[1], section[2],
                             section[3], key)).append("</a>");
-            // The Display section carries the theme switch beside its name, as the panel does:
-            // in the accordion's row before the chevron, and in the open card at the right of
-            // the title (Juri, 2026-09-27, "copy the app 1:1").
-            String action = key.equals("display") ? themeButton() : "";
+            // This panel carries the theme switch beside its name, as the panel does: in the
+            // accordion's row before the chevron, and in the open card at the right of the
+            // title (Juri, 2026-09-27, "copy the app 1:1"; beside Display until 2026-10-04,
+            // when the look's other choices came to This panel).
+            String action = key.equals("panel") ? themeButton() : "";
             boxes.append("<details class=\"box\" id=\"box-").append(key).append("\"")
                     .append(open ? " open" : "").append("><summary>")
                     .append(summaryRow(section[1], section[2], section[3], null))
@@ -1791,7 +1814,7 @@ final class HttpAdminServer {
                     def.id, false));
         }
         return "<div id=\"sensors-body\"" + listsAttributes("sensors_home") + ">"
-                + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"sensors-home\">" + rows + "</ul>")
+                + (rows.length() == 0 ? "" : "<ul class=\"list seg\" id=\"sensors-home\">" + rows + "</ul>")
                 + "<div class=\"actions" + (rows.length() == 0 ? " tight" : "") + "\">"
                 + "<a class=\"btn text\" href=\"/sensors\">More sensor settings" + glyph("next")
                 + "</a></div></div>";
@@ -1817,7 +1840,7 @@ final class HttpAdminServer {
                     id, false));
         }
         return "<div id=\"automations-body\"" + listsAttributes("automations_home") + ">"
-                + (rows.length() == 0 ? "" : "<ul class=\"list\" id=\"automations-home\">" + rows + "</ul>")
+                + (rows.length() == 0 ? "" : "<ul class=\"list seg\" id=\"automations-home\">" + rows + "</ul>")
                 + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
                 + "<a class=\"btn text\" href=\"/automations\">More automation settings"
                 + glyph("next") + "</a></div></div>";
@@ -1832,6 +1855,7 @@ final class HttpAdminServer {
                         " data-setting=\"device_id\"", null)
                 + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>"
+                + appearanceControls(config)
                 + "<ul class=\"list gap\">"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
@@ -1906,7 +1930,7 @@ final class HttpAdminServer {
         }
         String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Sensors</h2>"
                 + "<span class=\"count\" id=\"sum-sensors\">" + escapeHtml(sensorsSummary())
-                + "</span></div><ul class=\"list\">" + rows + absent + "</ul></section>";
+                + "</span></div><ul class=\"list seg\">" + rows + absent + "</ul></section>";
         // Every sensor's cards are on the page, one pane each, so choosing one at the left is
         // a switch of panes and not a page load, the way the settings menu opens a section.
         StringBuilder detail = new StringBuilder();
@@ -1939,20 +1963,61 @@ final class HttpAdminServer {
      * stored the moment it is picked through admin_setting.js (a menu here and radios on the
      * panel broke the mirror, review of 2026-10-01).
      */
+    /**
+     * The look of this panel, as the panel's This panel has it (Juri, 2026-10-04): Colour with
+     * its dot, Separators. Each stores the moment it is chosen
+     * (admin_setting.js), which also re-colours the page at once.
+     */
+    private static String appearanceControls(KioskConfig config) {
+        StringBuilder colours = new StringBuilder();
+        for (String colour : Palettes.COLOURS) {
+            // Its primary, light and dark, for the page's theme.
+            String[] lightOf = Palettes.colours(colour, false);
+            String[] darkOf = Palettes.colours(colour, true);
+            String dot = "<i class=\"dot\" style=\"--dot-light:" + (lightOf == null ? "" : lightOf[7])
+                    + ";--dot-dark:" + (darkOf == null ? "" : darkOf[7]) + "\"></i>";
+            colours.append(radioOf("appearance_colour", "appearance_colour", colour, config.appearanceColour,
+                    dot + "<span class=\"text\"><span class=\"h\">"
+                            + Character.toUpperCase(colour.charAt(0)) + colour.substring(1)
+                            + "</span></span>"));
+        }
+        String separators = radioOf("separators", "separators", KioskConfig.SEPARATORS_LINES,
+                config.separators, "<span class=\"text\"><span class=\"h\">Lines</span></span>")
+                + radioOf("separators", "separators", KioskConfig.SEPARATORS_SEGMENTS,
+                        config.separators, "<span class=\"text\"><span class=\"h\">Segments</span></span>")
+                + radioOf("separators", "separators", KioskConfig.SEPARATORS_NONE,
+                        config.separators, "<span class=\"text\"><span class=\"h\">None</span></span>");
+        return choice("appearance_colour", "Colour", colours.toString())
+                + choice("separators", "Separators", separators);
+    }
+
+    private static String choice(String key, String label, String radios) {
+        return "<div class=\"choice\"><p class=\"label\" id=\"opt-" + key + "-label\">" + label
+                + "</p><div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
+                + "-label\">" + radios + "</div></div>";
+    }
+
+    /**
+     * One radio: {@code dataSetting} is what a pick stores (a sensor's {@code sensor_option_<key>}
+     * or a plain setting's own key), {@code key} names the group, the label HTML is given.
+     */
+    private static String radioOf(String dataSetting, String key, String value, String current,
+            String labelHtml) {
+        return "<label class=\"radio\"><input type=\"radio\" name=\"opt-" + key + "\" id=\"opt-"
+                + key + "-" + escapeHtml(value) + "\" value=\"" + escapeHtml(value)
+                + "\" data-setting=\"" + dataSetting + "\""
+                + (value.equals(current) ? " checked" : "") + ">" + labelHtml + "</label>";
+    }
+
+    /** A sensor option as radios: the same builders as This panel's look (choice, radioOf). */
     private static String optionRadios(String key, String label, String current,
             String... valuesAndLabels) {
-        StringBuilder html = new StringBuilder("<div class=\"choice\"><p class=\"label\" id=\"opt-")
-                .append(key).append("-label\">").append(escapeHtml(label))
-                .append("</p><div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-")
-                .append(key).append("-label\">");
+        StringBuilder radios = new StringBuilder();
         for (int index = 0; index + 1 < valuesAndLabels.length; index += 2) {
-            String value = valuesAndLabels[index];
-            html.append("<label class=\"radio\"><input type=\"radio\" name=\"opt-").append(key)
-                    .append("\" value=\"").append(escapeHtml(value)).append("\" data-setting=\"sensor_option_")
-                    .append(key).append("\"").append(value.equals(current) ? " checked" : "")
-                    .append(">").append(escapeHtml(valuesAndLabels[index + 1])).append("</label>");
+            radios.append(radioOf("sensor_option_" + key, key, valuesAndLabels[index], current,
+                    escapeHtml(valuesAndLabels[index + 1])));
         }
-        return html.append("</div></div>").toString();
+        return choice(key, escapeHtml(label), radios.toString());
     }
 
     private static String optionSelect(String key, String label, String current,
@@ -2134,7 +2199,7 @@ final class HttpAdminServer {
         if (seen.isEmpty()) {
             return "<p class=\"hint\">No tag has been held to the panel yet.</p>";
         }
-        StringBuilder rows = new StringBuilder("<ul class=\"list\">");
+        StringBuilder rows = new StringBuilder("<ul class=\"list seg\">");
         for (Map.Entry<String, Long> tag : seen.entrySet()) {
             rows.append(listRow("tag", tag.getKey(), null, "Read "
                     + android.text.format.DateUtils.getRelativeTimeSpanString(tag.getValue()),
@@ -2222,7 +2287,7 @@ final class HttpAdminServer {
                 + "<span class=\"count\" id=\"sum-automations\">" + escapeHtml(automationsSummary())
                 + "</span></div>"
                 + (rows.length() == 0 ? "<p class=\"hint\">No automations yet.</p>"
-                        : "<ul class=\"list\">" + rows + "</ul>")
+                        : "<ul class=\"list seg\">" + rows + "</ul>")
                 + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/automation\">" + glyph("plus")
                 + "Add</a></div></section>";
         boolean fresh = rule.id.isEmpty();
@@ -3328,7 +3393,8 @@ final class HttpAdminServer {
      * <p>Shown only for the Pictures mode with this panel as the source; there is nothing to list
      * when the pictures come from Bing. A card since 2026-09-23, with the list re-read in place by
      * {@code admin_playlists.js} and the banner under it speaking only for a refusal: the radio
-     * moving, a row going or a row appearing is the whole answer to Use, Delete and Create.
+     * moving or a row appearing is the whole answer to Use and Create; Delete is on the
+     * playlist's own page.
      */
     private String pictureLibraryBox() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
@@ -3339,7 +3405,7 @@ final class HttpAdminServer {
         // the right-hand column of the grid whether or not the playlists are shown.
         StringBuilder html = new StringBuilder("<div")
                 .append(shown ? "" : " class=\"gone\"").append(" id=\"screensaver-library\">")
-                .append("<section class=\"card\"><h2>Playlist</h2>");
+                .append("<section class=\"card\"><h2>Playlists</h2>");
         if (!library.browsesOwnStorage()) {
             return html.append("<p class=\"hint bad\">This panel may not read its own pictures ")
                     .append("yet. Allow it on the panel's Screensaver settings; Android will only ")
@@ -3393,7 +3459,19 @@ final class HttpAdminServer {
                 .append(playlistItems(playlist, library))
                 .append("</div>")
                 .append("</section>")
-                .append("</div>");
+                .append("</div>")
+                // Delete, outlined red as in every editor (the delete rules, 2026-10-01), asked
+                // first in the panel's words; it left the Screensaver page's row on 2026-10-04.
+                // The answer is the Screensaver page, since this one is gone.
+                .append("<form method=\"post\" action=\"/api/playlists/delete\" class=\"actions editor\" data-native=\"1\">")
+                .append(hidden("id", playlist.id))
+                // A refusal other than gone, a failed save, is answered on this page.
+                .append(hidden("playlist", playlist.id))
+                .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
+                .append(escapeHtml(deleteQuestion(playlist.name) + (playlist.active
+                        ? " It is the playlist in use, so the screensaver will have none until you "
+                                + "choose another." : "") + " The pictures themselves are not deleted."))
+                .append("\">Delete</button></form>");
         return html.append(pageEnd()).toString();
     }
 
@@ -3927,6 +4005,18 @@ final class HttpAdminServer {
         // its own here lost whichever edit Home Assistant or the panel made meanwhile.
         String refusal = library.editPlaylists(change);
         KioskService.publishTelemetrySoon(context);
+        if (path.equals("/api/playlists/delete")
+                && !"1".equals(queryValue(query, "fragment"))
+                && (refusal == null || PlaylistDocument.GONE.equals(refusal))) {
+            // The playlist page's own Delete, posted by the browser: sent on to the Screensaver
+            // page, as the automation editor's Delete is sent to Automations, so a reload does
+            // not post the delete again and Back does not return to a page that is gone
+            // (review, 2026-10-04). A playlist already gone is sent on too, gone it is either
+            // way; any other refusal, a failed save, is answered here with its reason.
+            writeResponse(output, 303, "text/plain", bytes("deleted"),
+                    Collections.singletonMap("Location", "/screensaver"));
+            return;
+        }
         answerPictureChange(query, form,
                 refusal == null ? done : refused("Not changed", refusal), refusal == null, output);
     }
@@ -3958,8 +4048,9 @@ final class HttpAdminServer {
 
 
     /**
-     * The playlists as a Material list: the radio in front of a row says which one plays, the
-     * name and the count are the row, and Edit and Delete are the two icon buttons at its end.
+     * The playlists as a Material list: the screensaver glyph and the name over its count open
+     * the playlist's own page, and the Use radio at the end says which one plays. Delete is on
+     * the playlist's page.
      *
      * <p>Use is not a button any more (2026-09-23): the radio is the state and the control at
      * once, posted the moment it is picked. Without scripting the radio still marks the playlist
@@ -3971,32 +4062,29 @@ final class HttpAdminServer {
             html.append("<p class=\"hint\">No playlists yet. Name one below, then open it and "
                     + "pick its pictures.</p>");
         } else {
-            html.append("<ul class=\"list\">");
+            html.append("<ul class=\"list seg\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
                 int count = playlist.items.size();
+                // The left menu's row as the panel draws it (Juri, 2026-10-04): the glyph, the
+                // name over its count, a tap opening the playlist's own page, and Use at the
+                // end, the radio that is state and control at once. Delete lives on that page.
                 html.append("<li class=\"two\">")
-                        .append("<form method=\"post\" action=\"/api/playlists/activate\" class=\"use\">")
-                        .append(hidden("id", playlist.id))
-                        .append("<span class=\"lead\"><input type=\"radio\" name=\"active\" value=\"")
-                        .append(escapeHtml(playlist.id)).append("\"")
-                        .append(playlist.active ? " checked" : "")
-                        .append(" aria-label=\"Use ").append(escapeHtml(playlist.name))
-                        .append("\"></span>")
-                        .append(playlist.active ? ""
-                                : "<noscript><button class=\"text\" type=\"submit\">Use</button></noscript>")
-                        .append("</form>")
+                        .append("<a class=\"rowlink plain\" href=\"/playlist?id=").append(urlEncode(playlist.id))
+                        .append("\"><span class=\"lead\">").append(glyph("saver")).append("</span>")
                         .append("<span class=\"text\"><span class=\"h\">").append(escapeHtml(playlist.name))
                         .append("</span><span class=\"s\">").append(count)
                         .append(count == 1 ? " picture" : " pictures")
                         .append(playlist.active ? " · <span class=\"inuse\">in use</span>" : "")
-                        .append("</span></span>")
-                        // Edit opens the playlist's own page, where its name and its pictures both
-                        // live; Delete asks first, in the script, as the panel does.
+                        .append("</span></span></a>")
                         .append("<span class=\"trail\">")
-                        .append(iconLink("/playlist?id=" + urlEncode(playlist.id), "pencil", "Edit"))
-                        .append("<form method=\"post\" action=\"/api/playlists/delete\">")
+                        .append("<form method=\"post\" action=\"/api/playlists/activate\" class=\"use\">")
                         .append(hidden("id", playlist.id))
-                        .append(iconButton("trash", "Delete", ""))
+                        .append("<input type=\"radio\" name=\"active\" value=\"")
+                        .append(escapeHtml(playlist.id)).append("\"")
+                        .append(playlist.active ? " checked" : "")
+                        .append(" aria-label=\"Use ").append(escapeHtml(playlist.name)).append("\">")
+                        .append(playlist.active ? ""
+                                : "<noscript><button class=\"text\" type=\"submit\">Use</button></noscript>")
                         .append("</form></span></li>");
             }
             html.append("</ul>");

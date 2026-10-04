@@ -846,7 +846,7 @@ final class PictureLibrary {
     private void dropDeleted(String playlistId, List<String> gone) {
         String refusal = editPlaylists(document -> {
             if (document.byId(playlistId) == null) {
-                return "that playlist is gone";
+                return PlaylistDocument.GONE;
             }
             document.remove(playlistId, gone, System.currentTimeMillis());
             return null;

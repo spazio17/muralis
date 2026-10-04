@@ -5,4 +5,9 @@
 <resources>
     <item name="held_move_up" type="id" />
     <item name="held_move_down" type="id" />
+    <!-- A segment row's state, {whether it is its list's first, its fill or null for the card's}; see KioskActivity.addListRow and addMenuRow. -->
+    <item name="segment_state" type="id"/>
+    <!-- A left menu's row: whether it is the chosen one, and what opens it; see addMenuRow. -->
+    <item name="menu_chosen" type="id"/>
+    <item name="menu_open" type="id"/>
 </resources>

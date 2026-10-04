@@ -1074,6 +1074,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             applied.put("stats_overlay", config.statsOverlay);
             applied.put("orientation", config.orientation);
+            // The look, for the web admin's page to follow a change made on the panel.
+            applied.put("appearance_colour", config.appearanceColour);
+            applied.put("separators", config.separators);
             // What applies, which on an ordinary install is the film whatever is stored.
             applied.put("display_off_method",
                     isDeviceOwner() ? config.displayOffMethod : DisplayOffPolicy.FILM);
