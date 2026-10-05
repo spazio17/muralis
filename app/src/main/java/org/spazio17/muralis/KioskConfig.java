@@ -61,6 +61,18 @@ final class KioskConfig {
     private static final String SCREENSAVER_BOOT_COUNT = "screensaver_boot_count";
     private static final String LAST_DASHBOARD_RELAUNCH_AT = "last_dashboard_relaunch_at";
     private static final String WEB_ADMIN_ENABLED = "web_admin_enabled";
+    /** Which certificate the web admin serves; see AdminCertificate. */
+    private static final String HTTP_CERTIFICATE = "http_certificate";
+    static final String CERTIFICATE_OWN = KioskCommandDispatcher.CERTIFICATE_OWN;
+    static final String CERTIFICATE_UPLOADED = KioskCommandDispatcher.CERTIFICATE_UPLOADED;
+    /**
+     * The uploaded certificate as the surfaces show it: its SHA-256, its names and when it ends.
+     * Plain settings, since a certificate is public; its key is SecretStore's (AdminCertificate).
+     */
+    private static final String HTTP_UPLOAD_SHA256 = "http_certificate_upload";
+    private static final String HTTP_UPLOAD_NAMES = "http_certificate_upload_names";
+    private static final String HTTP_UPLOAD_NAME = "http_certificate_upload_name";
+    private static final String HTTP_UPLOAD_UNTIL = "http_certificate_upload_until";
     private static final String LAST_NIGHTLY_RESTART_DAY = "last_nightly_restart_day";
     private static final String SETTINGS_SEQUENCE = "settings_sequence";
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
@@ -129,6 +141,14 @@ final class KioskConfig {
      * HttpAdminServer.start still applies on top.
      */
     boolean webAdminEnabled = true;
+    /** {@link #CERTIFICATE_OWN} or {@link #CERTIFICATE_UPLOADED}; see AdminCertificate. */
+    String httpCertificate = CERTIFICATE_OWN;
+    /** The uploaded certificate's SHA-256, empty when none is kept. */
+    String httpUploadSha256 = "";
+    /** The names as shown, "a, b, c, and 4 more", and the first alone, what a Delete calls it. */
+    String httpUploadNames = "";
+    String httpUploadName = "";
+    long httpUploadUntil;
     /**
      * Corner-tap combination that opens this configuration screen. Empty until the user records
      * one. There is deliberately no compiled-in default any more (the fixed BL x9 / BR x9 pair
@@ -170,6 +190,12 @@ final class KioskConfig {
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
+        KioskConfig certificate = certificateFacts(context);
+        config.httpCertificate = certificate.httpCertificate;
+        config.httpUploadSha256 = certificate.httpUploadSha256;
+        config.httpUploadNames = certificate.httpUploadNames;
+        config.httpUploadName = certificate.httpUploadName;
+        config.httpUploadUntil = certificate.httpUploadUntil;
         config.statsOverlay = statsOverlayEnabled(context);
         config.appearanceColour = appearanceColourOf(context);
         config.separators = separatorsOf(context);
@@ -431,6 +457,21 @@ final class KioskConfig {
 
         Editor webAdminEnabled(boolean value) {
             plain.putBoolean(WEB_ADMIN_ENABLED, value);
+            return this;
+        }
+
+        /** Which certificate the web admin serves, checked first by checkHttpCertificate. */
+        Editor httpCertificate(String value) {
+            plain.putString(HTTP_CERTIFICATE, value);
+            return this;
+        }
+
+        /** The uploaded certificate as shown; an empty SHA-256 says none is kept. */
+        Editor httpUpload(String sha256, String name, String names, long untilMs) {
+            plain.putString(HTTP_UPLOAD_SHA256, sha256);
+            plain.putString(HTTP_UPLOAD_NAME, name);
+            plain.putString(HTTP_UPLOAD_NAMES, names);
+            plain.putLong(HTTP_UPLOAD_UNTIL, untilMs);
             return this;
         }
 
@@ -1007,6 +1048,43 @@ final class KioskConfig {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putInt(VISUAL_OFF_BOOT_COUNT, bootCount)
                 .commit();
+    }
+
+    /**
+     * Which certificate the web admin serves: the uploaded one only while one is kept, so a
+     * stored choice that outlived its upload reads as this panel's own.
+     */
+    static String httpCertificateOf(Context context) {
+        SharedPreferences preferences = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return CERTIFICATE_UPLOADED.equals(preferences.getString(HTTP_CERTIFICATE, null))
+                && !preferences.getString(HTTP_UPLOAD_SHA256, "").isEmpty()
+                ? CERTIFICATE_UPLOADED : CERTIFICATE_OWN;
+    }
+
+    /**
+     * The certificate settings alone, the rest left at their defaults: the panel's live sync reads
+     * them every tick, and {@link #load} would decrypt every secret each time.
+     */
+    static KioskConfig certificateFacts(Context context) {
+        SharedPreferences preferences = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        KioskConfig facts = new KioskConfig();
+        facts.httpCertificate = httpCertificateOf(context);
+        facts.httpUploadSha256 = preferences.getString(HTTP_UPLOAD_SHA256, "");
+        facts.httpUploadNames = preferences.getString(HTTP_UPLOAD_NAMES, "");
+        facts.httpUploadName = preferences.getString(HTTP_UPLOAD_NAME, "");
+        facts.httpUploadUntil = preferences.getLong(HTTP_UPLOAD_UNTIL, 0);
+        return facts;
+    }
+
+    /**
+     * Why a choice of certificate is refused, or null when it can be served: the dispatcher's
+     * rule, given whether an upload is kept.
+     */
+    static String checkHttpCertificate(Context context, String value) {
+        return KioskCommandDispatcher.validateCertificateChoice(value,
+                !certificateFacts(context).httpUploadSha256.isEmpty());
     }
 
     /**

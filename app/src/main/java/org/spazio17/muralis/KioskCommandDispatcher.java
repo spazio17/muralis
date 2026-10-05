@@ -646,6 +646,25 @@ final class KioskCommandDispatcher {
         return null;
     }
 
+    /** The two certificates the web admin can serve; see AdminCertificate. */
+    static final String CERTIFICATE_OWN = "own";
+    static final String CERTIFICATE_UPLOADED = "uploaded";
+
+    /**
+     * Returns null when {@code value} names a certificate the web admin can serve now, an error
+     * message otherwise: the panel's own always, the uploaded one only while one is kept
+     * ({@code uploadKept}, the one fact this needs from storage).
+     */
+    static String validateCertificateChoice(String value, boolean uploadKept) {
+        if (!CERTIFICATE_OWN.equals(value) && !CERTIFICATE_UPLOADED.equals(value)) {
+            return "the certificate must be own or uploaded";
+        }
+        if (CERTIFICATE_UPLOADED.equals(value) && !uploadKept) {
+            return "no certificate is uploaded";
+        }
+        return null;
+    }
+
     private static Result accepted() {
         return new Result("accepted", "");
     }

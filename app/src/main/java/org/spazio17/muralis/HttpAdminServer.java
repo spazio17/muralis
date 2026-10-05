@@ -50,8 +50,16 @@ final class HttpAdminServer {
      */
     private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
             new java.util.HashSet<>(java.util.Arrays.asList(
-                    "dashboard", "mqtt", "webadmin", "sequences", "panel")));
+                    "dashboard", "mqtt", "webadmin", "sequences", "panel", "certificate")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
+
+    /**
+     * The box a notice belongs in: the certificate block's answers stand inside the web admin's
+     * box, which opens with them (review, 2026-10-05: a refusal sat in a closed box).
+     */
+    private static String boxOf(String noticeSection) {
+        return "certificate".equals(noticeSection) ? "webadmin" : noticeSection;
+    }
     /**
      * From the accept to the request line, TLS handshake included. Two seconds cut off one
      * request in seven from a laptop to the tablet over a Wi-Fi link that resent 7% of its
@@ -86,6 +94,11 @@ final class HttpAdminServer {
      * refused, so "post back the shape GET gives" failed (review, 2026-10-01).
      */
     private static final int MAX_DOCUMENT_BYTES = 160 * 1024;
+    /**
+     * A certificate upload: a full chain of RSA 4096 certificates and its key come to about
+     * 12 KB, so the 16 KB budget would refuse a long chain with its multipart wrapping.
+     */
+    private static final int MAX_CERTIFICATE_BYTES = 64 * 1024;
     private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
     private static final int UPLOAD_DEADLINE_MS = 120_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
@@ -156,14 +169,26 @@ final class HttpAdminServer {
 
     private ServerSocket serverSocket;
     /**
-     * Null when the stored key cannot be read yet, before the first unlock, or HTTPS could not be
-     * set up at all (see AdminCertificate); then the server speaks plain HTTP as it did before
-     * 2026-09-09, and says so. Otherwise every
-     * accepted connection is expected to start a TLS handshake, and one that does not is sent to
-     * the https address without ever being asked for a password.
+     * The certificate served, one object read once wherever it is used, so a reload never pairs
+     * one certificate's words with another's fingerprint (review, 2026-10-05). Its socket factory
+     * is null when the stored key cannot be read yet, before the first unlock, or HTTPS could not
+     * be set up at all (see AdminCertificate); then the server speaks plain HTTP as it did before
+     * 2026-09-09, and says so. Otherwise every accepted connection is expected to start a TLS
+     * handshake, and one that does not is sent to the https address without ever being asked
+     * for a password. Null only before the first start.
      */
-    private SSLSocketFactory tlsFactory;
-    private String certificateFingerprint = "";
+    private volatile AdminCertificate served;
+    /** Orders a reload's publish with stop(): a reload finishing late must not speak for a stopped server. */
+    private final Object tlsLock = new Object();
+    /**
+     * The reloads asked for, so only the latest one publishes: two reading at once (an upload's
+     * and the panel's choice) finished in the wrong order and served what nobody chose last
+     * (review, 2026-10-05).
+     */
+    private final java.util.concurrent.atomic.AtomicLong reloads =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** How long a reload that could read nothing waits before it tries once more. */
+    private static final long RELOAD_RETRY_MS = 5_000;
     /**
      * Every accepted connection, so {@code stop()} can close them. A worker blocked reading a
      * browser's speculative connection is not interruptible and only wakes when SOCKET_TIMEOUT_MS
@@ -234,9 +259,7 @@ final class HttpAdminServer {
             KioskRuntimeState.publishHttpAdminState(false, config.httpPort, "no password");
             return;
         }
-        AdminCertificate certificate = AdminCertificate.load(context);
-        tlsFactory = certificate == null ? null : certificate.socketFactory;
-        certificateFingerprint = certificate == null ? "" : certificate.fingerprint;
+        served = AdminCertificate.load(context);
         try {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
@@ -259,13 +282,79 @@ final class HttpAdminServer {
         acceptThread = new Thread(this::acceptLoop, "MuralisHttpAccept");
         acceptThread.start();
         KioskRuntimeState.publishHttpAdminState(true, config.httpPort, "");
-        KioskRuntimeState.publishHttpAdminTls(tlsFactory != null, certificateFingerprint);
-        Log.i(TAG, (tlsFactory != null ? "HTTPS" : "HTTP (no certificate)")
+        publish(served);
+        Log.i(TAG, (served.secure() ? "HTTPS" : "HTTP (no certificate)")
                 + " admin listening on port " + config.httpPort);
     }
 
+    private static void publish(AdminCertificate certificate) {
+        KioskRuntimeState.publishHttpAdminTls(certificate.secure(), certificate.fingerprint,
+                !certificate.secure() ? "" : certificate.uploaded
+                        ? KioskConfig.CERTIFICATE_UPLOADED : KioskConfig.CERTIFICATE_OWN,
+                certificate.uploadProblem);
+    }
+
+    /** Whether this server speaks HTTPS now. */
+    private boolean secure() {
+        AdminCertificate certificate = served;
+        return certificate != null && certificate.secure();
+    }
+
+    /**
+     * Serves the certificate now chosen from the next connection on, without closing the socket:
+     * every response closes its connection, so the next request a browser makes is already
+     * shaken hands with the new one. A restart of the whole server would have cut the answer that
+     * said the upload was kept. Called after an upload, a removal and a change of the choice,
+     * from any surface, and at the first unlock when an upload could not be read before it.
+     */
+    void reloadCertificate() {
+        reloadCertificate(true);
+    }
+
+    private void reloadCertificate(boolean mayRetry) {
+        if (!running) {
+            return;
+        }
+        long ticket = reloads.incrementAndGet();
+        // Read outside the lock: a Keystore round trip must not hold up stop().
+        AdminCertificate loaded = AdminCertificate.load(context);
+        synchronized (tlsLock) {
+            if (!running || ticket != reloads.get()) {
+                // Stopped meanwhile, or a later reload was asked for and speaks instead.
+                return;
+            }
+            AdminCertificate current = served;
+            if (!loaded.secure() && current != null && current.secure()) {
+                // Nothing could be read this moment (a Keystore briefly away): the certificate
+                // already serving stays, never a fall to plain HTTP mid-life, and the read is
+                // tried once more, so a Delete does not leave its certificate served until the
+                // next restart (review, 2026-10-05).
+                Log.w(TAG, "No certificate could be read; the one served stays"
+                        + (mayRetry ? " and the read is tried again" : ""));
+                if (mayRetry) {
+                    try {
+                        // On a thread of its own when it fires: the deadline thread must not
+                        // wait on the Keystore the retry is there for (review, 2026-10-05).
+                        connectionDeadlines.schedule(() -> new Thread(
+                                () -> reloadCertificate(false), "MuralisCertificateRetry").start(),
+                                RELOAD_RETRY_MS, TimeUnit.MILLISECONDS);
+                    } catch (java.util.concurrent.RejectedExecutionException stopping) {
+                        // The server is stopping; its successor reads afresh.
+                    }
+                }
+                return;
+            }
+            served = loaded;
+            publish(loaded);
+        }
+        Log.i(TAG, "Web admin now serves " + (!loaded.secure() ? "plain HTTP"
+                : loaded.uploaded ? "the uploaded certificate" : "this panel's own certificate"));
+    }
+
     void stop() {
-        running = false;
+        synchronized (tlsLock) {
+            running = false;
+        }
         connectionDeadlines.shutdownNow();
         KioskRuntimeState.publishHttpAdminState(false, KioskRuntimeState.httpAdminPort(),
                 "stopped");
@@ -419,6 +508,8 @@ final class HttpAdminServer {
             // being asked over plain text. Everything else that fails a handshake, a browser
             // that did not accept the certificate above all, is the caller's decision.
             InputStream plain;
+            AdminCertificate certificate = served;
+            SSLSocketFactory tlsFactory = certificate == null ? null : certificate.socketFactory;
             if (tlsFactory != null) {
                 SSLSocket tls = (SSLSocket) tlsFactory.createSocket(
                         socket, null, socket.getPort(), false);
@@ -555,16 +646,42 @@ final class HttpAdminServer {
                         && (requestPath.equals("/api/automations")
                                 || requestPath.equals("/api/sensors/settings")
                                 || requestPath.equals("/api/beacons/names"));
+                boolean certificateUpload = method.equals("POST")
+                        && (requestPath.equals("/api/certificate")
+                                || (requestPath.equals("/") && isMultipart(headers)));
                 body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
-                        : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES : MAX_BODY_BYTES);
+                        : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES
+                        : certificateUpload ? MAX_CERTIFICATE_BYTES : MAX_BODY_BYTES);
             } catch (BodyTooLargeException tooLarge) {
+                if (requestPath.equals("/") && method.equals("POST") && isMultipart(headers)) {
+                    // A file picked by mistake on the page's upload: the page, with the reason
+                    // in the certificate block, not a bare line of text (review, 2026-10-05).
+                    // What the browser is sending is read first, within the picture upload's
+                    // budget: answered before it and closed after the half second a lingering
+                    // close drains, a 5 MB photo on its way over Wi-Fi ended in a connection
+                    // reset instead of this page (Chrome and Firefox, measured on the phone).
+                    if (tooLarge.declared <= MAX_UPLOAD_BYTES) {
+                        input.extend(UPLOAD_DEADLINE_MS);
+                        deadline.cancel(false);
+                        deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                                UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                        drain(input, tooLarge.declared);
+                    }
+                    writeResponse(output, 413, "text/html; charset=utf-8",
+                            bytes(buildSettingsPage("Not uploaded: the files are larger than "
+                                    + (MAX_CERTIFICATE_BYTES / 1024) + " KB, and a certificate "
+                                    + "with its key takes a few.", "certificate")));
+                    return;
+                }
                 writeResponse(output, 413, "text/plain",
                         bytes("Payload Too Large: " + tooLarge.getMessage()));
                 return;
             }
 
 
-            route(method, target, headers, body, output, socket);
+            // Whether this request came over TLS, from the connection itself: a reload can change
+            // what the server serves while a request is on its way (review, 2026-10-05).
+            route(method, target, headers, body, output, socket, channel instanceof SSLSocket);
         } catch (IOException exception) {
             Log.w(TAG, "HTTP admin connection error", exception);
         } catch (RuntimeException | OutOfMemoryError unexpected) {
@@ -604,9 +721,14 @@ final class HttpAdminServer {
         }
     }
 
+    private static boolean isMultipart(Map<String, String> headers) {
+        String type = headers.get("content-type");
+        return type != null && type.toLowerCase(Locale.ROOT).startsWith("multipart/form-data");
+    }
+
     private void route(
             String method, String target, Map<String, String> headers, byte[] body,
-            OutputStream output, java.net.Socket socket) throws IOException {
+            OutputStream output, java.net.Socket socket, boolean overTls) throws IOException {
         String path = target;
         String query = "";
         int questionMark = target.indexOf('?');
@@ -629,6 +751,13 @@ final class HttpAdminServer {
 
         if (path.equals("/") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage()));
+        } else if (path.equals("/") && method.equals("POST") && isMultipart(headers)) {
+            // The web admin box's upload, posted to the page's own address so a refusal is drawn
+            // there and not under an address that answers only a POST (review, 2026-10-05).
+            handleCertificateUpload(headers, body, output, overTls, true);
+        } else if (path.equals("/") && method.equals("POST")
+                && "certificate".equals(parseFormBody(headers, body).get("section"))) {
+            handleCertificateDelete(parseFormBody(headers, body), output, true);
         } else if (path.equals("/") && method.equals("POST")) {
             Map<String, String> form = parseFormBody(headers, body);
             String refusal = saveSettings(form);
@@ -641,6 +770,10 @@ final class HttpAdminServer {
             }
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
+        } else if (path.equals("/api/certificate") && method.equals("POST")) {
+            handleCertificateUpload(headers, body, output, overTls, false);
+        } else if (path.equals("/api/certificate/delete") && method.equals("POST")) {
+            handleCertificateDelete(parseFormBody(headers, body), output, false);
         } else if (path.equals("/sensors") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildSensorsPage(queryValue(query, "id"), false)));
@@ -1166,6 +1299,19 @@ final class HttpAdminServer {
                     }
                     editor.apply();
                 }
+                if (form.containsKey("http_certificate")) {
+                    String value = form.get("http_certificate").trim();
+                    String problem = KioskConfig.checkHttpCertificate(context, value);
+                    if (problem != null) {
+                        return "Not saved: " + problem + ".";
+                    }
+                    if (!value.equals(KioskConfig.httpCertificateOf(context))) {
+                        KioskConfig.edit(context).httpCertificate(value).apply();
+                        // This server serves it from the next connection; the page reloads
+                        // itself onto it (admin_setting.js).
+                        reloadCertificate();
+                    }
+                }
                 if (form.containsKey("device_id")) {
                     // The panel's name stores when its box lets go of the focus, as on the panel
                     // since 2026-09-27; the Save button stays only for a browser without
@@ -1585,7 +1731,7 @@ final class HttpAdminServer {
                 config.mqttHost.isEmpty() ? "Not configured" : config.mqttHost + ":" + config.mqttPort,
                 mqttBody(config, notice, noticeSection)});
         sections.add(new String[] {"webadmin", "web", "Local web admin",
-                "Port " + config.httpPort + (tlsFactory == null ? " · HTTP" : " · HTTPS")
+                "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
                         + (config.webAdminEnabled ? "" : " · off"),
                 webAdminBody(config, notice, noticeSection)});
         sections.add(new String[] {"sequences", "esc", "Escape sequences",
@@ -1606,7 +1752,7 @@ final class HttpAdminServer {
         StringBuilder boxes = new StringBuilder("<div class=\"boxes\">");
         for (String[] section : sections) {
             String key = section[0];
-            boolean open = notice != null && key.equals(noticeSection);
+            boolean open = notice != null && key.equals(boxOf(noticeSection));
             nav.append("<a class=\"item\" href=\"#box-").append(key).append("\" data-box=\"box-")
                     .append(key).append("\">").append(summaryRow(section[1], section[2],
                             section[3], key)).append("</a>");
@@ -1998,10 +2144,24 @@ final class HttpAdminServer {
      */
     private static String radioOf(String dataSetting, String key, String value, String current,
             String labelHtml) {
-        return "<label class=\"radio\"><input type=\"radio\" name=\"opt-" + key + "\" id=\"opt-"
-                + key + "-" + escapeHtml(value) + "\" value=\"" + escapeHtml(value)
+        return radioOf(dataSetting, key, value, current, labelHtml, null);
+    }
+
+    /**
+     * The same, greyed and inert while {@code disabledReason} says why: a choice there is
+     * nothing for, the reason in its tooltip and, through the title, in what a screen reader
+     * says of it.
+     */
+    private static String radioOf(String dataSetting, String key, String value, String current,
+            String labelHtml, String disabledReason) {
+        String reason = disabledReason == null ? ""
+                : " title=\"" + escapeHtml(disabledReason) + "\"";
+        return "<label class=\"radio\"" + reason + "><input type=\"radio\" name=\"opt-" + key
+                + "\" id=\"opt-" + key + "-" + escapeHtml(value) + "\" value=\"" + escapeHtml(value)
                 + "\" data-setting=\"" + dataSetting + "\""
-                + (value.equals(current) ? " checked" : "") + ">" + labelHtml + "</label>";
+                + (value.equals(current) ? " checked" : "")
+                + (disabledReason == null ? "" : " disabled" + reason) + ">"
+                + labelHtml + "</label>";
     }
 
     /**
@@ -2966,8 +3126,168 @@ final class HttpAdminServer {
                 + field("password", "http_admin_password", "Admin password", "", "", BLANK_KEEPS)
                 + "<p class=\"hint\">At least " + MIN_ADMIN_PASSWORD_LENGTH
                 + " characters. No username.</p>"
-                + certificateHint()
-                + sectionFormEnd("Save");
+                + sectionFormEnd("Save")
+                + certificateControls(notice, noticeSection);
+    }
+
+    /**
+     * The certificate the web admin serves, as the panel's Local web admin card has it: the
+     * choice between this panel's own and the uploaded one, why an upload chosen is not served,
+     * the fingerprint to compare, then the upload of a certificate and its key, and Delete for
+     * one kept (planned 2026-09-24, built 2026-10-04). After the Save of port and password,
+     * outside that form, since the upload is a form of its own and forms do not nest. Both post
+     * to the page's own address. The block carries its state key, so the stats poll draws it
+     * again when the panel or the server changed it (AdminCertificate.stateKey, review
+     * 2026-10-05). On plain HTTP the upload is greyed with its reason, so no private key is ever
+     * sent before the refusal could stop it.
+     */
+    private String certificateControls(String notice, String noticeSection) {
+        KioskConfig facts = KioskConfig.certificateFacts(context);
+        AdminCertificate certificate = served;
+        boolean kept = !facts.httpUploadSha256.isEmpty();
+        boolean overTls = certificate != null && certificate.secure();
+        long now = System.currentTimeMillis();
+        String radios = radioOf("http_certificate", "http_certificate",
+                KioskConfig.CERTIFICATE_OWN, facts.httpCertificate,
+                "<span class=\"text\"><span class=\"h\">This panel's own</span></span>")
+                + radioOf("http_certificate", "http_certificate",
+                        KioskConfig.CERTIFICATE_UPLOADED, facts.httpCertificate,
+                        "<span class=\"text\"><span class=\"h\">Uploaded</span><span class=\"s"
+                                + (AdminCertificate.uploadExpired(facts, now) ? " bad" : "") + "\">"
+                                + escapeHtml(AdminCertificate.uploadLine(facts, now))
+                                + "</span></span>", kept ? null : AdminCertificate.NOTHING_UPLOADED);
+        String problem = certificate == null || certificate.uploadProblem == null ? ""
+                : certificate.uploadProblem;
+        String locked = overTls ? "" : " disabled title=\""
+                + escapeHtml(AdminCertificate.UPLOAD_NEEDS_HTTPS) + "\"";
+        return "<div class=\"certificate\" id=\"certificate\" data-lists-kind=\"certificate\" "
+                + "data-lists=\"" + escapeHtml(AdminCertificate.stateKey(facts)) + "\">"
+                // An upload or a Delete answers here, by the controls that asked, not at the top
+                // of the box above Port (review, 2026-10-05).
+                + (notice != null && "certificate".equals(noticeSection)
+                        ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>" : "")
+                + choice("http_certificate", "Certificate", radios)
+                + (problem.isEmpty() ? "" : "<p class=\"hint bad\">"
+                        + escapeHtml(AdminCertificate.notServedSentence(problem, overTls)) + "</p>")
+                + certificateHint(certificate)
+                // The two files, each a button with the name chosen beside it, as the pictures'
+                // upload; one file holding both, or the two swapped, work too.
+                + "<form method=\"post\" action=\"/#box-webadmin\" "
+                + "enctype=\"multipart/form-data\" id=\"certificate-upload\">"
+                + fileRow("certificate-file", "certificate", "Certificate", locked)
+                + fileRow("certificate-key", "key", "Private key", locked)
+                + "<div class=\"actions\"><button class=\"primary\" type=\"submit\"" + locked
+                + ">Upload</button></div></form>"
+                + (kept ? "<form method=\"post\" action=\"/#box-webadmin\" "
+                        + "class=\"actions\" data-native=\"1\">"
+                        + "<input type=\"hidden\" name=\"section\" value=\"certificate\">"
+                        + "<input type=\"hidden\" name=\"sha256\" value=\""
+                        + escapeHtml(facts.httpUploadSha256) + "\">"
+                        + "<button type=\"submit\" class=\"danger\" data-confirm=\""
+                        + escapeHtml(deleteQuestion(AdminCertificate.mainName(facts)) + " "
+                                + AdminCertificate.DELETE_CONSEQUENCE)
+                        + "\">Delete</button></form>"
+                        : "")
+                + "</div>";
+    }
+
+    /**
+     * One file to choose: its button, then the name chosen, as the pictures' upload row has
+     * them. Greyed with its reason on the visible button too, since the input itself is off
+     * screen (review, 2026-10-05).
+     */
+    private static String fileRow(String id, String name, String label, String locked) {
+        return "<div class=\"uploadrow\">"
+                + "<input type=\"file\" id=\"" + id + "\" name=\"" + name + "\" "
+                + "accept=\".pem,.crt,.cer,.key,.txt\" class=\"offscreen\" "
+                + "data-chosen=\"" + id + "-chosen\"" + locked + ">"
+                + "<label class=\"filebutton\" for=\"" + id + "\""
+                + (locked.isEmpty() ? "" : locked.replace(" disabled", "")) + ">" + glyph("upload")
+                + label + "</label>"
+                + "<span class=\"chosen\" id=\"" + id + "-chosen\">No file chosen</span>"
+                + "</div>";
+    }
+
+    /**
+     * A certificate and its key, posted as files by the web admin's form (to the page's own
+     * address) or by curl to /api/certificate
+     * ({@code -F certificate=@fullchain.pem -F key=@privkey.pem}). Refused when the request did
+     * not come over TLS, since a private key must not cross the network unencrypted, and with
+     * every reason {@link CertificateUpload} gives. The form's post is answered with the settings
+     * page, a script's with JSON.
+     */
+    private void handleCertificateUpload(Map<String, String> headers, byte[] body,
+            OutputStream output, boolean overTls, boolean fromPage) throws IOException {
+        String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
+        java.util.List<MultipartForm.Part> parts = boundary == null
+                ? java.util.Collections.emptyList() : MultipartForm.parse(body, boundary);
+        String certificateText = "";
+        String keyText = "";
+        for (MultipartForm.Part part : parts) {
+            if (part.name.equals("certificate")) {
+                certificateText = new String(part.data, StandardCharsets.UTF_8);
+            } else if (part.name.equals("key")) {
+                keyText = new String(part.data, StandardCharsets.UTF_8);
+            }
+        }
+        String problem;
+        if (!overTls) {
+            problem = "this page is served over plain HTTP right now, and a private key must not "
+                    + "cross the network unencrypted";
+        } else if (boundary == null) {
+            problem = "the request was not a file upload";
+        } else if (parts.isEmpty() && body.length > 0) {
+            problem = "the upload did not arrive complete; please try again";
+        } else {
+            problem = AdminCertificate.upload(context, certificateText, keyText);
+            // Read again whatever the answer: a pair that could not be kept was forgotten.
+            reloadCertificate();
+            KioskService.publishTelemetrySoon(context);
+        }
+        answerCertificateChange(fromPage, problem == null ? null : "Not uploaded: " + problem + ".",
+                output);
+    }
+
+    /**
+     * Deletes the upload. The page's form carries the SHA-256 of the upload it showed, so a
+     * renewal that landed meanwhile is not deleted in its place; a script may leave it out.
+     */
+    private void handleCertificateDelete(Map<String, String> form, OutputStream output,
+            boolean fromPage) throws IOException {
+        String problem = AdminCertificate.removeUpload(context, form.get("sha256"));
+        if (problem == null) {
+            reloadCertificate();
+            KioskService.publishTelemetrySoon(context);
+        }
+        answerCertificateChange(fromPage, problem == null ? null : "Not deleted: " + problem + ".",
+                output);
+    }
+
+    /**
+     * The page's own post: done, it goes on to the settings page's web admin box, so a reload
+     * does not post it again, and the box itself, the radio moved and the fingerprint changed,
+     * is the answer; refused, the settings page with the reason in that box, at the page's own
+     * address. A script's post: JSON, the shape /api/setting answers in.
+     */
+    private void answerCertificateChange(boolean fromPage, String refusal, OutputStream output)
+            throws IOException {
+        if (fromPage && refusal == null) {
+            writeResponse(output, 303, "text/plain", bytes("done"),
+                    Collections.singletonMap("Location", "/#box-webadmin"));
+        } else if (fromPage) {
+            writeResponse(output, 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage(refusal, "certificate")));
+        } else {
+            JSONObject response = new JSONObject();
+            try {
+                response.put("status", refusal == null ? "accepted" : "rejected");
+                response.put("detail", refusal == null ? "saved" : refusal);
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            writeResponse(output, refusal == null ? 200 : 400, "application/json",
+                    bytes(response.toString()));
+        }
     }
 
     private String sequencesBody(KioskConfig config, String notice, String noticeSection) {
@@ -4809,18 +5129,15 @@ final class HttpAdminServer {
      * The sentence under the web admin's own box that lets a person check the padlock: the
      * fingerprint here has to match the one the browser shows for this page.
      */
-    private String certificateHint() {
-        if (tlsFactory == null) {
-            return "<p class=\"hint bad\">Served over plain HTTP: this panel cannot use its "
-                    + "certificate right now, so the password travels unencrypted. Use it on a "
-                    + "trusted network only.</p>";
+    private String certificateHint(AdminCertificate certificate) {
+        if (certificate == null || !certificate.secure()) {
+            return "<p class=\"hint bad\">" + AdminCertificate.PLAIN_HTTP_SENTENCE + "</p>";
         }
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
         // to break at, so inline in the sentence it wrapped mid-value (Juri, 2026-09-23).
-        return "<p class=\"hint\">Served over HTTPS with a certificate this panel made itself, so "
-                + "your browser warned once. Its SHA-256 fingerprint, to compare with the one the "
-                + "browser shows for this page:</p>"
-                + "<p class=\"mono wrap\">" + escapeHtml(certificateFingerprint) + "</p>";
+        return "<p class=\"hint\">"
+                + escapeHtml(AdminCertificate.servedSentence(certificate.uploaded, "this page"))
+                + "</p><p class=\"mono wrap\">" + escapeHtml(certificate.fingerprint) + "</p>";
     }
 
     /** BoringSSL's words for "that was an HTTP request, not a handshake". */
@@ -4870,8 +5187,25 @@ final class HttpAdminServer {
 
     /** A body past its budget; answered with 413 where the caller can, dropped otherwise. */
     private static final class BodyTooLargeException extends IOException {
-        BodyTooLargeException(String message) {
+        /** The length the request declared, none of which was read. */
+        final int declared;
+
+        BodyTooLargeException(String message, int declared) {
             super(message);
+            this.declared = declared;
+        }
+    }
+
+    /** Reads and drops {@code length} bytes of a body nobody will use. */
+    private static void drain(InputStream input, int length) throws IOException {
+        byte[] sink = new byte[8192];
+        int left = length;
+        while (left > 0) {
+            int chunk = input.read(sink, 0, Math.min(sink.length, left));
+            if (chunk == -1) {
+                return;
+            }
+            left -= chunk;
         }
     }
 
@@ -4892,7 +5226,7 @@ final class HttpAdminServer {
         }
         if (length > limit) {
             throw new BodyTooLargeException("the request carries " + length + " bytes, the limit is "
-                    + limit);
+                    + limit, length);
         }
         byte[] body = new byte[length];
         int read = 0;

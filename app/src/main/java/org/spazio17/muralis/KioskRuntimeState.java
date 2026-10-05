@@ -199,16 +199,38 @@ final class KioskRuntimeState {
         if (!listening) {
             httpAdminSecure = false;
             httpAdminFingerprint = "";
+            httpAdminCertificate = "";
+            httpAdminCertificateProblem = "";
         }
     }
 
     private static volatile boolean httpAdminSecure;
     private static volatile String httpAdminFingerprint = "";
+    private static volatile String httpAdminCertificate = "";
+    private static volatile String httpAdminCertificateProblem = "";
 
-    /** Whether the running server speaks HTTPS, and with which certificate; see AdminCertificate. */
-    static void publishHttpAdminTls(boolean secure, String fingerprint) {
+    /**
+     * Whether the running server speaks HTTPS, and with which certificate; see AdminCertificate.
+     *
+     * @param certificate "own" or "uploaded", which one is served; empty on plain HTTP
+     * @param problem why the uploaded certificate, chosen, is not the one served; empty when none
+     */
+    static void publishHttpAdminTls(boolean secure, String fingerprint, String certificate,
+            String problem) {
         httpAdminSecure = secure;
         httpAdminFingerprint = fingerprint == null ? "" : fingerprint;
+        httpAdminCertificate = certificate == null ? "" : certificate;
+        httpAdminCertificateProblem = problem == null ? "" : problem;
+    }
+
+    /** "own" or "uploaded", the certificate the running web admin serves; empty on plain HTTP. */
+    static String httpAdminCertificate() {
+        return httpAdminCertificate;
+    }
+
+    /** Why the uploaded certificate is chosen and not served, empty when it is or is not chosen. */
+    static String httpAdminCertificateProblem() {
+        return httpAdminCertificateProblem;
     }
 
     static boolean httpAdminSecure() {

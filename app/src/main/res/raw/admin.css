@@ -398,7 +398,12 @@ ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16p
 /* The look's radios (This panel, Juri 2026-10-04): a colour's dot before its name, in the colour's
    own primary for the page's theme. */
 label.radio .dot{width:18px;height:18px;border-radius:50%;flex:none;background:var(--dot-light)}
-label.radio .text{display:flex;flex-direction:column}label.radio .s{font-size:14px;line-height:20px;color:var(--subtext)}
+label.radio:has(input:disabled){opacity:.38;cursor:default}
+.certificate{margin-top:16px}.certificate .uploadrow{margin-top:8px}
+/* The upload's names and end date wrap, as on the panel, so the date is never cut off. */
+.certificate label.radio .s{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+input.offscreen:disabled+label.filebutton{opacity:.38;cursor:default}
+label.radio .text{display:flex;flex-direction:column}label.radio .s{font-size:14px;line-height:20px;color:var(--subtext)}label.radio .s.bad{color:var(--bad)}
 @media (prefers-color-scheme:dark){html:not([data-theme=light]) label.radio .dot{background:var(--dot-dark)}}
 html[data-theme=dark] label.radio .dot{background:var(--dot-dark)}
 /* Separators, as This panel says: Lines is the stylesheet's own hairline; Segments draws every row

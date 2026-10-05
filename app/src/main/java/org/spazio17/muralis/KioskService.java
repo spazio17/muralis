@@ -1100,13 +1100,23 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (includeAdminDetail) {
                 // For the web page, which draws a list again when its key moves: see
                 // Sensors.listKeys. The rules as stored, the same the page is drawn from.
-                stats.put("lists", Sensors.listKeys(KioskRuntimeState.sensors(),
-                        Automations.toJson(KioskConfig.automationsOf(this), true)));
+                org.json.JSONObject lists = Sensors.listKeys(KioskRuntimeState.sensors(),
+                        Automations.toJson(KioskConfig.automationsOf(this), true));
+                // The web admin box's certificate block follows the panel and the server too.
+                lists.put("certificate",
+                        AdminCertificate.stateKey(KioskConfig.certificateFacts(this)));
+                stats.put("lists", lists);
             }
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
+                applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());
+                applied.put("http_certificate_problem",
+                        KioskRuntimeState.httpAdminCertificateProblem());
+                // The kept upload's fingerprint, served or not, so a script can name it to Delete.
+                applied.put("http_certificate_upload",
+                        KioskConfig.certificateFacts(this).httpUploadSha256);
                 applied.put("mqtt_host", config.mqttHost);
                 applied.put("mqtt_port", config.mqttPort);
             }
@@ -1576,7 +1586,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * could read (see {@code AdminCertificate.load}) and be serving plain HTTP, or not have started
      * at all because the admin password could not be read either. Neither changes the web admin's own settings, so the fingerprint check in
      * {@link #restartControllers} would see nothing to do: the fingerprint is dropped here to force
-     * the one restart that matters.
+     * the one restart that matters. A web admin serving its own certificate because the uploaded
+     * one could not be read yet is told to read it again instead, with no restart.
      */
     private final BroadcastReceiver unlockReceiver = new BroadcastReceiver() {
         @Override
@@ -1591,6 +1602,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (httpAdminServer == null || !KioskRuntimeState.httpAdminSecure()) {
                 httpInputs = null;
                 restartControllers();
+            } else if (!KioskRuntimeState.httpAdminCertificateProblem().isEmpty()) {
+                // The uploaded certificate could not be read before the unlock; it can now.
+                reloadAdminCertificate();
             }
         }
     };
@@ -2442,6 +2456,20 @@ public final class KioskService extends Service implements KioskCommandDispatche
     static Beacons beaconsOf(Context context) {
         KioskService service = live;
         return service == null ? null : service.beacons;
+    }
+
+    /**
+     * The web admin serves the certificate now chosen, after the panel's settings changed the
+     * choice or deleted the upload, and at the first unlock when the upload could not be read
+     * before it (unlockReceiver); see {@link HttpAdminServer#reloadCertificate}. Off the caller's
+     * thread, since reading the key is a Keystore round trip.
+     */
+    static void reloadAdminCertificate() {
+        KioskService service = live;
+        HttpAdminServer server = service == null ? null : service.httpAdminServer;
+        if (server != null) {
+            new Thread(server::reloadCertificate, "MuralisCertificate").start();
+        }
     }
     private android.media.MediaPlayer player;
     private android.speech.tts.TextToSpeech speech;
