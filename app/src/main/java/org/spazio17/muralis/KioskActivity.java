@@ -398,10 +398,13 @@ public final class KioskActivity extends Activity {
         }
         value.setText(Math.max(1, slider.getProgress()) + "%");
         if (brightnessModeNote != null) {
+            // Both sentences point at the switch, which a panel with no light sensor has not got.
+            brightnessModeNote.setVisibility(
+                    KioskService.hasLightSensor(this) ? View.VISIBLE : View.GONE);
             brightnessModeNote.setText(sensorInCharge
                     ? "The light sensor is setting the brightness. "
-                            + "Clear the box above to set it by hand."
-                    : "Set by hand. Tick the box above to hand it back to the light sensor.");
+                            + "Turn off the switch to set it by hand."
+                    : "Set by hand. Turn on the switch to let the light sensor set it.");
             brightnessModeNote.setTextColor(theme.subtext);
         }
     }
@@ -1898,9 +1901,9 @@ public final class KioskActivity extends Activity {
     /**
      * Sends the operator to the one Settings screen that can grant {@code WRITE_SETTINGS}.
      *
-     * <p>Reached from the automatic-brightness checkbox, and from the button the card shows while
+     * <p>Reached from the automatic-brightness switch, and from the button the card shows while
      * the grant is missing: the slider needs the same permission, and on a device with no light
-     * sensor the checkbox is not there to offer it. Lock task is released first: it would
+     * sensor the switch is not there to offer it. Lock task is released first: it would
      * otherwise refuse the launch outright, which is the same trap {@link #openSystemLauncher()}
      * documents. The log line names the adb route for a panel being provisioned over a cable,
      * which is the only route on an OEM build that hides this Settings screen.
@@ -2446,7 +2449,7 @@ public final class KioskActivity extends Activity {
                 "Blank keeps the current one.");
         // Applied on blur, not on the aggregate Save: waiting for "Open dashboard" meant the web
         // admin stayed dark, or kept an old password, until the operator happened to leave the
-        // screen for an unrelated reason. Same shape as the auto-brightness checkbox above: a
+        // screen for an unrelated reason. Same shape as the auto-brightness switch above: a
         // field losing focus is as much a deliberate action as a click is.
         httpAdminPasswordInput.setOnFocusChangeListener((view, hasFocus) -> {
             String typed = httpAdminPasswordInput.getText().toString();
@@ -2539,7 +2542,7 @@ public final class KioskActivity extends Activity {
         // the checkbox because the checkbox enables and disables it.
         final SeekBar brightnessInput = new SeekBar(this);
         final TextView brightnessValue = new FlushText(this);
-        // Caption first, then the sensor checkbox, then the slider: every cluster in this card
+        // Caption first, then the sensor switch, then the slider: every cluster in this card
         // leads with its heading, so nothing reads as a control floating on its own.
         TextView brightnessCaption = fieldCaption(theme, "Brightness");
         LinearLayout.LayoutParams brightnessCaptionParams = new LinearLayout.LayoutParams(
@@ -2550,7 +2553,7 @@ public final class KioskActivity extends Activity {
         // toast at the moment one of them is refused. On a freshly provisioned panel,
         // 2026-09-07: "the brightness toggle does not toggle", and neither the app nor the setup
         // page said why. In this state the card looks like two separate bugs rather than one
-        // missing grant: the checkbox cannot write SCREEN_BRIGHTNESS_MODE without WRITE_SETTINGS,
+        // missing grant: the switch cannot write SCREEN_BRIGHTNESS_MODE without WRITE_SETTINGS,
         // and the slider is separately disabled while the light sensor owns the backlight, which
         // on a device nobody has configured yet it does by default. Device-owner status buys
         // nothing here, unlike the Global and Secure namespaces: Settings.System has no
@@ -2579,9 +2582,9 @@ public final class KioskActivity extends Activity {
             // It used to wait for save, to avoid re-applying an unchanged value and prompting for
             // WRITE_SETTINGS on every save; that bug was in applying a value nobody had changed, and
             // a click is by definition a change. Waiting is now actively wrong: the slider below is
-            // enabled only while the sensor is not in charge, and if the checkbox on screen did not
+            // enabled only while the sensor is not in charge, and if the switch on screen did not
             // match the system until save, the slider would sit enabled while a brightness written
-            // through it was refused. Same behaviour as the web admin's checkbox, which has always
+            // through it was refused. Same behaviour as the web admin's switch, which has always
             // applied immediately.
             autoBrightnessInput.setOnCheckedChangeListener((button, checked) -> {
                 if (KioskService.applyAutoBrightness(this, checked)) {
@@ -2677,7 +2680,7 @@ public final class KioskActivity extends Activity {
 
         RadioGroup orientationInput = new RadioGroup(this);
         // "Auto-rotate", the platform's own name for it, is offered only where a sensor exists to
-        // follow, the same gate the auto-brightness checkbox sits behind just above.
+        // follow, the same gate the auto-brightness switch sits behind just above.
         if (KioskService.hasAccelerometer(this)) {
             radioChoice(theme, orientationInput, "Auto-rotate",
                     KioskConfig.ORIENTATION_AUTO);
@@ -4737,7 +4740,7 @@ public final class KioskActivity extends Activity {
         if (ui.getBoolean("permission_blocked_" + def.id, false) && !permittedNow(def)) {
             Runnable screen = currentScreen;
             showNotice("Blocked in Android settings", "Android will not ask for this permission "
-                    + "again. OK opens Muralis's page in Android's settings, where it is under "
+                    + "again. OK opens Muralis's page in Android's settings: allow it in "
                     + "Permissions.", () -> {
                         try {
                             startActivity(new Intent(
@@ -6548,7 +6551,7 @@ public final class KioskActivity extends Activity {
             TextView none = new FlushText(this);
             none.setTextColor(theme.subtext);
             none.setTextSize(12);
-            none.setText("No playlists yet. Name one below, then open it and pick its pictures.");
+            none.setText("No playlists yet. Create one, then open it and pick its pictures.");
             group.addView(none, matchWrapClose());
         }
         for (int index = 0; index < all.size(); index++) {
@@ -7978,7 +7981,7 @@ public final class KioskActivity extends Activity {
         screen.selected.trailing(saver.shuffle ? shuffleMark(theme) : null);
         if (draft.items.isEmpty()) {
             screen.selected.body.addView(
-                    paneNote(theme, "Nothing picked yet. Open a folder above and tick its pictures.",
+                    paneNote(theme, "Nothing picked yet. Open a folder and tick its pictures.",
                             false), matchWrapClose());
             return;
         }

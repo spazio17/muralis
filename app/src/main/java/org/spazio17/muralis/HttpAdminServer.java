@@ -1007,7 +1007,7 @@ final class HttpAdminServer {
         } else if (path.equals("/api/pictures/refresh") && method.equals("POST")) {
             PictureLibrary.get(context).refresh(KioskConfig.screensaverOf(context).source, null);
             answerPictureChange(query, parseFormBody(headers, body),
-                    "Fetching the pictures again; the sentence above updates when it is done.",
+                    "Fetching the pictures again.",
                     true, output);
         } else if (path.equals("/api/command") && method.equals("POST")) {
             handleCommand(method, query, headers, body, output);
@@ -1179,7 +1179,7 @@ final class HttpAdminServer {
      * <p>Each of these stands on its own (today only the overlay switch; the publish interval was
      * removed along with its presets). A control that has to agree with nothing else makes "tick a
      * box and then find a button" pure ceremony, and it is ceremony this page had already dropped
-     * for the brightness slider and the auto-brightness checkbox. The boxes that keep their Save
+     * for the brightness slider and the auto-brightness switch. The boxes that keep their Save
      * button,
      * Dashboard, MQTT, the web admin and the escape sequences, are the ones whose fields only mean
      * something together: a host with no password, or one sequence saved before the other, is a
@@ -3625,7 +3625,7 @@ final class HttpAdminServer {
         percent = Math.max(1, Math.min(100, percent));
         // The mode label is ALWAYS rendered and carries an id, so statsScript can keep it current.
         // It first shipped as a bare "(automatic)" with no id, emitted only in automatic mode: it never
-        // changed to "manual" when the checkbox was cleared, and never changed at all after page load,
+        // changed to "manual" when the switch was turned off, and never changed at all after page load,
         // which is precisely the staleness this control was rewritten to remove. Naming the mode is
         // worth doing, because in automatic mode the slider is a readout the sensor keeps moving, and
         // dragging it takes the panel away from the sensor.
@@ -3654,12 +3654,12 @@ final class HttpAdminServer {
     }
 
     /**
-     * Names the brightness mode, from the checkbox and nothing else.
+     * Names the brightness mode, from the switch and nothing else.
      *
      * <p>Two states only, by design. There was briefly a third, "manual override", for a window
      * override pinned above automatic mode; it was removed by making {@code display.brightness} write
-     * the system setting instead, so the state cannot arise. **The checkbox is the mode**: ticked means
-     * the sensor decides, cleared means the slider does, and this label can never contradict it.
+     * the system setting instead, so the state cannot arise. **The switch is the mode**: on means the
+     * sensor decides, off means the slider does, and this label can never contradict it.
      *
      * <p>{@code display_off} is not a mode. It is the {@code display.visual_off} presentation state,
      * where the panel is dimmed to 1% behind a black overlay, and it says so rather than claiming the
@@ -3992,8 +3992,8 @@ final class HttpAdminServer {
                 .append(playlist.active ? ", and this is the playlist in use." : ".")
                 .append("</p>");
         if (playlist.items.isEmpty()) {
-            return html.append("<p class=\"hint\">Nothing picked yet. Open a folder above and")
-                    .append(" add its pictures.</p>").toString();
+            return html.append("<p class=\"hint\">Nothing picked yet. Open a folder and add its")
+                    .append(" pictures.</p>").toString();
         }
         boolean creditsShown = KioskConfig.screensaverOf(context).credit;
         boolean movable = playlist.items.size() > 1;
@@ -4509,7 +4509,7 @@ final class HttpAdminServer {
     private String playlistTable(PlaylistDocument document) {
         StringBuilder html = new StringBuilder();
         if (document.size() == 0) {
-            html.append("<p class=\"hint\">No playlists yet. Name one below, then open it and "
+            html.append("<p class=\"hint\">No playlists yet. Create one, then open it and "
                     + "pick its pictures.</p>");
         } else {
             html.append("<ul class=\"list seg\">");
@@ -4902,7 +4902,7 @@ final class HttpAdminServer {
      * with the adb command in place of the tablet's grant button: this page cannot hand a browser
      * the Settings screen that grants an app-op, and on a wall-mounted panel a cable is often the
      * shorter route anyway. Both controls are affected and neither says so on its own: the
-     * checkbox writes {@code SCREEN_BRIGHTNESS_MODE}, the slider writes
+     * switch writes {@code SCREEN_BRIGHTNESS_MODE}, the slider writes
      * {@code SCREEN_BRIGHTNESS}, and both live in {@code Settings.System}, which has no
      * device-owner setter. Added 2026-09-07, after a freshly provisioned panel showed two dead
      * brightness controls and no surface anywhere said which single grant was missing.
