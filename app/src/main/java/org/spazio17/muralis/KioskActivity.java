@@ -982,6 +982,133 @@ public final class KioskActivity extends Activity {
     }
 
     /**
+     * The certificate part of the Local web admin card, drawn from what is stored and served and
+     * drawn again only when that changed, so a choice made or an upload kept on the web admin
+     * shows here on the live sync's tick: the Certificate radios (Uploaded greyed while none is
+     * kept, its names and end under it), why an upload chosen is not served in red, the
+     * sentence above the fingerprint, and Delete for an upload kept, which asks first in the
+     * words every Delete has.
+     */
+    private void paintCertificate(LinearLayout choice, TextView note, LinearLayout delete,
+            KioskTheme theme) {
+        KioskConfig config = KioskConfig.certificateFacts(this);
+        String state = AdminCertificate.stateKey(config);
+        if (state.equals(choice.getTag())) {
+            return;
+        }
+        choice.setTag(state);
+        boolean kept = !config.httpUploadSha256.isEmpty();
+        boolean listening = KioskRuntimeState.httpAdminListening();
+        boolean secure = KioskRuntimeState.httpAdminSecure();
+        String problem = KioskRuntimeState.httpAdminCertificateProblem();
+        // The words the web admin's box has, worded once in AdminCertificate; nothing claimed
+        // about a certificate while none is served (review, 2026-10-05).
+        note.setVisibility(listening ? View.VISIBLE : View.GONE);
+        note.setTextColor(secure ? theme.subtext : theme.bad);
+        note.setText(secure ? AdminCertificate.servedSentence(KioskConfig.CERTIFICATE_UPLOADED
+                .equals(KioskRuntimeState.httpAdminCertificate()), "that page")
+                : AdminCertificate.PLAIN_HTTP_SENTENCE);
+        choice.removeAllViews();
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        captionParams.topMargin = dp(14);
+        choice.addView(fieldCaption(theme, "Certificate"), captionParams);
+        RadioGroup group = new RadioGroup(this);
+        radioChoice(theme, group, "This panel's own", KioskConfig.CERTIFICATE_OWN);
+        RadioButton uploaded = radioChoice(theme, group, "Uploaded",
+                KioskConfig.CERTIFICATE_UPLOADED);
+        // The upload's names and end on a second line, in the supporting text's size and colour.
+        android.text.SpannableStringBuilder label = new android.text.SpannableStringBuilder("Uploaded\n");
+        int start = label.length();
+        label.append(AdminCertificate.uploadLine(config, System.currentTimeMillis()));
+        label.setSpan(new android.text.style.AbsoluteSizeSpan(14, true), start, label.length(),
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        // An expired upload in the error colour, as the web admin's box has it.
+        label.setSpan(new android.text.style.ForegroundColorSpan(
+                AdminCertificate.uploadExpired(config, System.currentTimeMillis())
+                        ? theme.bad : theme.subtext), start,
+                label.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        uploaded.setText(label);
+        // Greyed while there is nothing uploaded to choose, the reason in its tooltip and in
+        // what a screen reader says.
+        uploaded.setEnabled(kept);
+        uploaded.setAlpha(kept ? 1f : 0.38f);
+        if (!kept) {
+            uploaded.setTooltipText(AdminCertificate.NOTHING_UPLOADED_HERE);
+            uploaded.setContentDescription("Uploaded. " + AdminCertificate.NOTHING_UPLOADED_HERE);
+        }
+        checkRadioIfChanged(group, config.httpCertificate);
+        group.setOnCheckedChangeListener((radios, checkedId) -> {
+            View checked = radios.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            String value = (String) checked.getTag();
+            String refusal = KioskConfig.checkHttpCertificate(this, value);
+            if (refusal != null) {
+                Toast.makeText(this, "Not saved: " + refusal + ".", Toast.LENGTH_LONG).show();
+                choice.setTag(null);
+                paintCertificate(choice, note, delete, theme);
+                return;
+            }
+            applyLiveSetting(editor -> editor.httpCertificate(value));
+            KioskService.reloadAdminCertificate();
+        });
+        choice.addView(group, matchWrapClose());
+        if (!problem.isEmpty()) {
+            TextView why = new FlushText(this);
+            why.setTextColor(theme.bad);
+            why.setTextSize(12);
+            why.setText(AdminCertificate.notServedSentence(problem, secure));
+            choice.addView(why, matchWrapClose());
+        }
+        delete.removeAllViews();
+        if (kept) {
+            Button remove = dangerOutlinedButton(theme, "Delete");
+            // The upload the question names: a renewal landing while it is open is not deleted.
+            String asked = config.httpUploadSha256;
+            remove.setOnClickListener(view -> {
+                Runnable back = currentScreen;
+                Runnable settings = back != null ? back
+                        : () -> showConfiguration(KioskConfig.load(this));
+                confirmDelete(AdminCertificate.mainName(config), AdminCertificate.DELETE_CONSEQUENCE,
+                        () -> {
+                            // Off the main thread: it can wait for a web upload's Keystore round
+                            // trips and ends in a blocking write (review, 2026-10-05). The
+                            // settings come back once it is done, so they never show the upload
+                            // just deleted (seen on the Pixel, 2026-10-05).
+                            new Thread(() -> {
+                                String refusal = AdminCertificate.removeUpload(this, asked);
+                                if (refusal == null) {
+                                    KioskService.reloadAdminCertificate();
+                                    KioskService.publishTelemetrySoon(this);
+                                }
+                                mainHandler.post(() -> {
+                                    settings.run();
+                                    if (refusal != null) {
+                                        Toast.makeText(this, "Not deleted: " + refusal + ".",
+                                                Toast.LENGTH_LONG).show();
+                                    }
+                                });
+                            }, "MuralisCertificateDelete").start();
+                        },
+                        settings);
+            });
+            LinearLayout.LayoutParams deleteParams = matchWrap();
+            deleteParams.topMargin = dp(8);
+            delete.addView(buttonRow(remove), deleteParams);
+        }
+        // Drawn again on the tick, so the Pro gate's inert card stays inert (review, 2026-10-05:
+        // lockCardForPro greys what the card held when it was built, and these are new views).
+        if (!ProEntitlement.isActive(this)) {
+            for (View part : new View[] {choice, delete}) {
+                setEnabledDeeply(part, false);
+                part.setAlpha(0.45f);
+            }
+        }
+    }
+
+    /**
      * The web admin controls, from live state rather than a build-time snapshot: they follow the
      * flag and the socket while the screen sits open (liveSettingSyncTask) and refresh right
      * after the local toggle. Both together on purpose, the button's label is state exactly like
@@ -2319,9 +2446,13 @@ public final class KioskActivity extends Activity {
         TextView certificateNote = new FlushText(this);
         certificateNote.setTextColor(theme.subtext);
         certificateNote.setTextSize(12);
-        certificateNote.setText("Served over HTTPS with a certificate this panel made itself, so "
-                + "your browser warned once. Its SHA-256 fingerprint, to compare with the one the "
-                + "browser shows for that page:");
+        // The certificate served: the choice, why an upload chosen is not served, and Delete for
+        // one kept, as the web admin's box has them; the upload itself is the web admin's, where
+        // the files are. Painted again when any of it changes (paintCertificate).
+        LinearLayout certificateChoice = new LinearLayout(this);
+        certificateChoice.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout certificateDelete = new LinearLayout(this);
+        certificateDelete.setOrientation(LinearLayout.VERTICAL);
         TextView fingerprintView = new FlushText(this);
         fingerprintView.setTypeface(Typeface.MONOSPACE);
         fingerprintView.setTextSize(12);
@@ -2365,6 +2496,7 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         httpStateParams.topMargin = dp(10);
         httpCard.addView(httpState, httpStateParams);
+        httpCard.addView(certificateChoice, matchWrap());
         LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         noteParams.topMargin = dp(12);
@@ -2373,6 +2505,8 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fingerprintParams.topMargin = dp(8);
         httpCard.addView(fingerprintView, fingerprintParams);
+        httpCard.addView(certificateDelete, matchWrap());
+        paintCertificate(certificateChoice, certificateNote, certificateDelete, theme);
 
 
         // Everything about how the glass looks: the backlight and which way up the panel is.
@@ -2686,6 +2820,7 @@ public final class KioskActivity extends Activity {
                 // The web admin button and status line follow the flag and the socket too, so a
                 // toggle from MQTT or the web admin itself shows here without reopening the screen.
                 refreshWebAdminControls(webAdminToggle, httpState, fingerprintView, theme);
+                paintCertificate(certificateChoice, certificateNote, certificateDelete, theme);
                 mainHandler.postDelayed(this, LIVE_SETTING_SYNC_INTERVAL_MS);
             }
         };

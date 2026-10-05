@@ -123,7 +123,8 @@ the playlist page was the case that set the rule.
   the socket; a panel that is "on" with no stored password stays unbound and says so on the
   tablet's status line. Any new remote-control surface should be off until deliberately configured.
   Command payloads are capped at 16 KB on both transports (`HttpAdminServer.MAX_BODY_BYTES`,
-  `MqttController.MAX_COMMAND_BYTES`, deliberately equal), and the caller-supplied command id is
+  `MqttController.MAX_COMMAND_BYTES`, deliberately equal; a certificate upload has 64 KB of its
+  own), and the caller-supplied command id is
   bounded to 96 characters and stripped of control characters before it is logged or echoed, so an
   embedded newline cannot forge log lines.
 - **The web admin serves HTTPS with a certificate the panel makes itself (2026-09-09).**
@@ -160,19 +161,61 @@ the playlist page was the case that set the rule.
   (`config.http_tls`, `config.http_certificate_sha256`), so a person can compare it with the
   browser's. A device whose key cannot be read right now (SecretStore before the first unlock)
   falls back to plain HTTP and says so in red on the page, and never makes a new key over one
-  that is merely unreadable. **A user-supplied certificate is the planned "local web admin v2"**, settled 2026-09-24 and
-  no different from any service that takes a TLS certificate: two uploads on the web admin, a
-  certificate file with one or more PEM blocks (the server certificate first, then any
-  intermediates, `fullchain.pem` as certbot writes it or `cert.pem` and `chain.pem` pasted
-  together; the root is the client's business and is ignored if present) and an unencrypted
-  private key in PKCS#8 (`BEGIN PRIVATE KEY`), RSA or EC, which the one-key manager serves as it
-  serves the panel's own. Read with the platform's certificate and key factories, no library;
-  the traditional `BEGIN EC PRIVATE KEY` and `BEGIN RSA PRIVATE KEY` shapes are wrapped into
-  PKCS#8 by a few lines of DER or refused with the one openssl command that converts them, and
-  an encrypted key is refused outright, since a wall panel has nowhere to type a passphrase at
-  boot. Nothing is saved until the pair has been parsed and the key shown to match the first
-  certificate. The panel's own certificate stays the out-of-the-box default; a choice on the
-  web admin picks between the two. MQTT is unchanged: plain TCP, trusted network.
+  that is merely unreadable. **A certificate of the person's own** (planned 2026-09-24 as "local web admin v2", built
+  2026-10-04 on Juri's rules of 2026-10-01), no different from any service that takes a TLS
+  certificate: the web admin's box has two files to upload, a certificate file with one or more
+  PEM blocks (the server certificate first, then any intermediates, `fullchain.pem` as certbot
+  writes it or `cert.pem` and `chain.pem` pasted together; a root in it is the browser's business
+  and is left out) and an unencrypted private key, RSA or EC, in PKCS#8 (`BEGIN PRIVATE KEY`) or
+  the traditional `BEGIN EC PRIVATE KEY` and `BEGIN RSA PRIVATE KEY`, wrapped into PKCS#8 by a
+  few bytes of DER (`CertificateUpload`, pure and host-tested with every shape certbot, acme.sh and
+  openssl write, and every refusal). The two are read as one text, a block chosen in both fields
+  counting once, so one file holding both, picked once or twice, or the two swapped, work; an
+  encrypted key is refused with the openssl command that opens it, since a wall panel has nowhere
+  to type a passphrase at boot, and so is an upload that did not come over TLS, judged from the
+  connection itself, since a private key must not cross the network unencrypted; on plain HTTP
+  the page greys the upload with that reason, so no key is sent at all. A certificate no browser
+  accepts for a server is refused too, an extended key usage without serverAuth or a key usage
+  without digitalSignature (an authority's own certificate falls there); CA:TRUE alone is not,
+  since `openssl req -x509` makes it by default and Firefox lets a person past it (Mozilla bug
+  1034124). Nothing is kept until the pair has been read and a signature made with the key has
+  verified with the first certificate's public key, and a pair is read back after it is kept:
+  when nothing was written the pair kept before stays, when only half was the pair is forgotten
+  whole, one upload or Delete at a time. The page's
+  upload and Delete post to `/` (a refusal is drawn at the page's own address), Delete carrying
+  the SHA-256 of the upload it showed so a renewal that landed meanwhile is not deleted in its
+  place (colons and case aside, so sha256sum's hex works too); scripts use `POST /api/certificate`
+  (multipart, `certificate` and `key`, 64 KB, so curl can renew it) and
+  `POST /api/certificate/delete` (`sha256` optional, the kept upload's in
+  `config.http_certificate_upload`), answered in JSON; a refusal on the page is said in the
+  certificate block, an oversized upload included; the key and the chain go through `SecretStore` in
+  device-protected storage like the panel's own key, while the upload's SHA-256, names and end
+  are plain settings (`http_certificate_upload*`), since a certificate is public. **The choice
+  is on both surfaces** (`http_certificate`, own or uploaded, Certificate radios in the Local web
+  admin card and box, Uploaded greyed while nothing is kept, its names and "until 4 Oct 2027" or
+  "expired on ..." in the error colour under it, the date kept on one line, the first three names
+  and "and N more" past them, a common name read with its escapes undone and control characters
+  taken out of every name, a name longer than 253 characters refused; an upload kept chooses
+  itself), and so is Delete of the upload, in the
+  words every Delete has; the upload itself is the web admin's alone, where the files are, and stays so (Juri, 2026-10-04: a panel upload would mean handing a locked kiosk to Android's file picker). **A bad
+  upload never takes the web admin away**: one chosen that cannot be read at a start (a Keystore
+  not awake before the first unlock, a stored pair that no longer verifies) is not served, the
+  panel's own is, and both surfaces say why in red (`config.http_certificate_problem`; at the
+  first unlock the service has it read again). A change of certificate swaps the TLS factory in
+  place (`HttpAdminServer.reloadCertificate`), so the answer that says it was kept is not cut by
+  a restart, and the next connection, every response closing its own, shakes hands with the new
+  one; only the latest reload asked for publishes, a reload that can read nothing at that moment
+  keeps the certificate already served rather than fall to plain HTTP and tries once more five
+  seconds later, and one finishing after `stop()` publishes nothing. The server holds
+  the certificate served as one object, read once per connection. The web page reloads itself
+  onto a new one after the radio, and its certificate block follows the panel and the server
+  through the stats poll (`lists.certificate`, `AdminCertificate.stateKey`), as the panel's
+  follows the web on its live sync; the two surfaces' sentences are worded once in
+  `AdminCertificate`, and the choice's rule is the dispatcher's (`validateCertificateChoice`). `config.http_certificate` says which
+  is served. Measured 2026-10-04 with a test authority: curl trusts the panel by the authority
+  alone, the address in the certificate matching; Android 8's TLS stack sends the intermediate
+  twice (the Huawei tablet; the Android 9 phone sends it once), which clients accept. On the Pixel (Android 17) an uploaded RSA certificate signs TLS 1.3 with
+  RSA-PSS and an EC one with ECDSA, the chain sent once; both Huaweis speak TLS 1.2 only. MQTT is unchanged: plain TCP, trusted network.
 - **The remote surfaces are the paid tier, gated in exactly two places.** Muralis Pro (Play
   product `muralis_pro`, one-time, account-wide) unlocks MQTT and the web admin together; the
   kiosk, recovery, the stats overlay and the local `TelemetryCollector` feeding it stay free and
@@ -1318,7 +1361,7 @@ the playlist page was the case that set the rule.
   45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
   cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
   160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
-- **Every delete asks in the same words** (Juri, 2026-10-01): title `Delete "name"?`, text `"name" will be deleted.` followed by what else changes, button Delete (`confirmDelete` on the panel; the web's `confirm()` carries the title and the text). Only things made in Muralis are deleted (playlists, uploaded pictures, automations); settings have no Delete. Fleet words appear only where the fleet is on: a thing the fleet owns is deleted only from the fleet's control panel, and there the text adds "Changes will be synced across all devices.", which they then are.
+- **Every delete asks in the same words** (Juri, 2026-10-01): title `Delete "name"?`, text `"name" will be deleted.` followed by what else changes, button Delete (`confirmDelete` on the panel; the web's `confirm()` carries the title and the text). Only things made in Muralis or uploaded to it are deleted (playlists, uploaded pictures, automations, the uploaded certificate); settings have no Delete. Fleet words appear only where the fleet is on: a thing the fleet owns is deleted only from the fleet's control panel, and there the text adds "Changes will be synced across all devices.", which they then are.
 - **A button's colour says what it does, on both surfaces.** Juri's rule, 2026-09-11: the main
   colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
   playlist" as the mark that something is enabled); a plain outline is a visible action that saves
@@ -1501,7 +1544,7 @@ the playlist page was the case that set the rule.
   `WindowInsetsController`-family APIs arrived at 28/30; `scripts/test-host.sh` fails the build if
   such a call appears with no `SDK_INT` check nearby, specifically so this can't be forgotten
   silently.
-- **Three window worlds, and the phone that shows the third is Juri's Pixel, installed from Play.**
+- **Three window worlds, and the phone that shows the third is Juri's Pixel.**
   A device-owner panel is `FLAG_FULLSCREEN` with both bars hidden; an ordinary install below
   Android 15 shows its bars and its window starts below them; from Android 15 an ordinary install
   is laid out edge to edge, the bars are transparent over the page and `setDecorFitsSystemWindows`
@@ -1510,8 +1553,8 @@ the playlist page was the case that set the rule.
   insets (API 30 and up) into its padding and folds the keyboard's measured inset into the same
   bottom, and `applyBarIconContrast` darkens the bar icons over a light-themed page from Android
   15 only (below it the theme paints the bars black). Found 2026-09-25 on the Pixel 9 Pro XL
-  (Android 17), whose Muralis is the Play build, so a fix there is seen at the next Play upload,
-  never by installing a debug build over it. The two Huawei devices (Android 8 and 9) and the
+  (Android 17), which then ran the Play build; since that night it runs the debug-keyed build, so
+  a local build installs over it with its settings kept (the Play build would need an uninstall). The two Huawei devices (Android 8 and 9) and the
   Lenovo (10) cannot show any of this; a change to insets, immersive flags or the keyboard is not
   done until it has been reasoned through for that third world.
 - **No privileged permissions are available at all.** `DEVICE_POWER`, `REBOOT`, `STATUS_BAR`,

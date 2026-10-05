@@ -52,6 +52,9 @@ window.muralisLocal[el.dataset.setting]={value:value,at:Date.now()};
 // colour, the rows from the separators.
 if(el.dataset.setting==='appearance_colour'){document.documentElement.setAttribute('data-palette',value);}
 if(el.dataset.setting==='separators'){document.documentElement.setAttribute('data-separators',value);}
+// The web admin serves the other certificate from its next connection, so the page goes onto it,
+// fetched afresh: a reload of a page that answered an upload would offer to post the files again.
+if(el.dataset.setting==='http_certificate'){setTimeout(function(){window.location.replace('/');},300);}
 Array.prototype.forEach.call(document.querySelectorAll('[data-setting="'+el.dataset.setting+'"]'),function(other){
 if(other===el){return;}
 if(other.type==='checkbox'){other.checked=el.checked;}else if(other.type!=='radio'){other.value=el.value;}});
@@ -118,3 +121,9 @@ if(saverMode){saverMode.addEventListener('change',screensaverFields);}
 if(saverSource){saverSource.addEventListener('change',screensaverFields);}
 screensaverFields();
 })();
+// A file input is off screen with Browse as its label, so the name chosen is said beside it: the
+// certificate's two files (the pictures' upload has its own, which counts several).
+document.addEventListener('change',function(event){var input=event.target;
+if(!input||input.type!=='file'||!input.dataset||!input.dataset.chosen){return;}
+var chosen=document.getElementById(input.dataset.chosen);
+if(chosen){chosen.textContent=input.files&&input.files.length?input.files[0].name:'No file chosen';}});

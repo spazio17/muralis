@@ -9,7 +9,8 @@
 # compile and run these suites: dispatcher, provisioning, request origin, system
 # bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
 # retry, system stats, recycle policy, recovery policy, server probe policy,
-# escape sequence, relaunch policy, the self-signed certificate and the automations.
+# escape sequence, relaunch policy, the self-signed certificate, the uploaded
+# certificate and the automations.
 
 set -euo pipefail
 
@@ -100,7 +101,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
-            SelfSignedCertificate; do
+            SelfSignedCertificate CertificateUpload; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -272,6 +273,13 @@ javac -d "${test_dir}/certificate" \
     "${pure_java_dir}/SelfSignedCertificate.java" \
     "${host_test_dir}/SelfSignedCertificateTest.java"
 java -cp "${test_dir}/certificate" org.spazio17.muralis.SelfSignedCertificateTest
+
+# A certificate and key a person uploads for the web admin: every shape, every refusal.
+mkdir -p "${test_dir}/upload"
+javac -d "${test_dir}/upload" \
+    "${pure_java_dir}/CertificateUpload.java" \
+    "${host_test_dir}/CertificateUploadTest.java"
+java -cp "${test_dir}/upload" org.spazio17.muralis.CertificateUploadTest
 
 javac -d "${test_dir}/stats" \
     "${pure_java_dir}/SystemStats.java" \

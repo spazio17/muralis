@@ -20,6 +20,7 @@ public final class KioskCommandDispatcherTest {
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
         testDeviceIdValidation();
+        testCertificateChoice();
         testAdminPortValidation();
         testWebAdminToggle();
         testOneOffUrlAndHome();
@@ -331,6 +332,22 @@ public final class KioskCommandDispatcherTest {
                 "null is unparseable");
         require(KioskCommandDispatcher.parseEnabledFlag(new Object()) == null,
                 "an arbitrary object is unparseable");
+    }
+
+    /** The web admin's certificate: own always, uploaded only while one is kept, nothing else. */
+    private static void testCertificateChoice() {
+        require(KioskCommandDispatcher.validateCertificateChoice("own", false) == null,
+                "the panel's own certificate is always there");
+        require(KioskCommandDispatcher.validateCertificateChoice("uploaded", true) == null,
+                "an upload kept can be chosen");
+        require("no certificate is uploaded".equals(
+                KioskCommandDispatcher.validateCertificateChoice("uploaded", false)),
+                "nothing uploaded cannot be chosen");
+        for (String bad : new String[] {null, "", " own", "OWN", "<script>", "self"}) {
+            require("the certificate must be own or uploaded".equals(
+                    KioskCommandDispatcher.validateCertificateChoice(bad, true)),
+                    "a choice nothing offers is refused: " + bad);
+        }
     }
 
     /**

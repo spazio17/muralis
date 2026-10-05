@@ -11,8 +11,8 @@ import java.util.Locale;
 
 /**
  * The {@code multipart/form-data} body a browser sends for a file upload, split into its parts.
- * The web admin's picture upload is the only caller; every other form on that server is
- * urlencoded and stays so. Pure and host-tested, because a parser that is off by one boundary
+ * The web admin's picture upload and its certificate upload are the callers; every other form on
+ * that server is urlencoded and stays so. Pure and host-tested, because a parser that is off by one boundary
  * byte silently corrupts every picture it stores.
  */
 final class MultipartForm {
