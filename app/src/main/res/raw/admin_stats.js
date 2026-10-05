@@ -77,6 +77,7 @@ var refused=el.closest&&el.closest('.field')?el.closest('.field').querySelector(
 if(refused){refused.parentNode.removeChild(refused);}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
+follow('volume-buttons-disabled',cfg.volume_buttons_disabled);
 // The panel's name, renamed on the panel or over MQTT: the box and the app bar's subtitle.
 follow('f-device_id',cfg.device_id);
 var sub=document.querySelector('header.appbar .sub');

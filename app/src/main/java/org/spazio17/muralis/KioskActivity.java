@@ -851,6 +851,24 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * The volume buttons do nothing while Disable volume buttons is on (2026-10-05): Muralis
+     * takes the press before Android turns it into a volume change and its slider over the page,
+     * while its own screen has the keys. A window over it (a settings dropdown, a page's select
+     * or alert) and the display asleep leave the buttons to Android.
+     */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        int code = event.getKeyCode();
+        if ((code == android.view.KeyEvent.KEYCODE_VOLUME_UP
+                || code == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
+                || code == android.view.KeyEvent.KEYCODE_VOLUME_MUTE)
+                && KioskConfig.volumeButtonsDisabled(this)) {
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     @Override
     protected void onPause() {
         inFront = false;
@@ -2783,6 +2801,14 @@ public final class KioskActivity extends Activity {
         automationsMore.setOnClickListener(view -> showAutomationsPage());
         automationsCard.addView(buttonRow(automationsMore), matchWrap());
 
+        // The volume buttons, applied the moment the switch is touched, as on the web admin. A
+        // choice about the panel itself, not its screen, so it stands in This panel (Juri,
+        // 2026-10-05); built here so the sync below can follow it.
+        CompoundButton volumeButtonsInput = themedSwitch(theme, "Disable volume buttons",
+                config.volumeButtonsDisabled);
+        volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
+                applyLiveSetting(editor -> editor.volumeButtonsDisabled(checked)));
+
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
         // done this from the start via its five-second /api/stats poll; this is the tablet's
@@ -2806,6 +2832,8 @@ public final class KioskActivity extends Activity {
                 }
                 syncingLiveControls = true;
                 try {
+                    setCheckedIfChanged(volumeButtonsInput,
+                            KioskConfig.volumeButtonsDisabled(KioskActivity.this));
                     checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
@@ -2918,6 +2946,9 @@ public final class KioskActivity extends Activity {
             return true;
         });
         addAppearanceControls(aboutCard, theme, config);
+        LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
+        volumeButtonsParams.topMargin = dp(14);
+        aboutCard.addView(volumeButtonsInput, volumeButtonsParams);
         // The web's row: the stats glyph and the overlay's state under the name (review,
         // 2026-10-01).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
@@ -6497,18 +6528,19 @@ public final class KioskActivity extends Activity {
         group.removeAllViews();
         PictureLibrary library = PictureLibrary.get(this);
         if (!library.browsesOwnStorage()) {
-            // An ordinary install before anybody has answered the dialog. Not an error, and not a
-            // reason to hide the feature: the permission is the whole of what is missing.
+            // An ordinary install before anybody has answered the dialog, or one that said no.
+            // Not an error, and no longer a reason to hide the playlists: uploaded pictures live
+            // in Muralis's own files and need no permission (2026-10-05; before, nothing worked
+            // without it, uploads included). The permission is only what the panel's own
+            // pictures need.
             TextView why = new FlushText(this);
             why.setTextColor(theme.subtext);
             why.setTextSize(12);
-            why.setText("Muralis needs permission to read this panel's pictures before it can "
-                    + "show you any folders.");
+            why.setText(PictureLibrary.OWN_PICTURES_NEED_PERMISSION);
             group.addView(why, matchWrapClose());
             Button allow = secondaryButton(theme, "Allow Muralis to read pictures");
             allow.setOnClickListener(view -> requestPicturePermission());
             group.addView(buttonRow(allow), matchWrap());
-            return;
         }
         PlaylistDocument document = library.playlists().load();
         List<PlaylistDocument.Playlist> all = document.all();
@@ -6791,7 +6823,7 @@ public final class KioskActivity extends Activity {
         boolean allowed = library.browser().canReadStorage();
         Toast.makeText(this, allowed
                 ? "Muralis can read this panel's pictures now."
-                : "Without that permission the Pictures screensaver cannot be set up here.",
+                : PictureLibrary.OWN_PICTURES_NEED_PERMISSION,
                 Toast.LENGTH_LONG).show();
         if (currentScreen != null && configurationVisible) {
             redrawInPlace(currentScreen);
@@ -7166,7 +7198,9 @@ public final class KioskActivity extends Activity {
                 }
                 screen.tree = tree;
                 screen.uploadCount = uploads;
-                screen.treeProblem = problem;
+                // The sentence the web admin's folder list has, where the permission is missing.
+                screen.treeProblem = library.browsesOwnStorage() || problem == null ? problem
+                        : PictureLibrary.OWN_PICTURES_NEED_PERMISSION;
                 paintFolderPane(screen);
             });
         });

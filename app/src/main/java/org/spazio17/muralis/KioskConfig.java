@@ -22,6 +22,8 @@ final class KioskConfig {
     /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
     private static final String ESCAPE_PIN_HASH = "escape_pin_hash";
     private static final String STATS_OVERLAY = "stats_overlay";
+    /** Whether the device's volume buttons do nothing while Muralis is on screen. */
+    private static final String VOLUME_BUTTONS_DISABLED = "volume_buttons_disabled";
     /** Where the stats overlay was dragged to; see statsOverlayPlace and KioskActivity. */
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
@@ -109,6 +111,14 @@ final class KioskConfig {
      * so turning it off later needs no reflash.
      */
     boolean statsOverlay = true;
+    /**
+     * Disable volume buttons (2026-10-05): off by default, so the buttons on the device's side
+     * change the volume as Android has them; on, Muralis takes their presses while its own screen
+     * has the keys, so a passer-by cannot turn a wall panel's sound up or down (a dropdown or a
+     * page's popup open over it lets them through). Commands and the audio sensor still set the
+     * volume.
+     */
+    boolean volumeButtonsDisabled;
     String appearanceColour = Palettes.COLOURS[0];
     String separators = SEPARATORS_LINES;
     /**
@@ -197,6 +207,7 @@ final class KioskConfig {
         config.httpUploadName = certificate.httpUploadName;
         config.httpUploadUntil = certificate.httpUploadUntil;
         config.statsOverlay = statsOverlayEnabled(context);
+        config.volumeButtonsDisabled = volumeButtonsDisabled(context);
         config.appearanceColour = appearanceColourOf(context);
         config.separators = separatorsOf(context);
         config.orientation = orientationOf(context);
@@ -295,6 +306,11 @@ final class KioskConfig {
 
         Editor statsOverlay(boolean value) {
             plain.putBoolean(STATS_OVERLAY, value);
+            return this;
+        }
+
+        Editor volumeButtonsDisabled(boolean value) {
+            plain.putBoolean(VOLUME_BUTTONS_DISABLED, value);
             return this;
         }
 
@@ -919,6 +935,13 @@ final class KioskConfig {
         return key.replace('_', ' ') + " must be " + String.join(", ",
                 java.util.Arrays.copyOf(offered, offered.length - 1)) + " or "
                 + offered[offered.length - 1];
+    }
+
+    /** Narrow reader for Disable volume buttons, asked on every press of one. */
+    static boolean volumeButtonsDisabled(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(VOLUME_BUTTONS_DISABLED, false);
     }
 
     /**

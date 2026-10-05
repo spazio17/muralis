@@ -141,8 +141,8 @@ the playlist page was the case that set the rule.
   a browser shows two warnings, authority and name, and one click accepts both). **The key pair
   was in the Android Keystore until 2026-09-24, and that is why the playlist page failed:**
   the hardware signed every handshake at about 0.4 s on the Huawei tablet (a full handshake
-  0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response closes its connection, and
-  a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
+  0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response then closed its connection,
+  and a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
   deadline (8 s since 2026-09-30, when a lossy Wi-Fi link lost one request in seven to it): `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
   Nineteen parallel curls against the tablet all failed, seven refused at the per-host cap and
   twelve cut at 2.05 s. A software key signs in under a millisecond. The old Keystore alias is
@@ -203,8 +203,8 @@ the playlist page was the case that set the rule.
   panel's own is, and both surfaces say why in red (`config.http_certificate_problem`; at the
   first unlock the service has it read again). A change of certificate swaps the TLS factory in
   place (`HttpAdminServer.reloadCertificate`), so the answer that says it was kept is not cut by
-  a restart, and the next connection, every response closing its own, shakes hands with the new
-  one; only the latest reload asked for publishes, a reload that can read nothing at that moment
+  a restart, and the next connection shakes hands with the new one (the connection that asked
+  closes after its answer, and kept ones close; see the keep-alive bullet); only the latest reload asked for publishes, a reload that can read nothing at that moment
   keeps the certificate already served rather than fall to plain HTTP and tries once more five
   seconds later, and one finishing after `stop()` publishes nothing. The server holds
   the certificate served as one object, read once per connection. The web page reloads itself
@@ -464,6 +464,16 @@ the playlist page was the case that set the rule.
   passed on and only arms a timer, a move beyond the slop cancels it, and once picked up the
   dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first
   and work under it. There is no settings control for the place: the finger is the control.
+- **The volume buttons can be switched off** (2026-10-05, one of the small 0.6 ideas): "Disable
+  volume buttons" in This panel on both surfaces, under the look (`volume_buttons_disabled`, an
+  instant setting, off by default so the buttons work as Android has them, in the state
+  document; Juri's words and place the same day, after "Volume buttons change the volume" in
+  Display: it is about the panel, not its screen). On, `dispatchKeyEvent` takes volume up, down
+  and mute before Android turns them into a change and a slider over the page, wherever
+  Muralis's own screen has the keys, its settings included; a window over it, a settings
+  dropdown or a page's own popup (a select, an alert), and the display asleep leave them to
+  Android, and commands and the audio sensor still set the volume. Measured on the tablet and
+  the Pixel: disabled, three presses change no stream and draw no slider; enabled, they do.
 - **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since the sensors, 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
   lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
   needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
@@ -1433,10 +1443,20 @@ the playlist page was the case that set the rule.
   refused with the names that do exist. The select's "no playlist" option is the word `None`,
   because a select cannot hold an empty option, so the panel treats that word as none unless a
   playlist is actually called that; without it, clearing the playlist from a card was refused
-  (found over MQTT, 2026-09-10). Uploads appear as their own folder in the browser, but on an
-  ordinary install that refused the picture permission the browser does not open at all, so today
-  neither the panel's pictures nor the uploads can be put in a playlist there (found 2026-09-25;
-  whether uploads should work without it is an open product question).
+  (found over MQTT, 2026-09-10). Uploads appear as their own folder in the browser, and **work
+  without the picture permission** (2026-10-05; found 2026-09-25 that nothing did): on an
+  ordinary install that refused it, the playlists, the playlist page and the Uploaded folder stay
+  on both surfaces, and the upload on the web admin, where it always was, with one sentence (`PictureLibrary.OWN_PICTURES_NEED_PERMISSION`)
+  and on the panel the Allow button, since only the panel's own pictures need it. **A picture
+  whose file is gone keeps its name**: every label the playlist page lists is remembered by
+  address (`last_names.json` beside the captions, written once a moment after a listing, pruned to
+  what some playlist holds), so a gone one reads "./Pictures/Italy/rome.jpg (not found)" where it
+  read "186 (not found)", and without the permission a held picture shows that name too, never
+  "not found". **Android 14's partial grant ("Allow limited access") is not a licence to drop**:
+  the store answers only for the photos somebody picked, so a picture is called gone, and taken
+  out of its playlist, only with the full permission (`PictureBrowser.readsEveryPicture`); found
+  on the Pixel 2026-10-05 by reading the cleanup, and checked there after the fix (a playlist kept
+  its two unpicked pictures through a screensaver run under the partial grant).
 - **Captions and uploads.** A caption is keyed by the picture's own address, at most 200
   characters, and there is no file-name fallback any more: reading the name as a fallback is what
   crossed captions between same-named pictures in different folders (a second folder's `pd_2.jpg`
@@ -1504,6 +1524,19 @@ the playlist page was the case that set the rule.
   at 162 to 187 MB and the renderer at 95 to 126 MB across dashboard, second WebView, one picture,
   repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
   renderer death, and file descriptors steady at 188 to 191 (210 while the second WebView is up).
+- **A connection is kept open between requests** (keep-alive, 2026-10-05): a GET or POST of
+  HTTP/1.1 read whole (headers ended on their blank line, a Content-Length that is one plain
+  number, else 400 and close) is answered `Connection: keep-alive`, the next request is awaited on the
+  same connection for 3 s (`KEEP_ALIVE_IDLE_MS`), up to 100 requests, so a page and its burst of
+  scripts and thumbnails share one TLS handshake per connection. Everything answered before its
+  body was read (a refusal, a 401, a 413), a HEAD, HTTP/1.0, a chunked body, `Connection: close`
+  and the camera stream still close; an idle kept connection closes without a log line. A
+  change of certificate closes the connection that asked for it after its answer, every kept
+  connection waiting for a next request, and any that shook hands with the old one, so the page
+  announcing a certificate is fetched with it; the 500 of the failure barrier is written only
+  where nothing was answered yet. Measured
+  on the tablet: five requests on one connection in 0.73 s, the idle close at 3.0 s, the
+  thumbnail page whole in Chrome and Firefox, the per-host cap unchanged.
 - **The HTTPS server's capacity is sized for a browser, not for curl.** 16 workers, 12 connections
   per host, a queue depth of 8, and a socket that has sent nothing by 8 s is closed (2 s until
   2026-10-01, when a lossy Wi-Fi link cut one request in seven; the per-host cap still bounds

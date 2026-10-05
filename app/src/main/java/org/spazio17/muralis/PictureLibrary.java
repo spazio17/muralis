@@ -71,6 +71,10 @@ final class PictureLibrary {
     private static final String TAG = "MuralisPictures";
     /** Beside {@code captions.json}; see {@link #hiddenCredits}. */
     private static final String CREDITS_HIDDEN_FILE = "credits_hidden.json";
+    /** Beside {@code captions.json}; see {@link #rememberName}. */
+    private static final String LAST_NAMES_FILE = "last_names.json";
+    /** How long the names learnt by one listing wait to be written together. */
+    private static final long LAST_NAMES_WRITE_DELAY_MS = 2_000;
     /** Which caption-key migration a panel has had; see {@link #migrateCaptionKeys}. */
     private static final String CAPTIONS_KEY_VERSION = "captions_key_version";
     /** 1 moved names onto URIs; 2 also dropped the names nothing had claimed (2026-09-10). */
@@ -684,6 +688,23 @@ final class PictureLibrary {
         if (uri == null || !(isUpload(uri) || PictureBrowser.isMedia(uri))) {
             return null;
         }
+        // A thumbnail made while the permission was there is not served once it is gone: the
+        // held list now shows without it, and a cached copy was still the picture (review,
+        // 2026-10-05).
+        if (PictureBrowser.isMedia(uri) && !browser.readsEveryPicture()) {
+            // Under the partial grant only a photo somebody picked: a cached copy of one they did
+            // not pick was still served (review, 2026-10-05).
+            if (!browser.canReadStorage()) {
+                return null;
+            }
+            try {
+                if (browser.mediaLabel(uri) == null) {
+                    return null;
+                }
+            } catch (PictureBrowser.Unavailable notNow) {
+                return null;
+            }
+        }
         File dir = new File(app.getCacheDir(), "thumbs");
         File target = new File(dir, sha1(uri) + ".jpg");
         if (target.isFile() && target.length() > 0) {
@@ -742,6 +763,10 @@ final class PictureLibrary {
     private File storeDir() {
         return new File(app.getFilesDir(), "pictures");
     }
+
+    /** What both surfaces say where the panel's own pictures may not be read; uploads still work. */
+    static final String OWN_PICTURES_NEED_PERMISSION = "This panel may not read its own pictures "
+            + "yet, so only uploaded pictures can go in a playlist.";
 
     /**
      * Whether this panel browses its own storage.
@@ -821,10 +846,15 @@ final class PictureLibrary {
         // least one of them is still there. Every picture vanishing at once is what an ejected
         // card looks like, not what deleting looks like (review of 2026-09-19); a playlist of one
         // picture has no such second witness and follows the rule that a deleted picture leaves.
-        if (!gone.isEmpty() && !unsure
+        // And only with the permission to read every picture: under Android 14's partial grant
+        // the store answers for the pictures somebody picked and has no row for the rest, which
+        // looks exactly like a deletion and is not one.
+        if (!gone.isEmpty() && !unsure && browser.readsEveryPicture()
                 && (gone.size() < active.items.size() || active.items.size() == 1)) {
             dropDeleted(active.id, gone);
-        } else if (!gone.isEmpty()) {
+        } else if (!gone.isEmpty() && browser.readsEveryPicture()) {
+            // Under the partial grant pictures nobody picked look gone on every listing, every
+            // few seconds while a page is open: no line for that (review, 2026-10-05).
             Log.i(TAG, gone.size() + " picture(s) not found and nothing removed: the store may "
                     + "not be answering for them");
         }
@@ -1395,9 +1425,10 @@ final class PictureLibrary {
      * inside the app and means nothing to a person; a document address from the retired picker
      * path shows its stored name alone.
      *
-     * <p>A picture whose file is gone says so rather than showing an empty row: the playlist page
-     * lists what is in the playlist, and something that cannot be found is exactly what somebody
-     * looking at that page needs to see in order to take it out. Only a panel that can read its
+     * <p>A picture whose file is gone says so rather than showing an empty row, under the name it
+     * had when it was last found ({@link #rememberName}): the playlist page lists what is in the
+     * playlist, and something that cannot be found is exactly what somebody looking at that page
+     * needs to see in order to take it out. Only a panel that can read its
      * own pictures may call one missing, though: without the permission every answer is empty,
      * which would read as "every picture was deleted".
      */
@@ -1407,12 +1438,22 @@ final class PictureLibrary {
             try {
                 label = browser.mediaLabel(url);
             } catch (PictureBrowser.Unavailable notNow) {
-                return browser.canReadStorage() ? lastSegmentOf(url) : "picture";
+                return browser.canReadStorage() ? lastSegmentOf(url) : remembered(url);
             }
             if (label == null) {
-                return browser.canReadStorage() ? lastSegmentOf(url) + PictureSources.NOT_FOUND
-                        : "picture";
+                if (!browser.readsEveryPicture()) {
+                    // Without the permission every answer is empty, and under the partial grant
+                    // every picture not picked looks gone: the name it had when last found, which
+                    // tells two held pictures apart where "picture" did not (seen on the Pixel,
+                    // 2026-10-05), and never "not found", which nobody can know now.
+                    return remembered(url);
+                }
+                // The name it had when it was last found, not the store's bare number: "186 (not
+                // found)" told nobody which picture had gone (2026-10-05).
+                String known = lastName(url);
+                return (known != null ? known : lastSegmentOf(url)) + PictureSources.NOT_FOUND;
             }
+            rememberName(url, label);
             return label;
         }
         String name;
@@ -1425,6 +1466,120 @@ final class PictureLibrary {
             return lastSegmentOf(url) + PictureSources.NOT_FOUND;
         }
         return isUpload(url) ? "./uploads/" + name : name;
+    }
+
+    // ------------------------------------------------------------------ names of held pictures
+
+    /** The names learnt so far, by address; loaded once, guarded by this library. */
+    private Map<String, String> lastNames;
+    private boolean lastNamesWriteQueued;
+
+    /**
+     * The label a picture of the panel's own had when it was last found, so a picture whose file
+     * is gone still says which one it was. Kept in a file of its own beside the captions, for
+     * the pictures some playlist holds and no others.
+     */
+    private synchronized String lastName(String url) {
+        return lastNames().get(url);
+    }
+
+    /**
+     * Notes a picture's label as it is listed. One listing names many pictures, so the file is
+     * written once, a moment after the last new name, not once per row.
+     */
+    private synchronized void rememberName(String url, String label) {
+        if (lastNames == null && !userUnlocked()) {
+            return;
+        }
+        Map<String, String> names = lastNames();
+        if (label.equals(names.get(url))) {
+            return;
+        }
+        names.put(url, label);
+        if (!lastNamesWriteQueued) {
+            lastNamesWriteQueued = true;
+            deadlines.schedule(this::writeLastNames, LAST_NAMES_WRITE_DELAY_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private Map<String, String> lastNames() {
+        if (lastNames == null && !userUnlocked()) {
+            // The file lives in storage that opens at the first unlock: read now it would look
+            // empty, and that empty map, kept, would be written over the names (review,
+            // 2026-10-05). Nothing is learnt or written until then.
+            return new java.util.LinkedHashMap<>();
+        }
+        if (lastNames == null) {
+            lastNames = new java.util.LinkedHashMap<>();
+            File file = new File(storeDir(), LAST_NAMES_FILE);
+            if (file.isFile()) {
+                try {
+                    JSONObject stored = new JSONObject(readText(file));
+                    for (java.util.Iterator<String> keys = stored.keys(); keys.hasNext();) {
+                        String key = keys.next();
+                        lastNames.put(key, stored.optString(key, ""));
+                    }
+                } catch (IOException | JSONException unreadable) {
+                    // Read as none: a gone picture then shows its address's tail, as it used to.
+                    Log.w(TAG, "Unreadable picture names, treated as none", unreadable);
+                }
+            }
+        }
+        return lastNames;
+    }
+
+    private boolean userUnlocked() {
+        android.os.UserManager users = app.getSystemService(android.os.UserManager.class);
+        return users == null || users.isUserUnlocked();
+    }
+
+    /** The names to disk, those of pictures no playlist holds left out, replaced atomically. */
+    private void writeLastNames() {
+        Set<String> held = new java.util.HashSet<>();
+        for (PlaylistDocument.Playlist playlist : playlists.load().all()) {
+            held.addAll(playlist.items);
+        }
+        // An empty document prunes nothing: a damaged playlists file is moved aside and reads as
+        // none, and pruning against that would forget every name (review, 2026-10-05). Names of
+        // pictures no playlist holds then wait for the next write that has playlists to go by.
+        boolean pruned = !held.isEmpty();
+        JSONObject document = new JSONObject();
+        synchronized (this) {
+            lastNamesWriteQueued = false;
+            Map<String, String> names = lastNames();
+            if (pruned) {
+                names.keySet().retainAll(held);
+            }
+            try {
+                for (Map.Entry<String, String> entry : names.entrySet()) {
+                    document.put(entry.getKey(), entry.getValue());
+                }
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        }
+        File dir = storeDir();
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            return;
+        }
+        File target = new File(dir, LAST_NAMES_FILE);
+        File partial = new File(target.getPath() + ".part");
+        try (OutputStream out = new FileOutputStream(partial)) {
+            out.write(document.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException failed) {
+            Log.w(TAG, "Picture names not kept: " + failed.getMessage());
+            return;
+        }
+        if (!partial.renameTo(target)) {
+            Log.w(TAG, "Picture names not kept");
+        }
+    }
+
+    /** The name a picture had when last found, or the word "picture" when none was ever learnt. */
+    private String remembered(String url) {
+        String known = lastName(url);
+        return known != null ? known : "picture";
     }
 
     /** The tail of an address, for labelling something that can no longer be asked its name. */

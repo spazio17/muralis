@@ -279,6 +279,17 @@ final class PictureBrowser {
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
 
+    /**
+     * Whether this panel may read every one of its pictures: the full permission, not Android
+     * 14's partial grant of the photos somebody picked. Only then does a picture the store has no
+     * row for mean a deleted file; under the partial grant it means one nobody picked, and
+     * calling that gone dropped it from its playlist (seen on the Pixel, 2026-10-05).
+     */
+    boolean readsEveryPicture() {
+        return app.checkSelfPermission(permission())
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
     /** What to ask for: the read permission, and from Android 14 the partial one beside it. */
     static String[] permissionsToRequest() {
         return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE

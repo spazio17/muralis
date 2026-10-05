@@ -39,7 +39,7 @@ import javax.net.ssl.X509ExtendedKeyManager;
  * for free and kept the private key in the hardware. The hardware also signed every TLS
  * handshake, and on the Huawei tablet one such signature costs about 0.4 s: a full handshake
  * measured 0.55 s where a resumed one measured 0.04 s ({@code openssl s_time}). Every response
- * closes its connection, a browser opens six at once for a page of thumbnails, and six
+ * then closed its connection, a browser opens six at once for a page of thumbnails, and six
  * handshakes queued behind one Keymaster overran the server's 2 s handshake deadline: the page
  * said "the panel did not answer" and the thumbnails never loaded. A software key signs in
  * well under a millisecond. What is given up: a private key that root could read out of the
