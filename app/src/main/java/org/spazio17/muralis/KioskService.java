@@ -1230,7 +1230,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .getSharedPreferences("kiosk_runtime", MODE_PRIVATE)
                     .getInt(APPLIED_BRIGHTNESS_KEY, -1);
 
-            // Brightness now always comes from the system setting, so mode is simply the checkbox.
+            // Brightness now always comes from the system setting, so mode is simply the switch.
             // The only remaining window override is display.visual_off, which dims the panel to 1% as a
             // presentation state rather than as a brightness choice, and it is reported as its own
             // source so a 1% reading is not mistaken for a real level.
@@ -1641,7 +1641,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Sets the panel brightness by writing the system setting, not a per-window override.
      *
      * <p>Deliberate design, decided with the user 2026-08-19, and it is what makes the two controls
-     * coherent: <b>the automatic-brightness checkbox alone decides whether the sensor or the operator
+     * coherent: <b>the automatic-brightness switch alone decides whether the sensor or the operator
      * is in charge.</b> In manual mode this write is the level, and it sticks. In automatic mode
      * Android's own auto-brightness overwrites {@code SCREEN_BRIGHTNESS} at its next sensor update, so
      * a slider nudge is momentary and the sensor takes control back by itself.

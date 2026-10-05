@@ -1603,7 +1603,7 @@ the playlist page was the case that set the rule.
   app needs a human for is the one that looks most like it should come free with enrolment. It is
   declared in the manifest, granted from `ACTION_MANAGE_WRITE_SETTINGS` or by
   `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`, and until it is granted both
-  brightness controls are inert: the checkbox cannot write the mode, and the slider is separately
+  brightness controls are inert: the switch cannot write the mode, and the slider is separately
   disabled while the light sensor owns the backlight, which on an unconfigured device it does by
   default. That combination reads as two bugs, and on 2026-09-07 it read that way to the maintainer on a
   freshly provisioned panel, so **all three surfaces now name the missing grant rather than
