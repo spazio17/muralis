@@ -1073,6 +1073,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("escape_pin_set", KioskConfig.escapePinSet(this));
             }
             applied.put("stats_overlay", config.statsOverlay);
+            applied.put("volume_buttons_disabled", config.volumeButtonsDisabled);
             applied.put("orientation", config.orientation);
             // The look, for the web admin's page to follow a change made on the panel.
             applied.put("appearance_colour", config.appearanceColour);

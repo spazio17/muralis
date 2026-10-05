@@ -464,6 +464,16 @@ the playlist page was the case that set the rule.
   passed on and only arms a timer, a move beyond the slop cancels it, and once picked up the
   dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first
   and work under it. There is no settings control for the place: the finger is the control.
+- **The volume buttons can be switched off** (2026-10-05, one of the small 0.6 ideas): "Disable
+  volume buttons" in This panel on both surfaces, under the look (`volume_buttons_disabled`, an
+  instant setting, off by default so the buttons work as Android has them, in the state
+  document; Juri's words and place the same day, after "Volume buttons change the volume" in
+  Display: it is about the panel, not its screen). On, `dispatchKeyEvent` takes volume up, down
+  and mute before Android turns them into a change and a slider over the page, wherever
+  Muralis's own screen has the keys, its settings included; a window over it, a settings
+  dropdown or a page's own popup (a select, an alert), and the display asleep leave them to
+  Android, and commands and the audio sensor still set the volume. Measured on the tablet and
+  the Pixel: disabled, three presses change no stream and draw no slider; enabled, they do.
 - **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since the sensors, 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
   lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
   needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),

@@ -851,6 +851,24 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * The volume buttons do nothing while Disable volume buttons is on (2026-10-05): Muralis
+     * takes the press before Android turns it into a volume change and its slider over the page,
+     * while its own screen has the keys. A window over it (a settings dropdown, a page's select
+     * or alert) and the display asleep leave the buttons to Android.
+     */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        int code = event.getKeyCode();
+        if ((code == android.view.KeyEvent.KEYCODE_VOLUME_UP
+                || code == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
+                || code == android.view.KeyEvent.KEYCODE_VOLUME_MUTE)
+                && KioskConfig.volumeButtonsDisabled(this)) {
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
     @Override
     protected void onPause() {
         inFront = false;
@@ -2783,6 +2801,14 @@ public final class KioskActivity extends Activity {
         automationsMore.setOnClickListener(view -> showAutomationsPage());
         automationsCard.addView(buttonRow(automationsMore), matchWrap());
 
+        // The volume buttons, applied the moment the switch is touched, as on the web admin. A
+        // choice about the panel itself, not its screen, so it stands in This panel (Juri,
+        // 2026-10-05); built here so the sync below can follow it.
+        CompoundButton volumeButtonsInput = themedSwitch(theme, "Disable volume buttons",
+                config.volumeButtonsDisabled);
+        volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
+                applyLiveSetting(editor -> editor.volumeButtonsDisabled(checked)));
+
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
         // done this from the start via its five-second /api/stats poll; this is the tablet's
@@ -2806,6 +2832,8 @@ public final class KioskActivity extends Activity {
                 }
                 syncingLiveControls = true;
                 try {
+                    setCheckedIfChanged(volumeButtonsInput,
+                            KioskConfig.volumeButtonsDisabled(KioskActivity.this));
                     checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
@@ -2918,6 +2946,9 @@ public final class KioskActivity extends Activity {
             return true;
         });
         addAppearanceControls(aboutCard, theme, config);
+        LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
+        volumeButtonsParams.topMargin = dp(14);
+        aboutCard.addView(volumeButtonsInput, volumeButtonsParams);
         // The web's row: the stats glyph and the overlay's state under the name (review,
         // 2026-10-01).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",

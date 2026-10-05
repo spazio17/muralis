@@ -1277,6 +1277,11 @@ final class HttpAdminServer {
                         }
                     }
                 }
+                if (form.containsKey("volume_buttons_disabled")) {
+                    KioskConfig.edit(context)
+                            .volumeButtonsDisabled(isTrue(form.get("volume_buttons_disabled")))
+                            .apply();
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
@@ -2002,6 +2007,12 @@ final class HttpAdminServer {
                 + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>"
                 + appearanceControls(config)
+                // The volume buttons, the panel's own place for them (Juri, 2026-10-05).
+                + "<div class=\"switches\">"
+                + switchRow("volume-buttons-disabled", "Disable volume buttons",
+                        " data-setting=\"volume_buttons_disabled\"",
+                        KioskConfig.volumeButtonsDisabled(context))
+                + "</div>"
                 + "<ul class=\"list gap\">"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
