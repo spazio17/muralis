@@ -136,6 +136,23 @@ final class HttpAdminServer {
      * cost of being wrong is one refused request from a client on a genuinely awful link.
      */
     private static final int REQUEST_DEADLINE_MS = 8_000;
+    /**
+     * How long a connection is kept open after an answer for the browser's next request
+     * (keep-alive, 2026-10-05). A page and the burst that follows it (its scripts, its
+     * stylesheet, a folder of thumbnails) then share one TLS handshake per connection instead of
+     * paying one per request. Short, because an idle connection holds a worker: three seconds
+     * covers a burst and lets the stats poll, five seconds apart, start afresh.
+     */
+    private static final int KEEP_ALIVE_IDLE_MS = 3_000;
+    /** Requests one connection may carry before it is closed, as servers bound it. */
+    private static final int KEEP_ALIVE_MAX_REQUESTS = 100;
+    /**
+     * Set by the connection, read by {@link #writeResponse}: whether the answer being written may
+     * keep the connection open. Only for a request read whole, so nothing of it is left unread.
+     */
+    private static final ThreadLocal<Boolean> keepOpen = ThreadLocal.withInitial(() -> false);
+    /** Set by {@link #writeResponse} when it answered with the connection kept open. */
+    private static final ThreadLocal<Boolean> answeredOpen = ThreadLocal.withInitial(() -> false);
     /** How long the camera stream waits for a frame before it ends; see serveStream. */
     private static final long STREAM_STALL_MS = 15_000;
     /** Backoff after a failed {@code accept()}; see the comment at that call site. */
@@ -187,6 +204,14 @@ final class HttpAdminServer {
      */
     private final java.util.concurrent.atomic.AtomicLong reloads =
             new java.util.concurrent.atomic.AtomicLong();
+    /**
+     * The kept connections waiting for their next request, closed when the certificate changes so
+     * none goes on with the old one.
+     */
+    private final java.util.Set<Socket> idleKept =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Set by {@link #writeResponse} for the request being served: an answer has been written. */
+    private static final ThreadLocal<Boolean> answered = ThreadLocal.withInitial(() -> false);
     /** How long a reload that could read nothing waits before it tries once more. */
     private static final long RELOAD_RETRY_MS = 5_000;
     /**
@@ -206,7 +231,7 @@ final class HttpAdminServer {
     private final Map<String, Integer> hostConnections = new java.util.HashMap<>();
     /**
      * Rate-limits password guessing per address. Lives for as long as the server does rather than
-     * per connection, since every response here closes its connection and an attacker gets a fresh
+     * per connection, since a refused request closes its connection and an attacker gets a fresh
      * one per attempt.
      */
     private final AuthThrottle authThrottle = new AuthThrottle();
@@ -301,9 +326,9 @@ final class HttpAdminServer {
     }
 
     /**
-     * Serves the certificate now chosen from the next connection on, without closing the socket:
-     * every response closes its connection, so the next request a browser makes is already
-     * shaken hands with the new one. A restart of the whole server would have cut the answer that
+     * Serves the certificate now chosen from the next connection on, without closing the listening
+     * socket: the connection that asked closes after its answer and the kept ones close at once,
+     * so the browser's next one shakes hands with the new certificate. A restart of the whole server would have cut the answer that
      * said the upload was kept. Called after an upload, a removal and a change of the choice,
      * from any surface, and at the first unlock when an upload could not be read before it.
      */
@@ -346,6 +371,13 @@ final class HttpAdminServer {
             }
             served = loaded;
             publish(loaded);
+        }
+        // The answer to the request that asked for this, if one is being served on this thread,
+        // closes its connection, and the kept connections waiting for a next request close now:
+        // the browser's next fetch shakes hands with the new certificate (review, 2026-10-05).
+        keepOpen.set(false);
+        for (Socket idle : idleKept) {
+            closeQuietly(idle);
         }
         Log.i(TAG, "Web admin now serves " + (!loaded.secure() ? "plain HTTP"
                 : loaded.uploaded ? "the uploaded certificate" : "this panel's own certificate"));
@@ -544,144 +576,213 @@ final class HttpAdminServer {
             DeadlineInputStream input = new DeadlineInputStream(plain, REQUEST_DEADLINE_MS);
             output = channel.getOutputStream();
 
-            String requestLine = readLine(input, MAX_REQUEST_LINE_LENGTH);
-            if (requestLine == null || requestLine.isEmpty()) {
-                return;
-            }
-            deadline.cancel(false);
-            deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
-                    REQUEST_DEADLINE_MS, TimeUnit.MILLISECONDS);
-            channel.setSoTimeout(SOCKET_TIMEOUT_MS);
-            String[] parts = requestLine.split(" ", 3);
-            if (parts.length < 2) {
-                writeResponse(output, 400, "text/plain", bytes("Bad Request"));
-                return;
-            }
-            String method = parts[0];
-            String target = parts[1];
-
-            Map<String, String> headers = new HashMap<>();
-            for (int i = 0; i < MAX_HEADER_LINES; i++) {
-                String line = readLine(input, MAX_REQUEST_LINE_LENGTH);
-                if (line == null || line.isEmpty()) {
-                    break;
+            // One request after another on the same connection while each answer keeps it open
+            // (keep-alive); anything else ends the loop and the connection with it.
+            for (int requests = 0; ; requests++) {
+                if (requests > 0) {
+                    idleKept.add(socket);
+                    if (served != certificate) {
+                        // The certificate changed between the answer and here: this
+                        // connection still has the old one (review, 2026-10-05).
+                        return;
+                    }
+                    if (uploadHeld) {
+                        uploadSlot.release();
+                        uploadHeld = false;
+                    }
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            KEEP_ALIVE_IDLE_MS + 1_000, TimeUnit.MILLISECONDS);
+                    input.extend(KEEP_ALIVE_IDLE_MS + 1_000);
+                    try {
+                        channel.setSoTimeout(KEEP_ALIVE_IDLE_MS);
+                    } catch (IOException closedMeanwhile) {
+                        // Closed by a certificate change a moment ago: nothing to say.
+                        return;
+                    }
                 }
-                int colon = line.indexOf(':');
-                if (colon > 0) {
-                    headers.put(line.substring(0, colon).trim().toLowerCase(Locale.ROOT),
-                            line.substring(colon + 1).trim());
+                String requestLine;
+                try {
+                    requestLine = readLine(input, MAX_REQUEST_LINE_LENGTH);
+                    idleKept.remove(socket);
+                } catch (IOException idle) {
+                    if (requests > 0) {
+                        // A kept connection nobody used again: closed without a word in the log.
+                        return;
+                    }
+                    throw idle;
                 }
-            }
-
-            // Credentials first, body second, always. The picture upload is allowed megabytes,
-            // and reading them before judging the password would let anyone on the network have
-            // this panel allocate 24 MB per worker thread on demand, an OutOfMemoryError that no
-            // barrier below catches (2026-09-09 review). Answering a request before its body is
-            // read is what every HTTP server does with a 401, and this server closes the
-            // connection after every response anyway.
-            String remoteHost = remoteHostOf(socket);
-            // elapsedRealtime, not wall time: a lockout must not be escapable by setting the clock,
-            // and must not stall while the device is suspended.
-            long nowMs = android.os.SystemClock.elapsedRealtime();
-            long lockedForMs = authThrottle.lockedOutFor(remoteHost, nowMs);
-            if (lockedForMs > 0L) {
-                // 429 with Retry-After rather than another 401. It is the honest answer, it tells a
-                // legitimate operator who mistyped their password how long to wait instead of
-                // leaving them guessing, and refusing here costs no worker thread, which is the
-                // whole reason this throttles by refusing rather than by sleeping.
-                Map<String, String> extra = new HashMap<>();
-                extra.put("Retry-After", Long.toString((lockedForMs + 999L) / 1000L));
-                writeResponse(output, 429, "text/plain",
-                        bytes("Too Many Requests"), extra);
-                return;
-            }
-            if (!isAuthorized(headers.get("authorization"))) {
-                if (authThrottle.recordFailure(remoteHost, nowMs)) {
-                    KioskRuntimeState.recordAuthLockout(remoteHost);
-                    // Only when a lockout begins. Logging every failure would let anyone on the LAN
-                    // fill this panel's log by guessing, which is a denial of service wearing the
-                    // costume of an audit trail. Never logs the credential that was tried.
-                    Log.w(TAG, "Web admin authentication failed "
-                            + AuthThrottle.FAILURES_BEFORE_LOCKOUT + " times from " + remoteHost
-                            + "; that address is now refused for "
-                            + (authThrottle.lockedOutFor(remoteHost, nowMs) / 1000L) + "s");
-                }
-                Map<String, String> extra = new HashMap<>();
-                extra.put("WWW-Authenticate", "Basic realm=\"Muralis\"");
-                writeResponse(output, 401, "text/plain", bytes("Unauthorized"), extra);
-                return;
-            }
-            authThrottle.recordSuccess(remoteHost, nowMs);
-            if (method.equals("POST")) {
-                String refusal = crossSiteRefusal(headers);
-                if (refusal != null) {
-                    writeResponse(output, 403, "text/plain", bytes("Forbidden: " + refusal));
+                if (requestLine == null || requestLine.isEmpty()) {
                     return;
                 }
-            }
-            String requestPath = target.split("\\?", 2)[0];
-            if (method.equals("GET") && requestPath.equals("/camera/stream")) {
-                // The stream lasts as long as the viewer does; the request deadline that
-                // closes a slow connection would cut it at eight seconds.
-                deadline.cancel(false);
-            }
-            boolean upload = method.equals("POST") && requestPath.equals("/api/pictures");
-            if (upload) {
-                uploadHeld = uploadSlot.tryAcquire();
-                if (!uploadHeld) {
-                    writeResponse(output, 503, "text/plain", bytes("Another upload is in progress"),
-                            Collections.singletonMap("Retry-After", "5"));
-                    return;
-                }
-                input.extend(UPLOAD_DEADLINE_MS);
+                answered.set(false);
+                input.extend(REQUEST_DEADLINE_MS);
                 deadline.cancel(false);
                 deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
-                        UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
-            }
-            byte[] body;
-            try {
-                boolean order = method.equals("POST")
-                        && requestPath.equals("/api/playlists/order");
-                boolean document = method.equals("POST")
-                        && (requestPath.equals("/api/automations")
-                                || requestPath.equals("/api/sensors/settings")
-                                || requestPath.equals("/api/beacons/names"));
-                boolean certificateUpload = method.equals("POST")
-                        && (requestPath.equals("/api/certificate")
-                                || (requestPath.equals("/") && isMultipart(headers)));
-                body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
-                        : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES
-                        : certificateUpload ? MAX_CERTIFICATE_BYTES : MAX_BODY_BYTES);
-            } catch (BodyTooLargeException tooLarge) {
-                if (requestPath.equals("/") && method.equals("POST") && isMultipart(headers)) {
-                    // A file picked by mistake on the page's upload: the page, with the reason
-                    // in the certificate block, not a bare line of text (review, 2026-10-05).
-                    // What the browser is sending is read first, within the picture upload's
-                    // budget: answered before it and closed after the half second a lingering
-                    // close drains, a 5 MB photo on its way over Wi-Fi ended in a connection
-                    // reset instead of this page (Chrome and Firefox, measured on the phone).
-                    if (tooLarge.declared <= MAX_UPLOAD_BYTES) {
-                        input.extend(UPLOAD_DEADLINE_MS);
-                        deadline.cancel(false);
-                        deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
-                                UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
-                        drain(input, tooLarge.declared);
-                    }
-                    writeResponse(output, 413, "text/html; charset=utf-8",
-                            bytes(buildSettingsPage("Not uploaded: the files are larger than "
-                                    + (MAX_CERTIFICATE_BYTES / 1024) + " KB, and a certificate "
-                                    + "with its key takes a few.", "certificate")));
+                        REQUEST_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                channel.setSoTimeout(SOCKET_TIMEOUT_MS);
+                String[] parts = requestLine.split(" ", 3);
+                if (parts.length < 2) {
+                    writeResponse(output, 400, "text/plain", bytes("Bad Request"));
                     return;
                 }
-                writeResponse(output, 413, "text/plain",
-                        bytes("Payload Too Large: " + tooLarge.getMessage()));
-                return;
+                String method = parts[0];
+                String target = parts[1];
+
+                Map<String, String> headers = new HashMap<>();
+                boolean headersWhole = false;
+                boolean lengthsDiffer = false;
+                for (int i = 0; i < MAX_HEADER_LINES; i++) {
+                    String line = readLine(input, MAX_REQUEST_LINE_LENGTH);
+                    if (line == null || line.isEmpty()) {
+                        headersWhole = line != null;
+                        break;
+                    }
+                    int colon = line.indexOf(':');
+                    if (colon > 0) {
+                        String name = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
+                        String value = line.substring(colon + 1).trim();
+                        lengthsDiffer |= name.equals("content-length")
+                                && headers.containsKey(name) && !headers.get(name).equals(value);
+                        headers.put(name, value);
+                    }
+                }
+                String declaredLength = headers.get("content-length");
+                if (lengthsDiffer || (declaredLength != null
+                        && !declaredLength.matches("[0-9]{1,10}"))) {
+                    // A length that is not one plain number cannot say where this request ends,
+                    // and on a kept connection the rest would be read as the next request.
+                    writeResponse(output, 400, "text/plain", bytes("Bad Request: Content-Length"));
+                    return;
+                }
+
+                // Credentials first, body second, always. The picture upload is allowed megabytes,
+                // and reading them before judging the password would let anyone on the network have
+                // this panel allocate 24 MB per worker thread on demand, an OutOfMemoryError that
+                // no barrier below catches (2026-09-09 review). Answering a request before its body
+                // is read is what every HTTP server does with a 401, and every answer written
+                // before the body is read closes the connection.
+                String remoteHost = remoteHostOf(socket);
+                // elapsedRealtime, not wall time: a lockout must not be escapable by setting the
+                // clock, and must not stall while the device is suspended.
+                long nowMs = android.os.SystemClock.elapsedRealtime();
+                long lockedForMs = authThrottle.lockedOutFor(remoteHost, nowMs);
+                if (lockedForMs > 0L) {
+                    // 429 with Retry-After rather than another 401. It is the honest answer, it
+                    // tells a legitimate operator who mistyped their password how long to wait
+                    // instead of leaving them guessing, and refusing here costs no worker thread,
+                    // which is the whole reason this throttles by refusing rather than by sleeping.
+                    Map<String, String> extra = new HashMap<>();
+                    extra.put("Retry-After", Long.toString((lockedForMs + 999L) / 1000L));
+                    writeResponse(output, 429, "text/plain",
+                            bytes("Too Many Requests"), extra);
+                    return;
+                }
+                if (!isAuthorized(headers.get("authorization"))) {
+                    if (authThrottle.recordFailure(remoteHost, nowMs)) {
+                        KioskRuntimeState.recordAuthLockout(remoteHost);
+                        // Only when a lockout begins. Logging every failure would let anyone on the
+                        // LAN fill this panel's log by guessing, which is a denial of service
+                        // wearing the costume of an audit trail. Never logs the credential that was
+                        // tried.
+                        Log.w(TAG, "Web admin authentication failed "
+                                + AuthThrottle.FAILURES_BEFORE_LOCKOUT + " times from " + remoteHost
+                                + "; that address is now refused for "
+                                + (authThrottle.lockedOutFor(remoteHost, nowMs) / 1000L) + "s");
+                    }
+                    Map<String, String> extra = new HashMap<>();
+                    extra.put("WWW-Authenticate", "Basic realm=\"Muralis\"");
+                    writeResponse(output, 401, "text/plain", bytes("Unauthorized"), extra);
+                    return;
+                }
+                authThrottle.recordSuccess(remoteHost, nowMs);
+                if (method.equals("POST")) {
+                    String refusal = crossSiteRefusal(headers);
+                    if (refusal != null) {
+                        writeResponse(output, 403, "text/plain", bytes("Forbidden: " + refusal));
+                        return;
+                    }
+                }
+                String requestPath = target.split("\\?", 2)[0];
+                if (method.equals("GET") && requestPath.equals("/camera/stream")) {
+                    // The stream lasts as long as the viewer does; the request deadline that
+                    // closes a slow connection would cut it at eight seconds.
+                    deadline.cancel(false);
+                }
+                boolean upload = method.equals("POST") && requestPath.equals("/api/pictures");
+                if (upload) {
+                    uploadHeld = uploadSlot.tryAcquire();
+                    if (!uploadHeld) {
+                        writeResponse(output, 503, "text/plain",
+                                bytes("Another upload is in progress"),
+                                Collections.singletonMap("Retry-After", "5"));
+                        return;
+                    }
+                    input.extend(UPLOAD_DEADLINE_MS);
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                }
+                byte[] body;
+                try {
+                    boolean order = method.equals("POST")
+                            && requestPath.equals("/api/playlists/order");
+                    boolean document = method.equals("POST")
+                            && (requestPath.equals("/api/automations")
+                                    || requestPath.equals("/api/sensors/settings")
+                                    || requestPath.equals("/api/beacons/names"));
+                    boolean certificateUpload = method.equals("POST")
+                            && (requestPath.equals("/api/certificate")
+                                    || (requestPath.equals("/") && isMultipart(headers)));
+                    body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
+                            : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES
+                            : certificateUpload ? MAX_CERTIFICATE_BYTES : MAX_BODY_BYTES);
+                } catch (BodyTooLargeException tooLarge) {
+                    if (requestPath.equals("/") && method.equals("POST") && isMultipart(headers)) {
+                        // A file picked by mistake on the page's upload: the page, with the reason
+                        // in the certificate block, not a bare line of text (review, 2026-10-05).
+                        // What the browser is sending is read first, within the picture upload's
+                        // budget: answered before it and closed after the half second a lingering
+                        // close drains, a 5 MB photo on its way over Wi-Fi ended in a connection
+                        // reset instead of this page (Chrome and Firefox, measured on the phone).
+                        if (tooLarge.declared <= MAX_UPLOAD_BYTES) {
+                            input.extend(UPLOAD_DEADLINE_MS);
+                            deadline.cancel(false);
+                            deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                                    UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                            drain(input, tooLarge.declared);
+                        }
+                        writeResponse(output, 413, "text/html; charset=utf-8",
+                                bytes(buildSettingsPage("Not uploaded: the files are larger than "
+                                        + (MAX_CERTIFICATE_BYTES / 1024) + " KB, and a certificate "
+                                        + "with its key takes a few.", "certificate")));
+                        return;
+                    }
+                    writeResponse(output, 413, "text/plain",
+                            bytes("Payload Too Large: " + tooLarge.getMessage()));
+                    return;
+                }
+
+
+                keepOpen.set(mayKeepOpen(method, parts, headers, headersWhole, requests));
+                answeredOpen.set(false);
+                try {
+                    // Whether this request came over TLS, from the connection itself: a reload
+                    // can change what the server serves while a request is on its way (review,
+                    // 2026-10-05).
+                    route(method, target, headers, body, output, socket,
+                            channel instanceof SSLSocket);
+                } finally {
+                    keepOpen.set(false);
+                }
+                // Closed too when the certificate changed since this connection's handshake, so
+                // the page that announces a new certificate is fetched on a connection that has
+                // it (review, 2026-10-05).
+                if (!answeredOpen.get() || served != certificate) {
+                    return;
+                }
+                answeredOpen.set(false);
             }
-
-
-            // Whether this request came over TLS, from the connection itself: a reload can change
-            // what the server serves while a request is on its way (review, 2026-10-05).
-            route(method, target, headers, body, output, socket, channel instanceof SSLSocket);
         } catch (IOException exception) {
             Log.w(TAG, "HTTP admin connection error", exception);
         } catch (RuntimeException | OutOfMemoryError unexpected) {
@@ -701,8 +802,13 @@ final class HttpAdminServer {
             // Fail soft like the rest of the app: log it, answer 500, keep serving.
             Log.w(TAG, "HTTP admin request failed", unexpected);
             try {
-                writeResponse(output != null ? output : channel.getOutputStream(), 500,
-                        "text/plain", bytes("Internal Server Error"));
+                // Only where nothing was answered yet: a 500 after a whole answer would reach a
+                // browser that may read it as the answer to its next request (review,
+                // 2026-10-05). The connection closes either way.
+                if (!answered.get()) {
+                    writeResponse(output != null ? output : channel.getOutputStream(), 500,
+                            "text/plain", bytes("Internal Server Error"));
+                }
             } catch (IOException | RuntimeException ignored) {
                 // The socket is already unusable, or the response was partly written. Nothing left
                 // to say to this client; the point was to survive, and we have.
@@ -711,6 +817,10 @@ final class HttpAdminServer {
             if (deadline != null) deadline.cancel(false);
             if (uploadHeld) uploadSlot.release();
             liveSockets.remove(socket);
+            idleKept.remove(socket);
+            keepOpen.set(false);
+            answeredOpen.set(false);
+            answered.set(false);
             if (tlsToRelease != null) {
                 // Sends the TLS close_notify where there was a session, and frees the native one
                 // now rather than at GC. autoClose was false, so the raw socket below is still
@@ -3048,6 +3158,8 @@ final class HttpAdminServer {
             output.write(("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; "
                     + "boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
                     .getBytes(StandardCharsets.US_ASCII));
+            // Answered: a failure from here on ends the stream, never adds a 500 to it.
+            answered.set(true);
             long waitingSinceMs = System.currentTimeMillis();
             while (camera.open()) {
                 byte[] jpeg = camera.snapshot();
@@ -5233,19 +5345,23 @@ final class HttpAdminServer {
         if (lengthHeader == null) {
             return new byte[0];
         }
-        int length;
+        long declared;
         try {
-            length = Integer.parseInt(lengthHeader.trim());
+            declared = Long.parseLong(lengthHeader.trim());
         } catch (NumberFormatException invalid) {
             return new byte[0];
         }
-        if (length <= 0) {
+        if (declared <= 0) {
             return new byte[0];
         }
-        if (length > limit) {
-            throw new BodyTooLargeException("the request carries " + length + " bytes, the limit is "
-                    + limit, length);
+        // Read as a long: ten digits pass the request's check, and one past an int's range read
+        // as no body at all left a kept connection to take the body for the next request
+        // (review, 2026-10-05).
+        if (declared > limit) {
+            throw new BodyTooLargeException("the request carries " + declared
+                    + " bytes, the limit is " + limit, (int) Math.min(declared, Integer.MAX_VALUE));
         }
+        int length = (int) declared;
         byte[] body = new byte[length];
         int read = 0;
         while (read < length) {
@@ -5263,6 +5379,22 @@ final class HttpAdminServer {
         writeResponse(output, status, contentType, body, Collections.emptyMap());
     }
 
+    /**
+     * Whether the answer to this request may keep the connection open: a GET or a POST of
+     * HTTP/1.1, read whole (its headers ended on their blank line; a chunked body is not read
+     * here, so it could not be), not asking to close, within {@link #KEEP_ALIVE_MAX_REQUESTS}.
+     * Anything left unread would be taken for the next request (review, 2026-10-05). A HEAD would be answered with a body the
+     * client does not read, so it closes, as does everything answered before its body was read.
+     */
+    private static boolean mayKeepOpen(String method, String[] requestLine,
+            Map<String, String> headers, boolean headersWhole, int requests) {
+        return (method.equals("GET") || method.equals("POST"))
+                && requestLine.length > 2 && requestLine[2].trim().equals("HTTP/1.1")
+                && !"close".equalsIgnoreCase(String.valueOf(headers.get("connection")).trim())
+                && !headers.containsKey("transfer-encoding")
+                && headersWhole && requests + 1 < KEEP_ALIVE_MAX_REQUESTS;
+    }
+
     private static void writeResponse(
             OutputStream output, int status, String contentType, byte[] body,
             Map<String, String> extraHeaders) throws IOException {
@@ -5271,7 +5403,11 @@ final class HttpAdminServer {
                 .append("\r\n");
         header.append("Content-Type: ").append(contentType).append("\r\n");
         header.append("Content-Length: ").append(body.length).append("\r\n");
-        header.append("Connection: close\r\n");
+        boolean open = keepOpen.get();
+        answered.set(true);
+        header.append(open ? "Connection: keep-alive\r\nKeep-Alive: timeout="
+                + (KEEP_ALIVE_IDLE_MS / 1000) + "\r\n" : "Connection: close\r\n");
+        answeredOpen.set(open);
         for (Map.Entry<String, String> entry : extraHeaders.entrySet()) {
             header.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
         }
@@ -5334,8 +5470,9 @@ final class HttpAdminServer {
     /**
      * Closes a connection the way a web server has to: FIN first, then drain, then close.
      *
-     * <p>Every response here carries {@code Connection: close}, and several of them are written
-     * <em>before</em> the request body has been read, deliberately: a 401, a 403, a 413 and a 503
+     * <p>A connection ends here after an answer that closes it, or once a kept one has gone idle,
+     * and several closing answers are written <em>before</em> the request body has been read,
+     * deliberately: a 401, a 403, a 413 and a 503
      * all answer without allocating megabytes. That leaves bytes in the receive buffer, and
      * closing a socket with unread received data makes the kernel send an RST instead of a FIN
      * (RFC 1122's rule, and Linux implements it), which throws away the reply the client has not

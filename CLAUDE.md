@@ -141,8 +141,8 @@ the playlist page was the case that set the rule.
   a browser shows two warnings, authority and name, and one click accepts both). **The key pair
   was in the Android Keystore until 2026-09-24, and that is why the playlist page failed:**
   the hardware signed every handshake at about 0.4 s on the Huawei tablet (a full handshake
-  0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response closes its connection, and
-  a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
+  0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response then closed its connection,
+  and a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
   deadline (8 s since 2026-09-30, when a lossy Wi-Fi link lost one request in seven to it): `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
   Nineteen parallel curls against the tablet all failed, seven refused at the per-host cap and
   twelve cut at 2.05 s. A software key signs in under a millisecond. The old Keystore alias is
@@ -203,8 +203,8 @@ the playlist page was the case that set the rule.
   panel's own is, and both surfaces say why in red (`config.http_certificate_problem`; at the
   first unlock the service has it read again). A change of certificate swaps the TLS factory in
   place (`HttpAdminServer.reloadCertificate`), so the answer that says it was kept is not cut by
-  a restart, and the next connection, every response closing its own, shakes hands with the new
-  one; only the latest reload asked for publishes, a reload that can read nothing at that moment
+  a restart, and the next connection shakes hands with the new one (the connection that asked
+  closes after its answer, and kept ones close; see the keep-alive bullet); only the latest reload asked for publishes, a reload that can read nothing at that moment
   keeps the certificate already served rather than fall to plain HTTP and tries once more five
   seconds later, and one finishing after `stop()` publishes nothing. The server holds
   the certificate served as one object, read once per connection. The web page reloads itself
@@ -1524,6 +1524,19 @@ the playlist page was the case that set the rule.
   at 162 to 187 MB and the renderer at 95 to 126 MB across dashboard, second WebView, one picture,
   repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
   renderer death, and file descriptors steady at 188 to 191 (210 while the second WebView is up).
+- **A connection is kept open between requests** (keep-alive, 2026-10-05): a GET or POST of
+  HTTP/1.1 read whole (headers ended on their blank line, a Content-Length that is one plain
+  number, else 400 and close) is answered `Connection: keep-alive`, the next request is awaited on the
+  same connection for 3 s (`KEEP_ALIVE_IDLE_MS`), up to 100 requests, so a page and its burst of
+  scripts and thumbnails share one TLS handshake per connection. Everything answered before its
+  body was read (a refusal, a 401, a 413), a HEAD, HTTP/1.0, a chunked body, `Connection: close`
+  and the camera stream still close; an idle kept connection closes without a log line. A
+  change of certificate closes the connection that asked for it after its answer, every kept
+  connection waiting for a next request, and any that shook hands with the old one, so the page
+  announcing a certificate is fetched with it; the 500 of the failure barrier is written only
+  where nothing was answered yet. Measured
+  on the tablet: five requests on one connection in 0.73 s, the idle close at 3.0 s, the
+  thumbnail page whole in Chrome and Firefox, the per-host cap unchanged.
 - **The HTTPS server's capacity is sized for a browser, not for curl.** 16 workers, 12 connections
   per host, a queue depth of 8, and a socket that has sent nothing by 8 s is closed (2 s until
   2026-10-01, when a lossy Wi-Fi link cut one request in seven; the per-host cap still bounds
