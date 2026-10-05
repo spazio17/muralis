@@ -135,8 +135,16 @@
          as required and hide the app from any device without a Wi-Fi radio. A wall panel on
          PoE Ethernet is exactly such a device. The service copes with a missing WifiManager. -->
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <!-- The same for the sensors, every one optional: BLUETOOTH and BLUETOOTH_ADMIN imply
+         android.hardware.bluetooth, and CAMERA implies android.hardware.camera (a camera on the
+         back) and its autofocus, which camera.any does not cancel. Play counted 409 devices
+         lost on the 0.6.2 upload, most of them tablets with a front camera alone, Chromebooks
+         and cars (2026-10-05); aapt2 dump badging lists what is implied. -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
