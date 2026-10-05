@@ -630,6 +630,10 @@ public final class KioskActivity extends Activity {
                 anythingToRepaint = true;
             }
             if (anythingToRepaint) {
+                // One tick at a time: a page drawn again from this run (a list or a beacon
+                // that changed) has posted the tick for itself, and two would then each
+                // repaint every second until the next page.
+                mainHandler.removeCallbacks(this);
                 mainHandler.postDelayed(this, OVERLAY_REFRESH_MS);
             }
         }
@@ -3822,7 +3826,50 @@ public final class KioskActivity extends Activity {
                 sensorCountView.setText(count);
             }
         }
+        repaintBeaconLines();
         return alive;
+    }
+
+    /**
+     * The Bluetooth beacons page's Beacons card, the line under each name box by beacon id,
+     * and which beacons it was drawn with (Beacons.listKey). The lines follow the tick as the
+     * row's count does; they kept the distance the page was drawn with (2026-10-05).
+     */
+    private LinearLayout beaconList;
+    private final java.util.Map<String, TextView> beaconLines = new java.util.HashMap<>();
+    private String beaconListKey = "";
+
+    /**
+     * Repaints the beacons' lines from what the scan hears now, and draws the page again when
+     * a beacon is heard for the first time or forgotten, never while a box has the focus, so
+     * a name being typed is not lost; the lines of the beacons still listed follow meanwhile.
+     */
+    private void repaintBeaconLines() {
+        LinearLayout list = beaconList;
+        if (list == null) {
+            return;
+        }
+        if (!list.isAttachedToWindow()) {
+            // The page has gone; the next one that lists beacons sets these again.
+            beaconList = null;
+            beaconLines.clear();
+            return;
+        }
+        Beacons beacons = KioskService.beaconsOf(this);
+        java.util.Map<String, String> lines = beacons == null
+                ? java.util.Collections.<String, String>emptyMap() : beacons.lines();
+        for (java.util.Map.Entry<String, TextView> entry : beaconLines.entrySet()) {
+            String line = lines.get(entry.getKey());
+            TextView view = entry.getValue();
+            if (line != null && !line.contentEquals(view.getText())) {
+                view.setText(line);
+            }
+        }
+        if (!Beacons.listKey(lines.keySet()).equals(beaconListKey)
+                && !(getCurrentFocus() instanceof EditText) && currentScreen != null) {
+            beaconList = null;
+            redrawInPlace(currentScreen);
+        }
     }
 
     private static final int REQUEST_SENSOR_PERMISSION = 22;
@@ -4994,8 +5041,11 @@ public final class KioskActivity extends Activity {
             // beacon is renamed (2026-10-04).
             LinearLayout list = card(theme, "Beacons");
             Beacons beacons = KioskService.beaconsOf(this);
-            java.util.List<Beacons.Seen> heard = beacons == null
-                    ? java.util.Collections.<Beacons.Seen>emptyList() : beacons.listed();
+            java.util.Map<String, String> heard = beacons == null
+                    ? java.util.Collections.<String, String>emptyMap() : beacons.lines();
+            beaconLines.clear();
+            beaconList = list;
+            beaconListKey = Beacons.listKey(heard.keySet());
             if (heard.isEmpty()) {
                 TextView none = new FlushText(this);
                 none.setText("No beacon has been heard yet.");
@@ -5004,13 +5054,14 @@ public final class KioskActivity extends Activity {
                 LinearLayout.LayoutParams noneParams = matchWrap();
                 list.addView(none, noneParams);
             } else {
-                java.util.List<Beacons.Seen> reach = beacons.inReach();
                 NamedList beaconNames = KioskConfig.beaconNames(this);
-                for (Beacons.Seen seen : heard) {
+                for (java.util.Map.Entry<String, String> line : heard.entrySet()) {
+                    String id = line.getKey();
                     // Words, not a machine value: the prose box (review, 2026-10-01).
-                    EditText name = proseInput(theme, beaconNames.name(seen.id));
-                    addField(list, theme, "Name", name,
-                            seen.id + ", " + beacons.describe(seen, reach.contains(seen)));
+                    EditText name = proseInput(theme, beaconNames.name(id));
+                    addField(list, theme, "Name", name, line.getValue());
+                    // The line under the box, repainted on the tick (repaintBeaconLines).
+                    beaconLines.put(id, (TextView) list.getChildAt(list.getChildCount() - 1));
                     // Why a name is refused, in red under its box, as on the other fields.
                     TextView nameProblem = new FlushText(this);
                     nameProblem.setTextColor(theme.bad);
@@ -5021,17 +5072,17 @@ public final class KioskActivity extends Activity {
                     list.addView(nameProblem, nameProblemParams);
                     Runnable store = () -> {
                         String typed = name.getText().toString().trim();
-                        String problem = Sensors.checkBeaconName(seen.id, typed);
+                        String problem = Sensors.checkBeaconName(id, typed);
                         if (problem != null) {
                             nameProblem.setText("Not saved: " + problem + ".");
                             nameProblem.setVisibility(View.VISIBLE);
                             return;
                         }
                         nameProblem.setVisibility(View.GONE);
-                        KioskConfig.beaconName(this, seen.id, typed);
-                        TextView calibrated = calibratedBeaconNames.get(seen.id);
+                        KioskConfig.beaconName(this, id, typed);
+                        TextView calibrated = calibratedBeaconNames.get(id);
                         if (calibrated != null) {
-                            calibrated.setText(typed.isEmpty() ? seen.id : typed);
+                            calibrated.setText(typed.isEmpty() ? id : typed);
                         }
                         KioskService.publishTelemetrySoon(this);
                     };

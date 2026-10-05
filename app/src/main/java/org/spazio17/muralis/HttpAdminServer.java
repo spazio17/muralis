@@ -2489,28 +2489,35 @@ final class HttpAdminServer {
         return rows.append("</ul>").toString();
     }
 
-    /** The beacons heard, each with a box for its name. */
+    /**
+     * The beacons heard, each with a box for its name and its line under it. The stats poll
+     * repaints the lines ({@code data-beacon}, from {@code beacon_lines}) and fetches the list
+     * again when its key moves ({@code lists.beacons}), so a beacon heard after the page loaded
+     * appears; the lines kept the state the page was drawn with (2026-10-05).
+     */
     private String beaconRows() {
         Beacons beacons = kioskService.beacons();
-        java.util.List<Beacons.Seen> heard = beacons == null
-                ? Collections.<Beacons.Seen>emptyList() : beacons.listed();
+        java.util.Map<String, String> heard = beacons == null
+                ? Collections.<String, String>emptyMap() : beacons.lines();
+        StringBuilder rows = new StringBuilder("<div id=\"beacon-rows\" data-lists-kind=\"beacons\""
+                + " data-lists=\"" + escapeHtml(Beacons.listKey(heard.keySet())) + "\">");
         if (heard.isEmpty()) {
-            return "<p class=\"hint\">No beacon has been heard yet.</p>";
+            return rows.append("<p class=\"hint\">No beacon has been heard yet.</p></div>")
+                    .toString();
         }
-        java.util.List<Beacons.Seen> reach = beacons.inReach();
-        StringBuilder rows = new StringBuilder("<ul class=\"list gap\">");
+        rows.append("<ul class=\"list gap\">");
         NamedList names = KioskConfig.beaconNames(context);
-        for (Beacons.Seen one : heard) {
-            String name = names.name(one.id);
-            String state = beacons.describe(one, reach.contains(one));
+        for (Map.Entry<String, String> line : heard.entrySet()) {
+            String id = line.getKey();
             rows.append("<li class=\"two\"><span class=\"lead\">").append(glyph("bluetooth"))
                     .append("</span><span class=\"text\">")
-                    .append(fieldWithId("beacon-" + one.id.hashCode(), "text", null, "Name", name,
-                            " data-setting=\"sensor_option_beacon_" + escapeHtml(one.id) + "\"",
-                            one.id + ", " + state))
+                    .append(fieldWithId("beacon-" + id.hashCode(), "text", null, "Name",
+                            names.name(id),
+                            " data-setting=\"sensor_option_beacon_" + escapeHtml(id) + "\"",
+                            line.getValue(), " data-beacon=\"" + escapeHtml(id) + "\""))
                     .append("</span></li>");
         }
-        return rows.append("</ul>").toString();
+        return rows.append("</ul></div>").toString();
     }
 
     /** Stores one setting of a sensor's page, checked by key; the rules are Sensors.checkOption. */
@@ -5043,12 +5050,19 @@ final class HttpAdminServer {
      */
     private static String fieldWithId(String id, String type, String name, String label,
             String value, String extraAttributes, String support) {
+        return fieldWithId(id, type, name, label, value, extraAttributes, support, "");
+    }
+
+    /** The same, {@code supportAttributes} on the helper line, for a script to find it. */
+    private static String fieldWithId(String id, String type, String name, String label,
+            String value, String extraAttributes, String support, String supportAttributes) {
         return "<div class=\"field\"><input type=\"" + type + "\" id=\"" + id + "\""
                 + (name == null ? "" : " name=\"" + name + "\"")
                 + " value=\"" + escapeHtml(value) + "\" placeholder=\" \""
                 + (type.equals("text") ? MACHINE_TEXT : "") + extraAttributes + ">"
                 + "<label for=\"" + id + "\">" + escapeHtml(label) + "</label>"
-                + (support == null ? "" : "<p class=\"support\">" + escapeHtml(support) + "</p>")
+                + (support == null ? "" : "<p class=\"support\"" + supportAttributes + ">"
+                        + escapeHtml(support) + "</p>")
                 + "</div>";
     }
 
