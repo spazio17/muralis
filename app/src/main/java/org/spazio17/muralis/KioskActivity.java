@@ -6528,18 +6528,19 @@ public final class KioskActivity extends Activity {
         group.removeAllViews();
         PictureLibrary library = PictureLibrary.get(this);
         if (!library.browsesOwnStorage()) {
-            // An ordinary install before anybody has answered the dialog. Not an error, and not a
-            // reason to hide the feature: the permission is the whole of what is missing.
+            // An ordinary install before anybody has answered the dialog, or one that said no.
+            // Not an error, and no longer a reason to hide the playlists: uploaded pictures live
+            // in Muralis's own files and need no permission (2026-10-05; before, nothing worked
+            // without it, uploads included). The permission is only what the panel's own
+            // pictures need.
             TextView why = new FlushText(this);
             why.setTextColor(theme.subtext);
             why.setTextSize(12);
-            why.setText("Muralis needs permission to read this panel's pictures before it can "
-                    + "show you any folders.");
+            why.setText(PictureLibrary.OWN_PICTURES_NEED_PERMISSION);
             group.addView(why, matchWrapClose());
             Button allow = secondaryButton(theme, "Allow Muralis to read pictures");
             allow.setOnClickListener(view -> requestPicturePermission());
             group.addView(buttonRow(allow), matchWrap());
-            return;
         }
         PlaylistDocument document = library.playlists().load();
         List<PlaylistDocument.Playlist> all = document.all();
@@ -6822,7 +6823,7 @@ public final class KioskActivity extends Activity {
         boolean allowed = library.browser().canReadStorage();
         Toast.makeText(this, allowed
                 ? "Muralis can read this panel's pictures now."
-                : "Without that permission the Pictures screensaver cannot be set up here.",
+                : PictureLibrary.OWN_PICTURES_NEED_PERMISSION,
                 Toast.LENGTH_LONG).show();
         if (currentScreen != null && configurationVisible) {
             redrawInPlace(currentScreen);
@@ -7197,7 +7198,9 @@ public final class KioskActivity extends Activity {
                 }
                 screen.tree = tree;
                 screen.uploadCount = uploads;
-                screen.treeProblem = problem;
+                // The sentence the web admin's folder list has, where the permission is missing.
+                screen.treeProblem = library.browsesOwnStorage() || problem == null ? problem
+                        : PictureLibrary.OWN_PICTURES_NEED_PERMISSION;
                 paintFolderPane(screen);
             });
         });

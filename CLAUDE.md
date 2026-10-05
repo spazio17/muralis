@@ -1443,10 +1443,20 @@ the playlist page was the case that set the rule.
   refused with the names that do exist. The select's "no playlist" option is the word `None`,
   because a select cannot hold an empty option, so the panel treats that word as none unless a
   playlist is actually called that; without it, clearing the playlist from a card was refused
-  (found over MQTT, 2026-09-10). Uploads appear as their own folder in the browser, but on an
-  ordinary install that refused the picture permission the browser does not open at all, so today
-  neither the panel's pictures nor the uploads can be put in a playlist there (found 2026-09-25;
-  whether uploads should work without it is an open product question).
+  (found over MQTT, 2026-09-10). Uploads appear as their own folder in the browser, and **work
+  without the picture permission** (2026-10-05; found 2026-09-25 that nothing did): on an
+  ordinary install that refused it, the playlists, the playlist page and the Uploaded folder stay
+  on both surfaces, and the upload on the web admin, where it always was, with one sentence (`PictureLibrary.OWN_PICTURES_NEED_PERMISSION`)
+  and on the panel the Allow button, since only the panel's own pictures need it. **A picture
+  whose file is gone keeps its name**: every label the playlist page lists is remembered by
+  address (`last_names.json` beside the captions, written once a moment after a listing, pruned to
+  what some playlist holds), so a gone one reads "./Pictures/Italy/rome.jpg (not found)" where it
+  read "186 (not found)", and without the permission a held picture shows that name too, never
+  "not found". **Android 14's partial grant ("Allow limited access") is not a licence to drop**:
+  the store answers only for the photos somebody picked, so a picture is called gone, and taken
+  out of its playlist, only with the full permission (`PictureBrowser.readsEveryPicture`); found
+  on the Pixel 2026-10-05 by reading the cleanup, and checked there after the fix (a playlist kept
+  its two unpicked pictures through a screensaver run under the partial grant).
 - **Captions and uploads.** A caption is keyed by the picture's own address, at most 200
   characters, and there is no file-name fallback any more: reading the name as a fallback is what
   crossed captions between same-named pictures in different folders (a second folder's `pd_2.jpg`

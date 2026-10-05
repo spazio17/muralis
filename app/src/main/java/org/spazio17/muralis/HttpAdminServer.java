@@ -3737,10 +3737,9 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder("<div")
                 .append(shown ? "" : " class=\"gone\"").append(" id=\"screensaver-library\">")
                 .append("<section class=\"card\"><h2>Playlists</h2>");
+        // Without the permission the playlists stay: uploads need none (2026-10-05).
         if (!library.browsesOwnStorage()) {
-            return html.append("<p class=\"hint bad\">This panel may not read its own pictures ")
-                    .append("yet. Allow it on the panel's Screensaver settings; Android will only ")
-                    .append("ask there.</p></section></div>").toString();
+            html.append(ownPicturesHint());
         }
         return html.append("<div id=\"playlist-table\">")
                 .append(playlistTable(library.playlists().load())).append("</div>")
@@ -3983,12 +3982,17 @@ final class HttpAdminServer {
         return separator < 0 ? 0 : boundedToken(token.substring(0, separator), 100_000);
     }
 
+    /**
+     * The hint where the panel may not read its own pictures: uploads work without it, so the
+     * playlists and the Uploaded folder stay (2026-10-05), and Android only asks on the panel.
+     */
+    private static String ownPicturesHint() {
+        return "<p class=\"hint bad\">" + escapeHtml(PictureLibrary.OWN_PICTURES_NEED_PERMISSION)
+                + " Allow it on the panel's Screensaver settings; Android only asks there.</p>";
+    }
+
     /** Why the panels cannot show pictures, as the hint both of them then carry, or null. */
     private static String browserRefusal(PictureLibrary library, String playlistId) {
-        if (!library.browsesOwnStorage()) {
-            return "<p class=\"hint bad\">This panel may not read its own pictures yet. Allow it "
-                    + "on the panel's Screensaver settings; Android will only ask there.</p>";
-        }
         // The playlist this page was opened for, not whichever happens to be playing: the page is
         // per playlist since 2026-09-12, which is what removed the ambiguity the old inline
         // browser had.
@@ -4021,6 +4025,7 @@ final class HttpAdminServer {
             return refusal;
         }
         java.util.List<PictureBrowser.Folder> tree = library.browser().folders();
+        boolean readable = library.browsesOwnStorage();
         java.util.Set<String> parents = new java.util.HashSet<>();
         for (PictureBrowser.Folder folder : tree) {
             if (!folder.path.isEmpty()) {
@@ -4050,7 +4055,9 @@ final class HttpAdminServer {
                     location, playlistId, size, parents.contains(folder.path),
                     open.contains(folder.path), shown));
         }
-        return html.append("</ul>").toString();
+        // The Uploaded folder is above, always there; the panel's own folders need the
+        // permission, and the hint under the list says so.
+        return html.append("</ul>").append(readable ? "" : ownPicturesHint()).toString();
     }
 
 
