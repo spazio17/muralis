@@ -95,6 +95,11 @@ if(out){out.textContent=one.reading||'';}});
 // The camera page's two switches Home Assistant can flip follow the block's attributes.
 if(id==='camera'&&one.attributes){follow('opt-camera_motion',one.attributes.detecting);follow('opt-camera_mqtt',one.attributes.pictures);}
 });
+// Each beacon's line under its name box, worded by the panel, as the row's count is; a beacon
+// heard for the first time or forgotten moves lists.beacons, and the list is fetched again.
+var beaconLines=data.beacon_lines||{};
+Array.prototype.forEach.call(document.querySelectorAll('[data-beacon]'),function(el){
+var line=beaconLines[el.getAttribute('data-beacon')];if(line!=null&&el.textContent!==line){el.textContent=line;}});
 var ss=document.getElementById('sum-sensors');
 // Counted as Sensors.summary counts, every sensor this device has, the panel's own included;
 // leaving those out read "5 of 7" five seconds after the page said "12 of 14" (2026-10-01).

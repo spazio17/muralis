@@ -1106,7 +1106,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 // The web admin box's certificate block follows the panel and the server too.
                 lists.put("certificate",
                         AdminCertificate.stateKey(KioskConfig.certificateFacts(this)));
+                // The Bluetooth beacons page: each beacon's line, repainted where it stands,
+                // and which beacons it lists, so one heard for the first time is drawn.
+                java.util.Map<String, String> beaconLines = beacons == null
+                        ? java.util.Collections.<String, String>emptyMap() : beacons.lines();
+                lists.put("beacons", Beacons.listKey(beaconLines.keySet()));
                 stats.put("lists", lists);
+                stats.put("beacon_lines", new org.json.JSONObject(beaconLines));
             }
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);

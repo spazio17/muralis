@@ -686,6 +686,32 @@ final class Beacons implements Sensors.Reading {
         return list;
     }
 
+    /**
+     * The line under each listed beacon's name, by id in the page's order: its id and its
+     * state, "<id>, in reach, 1.2 m, -63 dBm". Both surfaces draw the list from it and repaint
+     * the lines from it while the page is open, which they did not: a line kept the distance it
+     * had when the page was drawn, and read "out of reach" while the row above said "1 in
+     * reach" (found recording the Play video, 2026-10-05). The reach is judged first, since it
+     * forgets the beacons out of reach for too long.
+     */
+    LinkedHashMap<String, String> lines() {
+        List<Seen> reach = inReach();
+        LinkedHashMap<String, String> lines = new LinkedHashMap<>();
+        for (Seen one : listed()) {
+            lines.put(one.id, one.id + ", " + describe(one, reach.contains(one)));
+        }
+        return lines;
+    }
+
+    /**
+     * A short hash of which beacons a page lists, in order, so a page tells a beacon heard for
+     * the first time, or forgotten, from a line that only changed, and draws the list again.
+     * Compared, never read; empty for none.
+     */
+    static String listKey(java.util.Collection<String> ids) {
+        return ids.isEmpty() ? "" : Integer.toHexString(String.join("\n", ids).hashCode());
+    }
+
     @Override
     public void fill(JSONObject one) throws JSONException {
         List<Seen> reach = inReach();
