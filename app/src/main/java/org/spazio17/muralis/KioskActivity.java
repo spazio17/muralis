@@ -726,9 +726,14 @@ public final class KioskActivity extends Activity {
             return;
         }
         userInterfaceInitialized = true;
-        // The open section was kept here until 2026-10-07; it lives for one visit now.
-        KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
-                .edit().remove("open_section").apply();
+        // The open section was kept here until 2026-10-07; it lives for one visit now. Removed
+        // where it is still stored, a read otherwise. Bridging code, to go with the first release
+        // after 0.6.4.
+        android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+        if (ui.contains("open_section")) {
+            ui.edit().remove("open_section").apply();
+        }
         // No setup-wizard handoff here, deliberately. The privileged build checked
         // DEVICE_PROVISIONED plus USER_SETUP_COMPLETE and launched Lineage's SetupWizard, because on
         // a freshly wiped tablet HOME could resolve to Muralis before the wizard was available. None
@@ -945,7 +950,7 @@ public final class KioskActivity extends Activity {
     public void onBackPressed() {
         // Inert only in a kiosk. Below API 33 this is the only hook, so the decision lives here and
         // in the OnBackInvokedCallback both.
-        if (isDeviceOwner()) {
+        if (putKeyboardAway() || isDeviceOwner()) {
             return;
         }
         if (!navigateBack()) {
@@ -1199,9 +1204,6 @@ public final class KioskActivity extends Activity {
      *     any other app looks like.
      */
     private boolean navigateBack() {
-        if (putKeyboardAway()) {
-            return true;
-        }
         if (recorderVisible) {
             // Same destination the recorder's own Cancel/Back button uses, rather than a second
             // opinion about where the recorder goes back to.
@@ -1253,8 +1255,10 @@ public final class KioskActivity extends Activity {
      * Puts a showing keyboard away, which is what the first Back does in every app. From API 33
      * this app's Back callback outranks the keyboard's own ({@code PRIORITY_OVERLAY}, see
      * {@link #keepBackInert}), so Back moved to the page above and left the keyboard standing
-     * over it with no box to type in (2026-10-07, the Pixel). Below API 30 there is no way to
-     * ask, and none needed: up to API 32 the keyboard takes Back before onBackPressed sees it.
+     * over it with no box to type in (2026-10-07, the Pixel). Asked before the kiosk's inert Back
+     * too, since putting the keyboard away is no way out (review, 2026-10-07). Below API 30 there
+     * is no way to ask, and none needed: up to API 32 the keyboard takes Back before
+     * onBackPressed sees it.
      *
      * @return true when a keyboard was showing and Back has been spent on it
      */
@@ -1294,6 +1298,10 @@ public final class KioskActivity extends Activity {
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                 () -> {
+                    // The keyboard first, kiosk or not: putting it away is no way out.
+                    if (putKeyboardAway()) {
+                        return;
+                    }
                     // Swallowed in a kiosk: every Muralis screen that needs to go back has an
                     // explicit button, so nothing becomes unreachable.
                     if (isDeviceOwner()) {
@@ -1386,6 +1394,10 @@ public final class KioskActivity extends Activity {
             return true;
         }
         if (action == MotionEvent.ACTION_DOWN) {
+            // A new touch: what the last one left armed is over, a lift or a cancel it never
+            // delivered included (review, 2026-10-07).
+            previewTouch = false;
+            tapAwayFromBox = false;
             // Screen coordinates, because cornerZoneAt compares against the content view's position
             // on screen. getX/getY are window-relative and were part of the offset that made the
             // recorder's targets miss on a device with visible system bars.
@@ -1435,9 +1447,11 @@ public final class KioskActivity extends Activity {
             if (zone != null && handleEscapeTap(zone, event.getEventTime())) {
                 return true;
             }
+            tapAwayFromBox = configurationVisible && outsideFocusedBox(event);
         }
-        if (configurationVisible && action == MotionEvent.ACTION_UP) {
-            dismissKeyboardIfTapOutsideInput(event);
+        if (tapAwayFromBox && action == MotionEvent.ACTION_UP) {
+            tapAwayFromBox = false;
+            putFocusedBoxAway();
         }
         if (overlayTouch(event)) {
             return true;
@@ -1615,30 +1629,45 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Closes the soft keyboard when a tap lands outside the focused text field.
+     * A touch that went down outside the focused text box on a settings screen, and whose lift
+     * closes the keyboard (see {@link #outsideFocusedBox}).
+     */
+    private boolean tapAwayFromBox;
+
+    /**
+     * Whether a touch down lands outside the focused text box; its lift then closes the keyboard.
      *
      * <p>Needed because the configuration screen is now fullscreen. It used to keep the navigation
      * bar precisely so the stock keyboard's dismiss key was reachable; with the bar gone, a tap on
      * the page is the way out, and without this there was no way to close the keyboard at all.
      *
-     * <p>On the lift, not the touch down: a touch that the system takes for its Back gesture is
-     * cancelled and never lifts, so on an ordinary install the gesture's first Back puts the
-     * keyboard away ({@link #putKeyboardAway}) instead of the touch down doing it and the Back
-     * then moving the page as well (2026-10-07, the Pixel). Still before the views see the lift,
-     * so a box that stores itself on blur has stored before a button under the finger acts.
+     * <p>Judged where the touch goes down and acted on at the lift. At the lift, because a touch
+     * the system takes for its Back gesture is cancelled and never lifts, so on an ordinary install
+     * the gesture's first Back puts the keyboard away ({@link #putKeyboardAway}) instead of the
+     * touch down doing it and the Back then moving the page as well (2026-10-07, the Pixel); still
+     * before the views see the lift, so a box that stores itself on blur has stored before a button
+     * under the finger acts. Where it goes down, because a touch that starts in the box, a drag
+     * along a long address, must not close it wherever it ends, and the corner tap that opens the
+     * PIN prompt returns before this is asked, so its lift leaves the PIN box focused (review,
+     * 2026-10-07).
      */
-    private void dismissKeyboardIfTapOutsideInput(MotionEvent event) {
+    private boolean outsideFocusedBox(MotionEvent event) {
         View focused = getCurrentFocus();
         if (!(focused instanceof EditText)) {
-            return;
+            return false;
         }
         int[] origin = new int[2];
         focused.getLocationOnScreen(origin);
         float x = event.getRawX();
         float y = event.getRawY();
-        boolean insideField = x >= origin[0] && x <= origin[0] + focused.getWidth()
-                && y >= origin[1] && y <= origin[1] + focused.getHeight();
-        if (insideField) {
+        return x < origin[0] || x > origin[0] + focused.getWidth()
+                || y < origin[1] || y > origin[1] + focused.getHeight();
+    }
+
+    /** Takes the focus out of the focused text box and closes the keyboard. */
+    private void putFocusedBoxAway() {
+        View focused = getCurrentFocus();
+        if (!(focused instanceof EditText)) {
             return;
         }
         focused.clearFocus();
@@ -1728,6 +1757,7 @@ public final class KioskActivity extends Activity {
                 } else {
                     gateBehindPin("To open Muralis settings", false, () -> {
                         openSection = "";
+                        settingsScreen = null;
                         showConfiguration(KioskConfig.load(this));
                         Toast.makeText(this, R.string.configuration_escape_opened,
                                 Toast.LENGTH_SHORT).show();
@@ -2159,7 +2189,8 @@ public final class KioskActivity extends Activity {
         LinearLayout colourCard = card(theme, "Colour");
         RadioGroup colours = new RadioGroup(this);
         for (String colour : Palettes.COLOURS) {
-            RadioButton radio = radioChoice(theme, colours, capital(colour), colour);
+            RadioButton radio = radioChoice(theme, colours, KioskConfig.colourLabel(colour),
+                    colour);
             // The colour itself before its name: its primary in this theme.
             String[] scheme = Palettes.colours(colour, !theme.light);
             android.graphics.drawable.GradientDrawable dot =
@@ -2183,9 +2214,9 @@ public final class KioskActivity extends Activity {
 
         LinearLayout separatorsCard = card(theme, "Separators");
         RadioGroup separators = new RadioGroup(this);
-        radioChoice(theme, separators, "Lines", KioskConfig.SEPARATORS_LINES);
-        radioChoice(theme, separators, "Segments", KioskConfig.SEPARATORS_SEGMENTS);
-        radioChoice(theme, separators, "None", KioskConfig.SEPARATORS_NONE);
+        for (String choice : KioskConfig.SEPARATOR_CHOICES) {
+            radioChoice(theme, separators, KioskConfig.separatorsLabel(choice), choice);
+        }
         checkRadioIfChanged(separators, separatorsNow);
         separators.setOnCheckedChangeListener((group, checkedId) -> {
             View checked = group.findViewById(checkedId);
@@ -2318,7 +2349,8 @@ public final class KioskActivity extends Activity {
         // model says: the Save button compares against this to detect a form gone stale. Loaded
         // fresh even though a config was passed in, because after a rotation the passed object
         // carries half-typed field values that are exactly what must NOT be in the baseline.
-        connectionBaseline = connectionBaselineOf(KioskConfig.load(this));
+        KioskConfig stored = KioskConfig.load(this);
+        connectionBaseline = connectionBaselineOf(stored);
         // Deliberately stays inside lock-task mode: DevicePolicyManager.setStatusBarDisabled is
         // documented to have no effect outside it, so releasing lock task here, which is what this
         // screen used to do, to keep the navigation bar for dismissing the keyboard, left a fully
@@ -3237,21 +3269,49 @@ public final class KioskActivity extends Activity {
         page.setRevealOnFocusHint(false);
         page.requestFocus();
         setContentView(scrollPage(theme, page));
-        // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
-        // from a fresh load with the boxes laid over it, which is the rule the Save button follows
-        // too: the snapshot this screen was built from is stale the moment another surface writes.
-        currentScreen = () -> {
+        // Rotating rebuilds this screen, so it has to carry the half-typed fields across, and so
+        // does coming back from a page below it (settingsScreen). Rebuilt from a fresh load with
+        // the boxes somebody changed laid over it: the snapshot this screen was built from is
+        // stale the moment another surface writes, and a box nobody touched would carry the old
+        // value back over a newer one, for as long as the page below stayed open.
+        String storedUrl = stored.dashboardUrl;
+        String storedId = stored.deviceId;
+        String storedHost = stored.mqttHost;
+        String storedPort = Integer.toString(stored.mqttPort);
+        String storedUser = stored.mqttUsername;
+        String storedHttpPort = Integer.toString(stored.httpPort);
+        Runnable again = () -> {
             KioskConfig pending = KioskConfig.load(this);
-            pending.dashboardUrl = urlInput.getText().toString();
-            pending.deviceId = deviceIdInput.getText().toString();
-            pending.mqttHost = brokerInput.getText().toString();
-            pending.mqttPort = parsePort(portInput.getText().toString(), pending.mqttPort);
-            pending.mqttUsername = usernameInput.getText().toString();
-            // The password deliberately does not ride across a rotation: the box renders blank by
-            // design, and carrying a half-typed secret in the display model would re-render it.
-            pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
+            String url = urlInput.getText().toString();
+            if (!url.equals(storedUrl)) {
+                pending.dashboardUrl = url;
+            }
+            String id = deviceIdInput.getText().toString();
+            if (!id.equals(storedId)) {
+                pending.deviceId = id;
+            }
+            String host = brokerInput.getText().toString();
+            if (!host.equals(storedHost)) {
+                pending.mqttHost = host;
+            }
+            String port = portInput.getText().toString();
+            if (!port.equals(storedPort)) {
+                pending.mqttPort = parsePort(port, pending.mqttPort);
+            }
+            String user = usernameInput.getText().toString();
+            if (!user.equals(storedUser)) {
+                pending.mqttUsername = user;
+            }
+            // The password deliberately does not ride across: the box renders blank by design,
+            // and carrying a half-typed secret in the display model would re-render it.
+            String httpPort = httpPortInput.getText().toString();
+            if (!httpPort.equals(storedHttpPort)) {
+                pending.httpPort = parsePort(httpPort, pending.httpPort);
+            }
             showConfiguration(pending);
         };
+        currentScreen = again;
+        settingsScreen = again;
     }
 
     /**
@@ -4207,7 +4267,8 @@ public final class KioskActivity extends Activity {
      * (Juri, 2026-10-07, the Pixel). Set by {@link #pageHeading}, which every page with a heading
      * draws, so a page cannot have an arrow that leads somewhere else; set after the heading by
      * the questions, and by the PIN prompt and the beacon countdown, which have no heading. Null
-     * on the settings screen, where Back goes to the dashboard as it always did.
+     * on the settings screen, where Back goes to the dashboard as it always did, and cleared where
+     * the settings are left, so a page's closures do not outlive it (review, 2026-10-07).
      */
     private Runnable pageBack;
 
@@ -4232,8 +4293,23 @@ public final class KioskActivity extends Activity {
         return page;
     }
 
+    /**
+     * The settings screen as it was last left in this visit, with what was typed in its boxes,
+     * for the arrow of a page below it. Until 2026-10-07 a rotation kept a typed broker address
+     * and a page below and back lost it, Appearance included, where the look used to change in
+     * place (review, 2026-10-07). Cleared, like the open section, when the settings combination
+     * starts a visit.
+     */
+    private Runnable settingsScreen;
+
+    /** Back to the settings from a page below them, with what was typed; see settingsScreen. */
     private void showSettings() {
-        showConfiguration(KioskConfig.load(this));
+        Runnable typed = settingsScreen;
+        if (typed != null) {
+            typed.run();
+        } else {
+            showConfiguration(KioskConfig.load(this));
+        }
     }
 
     /** The sensor the wide Sensors page shows at the right; see showSensorsPage. */
@@ -5972,7 +6048,7 @@ public final class KioskActivity extends Activity {
         // The title alone, as the web page has it: the subtitle and the paragraph that explained
         // the two timers went on 2026-09-19 at Juri's request, the panels say it themselves.
         page.addView(pageHeading(theme, "Screensaver", null,
-                () -> showConfiguration(KioskConfig.load(this))), matchWrap());
+                this::showSettings), matchWrap());
 
         // The mode is chosen on the settings page, whose Screensaver section leads here, so this
         // page no longer repeats the chooser (Juri, 2026-09-28): it has the chosen mode's
@@ -8750,7 +8826,7 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, "Escape sequences",
                 "Tap combinations that unlock the kiosk",
-                () -> showConfiguration(KioskConfig.load(this))), matchWrap());
+                this::showSettings), matchWrap());
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 sequenceCard(theme, "Open Muralis settings", config.settingsSequence, false),
@@ -8863,6 +8939,7 @@ public final class KioskActivity extends Activity {
         wizardVisible = true;
         recorderVisible = false;
         configurationVisible = false;
+        pageBack = null;
         publishOperatorScreenState();
         applyKioskPolicy();
         setDashboardFullscreen(true);
@@ -9283,17 +9360,10 @@ public final class KioskActivity extends Activity {
     private ScrollView scrollPage(KioskTheme theme, LinearLayout content) {
         PageScroll scroll = new PageScroll(this);
         scroll.setBackgroundColor(theme.base);
-        // Tapping the background dismisses the keyboard, which is the other half of having no
-        // navigation bar on this screen. On the lift, as dismissKeyboardIfTapOutsideInput.
-        scroll.setOnTouchListener((view, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                View focused = getCurrentFocus();
-                if (focused instanceof EditText) {
-                    hideKeyboard(focused);
-                }
-            }
-            return false;
-        });
+        // A tap on the background closes the keyboard, the other half of having no navigation
+        // bar on these screens: dispatchTouchEvent does it for every settings screen
+        // (outsideFocusedBox). This page kept a second copy, which closed the keyboard at the
+        // end of a drag that started in the box (review, 2026-10-07).
         scroll.setFillViewport(true);
         scroll.addView(content, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -10070,7 +10140,7 @@ public final class KioskActivity extends Activity {
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, "About", appVersionSummary(),
-                () -> showConfiguration(KioskConfig.load(this))), matchWrap());
+                this::showSettings), matchWrap());
 
         // Two cards rather than one titled "This build": half these facts are about the app and half
         // about the tablet, so a single title could only be vague. Splitting also balances the lanes,
@@ -10161,7 +10231,7 @@ public final class KioskActivity extends Activity {
         // The version, not the app name: the terms themselves say "the version they apply to is shown
         // on the About screen", and a document should say which build it belongs to.
         page.addView(pageHeading(theme, getString(titleRes), appVersionSummary(),
-                () -> showConfiguration(KioskConfig.load(this))), matchWrap());
+                this::showSettings), matchWrap());
 
         // The document and the line under it share this width, so they read as one column.
         int documentWidth = singlePanelWidth();
@@ -11376,6 +11446,7 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
+        pageBack = null;
         if (proBilling != null) {
             proBilling.detachListener();
         }
@@ -11518,6 +11589,7 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
+        pageBack = null;
         // The dashboard draws no price, so Play stops being asked for one. See ProBilling.askPlay.
         if (proBilling != null) {
             proBilling.detachListener();

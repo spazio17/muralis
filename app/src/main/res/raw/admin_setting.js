@@ -54,7 +54,8 @@ if(el.dataset.setting==='appearance_colour'){document.documentElement.setAttribu
 if(el.dataset.setting==='separators'){document.documentElement.setAttribute('data-separators',value);}
 // The web admin serves the other certificate from its next connection, so the page goes onto it,
 // fetched afresh: a reload of a page that answered an upload would offer to post the files again.
-if(el.dataset.setting==='http_certificate'){setTimeout(function(){window.location.replace('/');},300);}
+// Back in the Local web admin section, which nothing else would reopen.
+if(el.dataset.setting==='http_certificate'){setTimeout(function(){window.location.replace('/#box-webadmin');},300);}
 Array.prototype.forEach.call(document.querySelectorAll('[data-setting="'+el.dataset.setting+'"]'),function(other){
 if(other===el){return;}
 if(other.type==='checkbox'){other.checked=el.checked;}else if(other.type!=='radio'){other.value=el.value;}});

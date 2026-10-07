@@ -9,8 +9,9 @@
 // closed, except right after a save, whose form posts to "/#box-<section>" so the section saved
 // comes back open, and a message about a refused save, which arrives with its section open.
 (function(){
-// Kept in localStorage until 2026-10-07; nothing reads it any more.
-try{localStorage.removeItem('muralis-open-section');}catch(e){}
+// Kept in localStorage until 2026-10-07 and read by nothing since: cleared where a browser still
+// holds it. Bridging code, to go with the first release after 0.6.4.
+try{if(localStorage.getItem('muralis-open-section')!==null){localStorage.removeItem('muralis-open-section');}}catch(e){}
 var boxes=Array.prototype.slice.call(document.querySelectorAll('details.box'));
 if(!boxes.length){return;}
 var items=Array.prototype.slice.call(document.querySelectorAll('.sections .item'));
