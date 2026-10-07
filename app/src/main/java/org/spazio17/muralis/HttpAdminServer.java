@@ -923,6 +923,8 @@ final class HttpAdminServer {
             deleteAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
+        } else if (path.equals("/appearance") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppearancePage()));
         } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
@@ -1769,6 +1771,8 @@ final class HttpAdminServer {
         paths.put("saver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
         paths.put("stats", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
+        // A painter's palette with three dots of paint, the panel's ic_appearance.
+        paths.put("appearance", "<path d=\"M12 3a9 9 0 100 18c1 0 1.6-.7 1.6-1.5 0-.4-.2-.8-.5-1.1a1.5 1.5 0 011.1-2.5H16a5 5 0 005-5C21 6.6 17 3 12 3zM7.5 11h.01M10 7h.01M15 7h.01\"/>");
         paths.put("bolt", "<path d=\"M13 2L4 14h7l-1 8 9-12h-7z\"/>");
         paths.put("info", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 11v5M12 8h.01\"/>");
         paths.put("reboot", "<path d=\"M4 4v6h6M20 20v-6h-6M20 9A8 8 0 006.3 5.3L4 10"
@@ -2107,7 +2111,10 @@ final class HttpAdminServer {
                 + glyph("next") + "</a></div></div>";
     }
 
-    /** This panel: its name, then the stats and log, the version and the legal pages as rows. */
+    /**
+     * This panel: its name, the volume buttons, then Appearance, the stats and log, the version
+     * and the legal pages as rows.
+     */
     private String panelBody(KioskConfig config, String notice, String noticeSection) {
         return sectionFormStart("panel", notice, noticeSection)
                 + baselineField(config.deviceId)
@@ -2116,7 +2123,6 @@ final class HttpAdminServer {
                         " data-setting=\"device_id\"", null)
                 + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>"
-                + appearanceControls(config)
                 // The volume buttons, the panel's own place for them (Juri, 2026-10-05).
                 + "<div class=\"switches\">"
                 + switchRow("volume-buttons-disabled", "Disable volume buttons",
@@ -2124,6 +2130,11 @@ final class HttpAdminServer {
                         KioskConfig.volumeButtonsDisabled(context))
                 + "</div>"
                 + "<ul class=\"list gap\">"
+                // The look on a page of its own (Juri, 2026-10-07), as the panel has it.
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/appearance\"><span class=\"lead\">"
+                + glyph("appearance") + "</span><span class=\"text\"><span class=\"h\">Appearance"
+                + "</span><span class=\"s\">" + escapeHtml(appearanceSummary(config))
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
                 + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
@@ -2226,11 +2237,13 @@ final class HttpAdminServer {
     }
 
     /**
-     * The look of this panel, as the panel's This panel has it (Juri, 2026-10-04): Colour with
-     * its dot, Separators. Each stores the moment it is chosen
-     * (admin_setting.js), which also re-colours the page at once.
+     * Appearance, a page of its own under This panel since 2026-10-07, as the panel has it: the
+     * Colour with its dot and the Separators (Juri, 2026-10-04), a panel each, side by side from
+     * 840 px. Each stores the moment it is chosen (admin_setting.js), which also re-colours the
+     * page at once.
      */
-    private static String appearanceControls(KioskConfig config) {
+    private String buildAppearancePage() {
+        KioskConfig config = KioskConfig.load(context);
         StringBuilder colours = new StringBuilder();
         for (String colour : Palettes.COLOURS) {
             // Its primary, light and dark, for the page's theme.
@@ -2249,8 +2262,26 @@ final class HttpAdminServer {
                         config.separators, "<span class=\"text\"><span class=\"h\">Segments</span></span>")
                 + radioOf("separators", "separators", KioskConfig.SEPARATORS_NONE,
                         config.separators, "<span class=\"text\"><span class=\"h\">None</span></span>");
-        return choice("appearance_colour", "Colour", colours.toString())
-                + choice("separators", "Separators", separators);
+        return pageStart("Appearance", null, "/")
+                + "<div class=\"two\">" + choiceCard("appearance_colour", "Colour", colours.toString())
+                + choiceCard("separators", "Separators", separators) + "</div>"
+                + pageEnd();
+    }
+
+    /** A card whose title names its radios, for a screen reader too. */
+    private static String choiceCard(String key, String title, String radios) {
+        return "<section class=\"card\"><h2 id=\"opt-" + key + "-label\">" + title + "</h2>"
+                + "<div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
+                + "-label\">" + radios + "</div></section>";
+    }
+
+    /** The Appearance row's summary: the stored colour and separators, as the radios name them. */
+    private static String appearanceSummary(KioskConfig config) {
+        String separators = KioskConfig.SEPARATORS_SEGMENTS.equals(config.separators) ? "Segments"
+                : KioskConfig.SEPARATORS_NONE.equals(config.separators) ? "None" : "Lines";
+        String colour = config.appearanceColour;
+        return (colour.isEmpty() ? "" : Character.toUpperCase(colour.charAt(0)) + colour.substring(1))
+                + " \u00b7 " + separators;
     }
 
     private static String choice(String key, String label, String radios) {

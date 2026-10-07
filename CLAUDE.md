@@ -281,11 +281,13 @@ the playlist page was the case that set the rule.
   against a publicly-trusted certificate on a matching hostname, useless for the home-broker
   audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
   fingerprint machinery to back it.
-- **The look is the person's choice, on This panel** (Juri, 2026-10-04): Colour (Purple, Blue,
-  Orange, a seed each, a dot before each name) and Separators (Lines, the hairline; Segments,
-  every row of a list its own rounded surface with 2 dp of the card between, 16 dp corners at
-  the ends and 4 inside, as the Pixel's settings draw a list; None), with the day and night
-  toggle beside the section's name. **No second axis of the colour**: Material's variants were
+- **The look is the person's choice, on the Appearance page under This panel** (Juri, 2026-10-04;
+  a page of its own since 2026-10-07, the name Signal, macOS and iOS use, a row with its glyph and
+  "Purple · Lines" on both surfaces, `/appearance` on the web): Colour (Purple, Blue, Orange, a
+  seed each, a dot before each name) and Separators (Lines, the hairline; Segments, every row of
+  a list its own rounded surface with 2 dp of the card between, 16 dp corners at the ends and 4
+  inside, as the Pixel's settings draw a list; None), a panel each; the day and night toggle
+  stays beside This panel's name. **No second axis of the colour**: Material's variants were
   tried and on a dark panel the three gave the same primary (Material pins it at tone 80 and
   every saturation clips there, measured), then its contrast levels, which did not look good;
   Android, Home Assistant, Telegram and Signal offer a colour and day or night, nothing more,
@@ -1300,8 +1302,11 @@ the playlist page was the case that set the rule.
   a playlist are check boxes on rows and check circles on tiles, and the header box over a page
   ticks or clears the page shown (the Select all and Select none buttons went). **The settings are
   one menu of sections**, each a glyph, its name and a one-line summary of stored values only:
-  below 840 dp an accordion no wider than 720 dp with one section open and remembered
-  (`admin_menu.js` on the web, UI preference `open_section` on the panel), from 840 dp Material's
+  below 840 dp an accordion no wider than 720 dp with one section open, kept for the visit only
+  and all closed when a visit starts (Juri, 2026-10-07: `KioskActivity.openSection`, cleared
+  when the panel leaves its settings for the dashboard, the parking page or the launcher;
+  `admin_menu.js` keeps it in sessionStorage, so a tab's reloads and saves keep it and a new
+  visit does not), from 840 dp Material's
   list-detail, the list half the open section with Material's 24 dp gutter between them, so no
   panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
   This panel holding the legal pages and the version, which links to the repository on the web. The

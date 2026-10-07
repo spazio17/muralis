@@ -1,8 +1,10 @@
-// The settings page's sections: one open at a time, the choice remembered in this browser.
+// The settings page's sections: one open at a time, the choice remembered for this visit.
 //
 // Each section is a <details>, so without this file the page is a plain accordion that works
-// with no scripting at all. With it, opening one section closes the others, the last open
-// section comes back on the next visit, and from 840 px the list of sections on the left drives
+// with no scripting at all. With it, opening one section closes the others, the open section
+// stays open across this tab's reloads and saves (sessionStorage) and a new visit starts with
+// every section closed, as the panel does (Juri, 2026-10-07; localStorage brought the last one
+// back on every visit until then), and from 840 px the list of sections on the left drives
 // the one shown on the right (Material's list-detail; the stylesheet applies that layout only
 // where the html element carries the js class, which the page's head sets before the first
 // paint). A message about a refused save arrives with its section already open, and that wins
@@ -15,7 +17,7 @@ var items=Array.prototype.slice.call(document.querySelectorAll('.sections .item'
 var wideQuery=window.matchMedia('(min-width:840px)');
 function wide(){return wideQuery.matches;}
 function mark(id){items.forEach(function(a){a.classList.toggle('on',a.dataset.box===id);});}
-function remember(id){try{if(id){localStorage.setItem(KEY,id);}else{localStorage.removeItem(KEY);}}catch(e){}}
+function remember(id){try{if(id){sessionStorage.setItem(KEY,id);}else{sessionStorage.removeItem(KEY);}}catch(e){}}
 // The section meant to be open. Toggle events arrive after the fact and out of step with the
 // assignments that caused them, so a handler cannot tell "the script closed this" from "the
 // reader closed this" by timing; it can by comparing with what was meant.
@@ -34,7 +36,7 @@ items.forEach(function(a){a.addEventListener('click',function(event){
 event.preventDefault();open(a.dataset.box);remember(a.dataset.box);});});
 var already=boxes.filter(function(d){return d.open;})[0];
 if(already){open(already.id);}
-else{var saved=null;try{saved=localStorage.getItem(KEY);}catch(e){}
+else{var saved=null;try{saved=sessionStorage.getItem(KEY);}catch(e){}
 var target=boxes.filter(function(d){return d.id===saved;})[0];
 if(target){open(target.id);}else if(wide()){open(boxes[0].id);}}
 // Turning a phone, or widening a window, into the two-column layout with nothing open would

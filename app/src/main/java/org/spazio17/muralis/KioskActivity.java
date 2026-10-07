@@ -1813,6 +1813,7 @@ public final class KioskActivity extends Activity {
      * the Lenovo).
      */
     private void openSystemLauncher() {
+        openSection = "";
         stopScreensaver("leaving for the launcher");
         liftVisualOff();
         if (blackout != null && !kioskStopped) {
@@ -2074,17 +2075,21 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * The look of this panel (Juri, 2026-10-04), under its name: the Colour (a seed, each with
-     * its dot) and the Separators between a list's rows; a second axis of the colour went
-     * twice the same day, see Palettes. Each applies the
-     * moment it is tapped and the screen is drawn again in it, in place, as the theme button
-     * does; the web admin mirrors both.
+     * Appearance, a page of its own under This panel since 2026-10-07 (Juri: both choices are
+     * about how the app and the web admin look, so they belong together and out of the panel's
+     * own facts), with the name Signal, macOS and iOS give the same page. The Colour (a seed,
+     * each with its dot) and the Separators between a list's rows (Juri, 2026-10-04; a second
+     * axis of the colour went twice the same day, see Palettes), a panel each, side by side from
+     * 840 dp as every page of several panels without a menu. Each applies the moment it is
+     * tapped and the page is drawn again in it, in place; the web admin's Appearance page
+     * mirrors both.
      */
-    private void addAppearanceControls(LinearLayout card, KioskTheme theme, KioskConfig config) {
-        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        captionParams.topMargin = dp(14);
-        card.addView(fieldCaption(theme, "Colour"), captionParams);
+    private void showAppearancePage() {
+        currentScreen = this::showAppearancePage;
+        LinearLayout page = subPage("Appearance", this::showSettings);
+        KioskTheme theme = currentTheme();
+        KioskConfig config = KioskConfig.load(this);
+        LinearLayout colourCard = card(theme, "Colour");
         RadioGroup colours = new RadioGroup(this);
         for (String colour : Palettes.COLOURS) {
             RadioButton radio = radioChoice(theme, colours, capital(colour), colour);
@@ -2107,12 +2112,9 @@ public final class KioskActivity extends Activity {
             applyLiveSetting(editor -> editor.appearanceColour((String) checked.getTag()));
             redrawThisScreen();
         });
-        card.addView(colours, matchWrapClose());
+        colourCard.addView(colours, matchWrapClose());
 
-        LinearLayout.LayoutParams separatorsCaption = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        separatorsCaption.topMargin = dp(14);
-        card.addView(fieldCaption(theme, "Separators"), separatorsCaption);
+        LinearLayout separatorsCard = card(theme, "Separators");
         RadioGroup separators = new RadioGroup(this);
         radioChoice(theme, separators, "Lines", KioskConfig.SEPARATORS_LINES);
         radioChoice(theme, separators, "Segments", KioskConfig.SEPARATORS_SEGMENTS);
@@ -2126,7 +2128,17 @@ public final class KioskActivity extends Activity {
             applyLiveSetting(editor -> editor.separators((String) checked.getTag()));
             redrawThisScreen();
         });
-        card.addView(separators, matchWrapClose());
+        separatorsCard.addView(separators, matchWrapClose());
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(colourCard, separatorsCard)),
+                matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** The Appearance row's summary: the stored colour and separators, as the radios name them. */
+    private static String appearanceSummary(KioskConfig config) {
+        String separators = KioskConfig.SEPARATORS_SEGMENTS.equals(config.separators) ? "Segments"
+                : KioskConfig.SEPARATORS_NONE.equals(config.separators) ? "None" : "Lines";
+        return capital(config.appearanceColour) + " · " + separators;
     }
 
     /** One radio option, carrying its stored spelling as the tag the listener reads back. */
@@ -2952,10 +2964,12 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
-        addAppearanceControls(aboutCard, theme, config);
         LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
         volumeButtonsParams.topMargin = dp(14);
         aboutCard.addView(volumeButtonsInput, volumeButtonsParams);
+        // The look on a page of its own, the first of the rows, as on the web (Juri, 2026-10-07).
+        aboutCard.addView(glyphRow(theme, R.drawable.ic_appearance, "Appearance",
+                appearanceSummary(config), null, this::showAppearancePage, false), matchWrap());
         // The web's row: the stats glyph and the overlay's state under the name (review,
         // 2026-10-01).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
@@ -3211,21 +3225,24 @@ public final class KioskActivity extends Activity {
         return body;
     }
 
-    private static final String OPEN_SECTION = "open_section";
+    /**
+     * The section of the settings menu open now, kept while the settings are on screen (a
+     * rotation, a page below and back, a redraw) and cleared whenever the panel leaves them for
+     * the dashboard, the parking page or the launcher, so every visit starts with the menu closed
+     * (Juri, 2026-10-07). It lived in the UI preferences until then and came back on every visit.
+     */
+    private String openSection = "";
 
     /**
      * The settings as one menu, in the shape the width allows.
      *
      * <p>Below 840 dp an accordion: every row is a glyph, the name and a summary, a tap opens
-     * that section in place and closes the other, and the choice is remembered (Juri, 2026-09-23:
-     * one section open at a time). From 840 dp, Material's list-detail: the same rows as a list
+     * that section in place and closes the other (Juri, 2026-09-23: one section open at a time),
+     * and a visit starts with all of them closed (see {@link #openSection}). From 840 dp, Material's list-detail: the same rows as a list
      * at the left, 360 dp wide, and the open section as a card at the right, no wider than
      * 640 dp, so no panel ever spans a landscape tablet and turns its boxes into bars.
      */
     private View settingsMenu(KioskTheme theme, List<Section> sections, Runnable onOpenDashboard) {
-        android.content.SharedPreferences ui = KioskConfig.storageContext(this)
-                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
-        String remembered = ui.getString(OPEN_SECTION, "");
         boolean wide = getResources().getConfiguration().screenWidthDp >= 840;
         LinearLayout footer = new LinearLayout(this);
         footer.setOrientation(LinearLayout.VERTICAL);
@@ -3243,8 +3260,7 @@ public final class KioskActivity extends Activity {
             closeParams.topMargin = dp(8);
             footer.addView(closeMuralisRow(theme, wide), closeParams);
         }
-        return wide ? listDetail(theme, sections, remembered, ui, footer)
-                : accordion(theme, sections, remembered, ui, footer);
+        return wide ? listDetail(theme, sections, footer) : accordion(theme, sections, footer);
     }
 
     /**
@@ -3369,8 +3385,7 @@ public final class KioskActivity extends Activity {
         return row;
     }
 
-    private View accordion(KioskTheme theme, List<Section> sections, String remembered,
-            android.content.SharedPreferences ui, View footer) {
+    private View accordion(KioskTheme theme, List<Section> sections, View footer) {
         // The menu and the row under it share one column, no wider than 720 dp and centred: a
         // phone fills it, a portrait tablet does not stretch it. Measured inside the page's own
         // gutters, since those are what the column actually has to live in.
@@ -3407,7 +3422,7 @@ public final class KioskActivity extends Activity {
             body.setPadding(dp(phone ? 16 : 68), dp(8), dp(16), dp(24));
             body.addView(section.body, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            boolean open = section.title.equals(remembered);
+            boolean open = section.title.equals(openSection);
             body.setVisibility(open ? View.VISIBLE : View.GONE);
             paintAccordionRow(theme, row, open);
             rows.add(row);
@@ -3430,7 +3445,7 @@ public final class KioskActivity extends Activity {
                     bodies.get(other).setVisibility(on ? View.VISIBLE : View.GONE);
                     paintAccordionRow(theme, rows.get(other), on);
                 }
-                ui.edit().putString(OPEN_SECTION, opening ? section.title : "").apply();
+                openSection = opening ? section.title : "";
                 if (opening) {
                     hideKeyboardIfShown();
                 }
@@ -3450,8 +3465,7 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    private View listDetail(KioskTheme theme, List<Section> sections, String remembered,
-            android.content.SharedPreferences ui, View footer) {
+    private View listDetail(KioskTheme theme, List<Section> sections, View footer) {
         LinearLayout pair = new LinearLayout(this);
         pair.setOrientation(LinearLayout.HORIZONTAL);
         pair.setBaselineAligned(false);
@@ -3497,7 +3511,7 @@ public final class KioskActivity extends Activity {
 
         int openIndex = 0;
         for (int index = 0; index < sections.size(); index++) {
-            if (sections.get(index).title.equals(remembered)) {
+            if (sections.get(index).title.equals(openSection)) {
                 openIndex = index;
             }
         }
@@ -3512,7 +3526,7 @@ public final class KioskActivity extends Activity {
             final int mine = index;
             row.setOnClickListener(view -> {
                 showDetail(theme, detail, detailTitle, titleAction, sections, rows, mine);
-                ui.edit().putString(OPEN_SECTION, section.title).apply();
+                openSection = section.title;
                 hideKeyboardIfShown();
             });
         }
@@ -11275,6 +11289,7 @@ public final class KioskActivity extends Activity {
      */
     private void showParkingPage() {
         currentScreen = this::showParkingPage;
+        openSection = "";
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
@@ -11414,6 +11429,7 @@ public final class KioskActivity extends Activity {
             showParkingPage();
             return;
         }
+        openSection = "";
         // Cleared, not set: a WebView reflows itself on rotation, and rebuilding this screen would
         // reload the dashboard every time somebody turned the panel. See onConfigurationChanged.
         currentScreen = null;
