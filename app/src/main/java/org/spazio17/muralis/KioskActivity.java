@@ -1226,7 +1226,13 @@ public final class KioskActivity extends Activity {
             return true;
         }
         if (configurationVisible && pageBack != null) {
-            // A page below the settings: where its arrow leads, or a question's Cancel or OK.
+            // A page below the settings: where its arrow leads, or a question's Cancel or OK. A
+            // box that stores on blur stores first, as the arrow's tap makes it, or the page
+            // above is built from the old value (review, 2026-10-07).
+            View focused = getCurrentFocus();
+            if (focused != null) {
+                focused.clearFocus();
+            }
             pageBack.run();
             return true;
         }
@@ -4506,11 +4512,19 @@ public final class KioskActivity extends Activity {
      * quick to read and cut the reason short (Juri, 2026-09-27, the Pixel).
      */
     private void showNotice(String title, String message, Runnable back) {
+        showNotice(title, message, back, back);
+    }
+
+    /**
+     * A notice whose OK does more than go back, such as opening Android's settings: the system
+     * Back only goes back, and never leaves the app (review, 2026-10-07).
+     */
+    private void showNotice(String title, String message, Runnable onOk, Runnable back) {
         KioskTheme theme = currentTheme();
         enterImmersiveMode();
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, title, ""), matchWrap());
-        // A notice has no arrow: Back is its OK.
+        // A notice has no arrow: Back is its OK, unless the OK does more than go back.
         pendingBack = back;
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
@@ -4526,10 +4540,10 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         page.addView(column, singlePanelParams());
         Button ok = tonalButton(theme, "OK");
-        ok.setOnClickListener(view -> back.run());
+        ok.setOnClickListener(view -> onOk.run());
         column.addView(buttonRow(ok), matchWrap());
         setContentView(scrollPage(theme, page));
-        currentScreen = () -> showNotice(title, message, back);
+        currentScreen = () -> showNotice(title, message, onOk, back);
     }
 
     private static String capital(String text) {
@@ -4924,7 +4938,7 @@ public final class KioskActivity extends Activity {
                         if (screen != null) {
                             screen.run();
                         }
-                    });
+                    }, screen != null ? screen : this::showSettings);
             return;
         }
         permissionAskedFor = def.id;

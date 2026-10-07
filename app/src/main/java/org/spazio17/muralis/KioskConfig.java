@@ -28,7 +28,7 @@ final class KioskConfig {
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
     private static final String STATS_OVERLAY_ANCHOR = "stats_overlay_anchor";
-    /** The look a person chose on This panel; see appearanceColourOf, Palettes. */
+    /** The look a person chose on the Appearance page; see appearanceColourOf, Palettes. */
     private static final String APPEARANCE_COLOUR = "appearance_colour";
     private static final String SEPARATORS = "separators";
     static final String SEPARATORS_LINES = "lines";

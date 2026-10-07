@@ -1329,12 +1329,13 @@ the playlist page was the case that set the rule.
   back arrow returns to the settings. **Back is the arrow in the app
   bar, once**; the "← Back" buttons at head and foot went. On an ordinary install the system
   Back, gesture or key, goes where the arrow goes, on a question with no arrow its Cancel or
-  OK, and on a preview back to where it was started (Juri, 2026-10-07: people move around inside
+  OK (never an OK that opens another app: Back on "Blocked in Android settings" returns to the
+  page), and on a preview back to where it was started (Juri, 2026-10-07: people move around inside
   an app with the gesture); drawing the heading sets it (`pageHeading`, `pendingBack`, taken up
   by `setContentView` as the screen's `pageBack`), so the two cannot part and a screen that sets
   none has none. The settings screen's Back still opens the dashboard, and a device owner's Back
   stays inert; a showing keyboard takes the first Back on every install. The theme control is a sun or a moon in
-  the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices): **the panel's at the right of the section's name**
+  the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices; it stayed at This panel's name when they moved to the Appearance page below it on 2026-10-07): **the panel's at the right of the section's name**
   (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
   that carries a control beside its name (`Section.action`); the web's beside the section's
   name too, in the accordion's row and, from 840 px, in the open card's top corner, cycling
