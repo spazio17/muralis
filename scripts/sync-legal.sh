@@ -13,9 +13,7 @@
 
 set -euo pipefail
 
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=builder.sh
-source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
+project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 site_dir=${1:-"${project_dir}/../muralis-site"}
 
 if [[ ! -f "${site_dir}/legal/privacy.txt" ]]; then

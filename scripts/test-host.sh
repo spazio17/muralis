@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 #
 # Fast validation that needs neither the Android SDK nor a device. It runs in the
-# builder image, the one scripts/gradle.sh builds with, so the computer needs no
-# JDK and the tests compile with the same Java as the app.
-#
-# MURALIS_TESTS_DIRECT=1 (or true, or yes, in any case) runs the checks in the
-# current shell instead, which then needs a JDK 21, xmllint and python3. The
-# GitHub workflows set it: the image does not exist there, and they set up Java
-# 21 themselves.
+# builder image, the one scripts/gradle.sh builds with, so the host needs no JDK
+# and the tests compile with the same Java as the app. On GitHub Actions it runs
+# on the runner as it is: the image does not exist there, and the workflow sets
+# up the same Java 21 itself.
 #
 # Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
 # pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
@@ -22,95 +19,30 @@
 
 set -euo pipefail
 
-# Inside the container this bash is process 1, which ignores a signal it has no handler for, so
-# the Ctrl-C podman forwards would be lost and the run would go on to the end. 130 is what a shell
-# reports after an interrupt; the EXIT trap below still removes the test directory. Bash runs a
-# trap only once its foreground command has finished, so javac and java run in the background
-# behind a `wait` (the functions below the tool check), which a trapped signal does interrupt: the
-# handler then ends the suite that was running and the run stops at once, with or without a
-# terminal. The handler waits for the suite
-# it killed, so the EXIT trap does not remove the test directory under a javac still writing to
-# it; `child` is cleared after each wait so a PID the kernel has since reused is never signalled.
-child=
-on_interrupt() {
-    if [[ -n ${child} ]]; then
-        kill "${child}" 2>/dev/null || true
-        wait "${child}" 2>/dev/null || true
-    fi
-    exit 130
-}
-trap on_interrupt INT TERM
-run_child() {
-    "$@" & child=$!
-    local status=0
-    wait "${child}" || status=$?
-    child=
-    return "${status}"
-}
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+project_dir=$(cd "${1:-${script_dir}/..}" && pwd)
+image_name=kiosk-android-builder:36
 
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=builder.sh
-source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
-project_dir=$(CDPATH='' cd -- "${1:-${project_dir}}" && pwd)
-
-# Run again inside the builder image. The project keeps its own path in there, read-only, so every
-# message names a file the way it is seen here; this script's directory is mounted as well, for
-# when the project to check is another checkout. No network: the suites run against recorded
-# answers. HOME is /tmp because --userns=keep-id runs as a user with no home in the image.
-direct_value=$(printf '%s' "${MURALIS_TESTS_DIRECT:-}" | tr '[:upper:]' '[:lower:]')
-case ${direct_value} in
-    ''|0|false|no) direct= ;;
-    1|true|yes) direct=1 ;;
-    *)
-        printf 'MURALIS_TESTS_DIRECT is "%s"; it must be 1 or 0 (true/false and yes/no also work).\n' \
-            "${direct_value}" >&2
-        exit 2
-        ;;
-esac
-if [[ -z ${direct} ]]; then
-    if ! command -v podman >/dev/null; then
-        printf 'podman is needed to run the checks in the builder image; MURALIS_TESTS_DIRECT=1 runs them here.\n' >&2
-        exit 1
-    fi
-    if ! podman image exists "${builder_image}"; then
-        # A broken podman answers like a missing image; let it explain itself first.
-        podman info >/dev/null
+# Run again inside the builder image. The project keeps its own path in there, so every message
+# names a file the way it is seen here; this script's directory is mounted as well, for when the
+# project to check is another checkout. HOME is /tmp because --userns=keep-id runs as a user with
+# no home in the image, and the /gradle that HOME points at is a mount these checks do not need.
+if [[ -z ${MURALIS_IN_BUILDER:-} && ${GITHUB_ACTIONS:-} != true ]]; then
+    if ! podman image exists "${image_name}"; then
         printf 'Builder image missing; run scripts/build-container.sh first.\n' >&2
         exit 1
     fi
-    exec podman run --rm "${builder_run_args[@]}" \
-        --network none \
-        --env MURALIS_TESTS_DIRECT=1 \
-        --env "MURALIS_TESTS_IMAGE=${builder_image}" \
+    exec podman run --rm \
+        --userns=keep-id \
+        --security-opt label=disable \
+        --env MURALIS_IN_BUILDER=1 \
         --env HOME=/tmp \
-        --volume "${project_dir}:${project_dir}:ro" \
-        --volume "${scripts_dir}:${scripts_dir}:ro" \
+        --volume "${project_dir}:${project_dir}" \
+        --volume "${script_dir}:${script_dir}:ro" \
         --workdir "${project_dir}" \
-        "${builder_image}" \
-        bash "${scripts_dir}/test-host.sh" "${project_dir}"
+        "${image_name}" \
+        bash "${script_dir}/test-host.sh" "${project_dir}"
 fi
-
-# An image built before these tools were added passes the tag check above; name the fix, which
-# in a direct run is an install here, not a rebuild.
-for tool in javac xmllint python3; do
-    type -P "${tool}" >/dev/null && continue
-    if [[ -n ${MURALIS_TESTS_IMAGE:-} ]]; then
-        printf '%s is missing from %s; rebuild it with scripts/build-container.sh.\n' \
-            "${tool}" "${MURALIS_TESTS_IMAGE}" >&2
-    else
-        printf '%s is missing; install it, or unset MURALIS_TESTS_DIRECT to use the builder image.\n' \
-            "${tool}" >&2
-    fi
-    exit 1
-done
-
-# The two compilers go through run_child above. They are started by their program path, not
-# through the `command` builtin: bash 4.4 (the Lineage image) keeps a shell between the job and a
-# `command x &`, so the handler's kill would hit that shell and leave the compiler writing.
-javac_bin=$(type -P javac)
-java_bin=$(type -P java)
-javac() { run_child "${javac_bin}" "$@"; }
-java() { run_child "${java_bin}" "$@"; }
 
 test_dir=$(mktemp -d /tmp/kiosk-app-host-test.XXXXXX)
 trap 'rm -rf "${test_dir}"' EXIT
