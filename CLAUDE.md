@@ -1612,6 +1612,21 @@ the playlist page was the case that set the rule.
   full lock-task feature masking, `HardwarePropertiesManager`) exist only conditional on it. The
   app must work, in a visibly degraded way, without it too, see the device-owner warning banner
   pattern in the config screen.
+- **A QR enrolment needs two screens from Android 12** (2026-10-07: the Mi 9T on Android 16
+  downloaded Muralis and then failed "Can't set up device" every time, while Android 8 and 10 were
+  fine). AOSP's ManagedProvisioning installs the app, then refuses an app that does not answer both
+  `GET_PROVISIONING_MODE` and `ADMIN_POLICY_COMPLIANCE`. `ProvisioningModeActivity` answers a fully
+  managed device (`Provisioning.fullyManagedOffered`, host-tested; it cancels when the setup wizard
+  offers only a work profile, which cannot lock), `PolicyComplianceActivity` answers OK at once,
+  since lock task and HOME wait for the first-start wizard. Both are declared as Google's TestDPC,
+  Headwind MDM and FreeKiosk declare them: `BIND_DEVICE_ADMIN`, category `DEFAULT`,
+  `Theme.NoDisplay`. Android 10 and 11 ask the same questions once both screens exist (with no list
+  of allowed modes), Android 8 and 9 never. In that flow the setup wizard sends a device owner no
+  `PROFILE_PROVISIONING_COMPLETE` and no `PROVISIONING_SUCCESSFUL`; Muralis uses neither, since
+  `onEnabled` still arrives and its process start brings the service, which brings the panel up once
+  setup has finished. Never answer the mode with `EXTRA_PROVISIONING_SENSORS_PERMISSION_GRANT_OPT_OUT`:
+  it takes away the device owner's silent sensor grants. The QR payload needed no change; the
+  checksum without its `=` padding is accepted (`Base64.URL_SAFE`).
 - **`WRITE_SETTINGS` is a user grant, and device-owner status cannot substitute for it.** The
   brightness pair writes `Settings.System.SCREEN_BRIGHTNESS` and `SCREEN_BRIGHTNESS_MODE`, and
   that namespace has no device-owner setter, unlike Global and Secure. So the one permission this

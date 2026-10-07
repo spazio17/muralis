@@ -170,7 +170,8 @@
              bypass the platform's cleartext policy entirely. -->
 
         <!-- Device-owner component, provisioned with
-             `adb shell dpm set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`.
+             `adb shell dpm set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`,
+             or by QR during setup with the two activities below.
              Device-owner status is the single thing standing in for the lost
              privileged permissions: it is what makes lock task suppress SystemUI
              rather than merely making the bars inert. -->
@@ -187,6 +188,34 @@
                 <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
             </intent-filter>
         </receiver>
+
+        <!-- QR enrolment from Android 12: the setup wizard asks the downloaded app which mode it
+             wants and then whether it is compliant, and fails the enrolment when either screen is
+             missing (vendor docs, "Android 12 work changes"; the Mi 9T on Android 16 failed every
+             time without them, 2026-10-07). Android 10 and 11 ask too once both exist, Android 8
+             and 9 never. Declared as Google's TestDPC, Headwind MDM and FreeKiosk declare them:
+             BIND_DEVICE_ADMIN lets only the system start them, DEFAULT is how the setup wizard
+             finds them, and NoDisplay (FreeKiosk's) because neither shows anything. -->
+        <activity
+            android:name=".ProvisioningModeActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".PolicyComplianceActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- No excludeFromRecents, since 2026-08-27 (it was true). On the kiosk it never mattered:
              lock task disables the Overview button, so the panel shows no recents either way. On an
