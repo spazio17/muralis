@@ -40,8 +40,8 @@ jobs:
 
       - name: Host tests
         run: |
-          # xmllint only; the runner image usually ships it, and apt-get update alone cost
-          # ~20 seconds per run when it does.
+          # xmllint only when the runner image lacks it, since apt-get update alone costs
+          # ~20 seconds; the script names any other missing tool. release.yml has the same step.
           command -v xmllint >/dev/null || {
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends libxml2-utils

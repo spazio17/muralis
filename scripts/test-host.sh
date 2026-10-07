@@ -4,9 +4,10 @@
 # builder image, the one scripts/gradle.sh builds with, so the computer needs no
 # JDK and the tests compile with the same Java as the app.
 #
-# MURALIS_TESTS_DIRECT=1 (or true, or yes) runs the checks in the current shell
-# instead, which then needs a JDK 21, xmllint and python3. The GitHub workflows
-# set it: the image does not exist there, and they set up Java 21 themselves.
+# MURALIS_TESTS_DIRECT=1 (or true, or yes, in any case) runs the checks in the
+# current shell instead, which then needs a JDK 21, xmllint and python3. The
+# GitHub workflows set it: the image does not exist there, and they set up Java
+# 21 themselves.
 #
 # Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
 # pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
@@ -23,32 +24,35 @@ set -euo pipefail
 
 # Inside the container this bash is process 1, which ignores a signal it has no handler for, so
 # the Ctrl-C podman forwards would be lost and the run would go on to the end. 130 is what a shell
-# reports after an interrupt; the EXIT trap below still removes the test directory. Bash runs the
-# trap once the suite that is running has finished, so a terminal gets one in the container too
-# (below): its line discipline then sends the Ctrl-C to javac and java as well, and the run stops
-# at once. With the output redirected there is no terminal, and the stop waits for the suite.
-trap 'exit 130' INT TERM
+# reports after an interrupt; the EXIT trap below still removes the test directory. Bash runs a
+# trap only once its foreground command has finished, so javac and java run in the background
+# behind a `wait`, which a trapped signal does interrupt: the handler then ends the suite that was
+# running and the run stops at once, with or without a terminal.
+child=
+trap 'kill "${child:-}" 2>/dev/null; exit 130' INT TERM
+javac() { command javac "$@" & child=$!; wait "${child}"; }
+java() { command java "$@" & child=$!; wait "${child}"; }
 
-script_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-project_dir=$(CDPATH= cd -- "${1:-${script_dir}/..}" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+project_dir=$(CDPATH='' cd -- "${1:-${script_dir}/..}" && pwd)
+# shellcheck source=scripts/builder.sh
 source "${script_dir}/builder.sh"
 
 # Run again inside the builder image. The project keeps its own path in there, read-only, so every
 # message names a file the way it is seen here; this script's directory is mounted as well, for
 # when the project to check is another checkout. No network: the suites run against recorded
 # answers. HOME is /tmp because --userns=keep-id runs as a user with no home in the image.
-case ${MURALIS_TESTS_DIRECT:-} in
+direct_value=${MURALIS_TESTS_DIRECT:-}
+case ${direct_value,,} in
     ''|0|false|no) direct= ;;
     1|true|yes) direct=1 ;;
     *)
         printf 'MURALIS_TESTS_DIRECT is "%s"; it must be 1 or 0 (true/false and yes/no also work).\n' \
-            "${MURALIS_TESTS_DIRECT}" >&2
+            "${direct_value}" >&2
         exit 2
         ;;
 esac
 if [[ -z ${direct} ]]; then
-    tty_args=()
-    [[ -t 0 && -t 1 ]] && tty_args=(--interactive --tty)
     if ! command -v podman >/dev/null; then
         printf 'podman is needed to run the checks in the builder image; MURALIS_TESTS_DIRECT=1 runs them here.\n' >&2
         exit 1
@@ -59,7 +63,7 @@ if [[ -z ${direct} ]]; then
         printf 'Builder image missing; run scripts/build-container.sh first.\n' >&2
         exit 1
     fi
-    exec podman run --rm "${builder_run_args[@]}" "${tty_args[@]}" \
+    exec podman run --rm "${builder_run_args[@]}" \
         --network none \
         --env MURALIS_TESTS_DIRECT=1 \
         --env "MURALIS_TESTS_IMAGE=${builder_image}" \

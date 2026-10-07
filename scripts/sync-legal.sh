@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-project_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+project_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 site_dir=${1:-"${project_dir}/../muralis-site"}
 
 if [[ ! -f "${site_dir}/legal/privacy.txt" ]]; then

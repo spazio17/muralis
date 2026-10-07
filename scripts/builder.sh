@@ -7,6 +7,8 @@
 # keep-id: what the container writes on the mounts belongs to the user running it.
 # label=disable: the mounts are plain directories under the home, which SELinux
 # would otherwise keep the container out of.
+#
+# shellcheck disable=SC2034  # both are read by the scripts that source this file
 
 builder_image=kiosk-android-builder:36
 builder_run_args=(--userns=keep-id --security-opt label=disable)
