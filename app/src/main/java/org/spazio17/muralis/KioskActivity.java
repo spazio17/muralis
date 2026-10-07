@@ -32,7 +32,6 @@ import android.text.Spanned;
 import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.MotionEvent;
-import android.view.inputmethod.InputMethodManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -1383,11 +1382,12 @@ public final class KioskActivity extends Activity {
             // the preview. A cancel is the system taking the touch for its Back gesture, which
             // then ends the preview itself (navigateBack); ended on the touch down, the preview
             // went back a level and the gesture's Back a second one, to the settings (2026-10-07,
-            // the Pixel).
+            // the Pixel). In a kiosk Back does nothing, so there the cancel ends it, as the
+            // touch down did before (review, 2026-10-07).
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 previewTouch = false;
-                if (action == MotionEvent.ACTION_UP && screensaverPreview
-                        && screensaverShowing != null) {
+                boolean ends = action == MotionEvent.ACTION_UP || isDeviceOwner();
+                if (ends && screensaverPreview && screensaverShowing != null) {
                     endPreview("touch");
                 }
             }
@@ -1451,7 +1451,7 @@ public final class KioskActivity extends Activity {
         }
         if (tapAwayFromBox && action == MotionEvent.ACTION_UP) {
             tapAwayFromBox = false;
-            putFocusedBoxAway();
+            hideKeyboardIfShown();
         }
         if (overlayTouch(event)) {
             return true;
@@ -1664,18 +1664,6 @@ public final class KioskActivity extends Activity {
                 || y < origin[1] || y > origin[1] + focused.getHeight();
     }
 
-    /** Takes the focus out of the focused text box and closes the keyboard. */
-    private void putFocusedBoxAway() {
-        View focused = getCurrentFocus();
-        if (!(focused instanceof EditText)) {
-            return;
-        }
-        focused.clearFocus();
-        InputMethodManager keyboard = getSystemService(InputMethodManager.class);
-        if (keyboard != null) {
-            keyboard.hideSoftInputFromWindow(focused.getWindowToken(), 0);
-        }
-    }
 
     /**
      * Which corner a touch landed in, or null for anywhere else on the screen.
@@ -1757,7 +1745,6 @@ public final class KioskActivity extends Activity {
                 } else {
                     gateBehindPin("To open Muralis settings", false, () -> {
                         openSection = "";
-                        settingsScreen = null;
                         showConfiguration(KioskConfig.load(this));
                         Toast.makeText(this, R.string.configuration_escape_opened,
                                 Toast.LENGTH_SHORT).show();
@@ -1838,7 +1825,7 @@ public final class KioskActivity extends Activity {
             onCancel.run();
         };
         // No heading, so no arrow: Back is the Cancel.
-        pageBack = cancelPrompt;
+        pendingBack = cancelPrompt;
         Button unlock = primaryButton(theme, "Unlock");
         unlock.setOnClickListener(view -> {
             long now = android.os.SystemClock.elapsedRealtime();
@@ -2284,8 +2271,9 @@ public final class KioskActivity extends Activity {
     private Runnable pinPrompt;
 
     /**
-     * Every screen is set through here: the look it is drawn in is noted, and while a settings
-     * screen is up, {@link #lookWatch} compares it with the stored one. Stamped here and not in
+     * Every screen is set through here: where its Back goes is taken up ({@link #pageBack}), the
+     * look it is drawn in is noted, and while a settings screen is up, {@link #lookWatch}
+     * compares it with the stored one. Stamped here and not in
      * currentTheme, which the ticker and the bar painter call too; for every screen and not the
      * settings page alone, since an open Sensors or Screensaver page kept the old look until
      * it was left (review, 2026-10-04).
@@ -2293,6 +2281,8 @@ public final class KioskActivity extends Activity {
     @Override
     public void setContentView(View view) {
         super.setContentView(view);
+        pageBack = pendingBack;
+        pendingBack = null;
         drawnAppearance = appearanceKey();
         mainHandler.removeCallbacks(lookWatch);
         if (configurationVisible) {
@@ -2349,8 +2339,7 @@ public final class KioskActivity extends Activity {
         // model says: the Save button compares against this to detect a form gone stale. Loaded
         // fresh even though a config was passed in, because after a rotation the passed object
         // carries half-typed field values that are exactly what must NOT be in the baseline.
-        KioskConfig stored = KioskConfig.load(this);
-        connectionBaseline = connectionBaselineOf(stored);
+        connectionBaseline = connectionBaselineOf(KioskConfig.load(this));
         // Deliberately stays inside lock-task mode: DevicePolicyManager.setStatusBarDisabled is
         // documented to have no effect outside it, so releasing lock task here, which is what this
         // screen used to do, to keep the navigation bar for dismissing the keyboard, left a fully
@@ -3269,49 +3258,24 @@ public final class KioskActivity extends Activity {
         page.setRevealOnFocusHint(false);
         page.requestFocus();
         setContentView(scrollPage(theme, page));
-        // Rotating rebuilds this screen, so it has to carry the half-typed fields across, and so
-        // does coming back from a page below it (settingsScreen). Rebuilt from a fresh load with
-        // the boxes somebody changed laid over it: the snapshot this screen was built from is
-        // stale the moment another surface writes, and a box nobody touched would carry the old
-        // value back over a newer one, for as long as the page below stayed open.
-        String storedUrl = stored.dashboardUrl;
-        String storedId = stored.deviceId;
-        String storedHost = stored.mqttHost;
-        String storedPort = Integer.toString(stored.mqttPort);
-        String storedUser = stored.mqttUsername;
-        String storedHttpPort = Integer.toString(stored.httpPort);
-        Runnable again = () -> {
+        // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
+        // from a fresh load with the boxes laid over it, which is the rule the Save button follows
+        // too: the snapshot this screen was built from is stale the moment another surface writes.
+        // A page below the settings and back shows what is stored, as it always has: carrying
+        // typed boxes across pages needs the password, the port as typed and the stale-form check
+        // handled too (review, 2026-10-07), which is work of its own.
+        currentScreen = () -> {
             KioskConfig pending = KioskConfig.load(this);
-            String url = urlInput.getText().toString();
-            if (!url.equals(storedUrl)) {
-                pending.dashboardUrl = url;
-            }
-            String id = deviceIdInput.getText().toString();
-            if (!id.equals(storedId)) {
-                pending.deviceId = id;
-            }
-            String host = brokerInput.getText().toString();
-            if (!host.equals(storedHost)) {
-                pending.mqttHost = host;
-            }
-            String port = portInput.getText().toString();
-            if (!port.equals(storedPort)) {
-                pending.mqttPort = parsePort(port, pending.mqttPort);
-            }
-            String user = usernameInput.getText().toString();
-            if (!user.equals(storedUser)) {
-                pending.mqttUsername = user;
-            }
-            // The password deliberately does not ride across: the box renders blank by design,
-            // and carrying a half-typed secret in the display model would re-render it.
-            String httpPort = httpPortInput.getText().toString();
-            if (!httpPort.equals(storedHttpPort)) {
-                pending.httpPort = parsePort(httpPort, pending.httpPort);
-            }
+            pending.dashboardUrl = urlInput.getText().toString();
+            pending.deviceId = deviceIdInput.getText().toString();
+            pending.mqttHost = brokerInput.getText().toString();
+            pending.mqttPort = parsePort(portInput.getText().toString(), pending.mqttPort);
+            pending.mqttUsername = usernameInput.getText().toString();
+            // The password deliberately does not ride across a rotation: the box renders blank by
+            // design, and carrying a half-typed secret in the display model would re-render it.
+            pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
             showConfiguration(pending);
         };
-        currentScreen = again;
-        settingsScreen = again;
     }
 
     /**
@@ -4264,13 +4228,20 @@ public final class KioskActivity extends Activity {
      * Where the system Back of an ordinary install leads on the screen on show: where its arrow
      * leads, or on a question with no arrow, its Cancel or OK. People move around inside an app
      * with the Back gesture, and every page below the settings went straight to the dashboard
-     * (Juri, 2026-10-07, the Pixel). Set by {@link #pageHeading}, which every page with a heading
-     * draws, so a page cannot have an arrow that leads somewhere else; set after the heading by
-     * the questions, and by the PIN prompt and the beacon countdown, which have no heading. Null
-     * on the settings screen, where Back goes to the dashboard as it always did, and cleared where
-     * the settings are left, so a page's closures do not outlive it (review, 2026-10-07).
+     * (Juri, 2026-10-07, the Pixel). Taken up from {@link #pendingBack} by setContentView, so
+     * every screen has the one its own build named and none a screen before it left behind:
+     * null on the settings screen, where Back goes to the dashboard as it always did, and on the
+     * dashboard, so a page's closures do not outlive it (review, 2026-10-07).
      */
     private Runnable pageBack;
+
+    /**
+     * Where Back goes on the screen being built. Set by {@link #pageHeading}, which every page
+     * with a heading draws, so a page cannot have an arrow that leads somewhere else; set after
+     * the heading by the questions, and by the PIN prompt and the beacon countdown, which have
+     * no heading.
+     */
+    private Runnable pendingBack;
 
     /**
      * The prelude every page below the settings shares; see showScreensaverSettings. The arrow
@@ -4293,23 +4264,9 @@ public final class KioskActivity extends Activity {
         return page;
     }
 
-    /**
-     * The settings screen as it was last left in this visit, with what was typed in its boxes,
-     * for the arrow of a page below it. Until 2026-10-07 a rotation kept a typed broker address
-     * and a page below and back lost it, Appearance included, where the look used to change in
-     * place (review, 2026-10-07). Cleared, like the open section, when the settings combination
-     * starts a visit.
-     */
-    private Runnable settingsScreen;
-
-    /** Back to the settings from a page below them, with what was typed; see settingsScreen. */
+    /** Back to the settings from a page below them, drawn from what is stored. */
     private void showSettings() {
-        Runnable typed = settingsScreen;
-        if (typed != null) {
-            typed.run();
-        } else {
-            showConfiguration(KioskConfig.load(this));
-        }
+        showConfiguration(KioskConfig.load(this));
     }
 
     /** The sensor the wide Sensors page shows at the right; see showSensorsPage. */
@@ -4554,7 +4511,7 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, title, ""), matchWrap());
         // A notice has no arrow: Back is its OK.
-        pageBack = back;
+        pendingBack = back;
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
         text.setTextColor(theme.text);
@@ -4714,7 +4671,7 @@ public final class KioskActivity extends Activity {
             back.run();
         };
         // No heading, so no arrow: Back is the Cancel.
-        pageBack = stop;
+        pendingBack = stop;
         Button cancel = secondaryButton(theme, "Cancel");
         cancel.setOnClickListener(view -> stop.run());
         LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(
@@ -6893,7 +6850,7 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, title, ""), matchWrap());
         // A question has no arrow: Back answers it with Cancel, as it dismisses a dialog.
-        pageBack = onCancel;
+        pendingBack = onCancel;
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
         text.setTextColor(theme.text);
@@ -8939,7 +8896,6 @@ public final class KioskActivity extends Activity {
         wizardVisible = true;
         recorderVisible = false;
         configurationVisible = false;
-        pageBack = null;
         publishOperatorScreenState();
         applyKioskPolicy();
         setDashboardFullscreen(true);
@@ -10708,8 +10664,8 @@ public final class KioskActivity extends Activity {
      *
      * <p>Back is the arrow in the app bar, once, where every Material screen has it; the "← Back"
      * buttons at the head and foot of a page went with the redesign of 2026-09-23. Drawing the
-     * heading also points the system Back at the arrow's target ({@link #pageBack}), so the two
-     * cannot lead to different places.
+     * heading also points the system Back at the arrow's target ({@link #pendingBack}), so the
+     * two cannot lead to different places.
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
             View beside, Runnable back, View trailing) {
@@ -10726,8 +10682,8 @@ public final class KioskActivity extends Activity {
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
             View beside, Runnable back, View trailing, boolean readings) {
-        // The system Back goes where the arrow goes, null with no arrow; see pageBack.
-        pageBack = back;
+        // The system Back goes where the arrow goes, none with no arrow; see pendingBack.
+        pendingBack = back;
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.HORIZONTAL);
         heading.setGravity(Gravity.CENTER_VERTICAL);
@@ -11446,7 +11402,6 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
-        pageBack = null;
         if (proBilling != null) {
             proBilling.detachListener();
         }
@@ -11589,7 +11544,6 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
-        pageBack = null;
         // The dashboard draws no price, so Play stops being asked for one. See ProBilling.askPlay.
         if (proBilling != null) {
             proBilling.detachListener();

@@ -1642,11 +1642,6 @@ final class HttpAdminServer {
 
 
     /**
-     * The same, with the way back as the arrow at the left of the app bar, where every Material
-     * screen has it and once only: the Back buttons at the head and foot of a page went with the
-     * redesign of 2026-09-23.
-     */
-    /**
      * The settings with one section open, where a page under that section goes back to, as the
      * panel's arrow comes back to the section it left (review, 2026-10-07: with nothing
      * remembered between page loads, a bare "/" opened them all closed); admin_menu.js opens
@@ -1656,6 +1651,11 @@ final class HttpAdminServer {
         return "/#box-" + section;
     }
 
+    /**
+     * The same, with the way back as the arrow at the left of the app bar, where every Material
+     * screen has it and once only: the Back buttons at the head and foot of a page went with the
+     * redesign of 2026-09-23.
+     */
     private String pageStart(String title, String subtitle, String backTo) {
         // A page below the settings page says its name and nothing else: the panel's id, its
         // address and its load belong where somebody is configuring the panel, not on a page
@@ -1840,8 +1840,9 @@ final class HttpAdminServer {
      *
      * <p>The message about a refused save goes inside the section it is about, and that section
      * is the one open, so the reader lands on the reason rather than at the top of the page.
-     * {@code admin_menu.js} keeps one section open at a time and remembers which; without it the
-     * sections are plain {@code <details>} and still work.
+     * {@code admin_menu.js} keeps one section open at a time and remembers none between page
+     * loads, opening the one the address names; without it the sections are plain
+     * {@code <details>} and still work.
      */
     private String buildSettingsPage(String notice, String noticeSection) {
         KioskConfig config = KioskConfig.load(context);
@@ -2283,14 +2284,18 @@ final class HttpAdminServer {
     /** A card whose title names its radios, for a screen reader too. */
     private static String choiceCard(String key, String title, String radios) {
         return "<section class=\"card\"><h2 id=\"opt-" + key + "-label\">" + title + "</h2>"
-                + "<div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
-                + "-label\">" + radios + "</div></section>";
+                + radioGroup(key, radios) + "</section>";
     }
 
     private static String choice(String key, String label, String radios) {
         return "<div class=\"choice\"><p class=\"label\" id=\"opt-" + key + "-label\">" + label
-                + "</p><div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
-                + "-label\">" + radios + "</div></div>";
+                + "</p>" + radioGroup(key, radios) + "</div>";
+    }
+
+    /** The radios of one choice, named by the label whose id is {@code opt-<key>-label}. */
+    private static String radioGroup(String key, String radios) {
+        return "<div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
+                + "-label\">" + radios + "</div>";
     }
 
     /**

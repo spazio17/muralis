@@ -1305,10 +1305,11 @@ the playlist page was the case that set the rule.
   one menu of sections**, each a glyph, its name and a one-line summary of stored values only:
   below 840 dp an accordion no wider than 720 dp with one section open, kept for the visit only
   and all closed when a visit starts (Juri, 2026-10-07: `KioskActivity.openSection`, cleared by
-  the settings combination, as is `settingsScreen`, which carries what was typed in the
-  settings' boxes across the pages of a visit, only the boxes somebody changed laid over a fresh
-  load; `admin_menu.js` remembers nothing, and the section a Save posted from, or a page's arrow
-  leads back to, comes back open from its `/#box-<section>` address), from 840 dp Material's
+  the settings combination; a page below the settings and back shows what is stored, as a
+  typed but unsaved connection box is lost on every page below; `admin_menu.js` remembers
+  nothing, and the section a Save posted from, or a page's arrow leads back to, comes back open
+  from its `/#box-<section>` address, the certificate choice's reload from `/?open=webadmin`,
+  since a change of the hash alone reloads nothing), from 840 dp Material's
   list-detail, the list half the open section with Material's 24 dp gutter between them, so no
   panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
   This panel holding the legal pages and the version, which links to the repository on the web. The
@@ -1329,8 +1330,9 @@ the playlist page was the case that set the rule.
   bar, once**; the "← Back" buttons at head and foot went. On an ordinary install the system
   Back, gesture or key, goes where the arrow goes, on a question with no arrow its Cancel or
   OK, and on a preview back to where it was started (Juri, 2026-10-07: people move around inside
-  an app with the gesture); drawing the heading sets it (`pageHeading`, `pageBack`), so the two
-  cannot part. The settings screen's Back still opens the dashboard, and a device owner's Back
+  an app with the gesture); drawing the heading sets it (`pageHeading`, `pendingBack`, taken up
+  by `setContentView` as the screen's `pageBack`), so the two cannot part and a screen that sets
+  none has none. The settings screen's Back still opens the dashboard, and a device owner's Back
   stays inert; a showing keyboard takes the first Back on every install. The theme control is a sun or a moon in
   the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices): **the panel's at the right of the section's name**
   (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section

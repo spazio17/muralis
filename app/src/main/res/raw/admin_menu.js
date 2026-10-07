@@ -6,8 +6,9 @@
 // stylesheet applies that layout only where the html element carries the js class, which the
 // page's head sets before the first paint). Nothing is remembered between visits, as on the
 // panel (Juri, 2026-10-07; the last section came back from storage until then): a page opens
-// closed, except right after a save, whose form posts to "/#box-<section>" so the section saved
-// comes back open, and a message about a refused save, which arrives with its section open.
+// closed, except where the address names a section, "/#box-<section>" after a save (its form
+// posts there) or a page's back arrow, "/?open=<section>" after the certificate choice's reload,
+// and a message about a refused save, which arrives with its section open.
 (function(){
 // Kept in localStorage until 2026-10-07 and read by nothing since: cleared where a browser still
 // holds it. Bridging code, to go with the first release after 0.6.4.
@@ -36,8 +37,9 @@ items.forEach(function(a){a.addEventListener('click',function(event){
 event.preventDefault();open(a.dataset.box);});});
 var already=boxes.filter(function(d){return d.open;})[0];
 if(already){open(already.id);}
-else{var saved=location.hash.replace(/^#/,'');
-var target=boxes.filter(function(d){return d.id===saved;})[0];
+else{var asked=/[?&]open=([a-z]+)/.exec(location.search);
+var named=location.hash.replace(/^#/,'')||(asked?'box-'+asked[1]:'');
+var target=boxes.filter(function(d){return d.id===named;})[0];
 if(target){open(target.id);}else if(wide()){open(boxes[0].id);}}
 // Turning a phone, or widening a window, into the two-column layout with nothing open would
 // show an empty right column; the first section fills it.
