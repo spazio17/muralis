@@ -224,6 +224,8 @@ public final class KioskActivity extends Activity {
      * which goes back to that page.
      */
     private Runnable screensaverPreviewReturn;
+    /** A touch went down on a preview and its lift will end it; see dispatchTouchEvent. */
+    private boolean previewTouch;
     /** The strip that names a preview; without it the dimmed page is just the page, darker. */
     private TextView screensaverPreviewCaption;
     // The Pictures mode: the frame in the layer, the set being shown and where in it we are, the
@@ -1197,6 +1199,9 @@ public final class KioskActivity extends Activity {
      *     any other app looks like.
      */
     private boolean navigateBack() {
+        if (putKeyboardAway()) {
+            return true;
+        }
         if (recorderVisible) {
             // Same destination the recorder's own Cancel/Back button uses, rather than a second
             // opinion about where the recorder goes back to.
@@ -1213,8 +1218,14 @@ public final class KioskActivity extends Activity {
             // back to go, and leaving would reveal an unlockable kiosk with no way to return.
             return true;
         }
+        if (screensaverPreview && screensaverShowing != null) {
+            // A preview goes back to the screen it was started from, as a tap on it does; Back
+            // left the app from it, since the preview stands on the dashboard.
+            endPreview("back");
+            return true;
+        }
         if (configurationVisible && pageBack != null) {
-            // A page below the settings: one level up, as its arrow does.
+            // A page below the settings: where its arrow leads, or a question's Cancel or OK.
             pageBack.run();
             return true;
         }
@@ -1236,6 +1247,29 @@ public final class KioskActivity extends Activity {
         // the panel walk the dashboard's history backwards, and on a Home Assistant frontend it
         // strands the viewer on some earlier view with no obvious way forward.
         return false;
+    }
+
+    /**
+     * Puts a showing keyboard away, which is what the first Back does in every app. From API 33
+     * this app's Back callback outranks the keyboard's own ({@code PRIORITY_OVERLAY}, see
+     * {@link #keepBackInert}), so Back moved to the page above and left the keyboard standing
+     * over it with no box to type in (2026-10-07, the Pixel). Below API 30 there is no way to
+     * ask, and none needed: up to API 32 the keyboard takes Back before onBackPressed sees it.
+     *
+     * @return true when a keyboard was showing and Back has been spent on it
+     */
+    private boolean putKeyboardAway() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return false;
+        }
+        android.view.WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
+        if (insets == null || !insets.isVisible(android.view.WindowInsets.Type.ime())) {
+            return false;
+        }
+        // The box lets go of the focus first, so one that stores itself on blur does.
+        hideKeyboardIfShown();
+        getWindow().getInsetsController().hide(android.view.WindowInsets.Type.ime());
+        return true;
     }
 
     /**
@@ -1335,7 +1369,23 @@ public final class KioskActivity extends Activity {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+        int action = event.getActionMasked();
+        if (previewTouch && action != MotionEvent.ACTION_DOWN) {
+            // The rest of a touch that went down on a preview, never the page's: the lift ends
+            // the preview. A cancel is the system taking the touch for its Back gesture, which
+            // then ends the preview itself (navigateBack); ended on the touch down, the preview
+            // went back a level and the gesture's Back a second one, to the settings (2026-10-07,
+            // the Pixel).
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                previewTouch = false;
+                if (action == MotionEvent.ACTION_UP && screensaverPreview
+                        && screensaverShowing != null) {
+                    endPreview("touch");
+                }
+            }
+            return true;
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
             // Screen coordinates, because cornerZoneAt compares against the content view's position
             // on screen. getX/getY are window-relative and were part of the offset that made the
             // recorder's targets miss on a device with visible system bars.
@@ -1358,17 +1408,14 @@ public final class KioskActivity extends Activity {
             }
             // The screensaver: the first touch brings the page back and never reaches it, and a
             // corner tap still counts for the escape combinations, which work from every screen.
+            // A preview waits for the lift, above.
             if (screensaverShowing != null) {
-                boolean preview = screensaverPreview;
-                Runnable back = screensaverPreviewReturn;
+                if (screensaverPreview) {
+                    previewTouch = true;
+                    return true;
+                }
                 stopScreensaver("touch");
-                if (preview) {
-                    if (back != null) {
-                        back.run();
-                    } else {
-                        showScreensaverSettings();
-                    }
-                } else if (zone != null) {
+                if (zone != null) {
                     handleEscapeTap(zone, event.getEventTime());
                 }
                 return true;
@@ -1388,9 +1435,9 @@ public final class KioskActivity extends Activity {
             if (zone != null && handleEscapeTap(zone, event.getEventTime())) {
                 return true;
             }
-            if (configurationVisible) {
-                dismissKeyboardIfTapOutsideInput(event);
-            }
+        }
+        if (configurationVisible && action == MotionEvent.ACTION_UP) {
+            dismissKeyboardIfTapOutsideInput(event);
         }
         if (overlayTouch(event)) {
             return true;
@@ -1573,6 +1620,12 @@ public final class KioskActivity extends Activity {
      * <p>Needed because the configuration screen is now fullscreen. It used to keep the navigation
      * bar precisely so the stock keyboard's dismiss key was reachable; with the bar gone, a tap on
      * the page is the way out, and without this there was no way to close the keyboard at all.
+     *
+     * <p>On the lift, not the touch down: a touch that the system takes for its Back gesture is
+     * cancelled and never lifts, so on an ordinary install the gesture's first Back puts the
+     * keyboard away ({@link #putKeyboardAway}) instead of the touch down doing it and the Back
+     * then moving the page as well (2026-10-07, the Pixel). Still before the views see the lift,
+     * so a box that stores itself on blur has stored before a button under the finger acts.
      */
     private void dismissKeyboardIfTapOutsideInput(MotionEvent event) {
         View focused = getCurrentFocus();
@@ -1713,7 +1766,6 @@ public final class KioskActivity extends Activity {
     private static final long PIN_PROMPT_TIMEOUT_MS = 60_000L;
 
     private void showPinPrompt(String purpose, Runnable onSuccess, Runnable onCancel) {
-        pageBack = null;
         configurationVisible = true;
         recorderVisible = false;
         publishOperatorScreenState();
@@ -1750,6 +1802,13 @@ public final class KioskActivity extends Activity {
             }
         };
         mainHandler.postDelayed(expire, PIN_PROMPT_TIMEOUT_MS);
+        Runnable cancelPrompt = () -> {
+            mainHandler.removeCallbacks(expire);
+            hideKeyboard(input);
+            onCancel.run();
+        };
+        // No heading, so no arrow: Back is the Cancel.
+        pageBack = cancelPrompt;
         Button unlock = primaryButton(theme, "Unlock");
         unlock.setOnClickListener(view -> {
             long now = android.os.SystemClock.elapsedRealtime();
@@ -1776,11 +1835,7 @@ public final class KioskActivity extends Activity {
             verdict.setVisibility(View.VISIBLE);
         });
         Button cancel = secondaryButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> {
-            mainHandler.removeCallbacks(expire);
-            hideKeyboard(input);
-            onCancel.run();
-        });
+        cancel.setOnClickListener(view -> cancelPrompt.run());
         panel.addView(buttonRow(unlock, cancel), matchWrap());
         int screenWidth = getResources().getDisplayMetrics().widthPixels;
         LinearLayout.LayoutParams panelParams = new LinearLayout.LayoutParams(
@@ -2259,7 +2314,6 @@ public final class KioskActivity extends Activity {
     }
 
     private void showConfiguration(KioskConfig config) {
-        pageBack = null;
         // What is actually stored right now, not what the (possibly rotation-carried) display
         // model says: the Save button compares against this to detect a form gone stale. Loaded
         // fresh even though a config was passed in, because after a rotation the passed object
@@ -4147,20 +4201,22 @@ public final class KioskActivity extends Activity {
     }
 
     /**
+     * Where the system Back of an ordinary install leads on the screen on show: where its arrow
+     * leads, or on a question with no arrow, its Cancel or OK. People move around inside an app
+     * with the Back gesture, and every page below the settings went straight to the dashboard
+     * (Juri, 2026-10-07, the Pixel). Set by {@link #pageHeading}, which every page with a heading
+     * draws, so a page cannot have an arrow that leads somewhere else; set after the heading by
+     * the questions, and by the PIN prompt and the beacon countdown, which have no heading. Null
+     * on the settings screen, where Back goes to the dashboard as it always did.
+     */
+    private Runnable pageBack;
+
+    /**
      * The prelude every page below the settings shares; see showScreensaverSettings. The arrow
      * leads one level up, not to the settings: a sensor's page to the Sensors list, the editor to
      * the Automations list (Juri, 2026-09-27, found on the glass).
      */
-    /**
-     * Where the arrow of the page on screen leads, so the system Back of an ordinary install goes
-     * there too rather than to the dashboard (review, 2026-10-07). Set by {@link #subPage}; null
-     * on the settings screen and on the screens built without it, where Back keeps going to the
-     * dashboard as it always did.
-     */
-    private Runnable pageBack;
-
     private LinearLayout subPage(String title, Runnable back) {
-        pageBack = back;
         destroyWebView();
         setDashboardFullscreen(true);
         configurationVisible = true;
@@ -4421,6 +4477,8 @@ public final class KioskActivity extends Activity {
         enterImmersiveMode();
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, title, ""), matchWrap());
+        // A notice has no arrow: Back is its OK.
+        pageBack = back;
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
         text.setTextColor(theme.text);
@@ -4572,14 +4630,17 @@ public final class KioskActivity extends Activity {
         signal.setGravity(android.view.Gravity.CENTER);
         page.addView(signal, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        Button cancel = secondaryButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> {
+        Runnable stop = () -> {
             Beacons beacons = KioskService.beaconsOf(this);
             if (beacons != null) {
                 beacons.listenClosely(0);
             }
             back.run();
-        });
+        };
+        // No heading, so no arrow: Back is the Cancel.
+        pageBack = stop;
+        Button cancel = secondaryButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> stop.run());
         LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cancelParams.topMargin = dp(24);
@@ -5894,7 +5955,6 @@ public final class KioskActivity extends Activity {
      * configuration screen carries the mode alone; this page has the times and the rest.
      */
     private void showScreensaverSettings() {
-        pageBack = null;
         // Reached from the configuration screen, where no page is up, and from the touch that
         // ends a Preview, where the dashboard is: the same prelude as showConfiguration,
         // so the page never sits over a live WebView and its clocks.
@@ -6752,11 +6812,12 @@ public final class KioskActivity extends Activity {
      */
     private void showConfirm(String title, String message, String confirmLabel,
             boolean destructive, Runnable onConfirm, Runnable onCancel) {
-        pageBack = null;
         KioskTheme theme = currentTheme();
         enterImmersiveMode();
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, title, ""), matchWrap());
+        // A question has no arrow: Back answers it with Cancel, as it dismisses a dialog.
+        pageBack = onCancel;
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
         text.setTextColor(theme.text);
@@ -7080,7 +7141,6 @@ public final class KioskActivity extends Activity {
      * else: every tap inside the page goes through {@link PlaylistPage} instead.
      */
     private void showPlaylistPage(PlaylistDraft draft) {
-        pageBack = null;
         playlistDraft = draft;
         stopScreensaver("choosing pictures");
         destroyWebView();
@@ -8682,7 +8742,6 @@ public final class KioskActivity extends Activity {
      * have to carry that information.
      */
     private void showEscapeSequences(KioskConfig config) {
-        pageBack = null;
         configurationVisible = true;
         recorderVisible = false;
         publishOperatorScreenState();
@@ -9225,9 +9284,9 @@ public final class KioskActivity extends Activity {
         PageScroll scroll = new PageScroll(this);
         scroll.setBackgroundColor(theme.base);
         // Tapping the background dismisses the keyboard, which is the other half of having no
-        // navigation bar on this screen.
+        // navigation bar on this screen. On the lift, as dismissKeyboardIfTapOutsideInput.
         scroll.setOnTouchListener((view, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
                 View focused = getCurrentFocus();
                 if (focused instanceof EditText) {
                     hideKeyboard(focused);
@@ -10003,7 +10062,6 @@ public final class KioskActivity extends Activity {
      * the status bar suppressed here.
      */
     private void showAbout() {
-        pageBack = null;
         currentScreen = this::showAbout;
         configurationVisible = true;
         recorderVisible = false;
@@ -10093,7 +10151,6 @@ public final class KioskActivity extends Activity {
      * in the muralis-site repo, where one edit reaches every surface at once.
      */
     private void showLegalDocument(int titleRes, int bodyRes) {
-        pageBack = null;
         currentScreen = () -> showLegalDocument(titleRes, bodyRes);
         configurationVisible = true;
         recorderVisible = false;
@@ -10580,7 +10637,9 @@ public final class KioskActivity extends Activity {
      * chip and, on the settings screen, the theme toggle at the right.
      *
      * <p>Back is the arrow in the app bar, once, where every Material screen has it; the "← Back"
-     * buttons at the head and foot of a page went with the redesign of 2026-09-23.
+     * buttons at the head and foot of a page went with the redesign of 2026-09-23. Drawing the
+     * heading also points the system Back at the arrow's target ({@link #pageBack}), so the two
+     * cannot lead to different places.
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
             View beside, Runnable back, View trailing) {
@@ -10597,6 +10656,8 @@ public final class KioskActivity extends Activity {
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
             View beside, Runnable back, View trailing, boolean readings) {
+        // The system Back goes where the arrow goes, null with no arrow; see pageBack.
+        pageBack = back;
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.HORIZONTAL);
         heading.setGravity(Gravity.CENTER_VERTICAL);
@@ -12303,6 +12364,20 @@ public final class KioskActivity extends Activity {
                 screensaverSinceMs = since;
                 KioskConfig.recordScreensaverSinceMs(this, since);
             }
+        }
+    }
+
+    /**
+     * Ends a preview on the screen it was started from: the settings screen that was open for
+     * one asked for from the web or MQTT, the Screensaver page for its own Preview button.
+     */
+    private void endPreview(String reason) {
+        Runnable back = screensaverPreviewReturn;
+        stopScreensaver(reason);
+        if (back != null) {
+            back.run();
+        } else {
+            showScreensaverSettings();
         }
     }
 

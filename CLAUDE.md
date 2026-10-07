@@ -1324,7 +1324,12 @@ the playlist page was the case that set the rule.
   The privacy policy and the terms are rows of This panel and nowhere else: the panel's
   Version and device details page carried them a second time until 2026-09-23, and a legal page's
   back arrow returns to the settings. **Back is the arrow in the app
-  bar, once**; the "← Back" buttons at head and foot went. The theme control is a sun or a moon in
+  bar, once**; the "← Back" buttons at head and foot went. On an ordinary install the system
+  Back, gesture or key, goes where the arrow goes, on a question with no arrow its Cancel or
+  OK, and on a preview back to where it was started (Juri, 2026-10-07: people move around inside
+  an app with the gesture); drawing the heading sets it (`pageHeading`, `pageBack`), so the two
+  cannot part. The settings screen's Back still opens the dashboard, and a device owner's Back
+  stays inert. The theme control is a sun or a moon in
   the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices): **the panel's at the right of the section's name**
   (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
   that carries a control beside its name (`Section.action`); the web's beside the section's
