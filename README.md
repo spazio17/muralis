@@ -9,12 +9,12 @@ architecture and the decisions behind it.
 
 ## Building
 
-Everything builds inside a container; the host needs neither an Android SDK nor a matching JDK.
+Everything builds and tests inside a container; the host needs neither an Android SDK nor a JDK.
 
 ```bash
 scripts/build-container.sh   # once per clone: builds the image, provisions the SDK
-scripts/test-host.sh         # fast, container-free checks: lint the scripts/manifest, run the
-                              # pure-Java unit tests
+scripts/test-host.sh         # fast checks in the same container: lint the scripts/manifest, run
+                              # the pure-Java unit tests
 scripts/build-app.sh         # assembleDebug; prints the APK path and the adb commands to install
                               # it and take device ownership
 ```

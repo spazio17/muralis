@@ -15,10 +15,12 @@ FROM docker.io/library/ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
 # JDK 21: AGP 8.13 requires JDK 17+, and 21 is the current LTS that Gradle 8.14
-# fully supports. The host happens to carry JDK 25, which AGP does not accept
-# yet -- another reason this build is containerized rather than run on the host.
+# fully supports. Nothing compiles Java on the host: scripts/test-host.sh runs in
+# this image too, so the host tests use the same JDK as the build, and xmllint
+# and python3 are here for that script's resource and admin page checks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openjdk-21-jdk-headless \
+        libxml2-utils python3 \
         ca-certificates curl unzip zip git \
         file less procps \
     && rm -rf /var/lib/apt/lists/*

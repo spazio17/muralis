@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 #
-# Fast validation that needs neither the container, the Android SDK, nor a
-# device. Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
+# Fast validation that needs neither the Android SDK nor a device. It runs in the
+# builder image, the one scripts/gradle.sh builds with, so the host needs no JDK
+# and the tests compile with the same Java as the app. On GitHub Actions it runs
+# on the runner as it is: the image does not exist there, and the workflow sets
+# up the same Java 21 itself.
+#
+# Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
 # pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
 # EscapeSequence) stays free of Android imports and testable in seconds.
 #
@@ -14,7 +19,31 @@
 
 set -euo pipefail
 
-project_dir=${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+project_dir=$(cd "${1:-${script_dir}/..}" && pwd)
+image_name=kiosk-android-builder:36
+
+# Run again inside the builder image. The project keeps its own path in there, so every message
+# names a file the way it is seen here; this script's directory is mounted as well, for when the
+# project to check is another checkout. HOME is /tmp because --userns=keep-id runs as a user with
+# no home in the image, and the /gradle that HOME points at is a mount these checks do not need.
+if [[ -z ${MURALIS_IN_BUILDER:-} && ${GITHUB_ACTIONS:-} != true ]]; then
+    if ! podman image exists "${image_name}"; then
+        printf 'Builder image missing; run scripts/build-container.sh first.\n' >&2
+        exit 1
+    fi
+    exec podman run --rm \
+        --userns=keep-id \
+        --security-opt label=disable \
+        --env MURALIS_IN_BUILDER=1 \
+        --env HOME=/tmp \
+        --volume "${project_dir}:${project_dir}" \
+        --volume "${script_dir}:${script_dir}:ro" \
+        --workdir "${project_dir}" \
+        "${image_name}" \
+        bash "${script_dir}/test-host.sh" "${project_dir}"
+fi
+
 test_dir=$(mktemp -d /tmp/kiosk-app-host-test.XXXXXX)
 trap 'rm -rf "${test_dir}"' EXIT
 
