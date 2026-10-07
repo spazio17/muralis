@@ -4,9 +4,9 @@
 # builder image, the one scripts/gradle.sh builds with, so the computer needs no
 # JDK and the tests compile with the same Java as the app.
 #
-# MURALIS_TESTS_DIRECT=1 runs the checks in the current shell instead, which then
-# needs a JDK 21, xmllint and python3. The GitHub workflows set it: the image does
-# not exist there, and they set up Java 21 themselves.
+# MURALIS_TESTS_DIRECT=1 (or true, or yes) runs the checks in the current shell
+# instead, which then needs a JDK 21, xmllint and python3. The GitHub workflows
+# set it: the image does not exist there, and they set up Java 21 themselves.
 #
 # Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
 # pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
@@ -23,7 +23,10 @@ set -euo pipefail
 
 # Inside the container this bash is process 1, which ignores a signal it has no handler for, so
 # the Ctrl-C podman forwards would be lost and the run would go on to the end. 130 is what a shell
-# reports after an interrupt; the EXIT trap below still removes the test directory.
+# reports after an interrupt; the EXIT trap below still removes the test directory. Bash runs the
+# trap once the suite that is running has finished, so a terminal gets one in the container too
+# (below): its line discipline then sends the Ctrl-C to javac and java as well, and the run stops
+# at once. With the output redirected there is no terminal, and the stop waits for the suite.
 trap 'exit 130' INT TERM
 
 script_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -34,7 +37,18 @@ source "${script_dir}/builder.sh"
 # message names a file the way it is seen here; this script's directory is mounted as well, for
 # when the project to check is another checkout. No network: the suites run against recorded
 # answers. HOME is /tmp because --userns=keep-id runs as a user with no home in the image.
-if [[ ${MURALIS_TESTS_DIRECT:-} != 1 ]]; then
+case ${MURALIS_TESTS_DIRECT:-} in
+    ''|0|false|no) direct= ;;
+    1|true|yes) direct=1 ;;
+    *)
+        printf 'MURALIS_TESTS_DIRECT is "%s"; it must be 1 or 0 (true/false and yes/no also work).\n' \
+            "${MURALIS_TESTS_DIRECT}" >&2
+        exit 2
+        ;;
+esac
+if [[ -z ${direct} ]]; then
+    tty_args=()
+    [[ -t 0 && -t 1 ]] && tty_args=(--interactive --tty)
     if ! command -v podman >/dev/null; then
         printf 'podman is needed to run the checks in the builder image; MURALIS_TESTS_DIRECT=1 runs them here.\n' >&2
         exit 1
@@ -45,9 +59,10 @@ if [[ ${MURALIS_TESTS_DIRECT:-} != 1 ]]; then
         printf 'Builder image missing; run scripts/build-container.sh first.\n' >&2
         exit 1
     fi
-    exec podman run --rm "${builder_run_args[@]}" \
+    exec podman run --rm "${builder_run_args[@]}" "${tty_args[@]}" \
         --network none \
         --env MURALIS_TESTS_DIRECT=1 \
+        --env "MURALIS_TESTS_IMAGE=${builder_image}" \
         --env HOME=/tmp \
         --volume "${project_dir}:${project_dir}:ro" \
         --volume "${script_dir}:${script_dir}:ro" \
@@ -56,13 +71,18 @@ if [[ ${MURALIS_TESTS_DIRECT:-} != 1 ]]; then
         bash "${script_dir}/test-host.sh" "${project_dir}"
 fi
 
-# An image built before these tools were added passes the tag check above; name the fix.
+# An image built before these tools were added passes the tag check above; name the fix, which
+# in a direct run is an install here, not a rebuild.
 for tool in javac xmllint python3; do
-    command -v "${tool}" >/dev/null || {
-        printf '%s is missing; rebuild the builder image with scripts/build-container.sh.\n' \
+    command -v "${tool}" >/dev/null && continue
+    if [[ -n ${MURALIS_TESTS_IMAGE:-} ]]; then
+        printf '%s is missing from %s; rebuild it with scripts/build-container.sh.\n' \
+            "${tool}" "${MURALIS_TESTS_IMAGE}" >&2
+    else
+        printf '%s is missing; install it, or unset MURALIS_TESTS_DIRECT to use the builder image.\n' \
             "${tool}" >&2
-        exit 1
-    }
+    fi
+    exit 1
 done
 
 test_dir=$(mktemp -d /tmp/kiosk-app-host-test.XXXXXX)

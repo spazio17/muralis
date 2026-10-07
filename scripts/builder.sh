@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 #
 # The builder image and the podman options shared by every script that runs it:
 # gradle.sh, adb.sh, build-container.sh and test-host.sh source this file, so the

@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+project_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "${project_dir}/scripts/builder.sh"
 
 # compileSdk/targetSdk 36 (Android 16), not the 34 this project's notes

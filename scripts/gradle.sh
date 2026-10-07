@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+project_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "${project_dir}/scripts/builder.sh"
 
 if [[ ! -d "${project_dir}/.android-sdk/platforms" ]]; then

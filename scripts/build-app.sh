@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+project_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 "${project_dir}/scripts/gradle.sh" assembleDebug
 

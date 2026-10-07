@@ -9,7 +9,7 @@ architecture and the decisions behind it.
 
 ## Building
 
-Everything builds and tests inside a podman container; the host needs podman and nothing else, neither an Android SDK nor a JDK.
+Everything builds and tests inside a podman container; the host needs podman and git, neither an Android SDK nor a JDK.
 
 ```bash
 scripts/build-container.sh   # once per clone: builds the image, provisions the SDK
