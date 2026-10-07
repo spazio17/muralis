@@ -882,6 +882,18 @@ final class KioskConfig {
      * a look is a thing of the screen in front of someone. Purple with lines is Muralis's own
      * look and the default; a stored value nothing offers reads as the default.
      */
+    /**
+     * The Appearance row's summary on both surfaces, "Purple · Lines": the colour and the
+     * separators as their radios name them, worded once here.
+     */
+    static String appearanceSummary(String colour, String separators) {
+        String separatorsName = SEPARATORS_SEGMENTS.equals(separators) ? "Segments"
+                : SEPARATORS_NONE.equals(separators) ? "None" : "Lines";
+        String colourName = colour == null || colour.isEmpty() ? ""
+                : Character.toUpperCase(colour.charAt(0)) + colour.substring(1);
+        return colourName + " \u00b7 " + separatorsName;
+    }
+
     static String appearanceColourOf(Context context) {
         String cached = appearanceColourCache;
         if (cached != null) {

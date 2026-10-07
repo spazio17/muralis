@@ -724,6 +724,9 @@ public final class KioskActivity extends Activity {
             return;
         }
         userInterfaceInitialized = true;
+        // The open section was kept here until 2026-10-07; it lives for one visit now.
+        KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                .edit().remove("open_section").apply();
         // No setup-wizard handoff here, deliberately. The privileged build checked
         // DEVICE_PROVISIONED plus USER_SETUP_COMPLETE and launched Lineage's SetupWizard, because on
         // a freshly wiped tablet HOME could resolve to Muralis before the wizard was available. None
@@ -1210,6 +1213,11 @@ public final class KioskActivity extends Activity {
             // back to go, and leaving would reveal an unlockable kiosk with no way to return.
             return true;
         }
+        if (configurationVisible && pageBack != null) {
+            // A page below the settings: one level up, as its arrow does.
+            pageBack.run();
+            return true;
+        }
         if (configurationVisible) {
             String url = KioskConfig.load(this).dashboardUrl;
             // Mirrors onCreate's routing. With nothing configured the configuration screen *is* this
@@ -1666,6 +1674,7 @@ public final class KioskActivity extends Activity {
                     gateBehindPin("To leave Muralis for the home screen", true, this::openSystemLauncher);
                 } else {
                     gateBehindPin("To open Muralis settings", false, () -> {
+                        openSection = "";
                         showConfiguration(KioskConfig.load(this));
                         Toast.makeText(this, R.string.configuration_escape_opened,
                                 Toast.LENGTH_SHORT).show();
@@ -1704,6 +1713,7 @@ public final class KioskActivity extends Activity {
     private static final long PIN_PROMPT_TIMEOUT_MS = 60_000L;
 
     private void showPinPrompt(String purpose, Runnable onSuccess, Runnable onCancel) {
+        pageBack = null;
         configurationVisible = true;
         recorderVisible = false;
         publishOperatorScreenState();
@@ -1813,7 +1823,6 @@ public final class KioskActivity extends Activity {
      * the Lenovo).
      */
     private void openSystemLauncher() {
-        openSection = "";
         stopScreensaver("leaving for the launcher");
         liftVisualOff();
         if (blackout != null && !kioskStopped) {
@@ -2088,7 +2097,10 @@ public final class KioskActivity extends Activity {
         currentScreen = this::showAppearancePage;
         LinearLayout page = subPage("Appearance", this::showSettings);
         KioskTheme theme = currentTheme();
-        KioskConfig config = KioskConfig.load(this);
+        // The two cached readers, not KioskConfig.load, which decrypts every secret, on every
+        // tap here: a choice redraws the page.
+        String colourNow = KioskConfig.appearanceColourOf(this);
+        String separatorsNow = KioskConfig.separatorsOf(this);
         LinearLayout colourCard = card(theme, "Colour");
         RadioGroup colours = new RadioGroup(this);
         for (String colour : Palettes.COLOURS) {
@@ -2103,7 +2115,7 @@ public final class KioskActivity extends Activity {
             radio.setCompoundDrawablesRelativeWithIntrinsicBounds(dot, null, null, null);
             radio.setCompoundDrawablePadding(dp(12));
         }
-        checkRadioIfChanged(colours, config.appearanceColour);
+        checkRadioIfChanged(colours, colourNow);
         colours.setOnCheckedChangeListener((group, checkedId) -> {
             View checked = group.findViewById(checkedId);
             if (checked == null || syncingLiveControls) {
@@ -2119,7 +2131,7 @@ public final class KioskActivity extends Activity {
         radioChoice(theme, separators, "Lines", KioskConfig.SEPARATORS_LINES);
         radioChoice(theme, separators, "Segments", KioskConfig.SEPARATORS_SEGMENTS);
         radioChoice(theme, separators, "None", KioskConfig.SEPARATORS_NONE);
-        checkRadioIfChanged(separators, config.separators);
+        checkRadioIfChanged(separators, separatorsNow);
         separators.setOnCheckedChangeListener((group, checkedId) -> {
             View checked = group.findViewById(checkedId);
             if (checked == null || syncingLiveControls) {
@@ -2132,13 +2144,6 @@ public final class KioskActivity extends Activity {
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(colourCard, separatorsCard)),
                 matchWrap());
         setContentView(scrollPage(theme, page));
-    }
-
-    /** The Appearance row's summary: the stored colour and separators, as the radios name them. */
-    private static String appearanceSummary(KioskConfig config) {
-        String separators = KioskConfig.SEPARATORS_SEGMENTS.equals(config.separators) ? "Segments"
-                : KioskConfig.SEPARATORS_NONE.equals(config.separators) ? "None" : "Lines";
-        return capital(config.appearanceColour) + " · " + separators;
     }
 
     /** One radio option, carrying its stored spelling as the tag the listener reads back. */
@@ -2254,6 +2259,7 @@ public final class KioskActivity extends Activity {
     }
 
     private void showConfiguration(KioskConfig config) {
+        pageBack = null;
         // What is actually stored right now, not what the (possibly rotation-carried) display
         // model says: the Save button compares against this to detect a form gone stale. Loaded
         // fresh even though a config was passed in, because after a rotation the passed object
@@ -2969,7 +2975,8 @@ public final class KioskActivity extends Activity {
         aboutCard.addView(volumeButtonsInput, volumeButtonsParams);
         // The look on a page of its own, the first of the rows, as on the web (Juri, 2026-10-07).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_appearance, "Appearance",
-                appearanceSummary(config), null, this::showAppearancePage, false), matchWrap());
+                KioskConfig.appearanceSummary(config.appearanceColour, config.separators), null,
+                this::showAppearancePage, false), matchWrap());
         // The web's row: the stats glyph and the overlay's state under the name (review,
         // 2026-10-01).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
@@ -3227,9 +3234,9 @@ public final class KioskActivity extends Activity {
 
     /**
      * The section of the settings menu open now, kept while the settings are on screen (a
-     * rotation, a page below and back, a redraw) and cleared whenever the panel leaves them for
-     * the dashboard, the parking page or the launcher, so every visit starts with the menu closed
-     * (Juri, 2026-10-07). It lived in the UI preferences until then and came back on every visit.
+     * rotation, a page below and back, a redraw) and cleared where a visit starts, the settings
+     * combination, so every visit starts with the menu closed (Juri, 2026-10-07); a new process
+     * starts with it empty. It lived in the UI preferences until then and came back every time.
      */
     private String openSection = "";
 
@@ -3238,9 +3245,10 @@ public final class KioskActivity extends Activity {
      *
      * <p>Below 840 dp an accordion: every row is a glyph, the name and a summary, a tap opens
      * that section in place and closes the other (Juri, 2026-09-23: one section open at a time),
-     * and a visit starts with all of them closed (see {@link #openSection}). From 840 dp, Material's list-detail: the same rows as a list
-     * at the left, 360 dp wide, and the open section as a card at the right, no wider than
-     * 640 dp, so no panel ever spans a landscape tablet and turns its boxes into bars.
+     * and a visit starts with all of them closed (see {@link #openSection}). From 840 dp,
+     * Material's list-detail: the same rows as a list at the left, 360 dp wide, and the open
+     * section as a card at the right, no wider than 640 dp, so no panel ever spans a landscape
+     * tablet and turns its boxes into bars.
      */
     private View settingsMenu(KioskTheme theme, List<Section> sections, Runnable onOpenDashboard) {
         boolean wide = getResources().getConfiguration().screenWidthDp >= 840;
@@ -4143,7 +4151,16 @@ public final class KioskActivity extends Activity {
      * leads one level up, not to the settings: a sensor's page to the Sensors list, the editor to
      * the Automations list (Juri, 2026-09-27, found on the glass).
      */
+    /**
+     * Where the arrow of the page on screen leads, so the system Back of an ordinary install goes
+     * there too rather than to the dashboard (review, 2026-10-07). Set by {@link #subPage}; null
+     * on the settings screen and on the screens built without it, where Back keeps going to the
+     * dashboard as it always did.
+     */
+    private Runnable pageBack;
+
     private LinearLayout subPage(String title, Runnable back) {
+        pageBack = back;
         destroyWebView();
         setDashboardFullscreen(true);
         configurationVisible = true;
@@ -5877,6 +5894,7 @@ public final class KioskActivity extends Activity {
      * configuration screen carries the mode alone; this page has the times and the rest.
      */
     private void showScreensaverSettings() {
+        pageBack = null;
         // Reached from the configuration screen, where no page is up, and from the touch that
         // ends a Preview, where the dashboard is: the same prelude as showConfiguration,
         // so the page never sits over a live WebView and its clocks.
@@ -6734,6 +6752,7 @@ public final class KioskActivity extends Activity {
      */
     private void showConfirm(String title, String message, String confirmLabel,
             boolean destructive, Runnable onConfirm, Runnable onCancel) {
+        pageBack = null;
         KioskTheme theme = currentTheme();
         enterImmersiveMode();
         LinearLayout page = pageColumn(theme);
@@ -7061,6 +7080,7 @@ public final class KioskActivity extends Activity {
      * else: every tap inside the page goes through {@link PlaylistPage} instead.
      */
     private void showPlaylistPage(PlaylistDraft draft) {
+        pageBack = null;
         playlistDraft = draft;
         stopScreensaver("choosing pictures");
         destroyWebView();
@@ -8662,6 +8682,7 @@ public final class KioskActivity extends Activity {
      * have to carry that information.
      */
     private void showEscapeSequences(KioskConfig config) {
+        pageBack = null;
         configurationVisible = true;
         recorderVisible = false;
         publishOperatorScreenState();
@@ -9982,6 +10003,7 @@ public final class KioskActivity extends Activity {
      * the status bar suppressed here.
      */
     private void showAbout() {
+        pageBack = null;
         currentScreen = this::showAbout;
         configurationVisible = true;
         recorderVisible = false;
@@ -10071,6 +10093,7 @@ public final class KioskActivity extends Activity {
      * in the muralis-site repo, where one edit reaches every surface at once.
      */
     private void showLegalDocument(int titleRes, int bodyRes) {
+        pageBack = null;
         currentScreen = () -> showLegalDocument(titleRes, bodyRes);
         configurationVisible = true;
         recorderVisible = false;
@@ -11289,7 +11312,6 @@ public final class KioskActivity extends Activity {
      */
     private void showParkingPage() {
         currentScreen = this::showParkingPage;
-        openSection = "";
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
@@ -11429,7 +11451,6 @@ public final class KioskActivity extends Activity {
             showParkingPage();
             return;
         }
-        openSection = "";
         // Cleared, not set: a WebView reflows itself on rotation, and rebuilding this screen would
         // reload the dashboard every time somebody turned the panel. See onConfigurationChanged.
         currentScreen = null;

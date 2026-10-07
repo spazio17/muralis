@@ -2133,7 +2133,8 @@ final class HttpAdminServer {
                 // The look on a page of its own (Juri, 2026-10-07), as the panel has it.
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/appearance\"><span class=\"lead\">"
                 + glyph("appearance") + "</span><span class=\"text\"><span class=\"h\">Appearance"
-                + "</span><span class=\"s\">" + escapeHtml(appearanceSummary(config))
+                + "</span><span class=\"s\" id=\"sum-appearance\">"
+                + escapeHtml(KioskConfig.appearanceSummary(config.appearanceColour, config.separators))
                 + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
@@ -2243,7 +2244,9 @@ final class HttpAdminServer {
      * page at once.
      */
     private String buildAppearancePage() {
-        KioskConfig config = KioskConfig.load(context);
+        // The two cached readers, not KioskConfig.load, which decrypts every secret.
+        String colourNow = KioskConfig.appearanceColourOf(context);
+        String separatorsNow = KioskConfig.separatorsOf(context);
         StringBuilder colours = new StringBuilder();
         for (String colour : Palettes.COLOURS) {
             // Its primary, light and dark, for the page's theme.
@@ -2251,17 +2254,17 @@ final class HttpAdminServer {
             String[] darkOf = Palettes.colours(colour, true);
             String dot = "<i class=\"dot\" style=\"--dot-light:" + (lightOf == null ? "" : lightOf[7])
                     + ";--dot-dark:" + (darkOf == null ? "" : darkOf[7]) + "\"></i>";
-            colours.append(radioOf("appearance_colour", "appearance_colour", colour, config.appearanceColour,
+            colours.append(radioOf("appearance_colour", "appearance_colour", colour, colourNow,
                     dot + "<span class=\"text\"><span class=\"h\">"
                             + Character.toUpperCase(colour.charAt(0)) + colour.substring(1)
                             + "</span></span>"));
         }
         String separators = radioOf("separators", "separators", KioskConfig.SEPARATORS_LINES,
-                config.separators, "<span class=\"text\"><span class=\"h\">Lines</span></span>")
+                separatorsNow, "<span class=\"text\"><span class=\"h\">Lines</span></span>")
                 + radioOf("separators", "separators", KioskConfig.SEPARATORS_SEGMENTS,
-                        config.separators, "<span class=\"text\"><span class=\"h\">Segments</span></span>")
+                        separatorsNow, "<span class=\"text\"><span class=\"h\">Segments</span></span>")
                 + radioOf("separators", "separators", KioskConfig.SEPARATORS_NONE,
-                        config.separators, "<span class=\"text\"><span class=\"h\">None</span></span>");
+                        separatorsNow, "<span class=\"text\"><span class=\"h\">None</span></span>");
         return pageStart("Appearance", null, "/")
                 + "<div class=\"two\">" + choiceCard("appearance_colour", "Colour", colours.toString())
                 + choiceCard("separators", "Separators", separators) + "</div>"
@@ -2273,15 +2276,6 @@ final class HttpAdminServer {
         return "<section class=\"card\"><h2 id=\"opt-" + key + "-label\">" + title + "</h2>"
                 + "<div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
                 + "-label\">" + radios + "</div></section>";
-    }
-
-    /** The Appearance row's summary: the stored colour and separators, as the radios name them. */
-    private static String appearanceSummary(KioskConfig config) {
-        String separators = KioskConfig.SEPARATORS_SEGMENTS.equals(config.separators) ? "Segments"
-                : KioskConfig.SEPARATORS_NONE.equals(config.separators) ? "None" : "Lines";
-        String colour = config.appearanceColour;
-        return (colour.isEmpty() ? "" : Character.toUpperCase(colour.charAt(0)) + colour.substring(1))
-                + " \u00b7 " + separators;
     }
 
     private static String choice(String key, String label, String radios) {

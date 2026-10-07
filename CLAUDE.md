@@ -467,7 +467,8 @@ the playlist page was the case that set the rule.
   dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first
   and work under it. There is no settings control for the place: the finger is the control.
 - **The volume buttons can be switched off** (2026-10-05, one of the small 0.6 ideas): "Disable
-  volume buttons" in This panel on both surfaces, under the look (`volume_buttons_disabled`, an
+  volume buttons" in This panel on both surfaces, under the name and above the Appearance row
+  (`volume_buttons_disabled`, an
   instant setting, off by default so the buttons work as Android has them, in the state
   document; Juri's words and place the same day, after "Volume buttons change the volume" in
   Display: it is about the panel, not its screen). On, `dispatchKeyEvent` takes volume up, down
@@ -1303,10 +1304,9 @@ the playlist page was the case that set the rule.
   ticks or clears the page shown (the Select all and Select none buttons went). **The settings are
   one menu of sections**, each a glyph, its name and a one-line summary of stored values only:
   below 840 dp an accordion no wider than 720 dp with one section open, kept for the visit only
-  and all closed when a visit starts (Juri, 2026-10-07: `KioskActivity.openSection`, cleared
-  when the panel leaves its settings for the dashboard, the parking page or the launcher;
-  `admin_menu.js` keeps it in sessionStorage, so a tab's reloads and saves keep it and a new
-  visit does not), from 840 dp Material's
+  and all closed when a visit starts (Juri, 2026-10-07: `KioskActivity.openSection`, cleared by
+  the settings combination; `admin_menu.js` remembers nothing, and the section a Save posted
+  from comes back open from the form's `/#box-<section>` address), from 840 dp Material's
   list-detail, the list half the open section with Material's 24 dp gutter between them, so no
   panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
   This panel holding the legal pages and the version, which links to the repository on the web. The
