@@ -6,9 +6,9 @@
 
 set -euo pipefail
 
-project_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=scripts/builder.sh
-source "${project_dir}/scripts/builder.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=builder.sh
+source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
 
 # compileSdk/targetSdk 36 (Android 16), not the 34 this project's notes
 # originally assumed: from 2026-08-31 Google Play requires new apps and updates

@@ -8,9 +8,9 @@
 
 set -euo pipefail
 
-project_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=scripts/builder.sh
-source "${project_dir}/scripts/builder.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=builder.sh
+source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
 
 if [[ ! -d "${project_dir}/.android-sdk/platforms" ]]; then
     printf 'SDK not provisioned; run scripts/build-container.sh first.\n' >&2

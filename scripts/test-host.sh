@@ -26,24 +26,39 @@ set -euo pipefail
 # the Ctrl-C podman forwards would be lost and the run would go on to the end. 130 is what a shell
 # reports after an interrupt; the EXIT trap below still removes the test directory. Bash runs a
 # trap only once its foreground command has finished, so javac and java run in the background
-# behind a `wait`, which a trapped signal does interrupt: the handler then ends the suite that was
-# running and the run stops at once, with or without a terminal.
+# behind a `wait` (the functions below the tool check), which a trapped signal does interrupt: the
+# handler then ends the suite that was running and the run stops at once, with or without a
+# terminal. The handler waits for the suite
+# it killed, so the EXIT trap does not remove the test directory under a javac still writing to
+# it; `child` is cleared after each wait so a PID the kernel has since reused is never signalled.
 child=
-trap 'kill "${child:-}" 2>/dev/null; exit 130' INT TERM
-javac() { command javac "$@" & child=$!; wait "${child}"; }
-java() { command java "$@" & child=$!; wait "${child}"; }
+on_interrupt() {
+    if [[ -n ${child} ]]; then
+        kill "${child}" 2>/dev/null || true
+        wait "${child}" 2>/dev/null || true
+    fi
+    exit 130
+}
+trap on_interrupt INT TERM
+run_child() {
+    "$@" & child=$!
+    local status=0
+    wait "${child}" || status=$?
+    child=
+    return "${status}"
+}
 
-script_dir=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-project_dir=$(CDPATH='' cd -- "${1:-${script_dir}/..}" && pwd)
-# shellcheck source=scripts/builder.sh
-source "${script_dir}/builder.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=builder.sh
+source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
+project_dir=$(CDPATH='' cd -- "${1:-${project_dir}}" && pwd)
 
 # Run again inside the builder image. The project keeps its own path in there, read-only, so every
 # message names a file the way it is seen here; this script's directory is mounted as well, for
 # when the project to check is another checkout. No network: the suites run against recorded
 # answers. HOME is /tmp because --userns=keep-id runs as a user with no home in the image.
-direct_value=${MURALIS_TESTS_DIRECT:-}
-case ${direct_value,,} in
+direct_value=$(printf '%s' "${MURALIS_TESTS_DIRECT:-}" | tr '[:upper:]' '[:lower:]')
+case ${direct_value} in
     ''|0|false|no) direct= ;;
     1|true|yes) direct=1 ;;
     *)
@@ -69,16 +84,16 @@ if [[ -z ${direct} ]]; then
         --env "MURALIS_TESTS_IMAGE=${builder_image}" \
         --env HOME=/tmp \
         --volume "${project_dir}:${project_dir}:ro" \
-        --volume "${script_dir}:${script_dir}:ro" \
+        --volume "${scripts_dir}:${scripts_dir}:ro" \
         --workdir "${project_dir}" \
         "${builder_image}" \
-        bash "${script_dir}/test-host.sh" "${project_dir}"
+        bash "${scripts_dir}/test-host.sh" "${project_dir}"
 fi
 
 # An image built before these tools were added passes the tag check above; name the fix, which
 # in a direct run is an install here, not a rebuild.
 for tool in javac xmllint python3; do
-    command -v "${tool}" >/dev/null && continue
+    type -P "${tool}" >/dev/null && continue
     if [[ -n ${MURALIS_TESTS_IMAGE:-} ]]; then
         printf '%s is missing from %s; rebuild it with scripts/build-container.sh.\n' \
             "${tool}" "${MURALIS_TESTS_IMAGE}" >&2
@@ -88,6 +103,14 @@ for tool in javac xmllint python3; do
     fi
     exit 1
 done
+
+# The two compilers go through run_child above. They are started by their program path, not
+# through the `command` builtin: bash 4.4 (the Lineage image) keeps a shell between the job and a
+# `command x &`, so the handler's kill would hit that shell and leave the compiler writing.
+javac_bin=$(type -P javac)
+java_bin=$(type -P java)
+javac() { run_child "${javac_bin}" "$@"; }
+java() { run_child "${java_bin}" "$@"; }
 
 test_dir=$(mktemp -d /tmp/kiosk-app-host-test.XXXXXX)
 trap 'rm -rf "${test_dir}"' EXIT
