@@ -6,8 +6,9 @@
 
 set -euo pipefail
 
-project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-image_name=kiosk-android-builder:36
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=builder.sh
+source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
 
 # compileSdk/targetSdk 36 (Android 16), not the 34 this project's notes
 # originally assumed: from 2026-08-31 Google Play requires new apps and updates
@@ -21,7 +22,7 @@ sdk_packages=(
 )
 
 podman build \
-    --tag "${image_name}" \
+    --tag "${builder_image}" \
     --file "${project_dir}/build/Containerfile.android" \
     "${project_dir}/build"
 
@@ -30,12 +31,11 @@ mkdir -p "${project_dir}/.android-sdk" "${project_dir}/.gradle"
 # `yes` feeds the licence prompts, which sdkmanager offers no non-interactive
 # flag for. Licences are written into the SDK root, so they persist on the mount.
 podman run --rm \
-    --userns=keep-id \
-    --security-opt label=disable \
+    "${builder_run_args[@]}" \
     --volume "${project_dir}/.android-sdk:/sdk" \
     --volume "${project_dir}/.gradle:/gradle" \
-    "${image_name}" \
+    "${builder_image}" \
     bash -lc "yes | sdkmanager --sdk_root=/sdk --licenses >/dev/null \
         && sdkmanager --sdk_root=/sdk ${sdk_packages[*]@Q}"
 
-printf 'Muralis Android builder ready: %s\n' "${image_name}"
+printf 'Muralis Android builder ready: %s\n' "${builder_image}"

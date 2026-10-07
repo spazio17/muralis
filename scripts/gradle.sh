@@ -8,8 +8,9 @@
 
 set -euo pipefail
 
-project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-image_name=kiosk-android-builder:36
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=builder.sh
+source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
 
 if [[ ! -d "${project_dir}/.android-sdk/platforms" ]]; then
     printf 'SDK not provisioned; run scripts/build-container.sh first.\n' >&2
@@ -24,10 +25,9 @@ keystore="${project_dir}/.gradle/kiosk-debug.keystore"
 if [[ ! -f ${keystore} ]]; then
     printf 'Creating the debug keystore (once): %s\n' "${keystore}"
     podman run --rm \
-        --userns=keep-id \
-        --security-opt label=disable \
+        "${builder_run_args[@]}" \
         --volume "${project_dir}/.gradle:/gradle" \
-        "${image_name}" \
+        "${builder_image}" \
         keytool -genkeypair -noprompt \
             -keystore /gradle/kiosk-debug.keystore \
             -storepass android -keypass android \
@@ -63,9 +63,10 @@ if [[ -f "${key_dir}/muralis-upload.p12" ]]; then
     )
 fi
 
-# The version identity comes from git (see the comment in app/build.gradle), but the container
-# has no git, so both values are computed here on the host and passed in. Absent when this is not
-# a git checkout, and that is fine: the build falls back to a value that is obviously no release.
+# The version identity comes from git (see the comment in app/build.gradle), computed here on the
+# host and passed in: the container sees only the mount, and a worktree's .git is a file pointing
+# outside it, so git in there finds no repository. Absent when this is not a git checkout, and
+# that is fine: the build falls back to a value that is obviously no release.
 # MURALIS_VERSION_NAME set in this shell wins, which is what app/build.gradle has always said
 # the variable does; this script used to compute over it, so the documented override did nothing.
 # The store captures need it: a version that reads "0.5.0-28-gc4df31e-dirty" on a listing image
@@ -104,13 +105,12 @@ fi
 # --no-daemon: each invocation is a fresh short-lived container, so a lingering
 # daemon would be killed with it anyway and only costs startup work.
 podman run --rm --interactive \
-    --userns=keep-id \
-    --security-opt label=disable \
+    "${builder_run_args[@]}" \
     --volume "${project_dir}:/src" \
     --volume "${project_dir}/.android-sdk:/sdk" \
     --volume "${project_dir}/.gradle:/gradle" \
     "${key_args[@]+"${key_args[@]}"}" \
     "${version_args[@]+"${version_args[@]}"}" \
     "${entitlement_args[@]+"${entitlement_args[@]}"}" \
-    "${image_name}" \
+    "${builder_image}" \
     gradle --project-dir /src --no-daemon "$@"
