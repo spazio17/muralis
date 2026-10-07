@@ -84,7 +84,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libxml2-utils
-          scripts/test-host.sh
+          MURALIS_TESTS_DIRECT=1 scripts/test-host.sh
 
       # The bundled legal texts are verbatim copies of the canonical files in the public
       # muralis-site repo (single source of truth, decided 2026-08-25). A release must not

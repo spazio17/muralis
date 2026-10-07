@@ -46,7 +46,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends libxml2-utils
           }
-          scripts/test-host.sh
+          MURALIS_TESTS_DIRECT=1 scripts/test-host.sh
 
       - name: Restore the debug keystore
         env:

@@ -9,7 +9,7 @@ architecture and the decisions behind it.
 
 ## Building
 
-Everything builds and tests inside a container; the host needs neither an Android SDK nor a JDK.
+Everything builds and tests inside a podman container; the host needs podman and nothing else, neither an Android SDK nor a JDK.
 
 ```bash
 scripts/build-container.sh   # once per clone: builds the image, provisions the SDK
@@ -18,6 +18,8 @@ scripts/test-host.sh         # fast checks in the same container: lint the scrip
 scripts/build-app.sh         # assembleDebug; prints the APK path and the adb commands to install
                               # it and take device ownership
 ```
+
+After a change to `build/Containerfile.android`, run `scripts/build-container.sh` again; `test-host.sh` names the missing tool when the image is older than the script.
 
 `scripts/gradle.sh <task>` runs any other Gradle task (`:app:lintDebug`, `:app:bundleDebug`, ...)
 inside the same container.

@@ -15,14 +15,19 @@ FROM docker.io/library/ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
 # JDK 21: AGP 8.13 requires JDK 17+, and 21 is the current LTS that Gradle 8.14
-# fully supports. Nothing compiles Java on the host: scripts/test-host.sh runs in
-# this image too, so the host tests use the same JDK as the build, and xmllint
-# and python3 are here for that script's resource and admin page checks.
+# fully supports. On this machine nothing compiles Java outside this image; GitHub
+# Actions installs its own Java 21 and runs the host tests and Gradle directly.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openjdk-21-jdk-headless \
-        libxml2-utils python3 \
         ca-certificates curl unzip zip git \
         file less procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# For scripts/test-host.sh, which runs in this image too: xmllint for the resource
+# checks, python3 for the admin page checks. A layer of its own, so a test tool
+# added later does not rebuild the JDK layer and change the Java with it.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxml2-utils python3 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64

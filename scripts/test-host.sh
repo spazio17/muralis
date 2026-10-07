@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
 # Fast validation that needs neither the Android SDK nor a device. It runs in the
-# builder image, the one scripts/gradle.sh builds with, so the host needs no JDK
-# and the tests compile with the same Java as the app. On GitHub Actions it runs
-# on the runner as it is: the image does not exist there, and the workflow sets
-# up the same Java 21 itself.
+# builder image, the one scripts/gradle.sh builds with, so the computer needs no
+# JDK and the tests compile with the same Java as the app.
+#
+# MURALIS_TESTS_DIRECT=1 runs the checks in the current shell instead, which then
+# needs a JDK 21, xmllint and python3. The GitHub workflows set it: the image does
+# not exist there, and they set up Java 21 themselves.
 #
 # Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
 # pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
@@ -19,30 +21,49 @@
 
 set -euo pipefail
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-project_dir=$(cd "${1:-${script_dir}/..}" && pwd)
-image_name=kiosk-android-builder:36
+# Inside the container this bash is process 1, which ignores a signal it has no handler for, so
+# the Ctrl-C podman forwards would be lost and the run would go on to the end. 130 is what a shell
+# reports after an interrupt; the EXIT trap below still removes the test directory.
+trap 'exit 130' INT TERM
 
-# Run again inside the builder image. The project keeps its own path in there, so every message
-# names a file the way it is seen here; this script's directory is mounted as well, for when the
-# project to check is another checkout. HOME is /tmp because --userns=keep-id runs as a user with
-# no home in the image, and the /gradle that HOME points at is a mount these checks do not need.
-if [[ -z ${MURALIS_IN_BUILDER:-} && ${GITHUB_ACTIONS:-} != true ]]; then
-    if ! podman image exists "${image_name}"; then
+script_dir=$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+project_dir=$(CDPATH= cd -- "${1:-${script_dir}/..}" && pwd)
+source "${script_dir}/builder.sh"
+
+# Run again inside the builder image. The project keeps its own path in there, read-only, so every
+# message names a file the way it is seen here; this script's directory is mounted as well, for
+# when the project to check is another checkout. No network: the suites run against recorded
+# answers. HOME is /tmp because --userns=keep-id runs as a user with no home in the image.
+if [[ ${MURALIS_TESTS_DIRECT:-} != 1 ]]; then
+    if ! command -v podman >/dev/null; then
+        printf 'podman is needed to run the checks in the builder image; MURALIS_TESTS_DIRECT=1 runs them here.\n' >&2
+        exit 1
+    fi
+    if ! podman image exists "${builder_image}"; then
+        # A broken podman answers like a missing image; let it explain itself first.
+        podman info >/dev/null
         printf 'Builder image missing; run scripts/build-container.sh first.\n' >&2
         exit 1
     fi
-    exec podman run --rm \
-        --userns=keep-id \
-        --security-opt label=disable \
-        --env MURALIS_IN_BUILDER=1 \
+    exec podman run --rm "${builder_run_args[@]}" \
+        --network none \
+        --env MURALIS_TESTS_DIRECT=1 \
         --env HOME=/tmp \
-        --volume "${project_dir}:${project_dir}" \
+        --volume "${project_dir}:${project_dir}:ro" \
         --volume "${script_dir}:${script_dir}:ro" \
         --workdir "${project_dir}" \
-        "${image_name}" \
+        "${builder_image}" \
         bash "${script_dir}/test-host.sh" "${project_dir}"
 fi
+
+# An image built before these tools were added passes the tag check above; name the fix.
+for tool in javac xmllint python3; do
+    command -v "${tool}" >/dev/null || {
+        printf '%s is missing; rebuild the builder image with scripts/build-container.sh.\n' \
+            "${tool}" >&2
+        exit 1
+    }
+done
 
 test_dir=$(mktemp -d /tmp/kiosk-app-host-test.XXXXXX)
 trap 'rm -rf "${test_dir}"' EXIT
