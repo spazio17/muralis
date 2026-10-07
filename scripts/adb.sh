@@ -19,15 +19,15 @@
 
 set -euo pipefail
 
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=builder.sh
-source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
+project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+image_name=kiosk-android-builder:36
 
 podman run --rm --interactive \
-    "${builder_run_args[@]}" \
+    --userns=keep-id \
+    --security-opt label=disable \
     --volume /dev/bus/usb:/dev/bus/usb \
     --volume "${project_dir}:/src" \
     --volume "${project_dir}/.android-sdk:/sdk" \
     --volume "${project_dir}/.gradle:/gradle" \
-    "${builder_image}" \
+    "${image_name}" \
     /sdk/platform-tools/adb "$@"

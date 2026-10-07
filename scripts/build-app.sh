@@ -4,9 +4,7 @@
 
 set -euo pipefail
 
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=builder.sh
-source "$(dirname "${BASH_SOURCE[0]}")/builder.sh"
+project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 "${project_dir}/scripts/gradle.sh" assembleDebug
 
