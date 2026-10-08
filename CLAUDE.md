@@ -1615,7 +1615,10 @@ the playlist page was the case that set the rule.
 - **A QR enrolment needs two screens from Android 12** (2026-10-07: the Mi 9T on Android 16
   downloaded Muralis and then failed "Can't set up device" every time, while Android 8 and 10 were
   fine). AOSP's ManagedProvisioning installs the app, then refuses an app that does not answer both
-  `GET_PROVISIONING_MODE` and `ADMIN_POLICY_COMPLIANCE`. `ProvisioningModeActivity` answers a fully
+  `GET_PROVISIONING_MODE` and `ADMIN_POLICY_COMPLIANCE`; on a device with Google's apps, Android 13
+  and newer hand the whole enrolment to Google's Android Device Policy (the holder of the device
+  policy management role, `cmd role get-role-holders android.app.role.DEVICE_POLICY_MANAGEMENT`),
+  which asks the same two questions, and the Mi 9T's failed install was recorded as made by it. `ProvisioningModeActivity` answers a fully
   managed device (`Provisioning.fullyManagedOffered`, host-tested; it cancels when the setup wizard
   offers only a work profile, which cannot lock), `PolicyComplianceActivity` answers OK at once,
   since lock task and HOME wait for the first-start wizard. Both are declared as Google's TestDPC,
