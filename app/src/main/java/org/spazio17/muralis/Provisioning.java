@@ -4,8 +4,11 @@
  */
 package org.spazio17.muralis;
 
+import java.util.List;
+
 /**
- * Works out whether this install can actually be a kiosk, and what to tell the operator if not.
+ * Works out whether this install can actually be a kiosk, and what to tell the operator if not,
+ * and, during a QR enrolment, whether the setup wizard offers the mode a kiosk needs.
  *
  * <p>The problem this solves is specific to shipping as an app rather than as a ROM. Device-owner
  * status is what stands in for every privileged permission the ROM build had, and it <b>cannot be
@@ -47,7 +50,24 @@ final class Provisioning {
         SIDELOAD_NOT_PROVISIONED,
     }
 
+    /**
+     * {@code DevicePolicyManager.PROVISIONING_MODE_FULLY_MANAGED_DEVICE}, the one mode Muralis
+     * takes: a work profile has neither lock task nor HOME, so it would be a kiosk in name only.
+     */
+    static final int MODE_FULLY_MANAGED_DEVICE = 1;
+
     private Provisioning() {
+    }
+
+    /**
+     * Whether the setup wizard lets Muralis become this device's owner, from the modes it offers
+     * in {@code EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES} (Android 12 on; a QR enrolment
+     * offers a work profile and a fully managed device). No list at all, as Android 10 and 11
+     * send none, leaves the choice to Muralis.
+     */
+    static boolean fullyManagedOffered(List<Integer> allowedModes) {
+        return allowedModes == null || allowedModes.isEmpty()
+                || allowedModes.contains(MODE_FULLY_MANAGED_DEVICE);
     }
 
     /**

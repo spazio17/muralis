@@ -4,6 +4,9 @@
  */
 package org.spazio17.muralis;
 
+import java.util.Arrays;
+import java.util.Collections;
+
 /**
  * Host tests for the install-source classification and the advice derived from it.
  *
@@ -17,7 +20,25 @@ public final class ProvisioningTest {
         testClassification();
         testAdviceIgnoresSourceWhenProvisioned();
         testAdviceDependsOnSourceWhenNotProvisioned();
+        testFullyManagedOffered();
         System.out.println("ProvisioningTest passed");
+    }
+
+    private static void testFullyManagedOffered() {
+        // Android 10 and 11 send no list: the mode is Muralis's to pick.
+        require(Provisioning.fullyManagedOffered(null), "no list offers every mode");
+        require(Provisioning.fullyManagedOffered(Collections.emptyList()),
+                "an empty list offers every mode");
+        // Android 12 on: a QR enrolment offers the work profile (2) and fully managed (1).
+        require(Provisioning.fullyManagedOffered(Arrays.asList(2, 1)),
+                "a QR enrolment's list offers fully managed");
+        require(Provisioning.fullyManagedOffered(Arrays.asList(1)),
+                "fully managed alone is offered");
+        // A setup that allows only a work profile is one Muralis cannot serve.
+        require(!Provisioning.fullyManagedOffered(Arrays.asList(2)),
+                "a work profile alone is not a kiosk");
+        require(!Provisioning.fullyManagedOffered(Arrays.asList(2, 3)),
+                "the two work profile modes are not a kiosk");
     }
 
     private static void testClassification() {

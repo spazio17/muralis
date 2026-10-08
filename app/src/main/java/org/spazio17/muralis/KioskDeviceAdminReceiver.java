@@ -28,6 +28,10 @@ import android.util.Log;
  *
  * <p>Provisioned out of band, not by the app, over adb or by QR during out-of-box setup. Muralis degrades to its
  * previous behaviour when it is not the device owner, so an un-provisioned tablet still works.
+ * From Android 12 a QR enrolment also needs {@link ProvisioningModeActivity} and
+ * {@link PolicyComplianceActivity}; the setup wizard then sends this receiver no
+ * provisioning-complete broadcast, and none is needed: {@link #onEnabled} still arrives, and the
+ * process it starts brings the service.
  */
 public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     private static final String TAG = "MuralisAdmin";
