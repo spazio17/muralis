@@ -22,8 +22,9 @@ import android.util.Log;
  * the app answers both, with no list of allowed modes, and keep their older flow otherwise;
  * Android 8 and 9 never ask. It shows nothing: it answers and closes.
  *
- * <p>Started by the system only, which the manifest's {@code BIND_DEVICE_ADMIN} permission makes
- * sure of, as Google's TestDPC, Headwind MDM and FreeKiosk declare it.
+ * <p>Started only by the setup, the system or the device's enrolment app (Android Device Policy
+ * on the Mi 9T), which the manifest's {@code BIND_DEVICE_ADMIN} permission makes sure of, as
+ * Google's TestDPC, Headwind MDM and FreeKiosk declare it.
  */
 public final class ProvisioningModeActivity extends Activity {
     private static final String TAG = "MuralisAdmin";

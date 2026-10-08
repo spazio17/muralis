@@ -194,7 +194,8 @@
              missing (vendor docs, "Android 12 work changes"; the Mi 9T on Android 16 failed every
              time without them, 2026-10-07). Android 10 and 11 ask too once both exist, Android 8
              and 9 never. Declared as Google's TestDPC, Headwind MDM and FreeKiosk declare them:
-             BIND_DEVICE_ADMIN lets only the system start them, DEFAULT is how the setup wizard
+             BIND_DEVICE_ADMIN lets only the setup start them (the system or the device's
+             enrolment app, Android Device Policy on the Mi 9T), DEFAULT is how the setup wizard
              finds them, and NoDisplay (FreeKiosk's) because neither shows anything. -->
         <activity
             android:name=".ProvisioningModeActivity"

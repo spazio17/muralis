@@ -18,8 +18,8 @@ import android.util.Log;
  *
  * <p>Required from Android 12 with {@link ProvisioningModeActivity}; see there. The setup wizard
  * starts it near its end, with Muralis already the device owner, and steps back on anything but
- * OK, so the answer comes before anything else. Started by the system only
- * ({@code BIND_DEVICE_ADMIN} in the manifest), and it shows nothing.
+ * OK, so the answer comes before anything else. Started only by the setup, the system or the
+ * device's enrolment app ({@code BIND_DEVICE_ADMIN} in the manifest), and it shows nothing.
  */
 public final class PolicyComplianceActivity extends Activity {
     private static final String TAG = "MuralisAdmin";
