@@ -52,8 +52,8 @@ return local.at>requestedAt||Date.now()-local.at<20000;}
 // (localWins): the radio and the page then stay together either way (review, 2026-10-04).
 function followLook(key,value,attr){if(value==null){return;}
 var radio=document.querySelector('[data-setting="'+key+'"][value="'+value+'"]');
-// A page without the radios (Sensors, Screensaver, a playlist) has no local choice to keep:
-// its look simply follows the panel (review, 2026-10-04).
+// A page without the radios (the settings page, Sensors, Screensaver, a playlist) has no local
+// choice to keep: its look simply follows the panel (review, 2026-10-04).
 if(!radio){if(document.documentElement.getAttribute(attr)!==value){document.documentElement.setAttribute(attr,value);}return;}
 var group=radio.closest?radio.closest('.radios'):null;
 if((group&&group.dataset.pending)||localWins(radio,value)){return;}
@@ -117,6 +117,9 @@ follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 // The look chosen on the panel: its radios and the page's own colours and rows follow.
 followLook('appearance_colour',cfg.appearance_colour,'data-palette');followLook('separators',cfg.separators,'data-separators');
+// The settings page's Appearance row says the same in words.
+var sap=document.getElementById('sum-appearance');
+if(sap&&cfg.appearance_summary!=null&&sap.textContent!==cfg.appearance_summary){sap.textContent=cfg.appearance_summary;}
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');

@@ -54,7 +54,9 @@ if(el.dataset.setting==='appearance_colour'){document.documentElement.setAttribu
 if(el.dataset.setting==='separators'){document.documentElement.setAttribute('data-separators',value);}
 // The web admin serves the other certificate from its next connection, so the page goes onto it,
 // fetched afresh: a reload of a page that answered an upload would offer to post the files again.
-if(el.dataset.setting==='http_certificate'){setTimeout(function(){window.location.replace('/');},300);}
+// Back in the Local web admin section, named in the query: an address that differs from this
+// page's by the hash alone moves within the page and loads nothing (review, 2026-10-07).
+if(el.dataset.setting==='http_certificate'){setTimeout(function(){window.location.replace('/?open=webadmin');},300);}
 Array.prototype.forEach.call(document.querySelectorAll('[data-setting="'+el.dataset.setting+'"]'),function(other){
 if(other===el){return;}
 if(other.type==='checkbox'){other.checked=el.checked;}else if(other.type!=='radio'){other.value=el.value;}});

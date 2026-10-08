@@ -281,11 +281,13 @@ the playlist page was the case that set the rule.
   against a publicly-trusted certificate on a matching hostname, useless for the home-broker
   audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
   fingerprint machinery to back it.
-- **The look is the person's choice, on This panel** (Juri, 2026-10-04): Colour (Purple, Blue,
-  Orange, a seed each, a dot before each name) and Separators (Lines, the hairline; Segments,
-  every row of a list its own rounded surface with 2 dp of the card between, 16 dp corners at
-  the ends and 4 inside, as the Pixel's settings draw a list; None), with the day and night
-  toggle beside the section's name. **No second axis of the colour**: Material's variants were
+- **The look is the person's choice, on the Appearance page under This panel** (Juri, 2026-10-04;
+  a page of its own since 2026-10-07, the name Signal, macOS and iOS use, a row with its glyph and
+  "Purple · Lines" on both surfaces, `/appearance` on the web): Colour (Purple, Blue, Orange, a
+  seed each, a dot before each name) and Separators (Lines, the hairline; Segments, every row of
+  a list its own rounded surface with 2 dp of the card between, 16 dp corners at the ends and 4
+  inside, as the Pixel's settings draw a list; None), a panel each; the day and night toggle
+  stays beside This panel's name. **No second axis of the colour**: Material's variants were
   tried and on a dark panel the three gave the same primary (Material pins it at tone 80 and
   every saturation clips there, measured), then its contrast levels, which did not look good;
   Android, Home Assistant, Telegram and Signal offer a colour and day or night, nothing more,
@@ -465,7 +467,8 @@ the playlist page was the case that set the rule.
   dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first
   and work under it. There is no settings control for the place: the finger is the control.
 - **The volume buttons can be switched off** (2026-10-05, one of the small 0.6 ideas): "Disable
-  volume buttons" in This panel on both surfaces, under the look (`volume_buttons_disabled`, an
+  volume buttons" in This panel on both surfaces, under the name and above the Appearance row
+  (`volume_buttons_disabled`, an
   instant setting, off by default so the buttons work as Android has them, in the state
   document; Juri's words and place the same day, after "Volume buttons change the volume" in
   Display: it is about the panel, not its screen). On, `dispatchKeyEvent` takes volume up, down
@@ -1300,8 +1303,13 @@ the playlist page was the case that set the rule.
   a playlist are check boxes on rows and check circles on tiles, and the header box over a page
   ticks or clears the page shown (the Select all and Select none buttons went). **The settings are
   one menu of sections**, each a glyph, its name and a one-line summary of stored values only:
-  below 840 dp an accordion no wider than 720 dp with one section open and remembered
-  (`admin_menu.js` on the web, UI preference `open_section` on the panel), from 840 dp Material's
+  below 840 dp an accordion no wider than 720 dp with one section open, kept for the visit only
+  and all closed when a visit starts (Juri, 2026-10-07: `KioskActivity.openSection`, cleared by
+  the settings combination; a page below the settings and back shows what is stored, as a
+  typed but unsaved connection box is lost on every page below; `admin_menu.js` remembers
+  nothing, and the section a Save posted from, or a page's arrow leads back to, comes back open
+  from its `/#box-<section>` address, the certificate choice's reload from `/?open=webadmin`,
+  since a change of the hash alone reloads nothing), from 840 dp Material's
   list-detail, the list half the open section with Material's 24 dp gutter between them, so no
   panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
   This panel holding the legal pages and the version, which links to the repository on the web. The
@@ -1319,8 +1327,15 @@ the playlist page was the case that set the rule.
   The privacy policy and the terms are rows of This panel and nowhere else: the panel's
   Version and device details page carried them a second time until 2026-09-23, and a legal page's
   back arrow returns to the settings. **Back is the arrow in the app
-  bar, once**; the "← Back" buttons at head and foot went. The theme control is a sun or a moon in
-  the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices): **the panel's at the right of the section's name**
+  bar, once**; the "← Back" buttons at head and foot went. On an ordinary install the system
+  Back, gesture or key, goes where the arrow goes, on a question with no arrow its Cancel or
+  OK (never an OK that opens another app: Back on "Blocked in Android settings" returns to the
+  page), and on a preview back to where it was started (Juri, 2026-10-07: people move around inside
+  an app with the gesture); drawing the heading sets it (`pageHeading`, `pendingBack`, taken up
+  by `setContentView` as the screen's `pageBack`), so the two cannot part and a screen that sets
+  none has none. The settings screen's Back still opens the dashboard, and a device owner's Back
+  stays inert; a showing keyboard takes the first Back on every install. The theme control is a sun or a moon in
+  the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices; it stayed at This panel's name when they moved to the Appearance page below it on 2026-10-07): **the panel's at the right of the section's name**
   (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
   that carries a control beside its name (`Section.action`); the web's beside the section's
   name too, in the accordion's row and, from 840 px, in the open card's top corner, cycling

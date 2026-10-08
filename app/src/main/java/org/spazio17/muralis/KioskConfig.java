@@ -28,12 +28,15 @@ final class KioskConfig {
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
     private static final String STATS_OVERLAY_ANCHOR = "stats_overlay_anchor";
-    /** The look a person chose on This panel; see appearanceColourOf, Palettes. */
+    /** The look a person chose on the Appearance page; see appearanceColourOf, Palettes. */
     private static final String APPEARANCE_COLOUR = "appearance_colour";
     private static final String SEPARATORS = "separators";
     static final String SEPARATORS_LINES = "lines";
     static final String SEPARATORS_SEGMENTS = "segments";
     static final String SEPARATORS_NONE = "none";
+    /** The separators on offer, in the order both surfaces list them. */
+    static final String[] SEPARATOR_CHOICES = {SEPARATORS_LINES, SEPARATORS_SEGMENTS,
+            SEPARATORS_NONE};
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
     private static final String SCREENSAVER_MODE = "screensaver_mode";
@@ -875,12 +878,13 @@ final class KioskConfig {
     }
 
     /**
-     * The look a person chose on This panel (Juri, 2026-10-04): a seed colour, which names a
-     * scheme of Palettes, and how the rows of a list are kept apart. A second axis went twice
-     * the same day (Material's variants, then its contrast levels): other apps offer a colour
-     * and day or night, nothing more. This panel's alone, like the light theme of the settings:
-     * a look is a thing of the screen in front of someone. Purple with lines is Muralis's own
-     * look and the default; a stored value nothing offers reads as the default.
+     * The look a person chose on the Appearance page under This panel (Juri, 2026-10-04; a page
+     * of its own since 2026-10-07): a seed colour, which names a scheme of Palettes, and how
+     * the rows of a list are kept apart. A second axis went twice the same day (Material's
+     * variants, then its contrast levels): other apps offer a colour and day or night, nothing
+     * more. This panel's alone, like the light theme of the settings: a look is a thing of the
+     * screen in front of someone. Purple with lines is Muralis's own look and the default; a
+     * stored value nothing offers reads as the default.
      */
     static String appearanceColourOf(Context context) {
         String cached = appearanceColourCache;
@@ -916,13 +920,29 @@ final class KioskConfig {
     private static volatile String appearanceColourCache;
     private static volatile String separatorsCache;
 
+    /** A colour's name, "Purple", on both surfaces' radios and in the Appearance summary. */
+    static String colourLabel(String colour) {
+        return colour == null || colour.isEmpty() ? ""
+                : Character.toUpperCase(colour.charAt(0)) + colour.substring(1);
+    }
+
+    /** A separators choice's name, "Lines", "Segments" or "None", wherever it is shown. */
+    static String separatorsLabel(String separators) {
+        return SEPARATORS_SEGMENTS.equals(separators) ? "Segments"
+                : SEPARATORS_NONE.equals(separators) ? "None" : "Lines";
+    }
+
+    /** The Appearance row's summary on both surfaces, "Purple · Lines", from the two labels. */
+    static String appearanceSummary(String colour, String separators) {
+        return colourLabel(colour) + " \u00b7 " + separatorsLabel(separators);
+    }
+
     /** Why a value for one of the two look settings is refused, or null when it is offered. */
     static String checkAppearance(String key, String value) {
         String[] offered;
         switch (key) {
             case "appearance_colour": offered = Palettes.COLOURS; break;
-            case "separators": offered = new String[] {SEPARATORS_LINES, SEPARATORS_SEGMENTS,
-                    SEPARATORS_NONE}; break;
+            case "separators": offered = SEPARATOR_CHOICES; break;
             default: return "no setting is called " + key;
         }
         if (value != null) {

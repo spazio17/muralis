@@ -923,6 +923,8 @@ final class HttpAdminServer {
             deleteAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
+        } else if (path.equals("/appearance") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppearancePage()));
         } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
@@ -1640,6 +1642,16 @@ final class HttpAdminServer {
 
 
     /**
+     * The settings with one section open, where a page under that section goes back to, as the
+     * panel's arrow comes back to the section it left (review, 2026-10-07: with nothing
+     * remembered between page loads, a bare "/" opened them all closed); admin_menu.js opens
+     * the section the address names, as it does after a Save.
+     */
+    private static String settingsAt(String section) {
+        return "/#box-" + section;
+    }
+
+    /**
      * The same, with the way back as the arrow at the left of the app bar, where every Material
      * screen has it and once only: the Back buttons at the head and foot of a page went with the
      * redesign of 2026-09-23.
@@ -1769,6 +1781,8 @@ final class HttpAdminServer {
         paths.put("saver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
         paths.put("stats", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
+        // A painter's palette with three dots of paint, the panel's ic_appearance.
+        paths.put("appearance", "<path d=\"M12 3a9 9 0 100 18c1 0 1.6-.7 1.6-1.5 0-.4-.2-.8-.5-1.1a1.5 1.5 0 011.1-2.5H16a5 5 0 005-5C21 6.6 17 3 12 3zM7.5 11h.01M10 7h.01M15 7h.01\"/>");
         paths.put("bolt", "<path d=\"M13 2L4 14h7l-1 8 9-12h-7z\"/>");
         paths.put("info", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 11v5M12 8h.01\"/>");
         paths.put("reboot", "<path d=\"M4 4v6h6M20 20v-6h-6M20 9A8 8 0 006.3 5.3L4 10"
@@ -1826,8 +1840,9 @@ final class HttpAdminServer {
      *
      * <p>The message about a refused save goes inside the section it is about, and that section
      * is the one open, so the reader lands on the reason rather than at the top of the page.
-     * {@code admin_menu.js} keeps one section open at a time and remembers which; without it the
-     * sections are plain {@code <details>} and still work.
+     * {@code admin_menu.js} keeps one section open at a time and remembers none between page
+     * loads, opening the one the address names; without it the sections are plain
+     * {@code <details>} and still work.
      */
     private String buildSettingsPage(String notice, String noticeSection) {
         KioskConfig config = KioskConfig.load(context);
@@ -2107,7 +2122,10 @@ final class HttpAdminServer {
                 + glyph("next") + "</a></div></div>";
     }
 
-    /** This panel: its name, then the stats and log, the version and the legal pages as rows. */
+    /**
+     * This panel: its name, the volume buttons, then Appearance, the stats and log, the version
+     * and the legal pages as rows.
+     */
     private String panelBody(KioskConfig config, String notice, String noticeSection) {
         return sectionFormStart("panel", notice, noticeSection)
                 + baselineField(config.deviceId)
@@ -2116,7 +2134,6 @@ final class HttpAdminServer {
                         " data-setting=\"device_id\"", null)
                 + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>"
-                + appearanceControls(config)
                 // The volume buttons, the panel's own place for them (Juri, 2026-10-05).
                 + "<div class=\"switches\">"
                 + switchRow("volume-buttons-disabled", "Disable volume buttons",
@@ -2124,6 +2141,12 @@ final class HttpAdminServer {
                         KioskConfig.volumeButtonsDisabled(context))
                 + "</div>"
                 + "<ul class=\"list gap\">"
+                // The look on a page of its own (Juri, 2026-10-07), as the panel has it.
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/appearance\"><span class=\"lead\">"
+                + glyph("appearance") + "</span><span class=\"text\"><span class=\"h\">Appearance"
+                + "</span><span class=\"s\" id=\"sum-appearance\">"
+                + escapeHtml(KioskConfig.appearanceSummary(config.appearanceColour, config.separators))
+                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
                 + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
@@ -2211,7 +2234,7 @@ final class HttpAdminServer {
                     .append(sensorCards(def, one)).append("</div>");
         }
         return pageStart(detailPage && chosen != null ? chosen.name : "Sensors", null,
-                detailPage ? "/sensors" : "/")
+                detailPage ? "/sensors" : settingsAt("sensors"))
                 + listDetail("sensors", detailPage, nav, detail.toString()) + pageEnd();
     }
 
@@ -2226,11 +2249,15 @@ final class HttpAdminServer {
     }
 
     /**
-     * The look of this panel, as the panel's This panel has it (Juri, 2026-10-04): Colour with
-     * its dot, Separators. Each stores the moment it is chosen
-     * (admin_setting.js), which also re-colours the page at once.
+     * Appearance, a page of its own under This panel since 2026-10-07, as the panel has it: the
+     * Colour with its dot and the Separators (Juri, 2026-10-04), a panel each, side by side from
+     * 840 px. Each stores the moment it is chosen (admin_setting.js), which also re-colours the
+     * page at once.
      */
-    private static String appearanceControls(KioskConfig config) {
+    private String buildAppearancePage() {
+        // The two cached readers, not KioskConfig.load, which decrypts every secret.
+        String colourNow = KioskConfig.appearanceColourOf(context);
+        String separatorsNow = KioskConfig.separatorsOf(context);
         StringBuilder colours = new StringBuilder();
         for (String colour : Palettes.COLOURS) {
             // Its primary, light and dark, for the page's theme.
@@ -2238,25 +2265,37 @@ final class HttpAdminServer {
             String[] darkOf = Palettes.colours(colour, true);
             String dot = "<i class=\"dot\" style=\"--dot-light:" + (lightOf == null ? "" : lightOf[7])
                     + ";--dot-dark:" + (darkOf == null ? "" : darkOf[7]) + "\"></i>";
-            colours.append(radioOf("appearance_colour", "appearance_colour", colour, config.appearanceColour,
+            colours.append(radioOf("appearance_colour", "appearance_colour", colour, colourNow,
                     dot + "<span class=\"text\"><span class=\"h\">"
-                            + Character.toUpperCase(colour.charAt(0)) + colour.substring(1)
-                            + "</span></span>"));
+                            + KioskConfig.colourLabel(colour) + "</span></span>"));
         }
-        String separators = radioOf("separators", "separators", KioskConfig.SEPARATORS_LINES,
-                config.separators, "<span class=\"text\"><span class=\"h\">Lines</span></span>")
-                + radioOf("separators", "separators", KioskConfig.SEPARATORS_SEGMENTS,
-                        config.separators, "<span class=\"text\"><span class=\"h\">Segments</span></span>")
-                + radioOf("separators", "separators", KioskConfig.SEPARATORS_NONE,
-                        config.separators, "<span class=\"text\"><span class=\"h\">None</span></span>");
-        return choice("appearance_colour", "Colour", colours.toString())
-                + choice("separators", "Separators", separators);
+        StringBuilder separators = new StringBuilder();
+        for (String choice : KioskConfig.SEPARATOR_CHOICES) {
+            separators.append(radioOf("separators", "separators", choice, separatorsNow,
+                    "<span class=\"text\"><span class=\"h\">"
+                            + KioskConfig.separatorsLabel(choice) + "</span></span>"));
+        }
+        return pageStart("Appearance", null, settingsAt("panel"))
+                + "<div class=\"two\">" + choiceCard("appearance_colour", "Colour", colours.toString())
+                + choiceCard("separators", "Separators", separators.toString()) + "</div>"
+                + pageEnd();
+    }
+
+    /** A card whose title names its radios, for a screen reader too. */
+    private static String choiceCard(String key, String title, String radios) {
+        return "<section class=\"card\"><h2 id=\"opt-" + key + "-label\">" + title + "</h2>"
+                + radioGroup(key, radios) + "</section>";
     }
 
     private static String choice(String key, String label, String radios) {
         return "<div class=\"choice\"><p class=\"label\" id=\"opt-" + key + "-label\">" + label
-                + "</p><div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
-                + "-label\">" + radios + "</div></div>";
+                + "</p>" + radioGroup(key, radios) + "</div>";
+    }
+
+    /** The radios of one choice, named by the label whose id is {@code opt-<key>-label}. */
+    private static String radioGroup(String key, String radios) {
+        return "<div class=\"radios\" role=\"radiogroup\" aria-labelledby=\"opt-" + key
+                + "-label\">" + radios + "</div>";
     }
 
     /**
@@ -2593,7 +2632,7 @@ final class HttpAdminServer {
                 .append(fresh ? automationEditor(rule, typedFrom, typedTo)
                         : automationEditor(new Automations.Rule())).append("</div>");
         return pageStart(!detailPage ? "Automations" : fresh ? "New automation" : "Edit automation",
-                null, detailPage ? "/automations" : "/")
+                null, detailPage ? "/automations" : settingsAt("automations"))
                 + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
                 + listDetail("automations", detailPage, nav, detail.toString()) + pageEnd();
     }
@@ -3116,7 +3155,7 @@ final class HttpAdminServer {
         KioskConfig config = KioskConfig.load(context);
         // Two panels, as the panel's page has them (Juri, 2026-09-28): side by side from 840 px,
         // one under the other below, the way every page of several panels without a menu is.
-        return pageStart("System stats and log", null, "/")
+        return pageStart("System stats and log", null, settingsAt("panel"))
                 + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
                 + statsBody(config) + "</section>"
                 + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
@@ -3302,13 +3341,13 @@ final class HttpAdminServer {
                 + certificateHint(certificate)
                 // The two files, each a button with the name chosen beside it, as the pictures'
                 // upload; one file holding both, or the two swapped, work too.
-                + "<form method=\"post\" action=\"/#box-webadmin\" "
+                + "<form method=\"post\" action=\"" + settingsAt("webadmin") + "\" "
                 + "enctype=\"multipart/form-data\" id=\"certificate-upload\">"
                 + fileRow("certificate-file", "certificate", "Certificate", locked)
                 + fileRow("certificate-key", "key", "Private key", locked)
                 + "<div class=\"actions\"><button class=\"primary\" type=\"submit\"" + locked
                 + ">Upload</button></div></form>"
-                + (kept ? "<form method=\"post\" action=\"/#box-webadmin\" "
+                + (kept ? "<form method=\"post\" action=\"" + settingsAt("webadmin") + "\" "
                         + "class=\"actions\" data-native=\"1\">"
                         + "<input type=\"hidden\" name=\"section\" value=\"certificate\">"
                         + "<input type=\"hidden\" name=\"sha256\" value=\""
@@ -3403,7 +3442,7 @@ final class HttpAdminServer {
             throws IOException {
         if (fromPage && refusal == null) {
             writeResponse(output, 303, "text/plain", bytes("done"),
-                    Collections.singletonMap("Location", "/#box-webadmin"));
+                    Collections.singletonMap("Location", settingsAt("webadmin")));
         } else if (fromPage) {
             writeResponse(output, 400, "text/html; charset=utf-8",
                     bytes(buildSettingsPage(refusal, "certificate")));
@@ -3553,7 +3592,7 @@ final class HttpAdminServer {
      * cannot be told one thing here and another on the published page.
      */
     private String renderLegalPage(String title, int rawRes) {
-        StringBuilder html = new StringBuilder(pageStart(title, null, "/"));
+        StringBuilder html = new StringBuilder(pageStart(title, null, settingsAt("panel")));
         html.append("<div class=\"doc one\">");
         for (String block : readRawText(rawRes).trim().split("\n\\s*\n")) {
             String content = block.trim();
@@ -4646,7 +4685,8 @@ final class HttpAdminServer {
         String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
                 "Show the screensaver first, a touch opens the page", saver.onWake)
                 + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once", saver.onWake);
-        StringBuilder html = new StringBuilder(pageStart("Screensaver", null, "/"));
+        StringBuilder html = new StringBuilder(pageStart("Screensaver", null,
+                settingsAt("screensaver")));
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
@@ -4997,7 +5037,7 @@ final class HttpAdminServer {
         String message = notice != null && section.equals(noticeSection)
                 ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>"
                 : "";
-        return "<form method=\"post\" action=\"/#box-" + section + "\">" + message
+        return "<form method=\"post\" action=\"" + settingsAt(section) + "\">" + message
                 + "<input type=\"hidden\" name=\"section\" value=\"" + section + "\">";
     }
 
