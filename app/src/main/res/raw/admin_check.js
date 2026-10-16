@@ -13,6 +13,7 @@
 (function(){
 var checks=[
 {name:'http_port',kind:'http_port'},
+{name:'fleet_port',kind:'fleet_port'},
 {name:'dashboard_url',kind:'dashboard_url'},
 {name:'mqtt_host',kind:'mqtt_host'}];
 // Per-field generation, so a slow probe on a dead host cannot land after a fast probe on the

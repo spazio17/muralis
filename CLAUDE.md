@@ -1,1700 +1,191 @@
-# Muralis (formerly KiOSk): architecture and decisions
+# Muralis
 
-This file is the one AI-facing document in this repo: a reference for what this app is, what it
-does, and why its trickier parts are shaped the way they are. It is not a status report, a
-changelog, or a getting-started guide, it does not track what's tested, what's pending, or how to
-build or run the project (the scripts and their own comments are self-explanatory for that). It
-describes the app as it stands, and should need no further edits except when a feature is added or
-removed that changes what the app actually does.
+This file tells an AI assistant what Muralis is and which rules the code keeps. It describes the
+app, not its history, its tests or anyone's setup. Keep it general: when a feature is added or
+removed, add or remove a line here; leave the details in the code and its comments.
 
-## What this is
+## What Muralis is
 
-An Android kiosk launcher for a wall-mounted tablet showing one web page in a WebView: a
-smart-home dashboard of any brand, an office board, a front-desk screen, a page on the local
-network. It locks the device onto that one page, recovers from the page going stale or unreachable
-without anyone touching it, and exposes a shared command/telemetry surface over both MQTT and a
-small built-in HTTP admin server. Home Assistant is one integration (MQTT discovery, two
-blueprints), not the product's frame; see the positioning decision of 2026-09-09.
+Muralis turns an Android tablet into a screen on the wall that shows one web page and looks after
+itself: a smart-home dashboard, an office board, a menu, any page on the local network. It locks
+the device to that page, recovers when the page or the network fails, and can be controlled from a
+browser or from home automation. It needs no cloud, no account and no server of its own.
 
-It targets the **public Android SDK only**: no platform signature, no privileged permissions, so it
-installs as an ordinary APK (minSdk 26, targetSdk 36, Play's floor, which moves every August;
-re-verify before any submission) on stock Android. A separate, privileged reference build exists
-(a custom-ROM app with `DEVICE_POWER`/`REBOOT`/`STATUS_BAR`/`WRITE_SECURE_SETTINGS`), kept frozen
-elsewhere as a working proof of what a fully-privileged build can do; this app is the deliberately
-constrained, publishable version of the same idea, not a port of that build's plumbing.
+It is an ordinary Android app built on the public SDK only (no platform signature, no privileged
+permissions), installed from Google Play or by a QR code during the device's first setup. The
+strongest lock-down needs the app to be the device owner; without that it still runs, visibly with
+fewer protections. Package `org.spazio17.muralis`. Internal class names keep an old `Kiosk` prefix
+on purpose.
 
-`applicationId`/package is `org.spazio17.muralis`; "Muralis" is the Play display name. Internal
-Java class names (`KioskActivity`, `KioskService`, `KioskCommandDispatcher`, ...) still carry the
-old `Kiosk` prefix on purpose, a deliberate scope decision, not an oversight: they're not
-product-facing, and renaming them touches every file for a purely cosmetic gain.
+## What it does
 
-## Design language: Material 3, on both surfaces
+- **Kiosk.** One page full screen, held by lock task with no system bars when the app is device
+  owner.
+  The way out is a combination of corner taps the person records, one for the settings and one for
+  the system launcher, optionally behind a PIN. A panel with no page shows a parking screen that
+  says what to do next, as does one whose App lock app is gone; over a dashboard that cannot be
+  reached the same screen says so while the page is retried underneath. App lock shows one installed app the person chose instead of the
+  page (the page is not loaded behind it), opened again whenever it closes, with the escape combinations read in four small
+  corner windows over it (display over other apps), pop-ups and Identify drawn straight over
+  it, Ambient and the dark brought over it on Muralis's own screen, and never Android's
+  Settings, a home screen or the Play Store as the app. The page's browser options: a sign-in for a page behind HTTP basic
+  auth, the user agent, text size, page zoom, a dark look, the way back to the dashboard
+  after a while, and the camera and microphone for the page when allowed (the camera handed
+  over by the camera sensor). A page certificate Android does not trust is asked about once,
+  then pinned by its fingerprint for that host and removable on both surfaces; never every
+  certificate.
+- **Self-recovery.** Retries a page that failed, notices a page that froze or a server that
+  restarted and reloads once, rebuilds a crashed browser engine, rebuilds it when memory runs low,
+  and restarts itself (or rebuilds its browser engine) once at night. None of this has a setting
+  to switch it off.
+- **Display.** Display off (a real sleep where the device can be trusted, a black overlay
+  otherwise), brightness, orientation, and Ambient, the optional screen while nobody uses the
+  panel: a dimmed page, black, another web page, or the panel's own pictures from named
+  playlists, then display off after a second delay. A status light for panels with none of
+  their own: a coloured frame around the screen, set like a Home Assistant light.
+  Pop-ups over the screen (a message, a picture, a camera's stream or a page, for some seconds
+  or until touched), from HTTP, MQTT, Home Assistant's notify and the automations, and cameras
+  that pop up on demand or on a doorbell's trigger, each with a mode on each panel and a cooldown.
+- **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
+  uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery, plain
+  or over TLS (the broker trusted by Android or by the certificate a person trusted on the panel,
+  a client certificate optional). The
+  panel and the web admin offer the same settings and show the same thing, except what needs a
+  hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
+  as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
+  image and button), the web admin's password or the broker's credentials being the gate; and a diagnostics file (device, permissions,
+  status, counters, log) downloaded from the web admin, never uploaded. A settings file exported
+  and imported in the web admin (passwords only when asked, then encrypted with a passphrase),
+  and a setup QR for a new tablet that carries the settings without passwords; both carry the
+  escape combinations and the page addresses as written.
+- **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
+  network and others), the camera as a network camera with motion detection, a sound level from
+  the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
+  them on the panel itself, also at a time of day, with actions on the panel, an MQTT message or
+  a call to an address (a charger's smart plug at 20 and 80 percent needs nothing else).
+- **Fleet.** Panels on one network trust each other by their own keys, and any panel's web admin
+  manages all of them. No server, no cloud. Each panel has its fleet key and a member endpoint,
+  announces itself on the local network (mDNS) while it is in a fleet or shows its Join code, joins
+  a fleet with a single-use code shown on its Join screen (proven by both sides with SPAKE2, never
+  sent), or leaves it (telling one member, which takes it off the list for all), removes another
+  panel that cannot leave by itself, and creates a fleet or adds another panel by reading that code
+  with its camera, or by typing it on a device with none (the panels announce whether they are ready
+  to be joined); every member holds the fleet's signed list of panels, the members tell each other
+  every few minutes that they are there and which version they hold, so one that fell behind fetches
+  the list, and sections of settings (the dashboard, MQTT, the web admin, the display, Ambient, the
+  alerts) can be shared, each by a switch on the Fleet page, in a group of panels or with the whole
+  fleet: groups are sets of panels with the same job, made with a name the person gives; a panel
+  ticks the groups it belongs to and may stop following what the whole fleet shares; a shared
+  section is applied on every panel of its scope, a group winning over the whole fleet, and a change
+  to it on any of them reaches all of them. A panel at its welcome screen can be joined before
+  anything locks: it takes the adding panel's escape combinations and PIN as its own, once, at that
+  moment, and goes to the dashboard; a panel that has combinations keeps them, they are never shared
+  afterwards. A page address may carry `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by
+  each panel when it loads the page, so one shared address shows each panel its own page. Alerts are
+  a shared section too (a panel offline, a page error, battery or temperature past a threshold, a
+  combination used, a PIN lockout): each panel judges itself and one panel judges the fleet's
+  offline, each alert is said once, on and off, as a notification on the panel, on a plain MQTT
+  topic and to a web address; every member keeps the last versions of the fleet's list, with what
+  each changed, and can restore one as a new version, membership kept as it is now. The Fleet page
+  shows a picture of every panel's screen on request, fetched from each panel over the fleet's own
+  link and never stored, and Identify shows a panel's name on its screen.
+- **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
+  one-time purchase through Google Play, is the fleet and what only makes sense across panels:
+  adding panels (at most six to a Pro fleet), the Fleet page and the fleet's alerts. A panel whose
+  account owns Pro writes it into the fleet's signed list, and the members without Google lease it
+  for thirty days from each confirmation; a refund ends it, a lapse makes the fleet free until a
+  panel with the account confirms again: what it shares stays applied, but a change on one panel
+  no longer reaches the others and no alert is raised.
 
-Decided 2026-09-23 and standing for everything added or changed from now on: **the panel's
-screens and the web admin are one Material 3 design** (Google's Material Design 3,
-m3.material.io), drawn once and applied to both. Anything new, a card, a field, a button, a
-dialog, a list, a page, follows Material 3's components and measurements, in the app's own
-palette (`KioskTheme`, `admin.css`), and looks the same on the panel and in the browser except
-where the surface itself differs (touch targets, a browser's own controls). Before adding a
-control, check the inventory in `../media/drafts/material3/INVENTORY.md` and the rules in the
-"Both surfaces are Material 3" bullet below; a redesign is checked against that inventory, never
-against a screenshot of one surface. Material 3 is the reference, not a look to imitate: no
-"Google clone", no Material branding, and no platform widget used unstyled because it happened to
-be there.
+## How the code is shaped
 
-**A sentence is the last resort (Juri, 2026-09-25).** Tell a person what they can do, and what
-state something is in, with the component and the glyph they already know: a grip for a row that
-moves, an eye for something shown or hidden, a mark in a card's head for a state set elsewhere,
-a greyed control for one that does nothing now, with the reason in its tooltip and spoken label.
-Add explanatory text only where no control or glyph can carry the meaning. The drag sentence on
-the playlist page was the case that set the rule.
+- **One command set, several surfaces.** `KioskCommandDispatcher` holds the commands that HTTP and
+  MQTT share (`HttpAdminServer`, `MqttController`), so a command and a refusal behave the same
+  wherever they arrive, and the validators for inputs that more than one surface accepts, which the
+  panel's screens and the web admin's forms call before they store anything. Feature-specific
+  rules live beside their feature (automations, sensors, the look, certificates).
+- **Activity and service.** `KioskActivity` draws every screen of the panel; `KioskService` runs the
+  remote surfaces, telemetry, sensors and the supervision that brings the dashboard back if it
+  disappears. `MuralisApplication` starts the service on a device-owner install whatever started
+  the process.
+- **Decisions in pure classes.** Recovery, restart scheduling, display off, the Ambient clock,
+  escape sequences, the provisioning check and similar decisions live in classes with no Android
+  imports (`RecoveryPolicy`, `RecyclePolicy`, `RelaunchPolicy`, `DisplayOffPolicy`,
+  `ScreensaverPolicy`, `EscapeSequence`, `Provisioning` and others), covered by host tests that run
+  without a device. Keep new decision logic in that shape.
+- **Settings and secrets.** `KioskConfig` reads and writes settings; writes go only through its
+  editor, which touches just the fields it is given, so one surface can never revert another's
+  change from a stale copy. Forms that save several fields carry a baseline and are refused when
+  the stored values changed meanwhile. Secrets live encrypted in `SecretStore` under a key that
+  stays in the Android Keystore. Settings and secrets are kept in device-protected storage, because
+  the service starts before the first unlock; pictures and playlists are files of the app's normal
+  storage, read only once the device is unlocked.
+- **Fleet.** `FleetIdentity` (each panel's own key and certificate), `FleetTls` (mutual TLS that
+  admits a peer by the hash of its public key), `FleetServer` (the member endpoint on its own
+  port, separate from the web admin) and `FleetDocument` (the signed list every member holds,
+  and how two lists changed apart merge into one) and `FleetProfile` (a shared group's values on
+  this panel, applied through the same commands and checks a person's change takes).
 
-## Core architecture
+## Rules the code keeps
 
-- **One command dispatcher, two transports.** `KioskCommandDispatcher` holds a single command
-  switch (`kiosk.start/stop/reload/restart/set_url`,
-  `kiosk.open_url/home`, `display.wake/visual_off/brightness/auto_brightness/orientation/off_method`,
-  `webadmin.enabled`, `screensaver.start/stop/mode/playlist/source/idle_seconds/off_seconds/
-  picture_seconds/dim_percent/url/on_wake/transition/picture_fit/credit_corner/shuffle/one_per_cycle/
-  credit`,
-  `system.reboot`, `telemetry.publish`;
-  the web admin alone adds `/api/pictures` and its family (`delete`, `refresh`, `caption`, `credit`,
-  `select` and the rest) and the `/api/playlists` family, `order` included, for the picture
-  playlists, which are not commands)
-  behind an `Executor` interface. `MqttController` and `HttpAdminServer` both call into it, so a
-  command behaves identically regardless of which surface it arrived on. Preserve this: it is the
-  point of the design, not incidental structure to simplify away.
-- **The dispatcher's validators are the only validators.** `validateDashboardUrl`,
-  `validateDeviceId` and `parseEnabledFlag` live in `KioskCommandDispatcher` (host-tested), and
-  every surface calls them before storing anything: the web admin returns the refusal on the page,
-  the tablet toasts it, MQTT publishes it. The 2026-08-21 audit found each surface with its own
-  rules: the web form stored URLs and device ids the command path refused with a reason (an
-  emptied device id even re-minted the panel's identity and orphaned every Home Assistant entity),
-  and the JSON and query encodings disagreed about whether `enabled=1` meant on. A new input gets
-  its validator in the dispatcher, and the surfaces share it.
-- **A one-off URL is not the dashboard.** `kiosk.set_url` means "this is the dashboard now" and
-  persists; `kiosk.open_url` shows a URL and stores nothing; `kiosk.home` returns to the stored
-  one. The web admin's one-off box used to send `set_url`, so looking at something once replaced
-  the panel's dashboard and the only way back was retyping the original from memory (reported
-  2026-08-24). Since 2026-09-08 there is no separate box: the Dashboard box has Save and Open
-  once on one input, mirroring the tablet's Dashboard card. The rules, all host-tested and verified on hardware: **reload** reloads
-  whatever is on screen, dashboard or one-off or a page reached inside the dashboard; a **kiosk
-  restart**, a process restart and the nightly clean always come back to the stored dashboard.
-  Every surface carries both halves as *inputs*, including two Home Assistant text entities; the
-  one-off entity reads `runtime.last_page_url` rather than a stored field, because an entity whose
-  state cannot be read back snaps back on every edit. **As a button, `kiosk.home` exists only in
-  Home Assistant now.** The tablet's "Main dashboard" and the web admin's quick action of the
-  same name were removed on 2026-09-07, when it was decided that they had to go: on the tablet's
-  settings screen it sat beside "Open once" while the only save was the foot button "Open
-  dashboard", two buttons naming the dashboard and neither of them the save, and it was pressed in
-  place of the save, which cost a full set of typed MQTT credentials. Anyone who misreads that button makes the same mistake, so
-  the button went rather than its name. The way back from a one-off URL on those two surfaces is
-  the foot button or "Restart kiosk"; the command itself is unchanged and MQTT keeps it.
-  **A panel with no dashboard URL shows a parking page, not a black WebView** (2026-09-07):
-  `showDashboard("")` routes to `showParkingPage`, a native screen that is the dashboard state in
-  every respect but the page (fullscreen, lock task, escape corners, blackout honoured) and says
-  what to do next, with the web admin address when there is one. It is reached by the foot button
-  pressed with an emptied URL box (which now saves the other cards and stores the empty URL, where
-  it used to do nothing), by `kiosk.home` and a kiosk restart with nothing stored, and by the
-  maintenance rebuilds; **not at boot**, where an unconfigured panel still opens its settings
-  screen. The dashboard URL box's example is a *hint*, never a value, and it is
-  `KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL` (`https://example.com/dashboard`) on both
-  surfaces: the old prefilled `homeassistant.local` text was saved and loaded at the first press on
-  a fresh panel, and named a product this app does not belong to. The parking page's illustration,
-  the Android robot pasting a fresh poster over a scratched Muralis billboard, is an easter egg
-  for exactly this state; About's Credits card carries the CC BY 3.0 credit for it (Google,
-  modified, the licence), short like the other rows rather than Google's long sentence, as decided
-  on 2026-09-07, and the robot is never the app icon.
-- **There is no `system.shutdown`.** No public or device-owner Android API can power a device off,
-  at any privilege level. The command was deleted rather than shipped as a no-op that reports
-  `"status":"accepted"` and does nothing, a remote caller (e.g. a Home Assistant automation) would
-  otherwise believe a panel is off when it is still fully powered and rendering.
-- **Both remote surfaces fail closed, but not identically.** Neither ships a default credential and
-  neither activates until configured. HTTP is the stricter of the two: it binds no socket at all
-  until an admin password of at least 8 characters exists. MQTT starts as soon as a broker *address*
-  is set, because broker username and password are optional, plenty of home brokers accept
-  anonymous connections, and refusing to work against one would be inventing a requirement the
-  protocol does not have. Authentication of individual MQTT commands is therefore the broker's job,
-  not this app's. The web admin also has an operator on/off flag (`KioskConfig.webAdminEnabled`,
-  the `webadmin.enabled` command, a tablet toggle button and a Home Assistant switch), which is
-  deliberately not the password: turning the surface off must not cost the credential, and turning
-  it back on must not require retyping one. An earlier tablet button that "switched off" by
-  erasing the stored password did exactly that damage during QA. The switch reflects the flag, not
-  the socket; a panel that is "on" with no stored password stays unbound and says so on the
-  tablet's status line. Any new remote-control surface should be off until deliberately configured.
-  Command payloads are capped at 16 KB on both transports (`HttpAdminServer.MAX_BODY_BYTES`,
-  `MqttController.MAX_COMMAND_BYTES`, deliberately equal; a certificate upload has 64 KB of its
-  own), and the caller-supplied command id is
-  bounded to 96 characters and stripped of control characters before it is logged or echoed, so an
-  embedded newline cannot forge log lines.
-- **The web admin serves HTTPS with a certificate the panel makes itself (2026-09-09).**
-  `AdminCertificate` holds an EC P-256 key pair made in software and kept encrypted through
-  `SecretStore` in device-protected storage, like every other secret, so it can be read on
-  `LOCKED_BOOT_COMPLETED`; 0.6.0 put it in credential-encrypted storage by mistake, where a service
-  started before the first unlock could not open it and served plain HTTP, and 0.6.1 moves such a
-  key across once and restarts the web admin at the first unlock (`KioskService.unlockReceiver`).
-  Reproduced on the Android 10 Lenovo with a PIN set, 2026-09-25: 0.6.0 served plain HTTP before
-  the unlock and after it; 0.6.1 served HTTPS with the same fingerprint while the lock screen was
-  still up, because that device's Keystore decrypts before the unlock.
-  `SelfSignedCertificate` writes the X.509 for it by hand (ten years,
-  `CN=Muralis <device id>`, no extensions; no address in it, since a panel's address changes, so
-  a browser shows two warnings, authority and name, and one click accepts both). **The key pair
-  was in the Android Keystore until 2026-09-24, and that is why the playlist page failed:**
-  the hardware signed every handshake at about 0.4 s on the Huawei tablet (a full handshake
-  0.55 s, a resumed one 0.04 s, by `openssl s_time`), every response then closed its connection,
-  and a browser's burst of six connections for a page of thumbnails overran the 2 s handshake
-  deadline (8 s since 2026-09-30, when a lossy Wi-Fi link lost one request in seven to it): `fetch` failed with "the panel did not answer", the thumbnails' `onerror` hid them.
-  Nineteen parallel curls against the tablet all failed, seven refused at the per-host cap and
-  twelve cut at 2.05 s. A software key signs in under a millisecond. The old Keystore alias is
-  deleted the first time the new code runs, so a panel updated across that date shows a new
-  fingerprint once; a user must accept it again. Never put that key back in the Keystore for
-  "security": the certificate exists to keep the admin password off a LAN's wire, and a key that
-  root could read is the price of a web admin that answers. The
-  listening socket stays plain and every accepted connection is handed to TLS: Android's
-  Conscrypt wraps the socket's file descriptor, not its streams, so nothing can be peeked and
-  handed back (a wrapper `Socket` was tried and died with "Socket is closed" inside
-  `NativeSsl.doHandshake`). BoringSSL names a plain HTTP request it was fed instead of a
-  ClientHello (`HTTP_REQUEST`, `WRONG_VERSION_NUMBER`), and that case is answered on the raw
-  socket with a `301` to `https://<the address it connected to>:<port>/`, path lost, password
-  never asked over plain text. The fingerprint is printed on the
-  tablet's web-admin card, in the web admin's own box and in the admin-only stats
-  (`config.http_tls`, `config.http_certificate_sha256`), so a person can compare it with the
-  browser's. A device whose key cannot be read right now (SecretStore before the first unlock)
-  falls back to plain HTTP and says so in red on the page, and never makes a new key over one
-  that is merely unreadable. **A certificate of the person's own** (planned 2026-09-24 as "local web admin v2", built
-  2026-10-04 on Juri's rules of 2026-10-01), no different from any service that takes a TLS
-  certificate: the web admin's box has two files to upload, a certificate file with one or more
-  PEM blocks (the server certificate first, then any intermediates, `fullchain.pem` as certbot
-  writes it or `cert.pem` and `chain.pem` pasted together; a root in it is the browser's business
-  and is left out) and an unencrypted private key, RSA or EC, in PKCS#8 (`BEGIN PRIVATE KEY`) or
-  the traditional `BEGIN EC PRIVATE KEY` and `BEGIN RSA PRIVATE KEY`, wrapped into PKCS#8 by a
-  few bytes of DER (`CertificateUpload`, pure and host-tested with every shape certbot, acme.sh and
-  openssl write, and every refusal). The two are read as one text, a block chosen in both fields
-  counting once, so one file holding both, picked once or twice, or the two swapped, work; an
-  encrypted key is refused with the openssl command that opens it, since a wall panel has nowhere
-  to type a passphrase at boot, and so is an upload that did not come over TLS, judged from the
-  connection itself, since a private key must not cross the network unencrypted; on plain HTTP
-  the page greys the upload with that reason, so no key is sent at all. A certificate no browser
-  accepts for a server is refused too, an extended key usage without serverAuth or a key usage
-  without digitalSignature (an authority's own certificate falls there); CA:TRUE alone is not,
-  since `openssl req -x509` makes it by default and Firefox lets a person past it (Mozilla bug
-  1034124). Nothing is kept until the pair has been read and a signature made with the key has
-  verified with the first certificate's public key, and a pair is read back after it is kept:
-  when nothing was written the pair kept before stays, when only half was the pair is forgotten
-  whole, one upload or Delete at a time. The page's
-  upload and Delete post to `/` (a refusal is drawn at the page's own address), Delete carrying
-  the SHA-256 of the upload it showed so a renewal that landed meanwhile is not deleted in its
-  place (colons and case aside, so sha256sum's hex works too); scripts use `POST /api/certificate`
-  (multipart, `certificate` and `key`, 64 KB, so curl can renew it) and
-  `POST /api/certificate/delete` (`sha256` optional, the kept upload's in
-  `config.http_certificate_upload`), answered in JSON; a refusal on the page is said in the
-  certificate block, an oversized upload included; the key and the chain go through `SecretStore` in
-  device-protected storage like the panel's own key, while the upload's SHA-256, names and end
-  are plain settings (`http_certificate_upload*`), since a certificate is public. **The choice
-  is on both surfaces** (`http_certificate`, own or uploaded, Certificate radios in the Local web
-  admin card and box, Uploaded greyed while nothing is kept, its names and "until 4 Oct 2027" or
-  "expired on ..." in the error colour under it, the date kept on one line, the first three names
-  and "and N more" past them, a common name read with its escapes undone and control characters
-  taken out of every name, a name longer than 253 characters refused; an upload kept chooses
-  itself), and so is Delete of the upload, in the
-  words every Delete has; the upload itself is the web admin's alone, where the files are, and stays so (Juri, 2026-10-04: a panel upload would mean handing a locked kiosk to Android's file picker). **A bad
-  upload never takes the web admin away**: one chosen that cannot be read at a start (a Keystore
-  not awake before the first unlock, a stored pair that no longer verifies) is not served, the
-  panel's own is, and both surfaces say why in red (`config.http_certificate_problem`; at the
-  first unlock the service has it read again). A change of certificate swaps the TLS factory in
-  place (`HttpAdminServer.reloadCertificate`), so the answer that says it was kept is not cut by
-  a restart, and the next connection shakes hands with the new one (the connection that asked
-  closes after its answer, and kept ones close; see the keep-alive bullet); only the latest reload asked for publishes, a reload that can read nothing at that moment
-  keeps the certificate already served rather than fall to plain HTTP and tries once more five
-  seconds later, and one finishing after `stop()` publishes nothing. The server holds
-  the certificate served as one object, read once per connection. The web page reloads itself
-  onto a new one after the radio, and its certificate block follows the panel and the server
-  through the stats poll (`lists.certificate`, `AdminCertificate.stateKey`), as the panel's
-  follows the web on its live sync; the two surfaces' sentences are worded once in
-  `AdminCertificate`, and the choice's rule is the dispatcher's (`validateCertificateChoice`). `config.http_certificate` says which
-  is served. Measured 2026-10-04 with a test authority: curl trusts the panel by the authority
-  alone, the address in the certificate matching; Android 8's TLS stack sends the intermediate
-  twice (the Huawei tablet; the Android 9 phone sends it once), which clients accept. On the Pixel (Android 17) an uploaded RSA certificate signs TLS 1.3 with
-  RSA-PSS and an EC one with ECDSA, the chain sent once; both Huaweis speak TLS 1.2 only. MQTT is unchanged: plain TCP, trusted network.
-- **Everything on one panel is free; Muralis Pro is the fleet (decided 2026-10-06).** Until that
-  day Pro (Play product `muralis_pro`, one-time, account-wide) unlocked MQTT and the web admin,
-  gated in `KioskService.startControllersNow` and `restartControllers`; the gate was removed the same
-  day and both surfaces come up on every panel. Pro now gates only the fleet console and
-  what makes sense across panels (alerts, log shipping, remote-only lock, picture sync, screenshots
-  on the fleet page, manager-fed updates), 39.99 EUR once per Google account, no device limit; the
-  design is `../muralis-fleet-design.md`. The entitlement is still Play's signed purchase document,
-  verified on-device by `PurchaseSignature` (pure, host-tested; see its javadoc for why there is
-  deliberately no verification server) and cached in `SecretStore` as a bridge, not as a right:
-  Google Play's answer is the truth. `ProBilling` calls `ProEntitlement.drop` on a full-account
-  `queryPurchasesAsync` that answers `OK` without the purchase, so a refund ends Pro the next time
-  a signed-in account is asked; a panel kept away from Play (the Store disabled, the account
-  removed) keeps what it holds, even after a refund, which is the price of carrying Pro to panels
-  without Google and how apps that keep a purchase offline behave. Every refusal about the
-  moment (service unavailable, disconnected, network, timeout) leaves it alone, **and since
-  2026-10-06 so does `BILLING_UNAVAILABLE`**, no account or no Play on this device, because the
-  fleet carries Pro to panels that never see Google on a lease (design, section 12), so "Play
-  cannot be asked here" must not erase a purchase. Reversible by Play's next answer alone. Do not
-  add an `AccountManager` check (deprecated broadcast, a "Contacts" permission on the listing,
-  visibility rules that changed at API 26) or a grace period: both were built on 2026-09-03 and
-  removed the same day because Play already answers the question and that is how client-only apps
-  behave. **Play is not asked anything until the first-start wizard has recorded both escape
-  combinations** (`KioskActivity.startProBilling`, which the wizard's exit calls): Muralis is free
-  without a Google account, so a panel nobody has finished setting up has no business talking to
-  Play, and somebody who cannot leave Muralis yet must not be shown a Google screen on the way in.
-  **Nothing is for sale until the fleet exists**: `ProBilling` only reads what the account owns
-  and acknowledges what Play delivers; the price query and the purchase sheet went with the Buy
-  button and come back with the fleet, from this file's history. The This panel section says what Pro is and whether the account has it, and where
-  Play cannot be asked it says only that, never "sign in to Google". A free panel is never
-  nagged. Debug builds accept `MURALIS_PRO_OVERRIDE=on|off` to force either
-  answer (R8-stripped from release); a signed release refuses to build without
-  `MURALIS_LICENSE_KEY`, or with one that does not parse.
-- **A broker that is down when the client is built is retried, not abandoned.** Paho's automatic
-  reconnect covers a connection that was established and then lost, nothing else: a first connect
-  that fails left the client silent for good (Lenovo, 2026-09-09: broker reachable, three minutes,
-  zero attempts). `MqttController.connect` now passes a failure listener and reschedules itself on
-  the schedule in `MqttConnectRetry`, 15 s, 30 s, 60 s, 120 s, 240 s, then every five minutes;
-  `stop()` cancels the pending retry, and a retry checks it is still for the live client, so a
-  configuration reload while one is pending leaves exactly one client (measured: one connection on
-  the broker after two reloads with it down). A connect that needed retries publishes telemetry at
-  once, like a reconnect does.
-- **A refused command is never silent.** Malformed input, an unusable command name, or a retained
-  MQTT command (structurally indistinguishable from a fresh one at the protocol level; MQTT strips
-  `RETAIN` on delivery to an established subscription, so the app can only refuse it on reconnect
-  and clear it) all publish a result with a reason. A caller must be able to tell a refusal from a
-  dead device. Note the status is `rejected` for bad arguments and `unsupported` for a command name
-  this build does not implement, two different answers on purpose. The single deliberate silence is
-  an **empty** payload, because clearing a retained command is itself an empty retained publish, and
-  replying would make the cleanup trigger its own refusal. The same rule covers success: a command
-  must not claim it either, which is why `telemetry.publish` answers `rejected` ("MQTT is not
-  configured" / "MQTT is not connected") instead of accepting a publish that went nowhere, the
-  accepted-no-op shape `system.shutdown` was deleted to avoid.
-- **Secrets are never stored in plaintext.** `SecretStore` keeps credentials as AES-GCM ciphertext in
-  its own shared-preferences file, under a key that never leaves the Android Keystore and with the
-  field name bound in as additional authenticated data. They are never *rendered* in plaintext
-  either: the tablet's password boxes draw blank like the web admin's always have, with blank
-  meaning "keep the current one", because a stored password prefilled into a masked EditText is
-  one input-type toggle away from readable. Every preference file, this one included, lives in
-  device-protected storage through `KioskConfig.storageContext`: the service is directBootAware,
-  and reading a credential-encrypted file before the first unlock throws. MQTT has no TLS option, by design: an earlier TLS checkbox was
-  removed because it was never actually backed by trust-material handling and could only ever work
-  against a publicly-trusted certificate on a matching hostname, useless for the home-broker
-  audience this app targets. Don't reintroduce a TLS toggle without also building the certificate/
-  fingerprint machinery to back it.
-- **The look is the person's choice, on the Appearance page under This panel** (Juri, 2026-10-04;
-  a page of its own since 2026-10-07, the name Signal, macOS and iOS use, a row with its glyph and
-  "Purple · Lines" on both surfaces, `/appearance` on the web): Colour (Purple, Blue, Orange, a
-  seed each, a dot before each name) and Separators (Lines, the hairline; Segments, every row of
-  a list its own rounded surface with 2 dp of the card between, 16 dp corners at the ends and 4
-  inside, as the Pixel's settings draw a list; None), a panel each; the day and night toggle
-  stays beside This panel's name. **No second axis of the colour**: Material's variants were
-  tried and on a dark panel the three gave the same primary (Material pins it at tone 80 and
-  every saturation clips there, measured), then its contrast levels, which did not look good;
-  Android, Home Assistant, Telegram and Signal offer a colour and day or night, nothing more,
-  and Tasmota's 19 editable colours are a console feature for tinkerers. The three schemes are
-  **generated, not drawn**: `scripts/gen-palettes.py` runs Google's material-color-utilities
-  (HCT) with Material's Vibrant recipe at its standard tones and writes `Palettes.java` (pure,
-  host-tested) and `res/raw/admin_palettes.css`, both committed, so the build needs neither
-  Python nor the library; edit the script, never the outputs. A scheme is fifteen colours: the
-  thirteen of `KioskTheme`'s constructor (surface, surface-container-lowest, -high, -highest,
-  outline, on-surface, on-surface-variant, primary, secondary, ok, warn, error,
-  on-secondary-container; ok and warn are the fixed status greens and yellows, no scheme's
-  business), then on-primary and the lowest surface. **Purple with Lines is the default** and
-  stands in for any stored value nothing offers; the hand-drawn palettes `KioskTheme` carried
-  went with them (a missing scheme is a broken build and throws). Stored as plain settings of this panel alone (`appearance_colour`,
-  `separators`, `KioskConfig.checkAppearance`), posted by the web admin as instant settings and
-  carried in the state document so every page of it follows a change made on the panel
-  (`followLook`, `data-palette` and `data-separators` on `html`; a page without the radios
-  follows too); every settings screen of the panel redraws in place when the look it was drawn
-  in no longer matches the stored one (`setContentView` stamps `drawnAppearance`, `lookWatch`
-  compares every 1.5 s), keeping what was typed, except the PIN prompt, which keeps its look so
-  the digits typed stay. The two settings are read through a cache the Editor writes through.
-  Segments apply to the lists the panel segments and no others, on the web the `ul.list seg`
-  ones (the settings' Sensors and Automations, the Sensors and Automations pages, the tags, the
-  playlists).
-  **The internal pages' left menus are one style** (Juri, 2026-10-04, sketch `media/drafts/left-menus`,
-  its B): Sensors, Automations and the Screensaver's playlists list glyph rows beside the detail
-  through `addMenuRow`, kept apart as the Separators say, 64 dp rows in every mode as on the web
-  (`sizeMenuRow`); the chosen row is the pill the menus always had with no hairline against it,
-  and with Segments a tinted segment (`secondaryContainer`), as Android marks a selected row.
-  Below 840 dp the playlists are list rows (`addListRow`), as the Sensors page's are. A
-  playlist's row is the screensaver glyph, the name over "7 pictures · in use", and the Use radio
-  at the end; a tap opens the playlist's page, where Delete lives as the outlined red button every
-  editor has (the pencil and the trash left the row, on the web too, whose Delete asks first
-  through one `data-confirm` listener in `admin_command.js`, posts natively and is answered with a
-  redirect to /screensaver once the playlist is gone, deleted then or before; any other refusal,
-  a failed save, is answered on the playlist's page with its reason). Sketch: `media/drafts/theme-colours`.
-- **Dashboard self-recovery is one clock, not scattered callbacks, and its decisions are pure.**
-  Every retry/timeout/frozen-page decision lives in `RecoveryPolicy` (no Android imports,
-  host-tested, with each historical recovery bug pinned as a test); `KioskActivity` only wires it
-  to the WebView, the clock and the handlers, and its supervising loop (`dashboardSupervisor`) is
-  the single place a reload is ever issued. WebView page callbacks (`onPageStarted`,
-  `onReceivedError`, etc.) only record facts, they never themselves issue a reload. This is
-  deliberate: a single cancellable handle that's reused for two different meanings (a retry timer
-  and a hung-load timeout) is the bug class that motivated this shape; don't reintroduce one, and
-  put any new recovery decision in `RecoveryPolicy` with a test, not in the activity. The failure no page callback can
-  report, the server restarting underneath an already-loaded page (a Home Assistant restart leaves
-  the odd card stuck on an error tile while the frontend's own websocket reconnect recovers the
-  rest, so the page is neither failed nor frozen), is covered by a reachability probe: while the
-  page is settled the activity sends a HEAD to the dashboard URL every 15 seconds, and
-  `ServerProbePolicy` (pure, host-tested) turns the verdicts into at most one reload per outage,
-  fired on recovery rather than mid-outage so the wall never trades a live-looking page for an
-  error page, and serviced through the same `recordLoadFailure`/supervisor path as everything
-  else.
-- **`NetworkGate`** holds MQTT/HTTP startup and the first dashboard load until there's a network,
-  using `NET_CAPABILITY_INTERNET`, never `NET_CAPABILITY_VALIDATED`, a LAN-only Home Assistant
-  install has no route to the internet and would never validate. It gives up after a bounded wait
-  and starts anyway (fail soft): a panel with genuinely no network must still end up with a running
-  web admin, since that's the surface someone would use to diagnose exactly that.
-- **Two self-maintenance mechanisms, deliberately different in scale, and no user control over
-  either.** `RecyclePolicy` decides between them. A **nightly restart of the whole app**, once a day
-  at `QUIET_HOUR` (04) plus a per-device offset derived from `String.hashCode()` of the device id, routine cleaning, and because the process actually exits it reclaims the heap, the renderer, native
-  allocations and any leaked handler in a way rebuilding in place cannot. **The full process exit
-  is device-owner-only** (2026-08-29): an ordinary install gets a nightly WebView rebuild in place
-  instead (`Action.NIGHTLY_REBUILD`, same calendar-day rule, same recorded day). The exit cannot
-  be survived without device-owner status, for two independent reasons: the relaunch alarm calls
-  `setExact`, which from Android 12 needs an exact-alarm permission this app deliberately does not
-  hold (`SCHEDULE_EXACT_ALARM` needs a user grant plus a Play declaration; `USE_EXACT_ALARM` is
-  reserved for alarm-clock/calendar apps), and even a scheduled activity start from a dead process
-  is a background start on modern Android. A device-owner panel is HOME, so the system relaunches
-  it when nothing else can be resumed, and its own service relaunches it otherwise (next bullet).
-  Where `setExact` would throw, `restartApplication` now falls back to an inexact
-  `set()`, belt and braces under the HOME relaunch. And a **WebView rebuild
-  when the OS reports low memory**, which is a response to a live condition, floored at once per 30
-  minutes so a dashboard simply too big for the device cannot reload in a loop. Renderer death is
-  handled separately by `onRenderProcessGone`. Every WebView teardown (`destroyWebView`, so
-  `kiosk.restart`, the pressure rebuild and the nightly clean alike) also clears the WebView's
-  HTTP disk cache, which is app-global and otherwise survives even the process exit; cache only,
-  never cookies or WebStorage, those hold the dashboard's login and clearing them would log the
-  panel out. There is no separate "clear cache" command or button, by the same no-user-control
-  rule. An "Auto recycle" switch and a "Recycle time" clock
-  existed on the tablet, in the web admin and over MQTT, and all of them were deleted along with the
-  `kiosk.auto_recycle` and `kiosk.recycle_time` commands: these are recovery mechanisms, and a
-  control whose only use is to stop a panel healing itself is surface area that can only be used to
-  break it. Both commands answer `unsupported` rather than being silently ignored. Three boundaries
-  both mechanisms respect: a deliberate `kiosk.stop` is persisted (`KioskConfig.kioskStopped`,
-  2026-08-24) and survives them both, so neither pass lights up a panel somebody blanked on
-  purpose; `display.visual_off` survives them the same way (2026-08-25, after the nightly restart
-  lit a panel blanked with the Display off button), but keyed to `BOOT_COUNT` rather than stored
-  as a bare flag, engaged-this-boot or not at all, so a reboot always comes back lit (the rule
-  since 2026-08-25) and the stranded-dark bug the old persisted 1% override caused cannot return; and the
-  pressure rebuild waits while the configuration screen or the
-  sequence recorder is up (`KioskRuntimeState.operatorOnScreen`), because destroying the view tree
-  mid-edit costs an operator a half-filled form. The nightly restart never waits: it runs inside
-  the quiet hour, and a screen left open must not be able to starve the calendar-day rule.
-- **The nightly rule is a calendar date, not an elapsed time.** `KioskConfig.recordNightlyRestartDay`
-  stores the local day number and `commit()`s it *synchronously before* `System.exit`, that write
-  being asynchronous would leave the day unrecorded, so the pass would fire again on the next tick
-  after the restart, forever. It is a date rather than a monotonic floor for two reasons: the process
-  dies, so any "time since the last one" resets with it; and the twelve-hour floor this replaced meant
-  a panel restarted for any other reason at 20:00 silently skipped that night's clean.
-- **The service supervises the dashboard's presence, because "the system relaunches HOME" is only
-  half true.** Measured on the MediaPad 2026-09-03: on battery with the screen turned off at the
-  power button, EMUI's PowerGenie (`com.huawei.powergenie`, uid system, persistent) force-stopped
-  Muralis 5 min 36 s after screen-off, 80 s after light Doze went idle. Android then started Muralis
-  as HOME, the force-stop's own finishing pass killed that activity 7 ms later, and the system
-  resumed the OEM launcher's task, still underneath from the last manual launch. Wake: launcher.
-  With no launcher task the system retries and Muralis comes back, so the failure needs a launcher
-  task in the home stack, which any escape to the launcher or manual launch leaves behind until a
-  reboot. A force-stop cancels every alarm, job and sticky service the app owns, so the only foothold
-  is the process the system starts anyway (for the HOME attempt, or for the lock-task-exiting
-  broadcast to the admin receiver): `MuralisApplication` starts `KioskService` on a device-owner
-  install, and the service, at 1.5 s after its creation and on every 60 s telemetry tick, asks
-  `RelaunchPolicy` (pure, host-tested) whether to start `KioskActivity`. Verdicts: not a kiosk,
-  settling (younger than 1.5 s: at boot and after an update the activity's creation is queued
-  right behind the service's, and judging early relaunched a dashboard milliseconds from existing
-  and stamped the floor that then blocked the real relaunch), on screen (`KioskRuntimeState.
-  dashboardAlive`, set in the activity's onCreate/onDestroy; paused behind Settings counts as
-  alive), not ready (same DEVICE_PROVISIONED + unlocked rule as `BootReceiver`, so it never pops up
-  over the setup wizard during QR enrolment), too soon (a persisted 60 s floor against a killer
-  that strikes back instantly), relaunch. Verified over adb with `am force-stop` and a launcher task
-  underneath: back and locked within 2 s; with no launcher task the system's own relaunch wins and
-  the check finds the activity alive. Starting an activity from a service is exempt for the device
-  owner from Android 10 on: the platform's background-start check returns early for the device
-  owner's uid (`ActivityStarter`/`BackgroundActivityStartController`, "don't abort if the
-  callingUid is the device owner"); the developer page on background starts does not list it.
-  Whether PowerGenie honours the Doze allowlist is being measured; the app is not on it and has no
-  device-owner API to put itself there. A `setPackagesSuspended(..., false)` call that claimed to
-  exempt it, and exempted nothing, was removed on 2026-09-25.
-- **The restart relaunches through an `AlarmManager` one-shot, not by trusting `START_STICKY`.** The
-  service would come back on its own and the activity usually follows because it is HOME, but
-  "usually" is doing too much work for the mechanism that has to survive unattended for months. An
-  alarm is held by the system rather than by this process, so it fires whether or not anything here
-  returns by itself. Verified on the API 26 panel: forced to fire immediately, the process exited,
-  came back, reconnected MQTT and rebound the admin server, then stayed put, which also proves the
-  synchronous date write, since otherwise it would have looped.
-- **There is no memory threshold in this app, and no learned model. Do not reintroduce one.** An
-  earlier version recycled below a fixed 12% of total memory. The version after that tried to learn
-  what this dashboard normally costs and act on growth, in the shape of a Kubernetes VPA raising a
-  pod's requests from observed usage. That idea cannot work here, and the reason is worth keeping
-  because it is not obvious: the WebView renderer is an isolated process belonging to the WebView
-  provider, not to this app, so no public API and no readable procfs path exposes its footprint.
-  Measuring system-wide memory instead measures the device rather than the dashboard, the node
-  rather than the pod, and every threshold derived from it was either unreachable or above physical
-  RAM. `getHistoricalProcessExitReasons` would give ground truth about a kill, but it is API 30 and
-  the target hardware is API 26. The nightly restart plus the OS's own verdict plus renderer-death
-  recovery cover the same failure without measuring anything.
-- **A panel with no battery is reported as mains-powered, never as a flat battery.** PoE wall
-  panels and screens on a mains adapter report `EXTRA_PRESENT` false while the platform still
-  fills level and status with 0 % and "charging" (measured on the Lenovo with `dumpsys battery
-  set present 0`, 2026-09-09). So `battery.present` is in the status document, every other
-  battery field is null on such a panel, the overlay's BAT row becomes a MAINS row carrying
-  whatever the kernel measures of the supply (`PowerSupply`, pure, reads
-  `/sys/class/power_supply`: only an online non-battery node, only live `voltage_now`,
-  `current_now` or `power_now`, never a rating, so most tablets show "MAINS" alone; the numbers
-  are whatever the kernel measures at the device's own DC input, 5 V USB to 24 V DC or PoE,
-  never the 230 V on the wall; the same numbers are `power.volts`/`power.watts`), the web admin
-  chip says "mains", and
-  discovery announces no battery entity. `plugged` stays true: it is what makes a real screen-off trustworthy there.
-  What every panel does report is `power.source`: `battery`, `wireless` (an induction pad) or
-  `mains`, which is a charger, PoE and a DC adapter alike, one word on purpose, Android cannot
-  tell them apart and whether the cell is filling is the battery object's business. A "Power
-  source" enum sensor carries it in discovery. Same day: the "Wake
-  display" button became "Display on" to pair with "Display off" (new key `display_on`), and the
-  "Reboot tablet" button is announced only to a device owner, because a button that can only answer `unsupported` is the thermal-status case again.
-- **The stats overlay moves with a finger** (Juri, 2026-10-04): pressed and held for four fifths of
-  the long-press time it is picked up (a haptic tick, lifted a little), before the page's own
-  long press would select text under it, follows the finger anywhere on the
-  screen, and where it is dropped is kept for this panel, measured from the edges it is nearest
-  to as shares of the screen (`stats_overlay_anchor`, `_x`, `_y`, `KioskConfig.statsOverlayPlace`),
-  so it stays on the screen whichever way the panel is turned, and never as shares of the room
-  left over: the block's size changes with every line it draws and the place then moved a few
-  pixels every second; until moved it sits one pixel under the status bar at the top right,
-  as decided 2026-09-07. A tap or a scroll on it still reaches the dashboard: the touch down is
-  passed on and only arms a timer, a move beyond the slop cancels it, and once picked up the
-  dashboard is sent a cancel (`KioskActivity.overlayTouch`). The escape corners are read first
-  and work under it. There is no settings control for the place: the finger is the control.
-- **The volume buttons can be switched off** (2026-10-05, one of the small 0.6 ideas): "Disable
-  volume buttons" in This panel on both surfaces, under the name and above the Appearance row
-  (`volume_buttons_disabled`, an
-  instant setting, off by default so the buttons work as Android has them, in the state
-  document; Juri's words and place the same day, after "Volume buttons change the volume" in
-  Display: it is about the panel, not its screen). On, `dispatchKeyEvent` takes volume up, down
-  and mute before Android turns them into a change and a slider over the page, wherever
-  Muralis's own screen has the keys, its settings included; a window over it, a settings
-  dropdown or a page's own popup (a select, an alert), and the display asleep leave them to
-  Android, and commands and the audio sensor still set the volume. Measured on the tablet and
-  the Pixel: disabled, three presses change no stream and draw no slider; enabled, they do.
-- **The app's own log is the Log panel beside System stats on both surfaces (2026-09-25; on the "System stats and log" page under This panel since the sensors, 2026-09-27; a panel of its own since 2026-09-28, side by side from 840 dp/px as every page of several panels without a menu, `cardGrid` and `.two`),** the
-  lines logcat holds for this process (`AppLog.tail`, a `logcat --pid` spawn, no permission
-  needed for one's own lines): 200 on the web page and in `GET /api/log` (plain text, for curl),
-  the last 30 on the panel, which grows with them rather than scrolling inside the page. The panel
-  re-reads every three seconds on its own thread while the block is on screen, the web page every
-  five with the stats poll's refusals, and follows the end while the reader is at the end. Above
-  the block, on both surfaces, the row every log reader has (Home Assistant's log page, MatLog):
-  chips Muralis, E, W, All (Muralis, the app's own tags, by default, the way Android Studio's
-  Logcat opens on `package:mine`; `?level=` and `?own=1` on the endpoint, filtered before the
-  tail so errors reach back through an OEM's chatter), a count ("14 of 200"), a search box
-  (`?q=`), pause, copy to the clipboard, download as a file (web only), and clear, which hides
-  what was logged before the press. Lines are painted by level: errors in `bad`, warnings in
-  `warn`, info in `text`, the rest in `subtext`, the time and tag bold; the date and the pid are
-  dropped, the tag kept. Nothing is stored or sent; logd prunes the
-  buffer as it likes, so a missing line proves nothing. Asked for as Fully's `cmd=logcat`,
-  reshaped 2026-09-26 ("it looks poor"); the site's API page documents it with the sensors.
-- **Sensors: one flat list, and a tiny automation controller (2026-09-26, reshaped 2026-09-27
-  on three rounds of sketches in `../media/drafts/sensors/`).** `Sensors` lists every sensor this
-  app knows, alphabetical, the companion app's "Manage sensors" with no groups: every row is the
-  same shape and only its right edge says what kind it is. A switch for the ones a person turns
-  on (`sensor_<id>` in KioskConfig, `sensor.enabled` with `value=<id>` as the command); a chevron
-  beside the switch for the ones with a page of their own (on the panel every hardware sensor,
-  for the test while asleep, plus the camera, the microphone, Bluetooth beacons and NFC; on
-  the web only where the page says more than the row, since the calibration and the test are
-  the panel's); Allow while a permission is missing (camera, microphone, and for the beacons
-  location on every Android and the Bluetooth scan permission from 12, asked once from the
-  Sensors page on an ordinary install and granted silently on a device owner); every row has a switch, and the panel's own
-  values (display, screensaver, battery, power, network, processor, memory: their Home
-  Assistant entities predate this list and are not announced twice) start on where the rest
-  start off; greyed at the end for what this device lacks. Every row's reading is worded once, by the service
-  (`Sensors.describe`, the `reading` field of the `sensors` block), and both surfaces copy it.
-  The settings page's Sensors section lists only what is on, with "More sensor settings" to the
-  page, the Screensaver section's shape. The audio sensor reports playing or idle with the media
-  volume, never the ringer mode, and is the one that also receives: `audio.volume`, `audio.play`,
-  `audio.stop`, `audio.say`. **Automations** (`Automations`, pure) are "When a sensor says this,
-  then do that": one row per rule with a name and a sentence, a switch each (`automation_<id>`
-  switches in discovery, `automation.enabled` with `value=<id>`), an editor of When (the sensor,
-  its event, a level and minutes where the event has them, the tag for NFC), Then (Display on
-  or off, Show the dashboard, Start the screensaver, Play a sound, Say a sentence, Reload the
-  page: each a command the panel already had) and Only (a window of the day). `Automations.Engine`
-  is fed each sensor's reading once, from the sensor's own callback (movement on its edge, the
-  panel's own values on the two-second tick), fires a rule once when its condition becomes true
-  after its minutes, and arms it again when it ends; the tick (`Engine.tick`) only advances the
-  minutes, so a steady room still fires "darker for 10 min", and a reading fed twice from two
-  threads cannot fire a rule twice; the first reading after the rules load, or after a rule's
-  condition was edited, only seeds the state, so a rule made or changed while its condition
-  already holds does not fire on the spot. A rule's id is `Automations.ID_SHAPE` (lowercase
-  letters and digits, 24 at most), checked wherever a rule comes in, since the id is written
-  into page ids, links and discovery templates. The editor's stale-form baseline
-  (`Automations.baseline`) leaves the switch out, so a switch flipped beside an open editor
-  never blocks its Save. The event radios have no caption, a sensor with one event shows it as
-  a line of text, and a rule on a sensor this device lacks keeps that sensor in the menu, marked
-  "(not on this device)". The one rule that ships,
-  on, is "Wake by hand" (proximity near, then Display on); nothing else runs until a person makes
-  it. The rules are one JSON document in KioskConfig, published as the `automations` array. **The
-  camera is an IP camera** (`PanelCamera`, Camera2): an MJPEG stream at `/camera/stream` and a
-  snapshot at `/camera/snapshot.jpg` behind the admin password, a name (the device id until
-  changed), lens, size, frame rate, mirror, upside down, a watermark of name and time, and motion
-  detection on a coarse grid of the brightness plane with a sensitivity and a still time; over
-  MQTT only what Frigate and Blue Iris publish: the motion sensor, a motion-detection switch
-  and, only while "Picture to MQTT" (`camera_mqtt`) is on, a snapshot button and the last
-  picture on motion as raw JPEG on `<prefix>camera` for a camera entity, retained and cleared
-  when the switch or the camera goes off; `camera.snapshot` is refused while the switch is off,
-  since a picture of the room must not reach the broker unasked (review, 2026-10-01). The
-  stream serves at most two viewers and ends a frame's write after ten seconds. The service
-  starts with the special-use type alone and adds camera (and microphone) only while those
-  sensors are on and allowed: the two-argument `startForeground` asks for every manifest type
-  and crashed a fresh install on Android 14+. The notification says "Camera on" while the type
-  is held. On the panel the camera's Stream card is greyed with "Needs the local web admin"
-  while the admin is not listening, and Allow, once Android will not ask again, opens the app's
-  page in Android's settings and says so. **Beacons** (`Beacons`) are the companion app's Beacon Monitor:
-  iBeacons heard within the reach time, named on the page. **Listen only, never send** (Juri,
-  2026-10-01): a transmitter, never asked for, was removed with its permission. **The scan needs
-  the location permission on every Android** (Juri, 2026-10-01): Android counts a scan as
-  location use, and a scan declared "never for location" has every iBeacon hidden from it on 12
-  and later (the platform's denylist names the iBeacon frame; measured as "nothing heard" on the
-  Pixel). "While using the app" is enough, since the service holds the location foreground type
-  while the sensor is on, so no background-location permission is asked; no position is ever
-  read. The heard list keeps at most 100 beacons, the one heard longest ago going first, and
-  forgets one ten minutes after it went out of reach. **The distance** (Juri, 2026-10-01, the Huaweis read 9 and 23 m for a phone 30 cm away; remodelled 2026-10-03 from measurements on the tablet): `BeaconDistance`, pure and host-tested, averages the signal over 20 s with the highest and lowest tenth dropped (AltBeacon's running average, which the companion app uses) and applies the log-distance model, d = 10^((t - r) / (10 n)), t the signal at one metre and n how fast it fades. **Each beacon is calibrated on each panel, both steps optional** (Juri: for some, a beacon heard is enough): held at 1 m the panel keeps t, held at 3 m too it learns n for the room; uncalibrated, t is the beacon's announced power and n is 2.5. AltBeacon's curve, the first version, takes no second point and read 2.1 m at 3 m; and one correction per panel was wrong, because a beacon announcing the wrong power (the Pixel on low power, 20 dB under its claim) threw it off for every other beacon. A 3 m step whose fade falls outside 1.5 to 5 is refused with the reason (the Pixel on low power faded 1.4, too weak to tell). The Calibration card on the Bluetooth beacons page lists each calibrated beacon by name with its steps (no Reset: a new step replaces the old, Juri 2026-09-27, kept 2026-10-04), then At 1 m and At 3 m, each a confirm screen and then a 10-second countdown (`CountdownRing`, Material 3's circular progress indicator with the seconds inside, as large as the screen allows since it is read from where the beacon is; Juri, 2026-10-04) during which the scan listens all the time (`Beacons.listenClosely`, which ends by itself even if the countdown never does) and counts only what is heard from the tap on, the strongest beacon in reach calibrated and then named on a notice. The beacons are a card of their own, Beacons, on both surfaces, each a Name box with its id and state under it; a calibrated beacon stays there when not heard, so it can always be renamed. **Listening** is the person's choice, Low (Android's low-power scan, short bursts, the default) or High (all the time), a setting of this panel alone (`beacons_listening`), since battery is the device's; a change of mode restarts the scan, keeping what was heard; a start waits only once four have gone in the last 30 s, because Android refuses a sixth (`STARTS_IN_WINDOW`), and a failed start pauses 7 s; one retry is pending at a time, and `stop()` cancels it and the end of a close listening, which had started scans on a stopped service. The countdown's ten seconds begin once the scan really listens all the time ("Getting ready to listen" until then, ending with the reason after `READY_WAIT_MS` or when the service is not running or Bluetooth, Location or the sensor is off), and its page scrolls, the ring sized within the screen's height (a phone in landscape lost Cancel). A step's outcome is the caller's own (`Beacons.Outcome`), not a shared field. A 3 m step taken without the 1 m one keeps the power the beacon announced (`far_announced`) and is out of force once the beacon announces another; steps are kept to a tenth of a dB in memory as on disk. A JSON `"beacon": null` means not given; `beacons.calibrate` takes near, far or reset and an optional `beacon` id (reset without one forgets them all). Kept as one JSON setting of this panel alone (`beacons_calibration`, {id: {near, far, far_announced}}, dBm), read, changed and stored under one lock. The panel cannot tell a change of the beacon's own power from a change of room, so after one the person takes both steps again. Both surfaces word a beacon's state once (`Beacons.describe`, the line under each name box from `Beacons.lines`): "in reach, 1.2 m, -63 dBm", the averaged signal beside the distance, and repaint the lines while the page is open, the panel on its one-second tick and the web page on its stats poll (`beacon_lines`); a beacon heard for the first time or forgotten draws the list again (`Beacons.listKey`, `lists.beacons` on the web), never while a name is being typed. Until 2026-10-05 a line kept the state the page was drawn with and read "out of reach" under a row saying "1 in reach" (found recording the Play video). The calibration is the panel's alone, like the proximity's and the microphone's. Bluetooth or NFC switched off in Android
-  reads "Bluetooth is off in Android" / "NFC is off in Android" on the row, and a stopped scan
-  feeds the rules nothing rather than "out of reach". **NFC** reads only (reader mode in the activity while the sensor is on): a tag's id is
-  the reading, a one-shot event for the automations and a Home Assistant tag event through
-  `homeassistant/tag/<id>/config`; the NFC page lists the tags read lately by id and when, and the automations' Tag menu offers them by id; a tag is named in Home Assistant, which gets each read as a tag scanned, the way the companion app hands one over (Juri, 2026-09-30: names on the panel meant nothing to someone who never used NFC, and one could not be deleted); a tag is reported as Home Assistant's app reports it, always: a tag written by Home Assistant by the id in its address, https://www.home-assistant.io/tag/<id>, any other tag by its chip's id (where the app refuses it), and its text and addresses ride in the attributes and on the row (Juri, 2026-09-30: a choice of what to read went, since doing what Home Assistant does covers it) (reader mode for all four tag
-  types, so a password-protected tag reads like any other;
-  verified on the Pixel with a LEGO Dimensions figure, 2026-09-30, once the phone's NFC spot
-  was found: a tag reads only on the coil, a centimetre or two). **Beacons verified** the same
-  day on the Huawei tablet and phone against the Pixel's Home Assistant transmitter; the
-  Lenovo's Lineage build hears none. **The microphone** is a sound
-  level, 0 to 100, nothing recorded. **This panel** is the section that holds the panel's name
-  (the device id, out of the Dashboard card, stored when the box lets go of the focus or on
-  Done, like the sensor pages' boxes), "System stats and log" as a page of its own, the version and Pro line and the legal rows; Close Muralis stands under
-  Open dashboard, outlined, on an ordinary install; the readings are on the
-  settings page alone, every sub-page's app bar empty at the right, and the arrow of a page
-  below Sensors or Automations leads one level up, not to the settings (Juri, 2026-09-27). That page's top row
-  is the same on every width and on both surfaces (Juri, 2026-10-01): Muralis with the id under
-  it at 16 sp (Title medium) on the left, the readings at 14 sp on the right, centred on one
-  line; a long id wraps under Muralis.
-  **Kept alive by the service's two-second tick** (review of 2026-09-27): `refreshSensors()`
-  runs on every tick, a no-op while the state matches, so a camera the platform took, a scan
-  that failed or beacons switched on before the radio was recover on their own (the camera
-  waits 15 s after a failure and reopens after 20 s without a frame); the sensor block and the
-  rules are published to `KioskRuntimeState` on the tick with or without MQTT, so the panel's
-  rows never depend on a broker or an open browser; discovery goes again when the set of
-  active sensors, the camera or the rules change (`MqttController.sensorsKey`), the retained
-  picture is cleared when the camera or its MQTT pictures go off, and an automation's switch
-  has its unique id from the rule's id, not its name. `Sensors.checkOption`/`checkBeaconName`
-  is the one rule book for a sensor's settings and beacon names, applied by both surfaces;
-  every sensor has a switch, the panel's own values (display, screensaver, battery, power,
-  network, memory, processor) starting on since they were always reported before, the rest off
-  (Juri, 2026-09-27); the web admin shows neither the calibration nor the test while asleep,
-  both need a hand at the glass and stay the panel's; the Display section's "Display off turns
-  the screen off ..." sentence went from both surfaces, the note shows only as the red warning
-  that a sleep ended badly; the proximity's events read Near and Far, Android's own words, the same as the row (Juri, 2026-09-30; Home Assistant has no binary class for a proximity sensor); **the service takes
-  the camera and microphone foreground types while those sensors are on**
-  (`KioskService.refreshForegroundTypes`, manifest `specialUse|camera|microphone` with the two
-  FOREGROUND_SERVICE_* permissions): from Android 11 a stopped activity may use either only
-  through a foreground service of that type, and the Pixel (Android 17) refused the camera
-  with "disabled by policy" the moment its screen went dark (2026-09-27). Android refuses the
-  types to an app in the background, so the activity asks again on every resume; the Play
-  console's foreground-service declaration must name the two types before the next upload;
-  every writer of the rules JSON, the service, the three web handlers, the panel's switch, Save and
-  Delete, holds `Automations.STORE`; a Save keeps the stored rule's on/off, since the switch
-  beside the editor may have moved meanwhile. `AutomationsTest` (host, over a small `org.json`
-  stand-in in the test tree) covers the storage round trip, the rule book, the window and the
-  engine's seed-then-arm, hold-for-minutes, reset and tag events; the dispatcher test covers
-  every sensor and audio command. The readings on the panel's
-  sensor pages follow the one-second tick; on rotation a box that stores on blur stores before
-  the page is rebuilt (`redrawInPlace` clears the focus first). **Three width classes for the
-  Sensors and Automations pages, both surfaces** (Juri, 2026-09-27, the tablet in landscape
-  was one column too wide): compact, under 600 dp, one column as the phone has it; medium, 600
-  to 839 dp, the same column no wider than 640 dp and centred (`paneOf`, the web's `.ld`
-  max-width), for a tablet in portrait and the small tablets; expanded, from 840 dp, list-detail
-  like the settings page: the list at the left (`navPanel`, the web's `section.card.nav`), the
-  chosen sensor's cards or the chosen rule's editor at the right, the text chooses and the
-  switch stays on the row, no chevron, the chosen row a pill (`markChosen`, `li.on`), and Add
-  under the rules opens a blank editor at the right. The cards of a sensor's page and the editor
-  are built once for both shapes (`sensorCards`, `automationEditor`; web `sensorCards`,
-  `automationEditor`), the web page holds list and detail in one `.ld[data-page]` and the
-  stylesheet shows one or both, `admin_listdetail.js` points the rows at `/sensors?id=` and
-  `/automations?id=` on a wide screen, and the detail's own row has `-page` ids so the stats
-  poll follows both. A save lands on `/automations?id=<the rule>`. **Proximity is
-  calibrated by the person, never guessed** (Juri, 2026-09-27, the Huawei MediaPad's driver
-  keeps Android's distance at the range and moves undocumented slots instead; "no guesses and
-  no hardcoding. If some sensors need calibration ... the user can be warned to calibrate the
-  sensor and a procedure inside chooses how to handle it"): Android's rule (distance under the
-  range is near) applies until the Proximity page's Calibrate runs, two steps, the sensor
-  covered then clear (`proximity.calibrate` with covered, clear or reset; the panel's two
-  confirm screens; the web has no calibration). `Sensors.Calibration.derive` picks the event value
-  that moved the most between the two, relative to its size, the line halfway and near on the
-  covered side, and refuses when nothing moved by a fifth; stored as `proximity_slot`,
-  `proximity_threshold`, `proximity_near_high`, read on the tick. An on-change sensor sends
-  nothing while a hand holds still, so a step reads the last event when nothing arrived in the
-  last four seconds. The row says Calibrated or Not calibrated on the panel. **Whether a
-  sensor reports while the panel sleeps is measured, never assumed** (2026-09-27: the Huawei
-  MediaPad delivers no proximity, light or accelerometer event to an app while asleep, drops
-  the registrations, and turns its Wi-Fi off after a few minutes; the phone reports; on
-  2026-09-28 its light sensor was seen sending events while asleep after all, with an unchanged
-  value, so only the test says): every
-  hardware sensor's page has a "While the display is off" card with "Test"
-  (`sensor.sleep_test`, the panel sleeps 20 s by `displayVisualOff`, then notes whether
-  `Sensors.lastEventAt` moved and wakes itself; refused where Display off is the film, since the
-  film keeps sensors awake; every hardware sensor has a page for the card, so it is reachable
-  on a phone too). The verdict, `sensor_option_<id>_asleep` reports or silent, rides
-  in the block as `asleep`, and the sensor's page says it with a glyph and one word, nothing
-  more (Juri: "It works / It doesn't work"): Running, Not running or Not tested, Home
-  Assistant's words for a binary sensor of the running class ("Disabled" read like a switch
-  somebody set, Juri, 2026-09-28), with Material's sensors glyph, the same with a slash, and a
-  question in a circle (`ic_asleep_*`). A panel whose Display off is the film never sleeps, so
-  the card says Running and nothing more, with no test: "The film keeps the display awake" under
-  it told a person nothing to act on, and "sleeps" is Android's word, not the person's (Juri,
-  2026-10-01). **Where it matters, the rules say it too**
-  (`KioskService.stopsWhileAsleep`: the test found the sensor not running and Display off
-  sleeps rather than showing the film): the sentence of a rule on such a sensor starts with the
-  slashed glyph in the warning colour on every list of rules, both surfaces, and the editor
-  says "Not running while the display is off" under the sensor, with "The black film keeps it
-  running"; "Wake by hand" on the MediaPad failed without a word before. **No text names where
-  a sensor sits**: Android does not say, every model differs, and the MediaPad's light sensor is
-  nowhere near its camera; the person finds it (Juri, 2026-09-28). Test and Calibrate are greyed out while their
-  sensor is switched off and come back the moment it is switched on (`sensorActions`), and the
-  confirm screen says what to do to that sensor, five seconds into the dark (`asleepAction`:
-  "Use the sensor" told nobody what to do with a light sensor). The test
-  ends without a verdict when the screen comes on before its 20 s (a hand, a command), counts
-  only a real sleep (the film is refused), registers the sensor again three seconds in, takes
-  the reading 1.5 s later as the one to beat, and counts a sensor as reporting only when an
-  event arrived after that whose reading, the first value Android defines or the calibrated
-  one, differs from it (`Sensors.readingMovedSince`; a light sensor answers a registration
-  with a fresh sample a lux or two off, which read Active with nobody touching it, 2026-09-28;
-  the log line gives both readings and when they came): the MediaPad answers a registration with the reading it
-  already had, with a different raw count in an undefined slot, and reports no change while
-  asleep, so a repeated reading proves nothing, and an on-change sensor needs the hand the
-  screen asks for. `applyOrientation` catches Android 8.0's "Only fullscreen activities can
-  request orientation", thrown while the keyboard is up over a resized page, and applies the
-  request on the next resume; it killed the process on the MediaPad (2026-09-27). Which Display off method to use stays the person's choice. **The settings
-  page's Sensors and Automations sections carry the switches** (Juri, 2026-09-27): a row
-  switched off leaves the section (panel: a redraw; web: the poll removes it, `#sensors-home`,
-  `#automations-home`) and is switched on again on the More page. **The wide web pages switch
-  panes in place**: every sensor's cards and one editor per rule plus a blank one stand on the
-  page (`.pane[data-id]`, editor ids suffixed `-<rule id>` or `-new`, `admin_automation.js`
-  binds per form; Save is the form's first submit button so Enter saves, Delete asks first and
-  comes last in the DOM, ordered by the stylesheet; every editor carries the stored rule's JSON
-  as its baseline, a stale page is refused like the settings boxes, and a rule deleted elsewhere
-  is not brought back), `admin_listdetail.js` shows the chosen pane and rewrites the address (the
-  shell says whether it is the sensors' or the automations' page), no page
-  load, the settings menu's own speed; rows that lead somewhere and the list beside a detail
-  highlight under the mouse like the settings menu's rows, and the panel's rows carry the same
-  ripple. On the two-column pages the grid's gap is the only spacing between cards.
-- **A list follows a change made on another surface (2026-09-28, Juri: "the sort of things a
-  review process should find").** A rule added, renamed or deleted on the web stayed off the
-  panel's Automations page until it was reopened, and the other way round. `Sensors.listKeys`
-  hashes what each list is drawn from: the settings page's two sections (sensors on, rules on),
-  the Sensors page (every sensor, available and permitted) and the Automations page (every rule
-  by name, sensor and sentence; switches follow on their own). The panel compares on its
-  one-second tick (`watchLists`, `checkLists`) and draws the page again, never while a box has
-  the focus; the wide Automations page keeps what its editor holds when it was edited and
-  takes the stored rule when it was not; rule switches follow what is stored
-  (`automationSwitches`). The web page carries the key on each list (`data-lists-kind`,
-  `data-lists`; the rules drawn from storage, like the key), `/api/stats` carries the current
-  ones under `lists`, and `admin_stats.js` fetches the page and swaps the stale list in place,
-  never while something in it is focused or edited; switches apply through a listener on the
-  document (`admin_setting.js`) and swapped editors are bound again
-  (`window.muralisBindEditors`). Measured on the tablet: a sensor switched remotely reaches the
-  settings section about 1.5 s after the command lands, a web edit reaches the panel's pages
-  within its one-second tick after the save.
-- **Automations and sensor settings are ready for the fleet of 0.7** (Juri, 2026-09-30: "prepare
-  automations and sensors now so that when we start with 0.7 we don't have to modify either
-  again"). Every rule carries `changed_at` and a 12-character random id, so rules made on two
-  panels never share one; a deleted rule leaves a marker (`automations_deleted`, the newest 100),
-  and every write goes through `KioskConfig.storeAutomations`, which stamps both, so nothing
-  writes the list any other way. Every sensor switch and setting keeps its change time
-  (`changed_sensor_*`). `SensorSettings` says which settings a fleet may share and which belong to
-  one panel's hardware (the camera's name, lens, size, orientation, mirror and flip,
-  calibrations, sleep tests, tags read); beacon names are a `NamedList` document with
-  change times and deletion markers (moved from `sensor_option_beacon_*` at the next naming). The
-  three documents are served and taken at `/api/automations`, `/api/sensors/settings` and
-  `/api/beacons/names` in the shape GET gives, with a 160 KB body budget of their own, checked in
-  full before anything is written (a rule's id must be `Automations.ID_SHAPE`); the
-  panel writes the times itself and ignores a post's copies, a key of this panel alone and a
-  `beacon_` key under `shared` are refused, the switches document lists every sensor's switch as
-  it stands (the panel's own values on with nothing stored), and a tag read is never stamped with
-  a change time. The site's API page documents them.
-- **A single choice among more than five items is a menu, five or fewer stay radios** (Juri,
-  2026-09-28, from Google's radio-button guidance, "If available options can be collapsed,
-  consider using a dropdown menu because it uses less space", and Nielsen Norman Group's
-  radios for five or fewer, a dropdown for five to fifteen). The panel's `MenuField` is
-  Material's exposed dropdown menu: the outlined field showing the chosen item with a chevron,
-  a menu anchored to it on a tap, opened on the chosen item; the automation editor's Sensor,
-  Action and Tag use it, as the web page's selects do. **The camera picture has an
-  orientation** (`camera_orientation`: `device`, `portrait`, `landscape`, Juri 2026-09-28):
-  turned upright for the display's rotation by Android's JPEG_ORIENTATION rule, then, for
-  portrait or landscape, the middle of the picture in that shape when the panel is the other
-  way (the sensor is fixed, so a tall picture from a wide panel is a crop); mirror and upside
-  down apply to the upright picture.
-- **Lists, the microphone and changes of state (Juri, 2026-09-28).** A list of rows on the
-  panel is the web's `ul.list`: the rows touch with a 1 dp divider between (`addListRow`, the
-  settings page's Sensors and Automations sections and the narrow Sensors and Automations
-  pages), a row is 56 dp with a name alone and 72 dp with a second line (`glyphRow`, Material's
-  list item heights, the web's `li` and `li.two`), and a button under a card's row sits 8 dp
-  below it (`tightParams`); the wide pages' lists keep the settings menu's pills. The proximity
-  glyph is Material's sensor_occupied, on both surfaces. **The microphone hears through the
-  voice-recognition source** at 44.1 kHz: CDD 5.4.2 makes every device capture it with noise
-  reduction and automatic gain control off, and the plain source's gain control lifted an empty
-  room to about 30 of 100. The rules get each half second as it is, so a knock reaches "louder
-  than" at once; the reading on the rows and in the state document is smoothed over about five
-  seconds and moves by 3 dB steps, so it does not flicker and a broker is not sent a new number
-  every breath. The 0 to 100 spans 16-bit audio's whole range until the person calibrates it on
-  the Microphone page (now a page of its own), the proximity's procedure: the room quiet, then
-  the loudest sound that should read 100, each the last three seconds averaged as power,
-  refused under 10 dB apart (`microphone.calibrate` quiet, loud or reset; `microphone_quiet_db`,
-  `microphone_loud_db`); `calibrated` rides in its block. **A change of state reaches everyone
-  at once** (`Sensors.onEdge`, `KioskService.sensorEdge`): proximity near or not, movement
-  started or ended publish the block, repaint the panel's readings and send the state document
-  within 100 ms, where they waited up to three seconds on the panel and a telemetry interval on
-  MQTT; readings that move all the time (light, pressure, temperature, humidity) are shown on every
-  surface at most every 3 s (`Sensors.SHOWN_EVERY_MS`, Juri 2026-10-04: a light value changing
-  several times a second was of no use; it had been a quarter of a second since 2026-09-28, to
-  find a panel's light sensor by hand), the next one brought to the panel's rows on time by
-  `Sensors.onReading` and `KioskService.sensorReading`, and stay on the periodic publish for
-  MQTT, as sound does.
-  The rules were never late, they are fed on the event. Android gives an app no setting of a
-  sensor beyond the sampling rate and batching (proximity is on-change, so neither applies);
-  thresholds and gain live in the driver, so what Muralis can offer is a calibration the person
-  runs.
-- **`TelemetryCollector`/`SystemStats`** read procfs/HAL sources that may be SELinux-denied on a
-  stock, unprivileged install; a denied path latches off after repeated failures rather than
-  retrying (and re-denying) forever. `HardwareProperties` (via `HardwarePropertiesManager`, public
-  API since 24) recovers CPU/thermal readings once the app is device owner, bypassing the denied
-  procfs paths entirely. Telemetry publishes on a **fixed 60-second interval** and early, on-change,
-  for a short allowlist of fields (battery, charging, memory pressure, thermal status) that change
-  rarely enough for an early publish not to spam the broker. The interval was four presets
-  (10/30/60/300s) with a button row on the tablet and a menu in the web admin; both are gone, along
-  with the stored field, for the reason the "Auto recycle" switch went: nobody can set it from an
-  informed position, and it had to be kept in step across three surfaces to do nothing an operator
-  wanted. Sixty rather than the thirty it replaced, because every field that behaves like an event
-  already publishes on change, leaving the periodic tick only the readings that drift (battery
-  temperature, available memory, available storage, network state). Liveness does not ride on it:
-  that is the 30-second heartbeat plus `expire_after` on the one entity that needs it, so
-  lengthening this cannot make anything read unavailable. An "MQTT state"
-  connectivity binary_sensor is backed directly by the broker's Last Will rather than by a periodic
-  field, so it reflects the tablet being gone even when nothing is left running to publish `false`.
-  The Last Will only covers a session the broker *held and lost*, so it says nothing when the panel
-  never reached the broker or when the broker itself died; the panel therefore also beats "online"
-  onto the availability topic every 30s and that entity carries `expire_after`, which turns "nobody
-  has spoken for this panel" into `unavailable` instead of a stale `on`. **There is no live
-  "Network state" entity, and one must not come back**: publishing "my network is down" requires
-  the network, so a live entity can only ever say "connected", and "MQTT down but network up" is
-  unreportable while it is true because the reporting channel is the thing that broke (the Last
-  Will cannot carry it either; its payload is frozen at connect time). For one year of its life
-  that question was answered in hindsight by an outage-attribution feature (`OutageLedger`, a
-  ConnectivityManager callback in the service, a verdict on every reconnect, a "Last MQTT outage
-  cause" diagnostic sensor and `runtime.mqtt_outages`/`last_mqtt_outage_*` telemetry fields);
-  the whole chain was removed on 2026-08-25, because as long as the MQTT state entity updates
-  correctly, *why* a session dropped is not worth knowing, and *when and for how long* is that
-  entity's own history in Home Assistant. Do not rebuild the attribution in any form without
-  that conversation again, and note the reconnect still publishes telemetry early, now simply
-  because the retained snapshot is as stale as the outage was long. Entity naming rule:
-  discovery key, `unique_id` and name all say the same thing, so a rename changes the entity id
-  too. Renames and removals are withdrawals (an empty component config holding only its
-  platform, then the payload without it, QoS 1), never an alias of a new name onto an old
-  `unique_id` and never mere omission, which strands the entity. **Since 2026-10-06 the panel
-  withdraws by itself exactly what it announced, zigbee2mqtt's way** (`DiscoveryWithdrawals`,
-  pure and host-tested): a sensor switched off, the camera's controls, a deleted rule, and an
-  entity a new build renamed or dropped. What it announced is what the running process published
-  and, on every connect, the broker's own retained device payload, read back before anything is
-  announced (`readRetainedDiscovery`, five seconds from the broker's acknowledgement, zigbee2mqtt's
-  wait; a broker whose access list refuses the read gets the announcement without it), which
-  covers a panel updated from a build that kept no record and a publish that never arrived; a new panel (or a new broker)
-  finds nothing and sends no removal at all. Discovery and the state publish run on one worker
-  thread, in order, and discovery goes again on Home Assistant's birth message, as its
-  documentation recommends. **A removal Home Assistant misses while it is offline is accepted as
-  a leftover**: Home Assistant acts on an empty config only for a component it has discovered
-  since it started (measured 2026-10-06), so the entity stays unavailable until a person deletes
-  it, as with Tasmota, ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk; a scheme
-  that carried removals and announced them again at the birth message was built and tested the
-  same day and dropped, since no project does it (Juri: look at how others do it). Only the
-  device payload is covered: the MQTT state entity and the tag config have topics of their own.
-  **Before every release the discovery code is checked to carry no hand-written withdrawal**
-  (Juri, 2026-10-06: Muralis starts on MQTT as if it were used for the first time, with no
-  message about an old entity). History: hand-written withdrawal blocks lived in
-  `MqttController` until 2026-08-25 (recycle controls, network/charging, both `network_state`
-  spellings, `last_mqtt_outage_cause`) and until 2026-10-06 (the portrait switch, the wake
-  button, the battery sensors on a panel without a battery, the reboot button on an ordinary
-  install, the old connected sensor), and until that day every sensor that was off or missing
-  went out as an empty entry on every connect, the fixed-list way Tasmota and FreeKiosk work.
-  The mechanics live in a comment above the discovery publish in `MqttController`.
-- **The escape hatch** is a user-recorded corner-tap sequence, three to twelve taps across the four
-  screen corners, tail-matched with a maximum gap between taps, and recorded separately for "open
-  settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture
-  is worthless once someone has watched it being used, and a hardcoded one is identical on every
-  panel. **There is no compiled-in default any more** (the fixed BL x9 / BR x9 pair was retired
-  2026-08-25, by decision of that day): a first-start wizard in `KioskActivity` records both combinations
-  before anything else, and `applyKioskPolicy` refuses to engage lock task until
-  `KioskConfig.escapeSequencesConfigured()` is true, because a pinned screen with no recorded way
-  out is a bricked panel. Deliberately unmigrated: installs that ran on the old defaults (they were
-  never persisted) see the wizard once after updating and re-record. Do not reintroduce a default,
-  and do not let any new screen bypass the wizard routing in `initializeUserInterface`. **An
-  optional PIN stands behind both combinations since 2026-09-09**, free on every panel: a
-  combination can be watched and repeated, a PIN has to be known. `EscapePin` (pure) keeps 4 to 8
-  digits as a salted PBKDF2 hash in `SecretStore`; `KioskActivity.gateBehindPin` asks for it after
-  a matched combination and counts wrong tries with an `AuthThrottle` (five, then a doubling
-  lockout); it is set, changed and removed on the Escape sequences page of the tablet and in the
-  web admin's Escape sequences box, which is also the reset for a forgotten one. Managing it for a
-  whole fleet is the paid part, per the fleet design. It works from every screen the app shows, including its own configuration screen: it is the
-  one way out of the kiosk and has no screen-specific exceptions. Exiting releases lock task and
-  launches the OEM launcher resolved at runtime via an explicit `setPackage` intent, never a
-  hardcoded launcher package, since the default launcher varies by OEM.
-  `addPersistentPreferredActivity` re-pins this app as the HOME activity once it's device owner, so
-  HOME reliably returns to it, **but not before the wizard has recorded both combinations**, the
-  same gate lock task sits behind and for the same reason one step removed: becoming the device's
-  only HOME means every later failure relaunches into itself. That is not hypothetical. On
-  2026-09-03 a QR-provisioned tablet with no Google account was left with no way back to the OEM
-  launcher and had to be factory reset, because Muralis had taken HOME during enrolment, from the
-  admin receiver's `onEnabled`, and something else then killed its activity a second into every
-  start. `onEnabled` no longer pins; `applyKioskPolicy` is the only caller. The safe-mode block
-  (`DISALLOW_SAFE_BOOT`) sits behind the same gate since the same day: safe mode is itself a way
-  out, and the service used to remove it at every boot, before anyone had another. Nothing may make Muralis the
-  only way out of the device before the operator has a way out of Muralis.
-- **The lock-task allowlist is this package and nothing else, and must stay that way.** An
-  allowlisted package is exactly one Android will let run *over* the kiosk while lock task is held,
-  so every name added there is a door. `lockTaskPackages()` used to volunteer the launcher and
-  Settings as "second lines of recovery"; measured 2026-09-03 on the panel,
-  `am start -a android.settings.SETTINGS` then put the whole Settings app on screen over a locked
-  panel and kept it, while Chrome, the Play Store and the dialer were refused by the platform with
-  code 101. The supervisor did not intervene, correctly, because `KioskActivity` was alive behind
-  it. Neither entry bought anything: every sanctioned hand-over (`openSystemLauncher`, the
-  WRITE_SETTINGS grant screen, the HOME-settings screen) calls `releaseForOtherApp()` first, and
-  that *ends* lock task, after which no allowlist entry is needed. Verified after the change:
-  Settings refused with 101, and releasing lock task then starting Settings still works. If a future
-  screen needs another app, release lock task for it; do not widen this list.
-- **The escape hatch's side doors are shut.** Where the app is device owner, accessibility
-  services are restricted to the system image (the configuration screen renders both corner-tap
-  combinations in plaintext, so a service that can read the screen and synthesise taps is a
-  keyless escape) and keyboards to system ones plus whichever keyboard is active when the policy
-  applies, resolved at runtime rather than hardcoded: the MediaPad's SwiftKey lives in `/data`,
-  so a bare "system only" would have left the settings screen unable to type. The dashboard
-  WebView refuses top-level navigation to non-web schemes (`intent://`, `tel:`, `market:` hand
-  control to another app, which under lock task is an exit). Every http(s) navigation stays
-  allowed and mixed-content mode stays permissive, decided with the user 2026-08-24: Muralis is
-  dashboard-agnostic, dashboards legitimately navigate across hosts and mix plain-http LAN camera
-  streams into https pages, so origin confinement was considered and refused. Don't tighten
-  either without that conversation again.
-- **A setting changed on any surface must be visible on all of them, quickly.** Three surfaces can
-  write the same settings, so the rules are: the stats-overlay switch, portrait, the brightness pair
-  and the admin password apply the moment they are touched, on the
-  tablet and in the web admin alike (the admin password on blur when non-empty, because the box
-  now renders blank and its only job on either surface is setting a new one); only
-  the connection fields (dashboard URL, device id, broker, ports) wait for a save button, because
-  applying those per keystroke would rebind sockets and restart the MQTT client. Anything applied
-  outside `KioskCommandDispatcher` must also call `KioskService.publishTelemetrySoon`, since only
-  the dispatcher republishes automatically, and without it Home Assistant keeps showing the old
-  value for up to a full publish interval. Both UIs poll storage on a timer so a change made
-  elsewhere appears rather than leaving two surfaces disagreeing. Writes go through
-  `KioskConfig.edit(...)`, which persists exactly the fields set on it; the whole-object `save()`
-  it replaced reverted another surface's change from a stale snapshot three separate times before
-  the API stopped being able to express the bug. A loaded `KioskConfig` is a read snapshot and a
-  display model only. The Save-button forms (both surfaces) additionally carry a baseline of the
-  values they were rendered from and are refused when it no longer matches the device, the same
-  rule the escape recorder pioneered, so a page or screen left open cannot silently revert a
-  newer change even to its own fields.
-- **The web admin port is floored at 1024, and refused while another service holds it.** The
-  history in one line each: an out-of-range port once crash-looped a panel, so the range became
-  checked; it was then proved on hardware (2026-08-24) that a *privileged* port like 80 passes a
-  1-65535 check and fails at bind time, since an unprivileged app can never bind below 1024, and
-  the server failing closed meant the admin's own settings box could switch the admin off. So
-  `KioskCommandDispatcher.validateAdminPort` floors the range at 1024 (this floor is for the port
-  the app binds itself; the broker port is remote and keeps 1-65535), and the web save
-  additionally test-binds a changed port and refuses one already in use. A brief hardcode of 8080
-  sat between these two designs and was rejected in review: two immovable services wanting the
-  same port would deadlock with no recourse, which is worse than the problem. Both surfaces also
-  **refuse a port rather than substituting one**: the tablet used to clamp an out-of-range admin
-  port to 8080 and a bad broker port to 1883, so an operator was told nothing while a different
-  value was stored, and the tablet now test-binds a changed admin port exactly as the web save
-  does. `KioskActivity.parsePort`'s clamp survives for reading storage back, where something
-  usable has to come out whatever is in there; it is never right for a form. Keep syntax and range
-  in separate checks, too: one parser judging both answered "must be a number" for 99999.
-- **Both settings surfaces pre-check values against the device, on blur, in colour.** The
-  design of 2026-08-24: validation can only test spelling, but "is this port bindable", "does this
-  URL answer HTTP", "is a broker listening there" are runtime facts only the device can know.
-  `SettingProbe` is the one implementation; the web admin reaches it through `POST /api/check`
-  with `admin_check.js` colouring the field, the tablet calls it directly and colours the same
-  way. **POST, not GET, and it must stay a POST**: the endpoint changes nothing here but makes the
-  panel connect out to a caller-chosen address, so as a GET it was an SSRF and LAN-scan primitive
-  an `<img>` tag could drive with the operator's own credentials. The verb is what puts it behind
-  `crossSiteRefusal`. The verdict is the border alone, no fill or glow, an
-  annotation rather than an alarm. Advisory by design, a port free now can be taken at the next
-  boot, so the save paths keep their own hard refusals; a check that cannot run clears the colour
-  rather than guessing, because a wrong verdict is worse than none, and every verdict carries a
-  per-field generation so a slow probe cannot repaint a value the operator has since corrected.
-  A probe only ever follows a deliberate visit: the tablet's config page takes the initial focus
-  itself, because when the first field silently owned it, the operator's first tap anywhere else
-  blurred it and painted a verdict on a box they never touched. The one probe that also runs
-  unasked: the tablet's MQTT card carries a broker verdict, probed when the settings screen opens
-  and whenever the host or port box is left, because a broker that never answers is the one
-  misconfiguration the dashboard itself never shows. It reports **on the settings page**, never as
-  a toast over the dashboard: that toast existed for one round and was unreadable in the second
-  before the dashboard took the screen, which is exactly where a misconfiguration must not be
-  reported. Any new input whose validity is a runtime fact should get a probe here rather than a
-  bespoke checker.
-- **Legal documents and app/device facts are shown in-app, not linked externally.** This panel
-  (tablet) and a matching section (web admin) render the bundled privacy policy and terms
-  directly, since a kiosk running under lock task has no browser to hand a URL to; Play separately
-  requires the same text at a public URL, which is a listing concern rather than an app one. Each
-  surface also states where the public copy lives (plain text on the tablet, a link on the web
-  admin; sentence and URLs shared through `res/values/legal.xml`). Since 2026-08-25 the bundled
-  texts are **verbatim copies, not sources**: the canonical documents are `legal/privacy.txt` and
-  `legal/terms.txt` in the public muralis-site repo, which also generates its HTML pages from
-  them. Edit them there, run `scripts/sync-legal.sh` here; the release workflow byte-compares
-  `res/raw` against that repo's main branch and refuses to release while they differ, so the in-app
-  copy cannot silently drift from the published one. This replaced hand-kept copies in five places,
-  which had already drifted once (a hand sentence-casing produced "If you buy muralis pro" on the
-  site). The layered setup, offline in-app text plus the public URL, is also what GDPR
-  accessibility and the Austrian guidance for commercial apps expect; researched 2026-08-25, link-
-  only was rejected on that basis.
-- **Play Console's automatic integrity protection must stay OFF for this app.** Turning it on makes
-  Play inject `com.pairip.*` into the signed artifact: it replaces the manifest's application class
-  with `com.pairip.application.Application` and adds `com.pairip.licensecheck.LicenseActivity`,
-  which refuses to let the app run unless Play itself installed it for a signed-in account. The
-  wall-panel path installs the APK by QR during setup, outside Play, on purpose, so that check can
-  never pass. Measured on the tablet 2026-09-03 with the Play-signed 0.4.5 and no Google account:
-  `KioskActivity` resumed, `LicenseActivity` finished it 1.3 s later with `clear-task-index`, Play's
-  `UnauthenticatedMainActivity` took the screen, and because Muralis was HOME the whole thing
-  repeated forever; the app's own code never logged a line. It is per-release in Play Console under
-  Test and release, App integrity, Automatic protection. None of this is in this repo and none of it
-  is visible in a local build, which is exactly why it is written down here.
+- **Never lock someone in.** Lock task and the home-screen role engage only after both escape
+  combinations exist: recorded on the panel, or brought by a settings file, a setup QR or the
+  fleet that adds it, from a panel where they were recorded. The escape works from every screen, the chosen app of App lock
+  included. Only this app is allowed under lock task, and in App lock the one app the person
+  chose; any other app is reached by releasing lock task first, never by widening that list. Accessibility services and foreign keyboards are restricted where the app is device
+  owner, and the page cannot hand control to another app through non-web links.
+- **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
+  password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
+  endpoint is the one exception: it listens on every panel and admits only keys the panel trusts,
+  plus, while a person keeps a join code open, an unknown key on the join routes alone, and a
+  removed key on the check-in route alone, to be told it was removed.
+  Request sizes are bounded. A refusal is always answered with a reason (the one silence is an
+  empty MQTT payload, which is how a retained command is cleared), and a command never claims a
+  success it did not have (there is no "shutdown" command, because Android offers no way to do it).
+- **Secrets are never in plain text,** neither stored nor drawn on screen: password boxes render
+  empty, and empty means "keep the current one".
+- **Ports.** The app's own ports (web admin, fleet member port) are settings between 1024 and 65535,
+  checked before they are stored, refused when taken, never newly set to each other's port (a pair
+  that already collides still saves unchanged), and never silently replaced by another value.
+- **A change shows everywhere.** A change made on the panel, in the web admin or over MQTT shows
+  up on the others within seconds; a change applied outside the dispatcher asks for a telemetry
+  publish itself. Values whose validity depends on the device (a port, an address)
+  are checked against the device when the field is left, with a coloured border.
+- **No backlog.** A panel acts at the moment something arrives, or drops it once it is stale;
+  it never replays in one go what it missed while it was asleep, stopped or behind another app
+  (a pop-up waits a minute at most, a time rule slept through is skipped).
+- **Self-healing has no user switch** and no memory threshold: the app cannot measure the browser
+  engine's memory, so it reacts to the system's own signals and restarts nightly.
+- **Home Assistant discovery.** An entity's key, id and name say the same thing. A panel removes from
+  Home Assistant only what it announced itself, so a fresh install starts with nothing to remove.
+- **One design on both surfaces.** The panel and the web admin are one Material 3 design in one
+  scheme from the ultramarine seed, with segmented lists, light and dark (a toggle in the settings
+  page's app bar: follow the device, light or dark; the wall's own screens are always dark),
+  with the same sections, words and behaviour. Plain words for
+  the person in front of the panel; a familiar glyph or control before an explanatory sentence.
+- **Legal texts** are copies of the canonical texts kept in the website repository; the release
+  workflow fails when they differ.
+- **Play's automatic integrity protection must stay off.** It makes the app refuse to run unless
+  Play installed it, which breaks the QR installation.
+- **QR setup on Android 12 and newer** needs the app to answer two setup requests (which kind of
+  management, and policy compliance); Muralis asks for a fully managed device and answers at once,
+  and leaves the lock-down to its own first-start screens.
 
-- **Display off is a real sleep where it can be trusted, and the black film otherwise
-  (decided 2026-09-08).** `display.visual_off` on a device-owner panel calls
-  `DevicePolicyManager.lockNow()` (`force-lock` is declared for it), which is the only call an app
-  has that switches the backlight off; the film, a black view at 1% brightness, is what an
-  ordinary install gets and what a device owner falls back to. `DisplayOffPolicy` (pure,
-  host-tested) decides from the stored `display_off_method` (`auto`, the default, `sleep`, `film`)
-  and three live facts: device owner or not, cable attached or not, and
-  `isIgnoringBatteryOptimizations`, because on battery without the allowlist Doze cuts a sleeping
-  panel's network so no wake can arrive. What no API announces, a vendor power manager stopping
-  or freezing the process while the screen is off, is caught after the fact: `DarkWatch` records
-  the sleep before `lockNow`, heartbeats while dark on the 2-second sampler, and the next process
-  judges what ended the last one, with a reboot, an app update and the nightly restart recognised
-  as innocent. A bad ending is recorded once and the stored method is switched to `film`, so the
-  radio visibly moves to Black film and the shared sentence (`KioskService.describeDisplayOff`)
-  turns red on every surface, saying Android stopped Muralis and that it is not a Muralis error;
-  changing the method from any surface clears the record, which is how an operator asks for
-  another try. An ordinary install shows the one choice it has, Black film, ticked and greyed on
-  both surfaces, with the sentence saying what would unlock the rest (2026-09-24: Automatic
-  resolved to the film there, so the two options were one thing under two names). A tap on a darkened panel wakes it on every screen (`filmOn` in
-  `dispatchTouchEvent`), not only where the black view exists. Under sleep
-  nothing is drawn: the dark state is the screen being off, `display.source` reports
-  `display_off` from `isInteractive()`, and the power button or a remote wake ends it. The
-  `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` permission is deliberately not declared: Play restricts
-  it, and the policy does not need it, it only reads the answer. **A sleep leaves a keyguard
-  behind** (found 2026-09-09): `lockNow` asks the keyguard to lock while lock task has it
-  externally disabled, and `KeyguardViewMediator` records "reshow when re-enabled" before it ever
-  checks that the device owner disabled the lock screen; `stopLockTask()` re-enables it, so the
-  launcher hand-over came up behind a lock screen. It cannot be dismissed while hidden (the request
-  errors), so `openSystemLauncher` drops the pin first, clears the screensaver and any brightness
-  override, and `dismissKeyguardForLauncher` retries `requestDismissKeyguard` on a 100 ms clock
-  until the reshown keyguard accepts it (one retry on the Lenovo). **Only for a device owner whose
-  keyguard is not secure**, where the lock screen is disabled and the dismissal is therefore
-  silent: a real credential stays Android's to ask for, and an ordinary install never asks. A
-  callback is not a deadline, so an independent 1.2 s timer hands the screen over even where a
-  vendor never answers, and `onResume` does not re-apply the kiosk policy while the hand-over is
-  pending, which would otherwise re-pin the screen mid-retry. Each hand-over carries a generation,
-  so a repeated escape and a late callback cannot start the launcher twice. Measured on the Lenovo
-  2026-09-10, sleeping with `lockNow` and then escaping: the first dismissal request at +0 ms, a
-  retry at +113 ms, the launcher started at +1,206 ms, so the deadline is what completed the
-  hand-over rather than any callback; the launcher was usable with no keyguard over it, brightness
-  came back to the system value, returning to Muralis re-pinned the screen, and two escapes in a
-  row started the launcher exactly once. With a real credential set on the same panel **no
-  dismissal was requested at all** and Android's lock screen took the screen, which is the point.
-  The cost of the deadline is that an escape from an awake panel also waits out the 1.2 s, because
-  the poll waits for a keyguard that never appears; that was true of the first version of this fix
-  too, and it is a second of patience against a bricked hand-over.
-  Measured on the Huawei BAH2-W19 (API 26, EMUI 8) 2026-09-19, after a `lockNow` sleep and after a
-  power-button sleep: EMUI leaves nothing to reshow, `isKeyguardLocked` stays false and the same
-  deadline starts the launcher at +1.21 s with no lock screen over it; with a device PIN set there,
-  no dismissal was requested and the launcher started 9 ms after lock task ended. Lock task was
-  re-applied on the way back in every run, on both panels.
-- **The screensaver is a quieter page after a chosen idle time, and then Display off after a
-  second one (built 2026-09-09, from the design note of that day).** Three modes in this step,
-  `dim` (the page at a brightness floor), `film` (the black view Display off uses) and `url` (a
-  second web page over the dashboard, which stays loaded underneath so a touch brings it back at
-  once); `off` is the shipped value, because a panel that started darkening by itself after an
-  update would read as broken. `ScreensaverPolicy` (pure, host-tested) holds the vocabulary, the
-  ranges and the clock: `next()` says START after `idle_s` without a touch and DISPLAY_OFF after
-  `off_s` of screensaver, and either time at 0 switches that step off. `KioskActivity` runs a
-  one-second clock and owns the state (`screensaverStage`, `screensaverShowing`, the layer under
-  the black view), asks the service for the display off (`KioskService.displayOff`, so sleep or
-  film is decided by `DisplayOffPolicy` exactly as for the button), and consumes the first touch
-  on a showing screensaver while still counting it for the escape combinations. What a wake from
-  display off shows is the user's choice (`screensaver_on_wake`, for `url`, `dim` and `pictures`;
-  the film has nothing to glance at, so the control is not there at all for it, and both pages
-  show only the fields the chosen mode uses):
-  `onDisplayWoke` is idempotent because a wake from sleep reaches it twice, from `onResume` and
-  from the `display.wake` broadcast. The web-page mode with no address is stored anyway and
-  refused at start time with the reason, so the mode and the address can be typed in either
-  order; the one sentence every surface shows (`ScreensaverPolicy.describe`) turns red meanwhile.
-  Settings go through the instant path (`screensaver_mode/_idle_s/_off_s/_url/_dim_percent/
-  _on_wake` in the web admin's behaviour section, applied on change and refused in red on the
-  field itself; the tablet's card carries the mode and the sentence, its page every field,
-  applied on blur or Done with a toast for a refusal, and "Preview", whose preview a touch
-  ends by returning to that page rather than to the dashboard); the commands are
-  `screensaver.start` (refused, not accepted, when it cannot show: mode off, no address, kiosk
-  stopped, Muralis not on screen, the display off, the first-start wizard or the escape
-  recorder up; with the settings open it shows as a preview, see below), `screensaver.stop` and
-  `screensaver.mode`. The status document carries a
-  `screensaver` block (`active`, `mode`, the times, `summary`, `problem`, and `url`, shared rather
-  than admin-only because the Home Assistant text entity reads it), and
-  `display.source` reads `screensaver` while the dim floor or the film is the screensaver's, so a
-  lit dimmed page is never reported as display off. Home Assistant gets a select for the mode and
-  one switch that is both state and control; no separate start/stop buttons, they would be the
-  switch twice over. The camera and microphone are not part of it.
-- **Pictures: local playlists, Bing and Wikimedia Commons.** `PictureSources` and `TinyJson` stay
-  pure and host-tested. JSON has nesting and value limits and rejects malformed numbers and raw
-  control characters. **A third party chooses the addresses this panel connects to, so those
-  addresses are confined rather than trusted**: HTTPS only, one of four exact approved hosts
-  (`www.bing.com`, `commons.wikimedia.org`, `upload.wikimedia.org`, `thumb.wikimedia.org`), no
-  userinfo, no non-standard port, no fragment, and the check is repeated on every redirect hop,
-  which is why redirects are followed by hand and capped at three. Bing's `urlbase` must start
-  `/th?id=`, so a hostile answer cannot rewrite the authority through path concatenation. That is
-  destination confinement, not proof of safe bytes: a compromised approved service can still send
-  a decoder input, a wrong credit or an objectionable picture. A separate download worker keeps
-  network waits out of the disk and decode queue, so a slow fetch cannot stall the slideshow that
-  is already cached. Seven entries per source are cached with a manifest, fresh for 20 hours,
-  checked at every screensaver start and hourly; a failed fetch keeps the last usable cache and
-  says so in the source's sentence, measured on the Lenovo 2026-09-10 with the radio off and the
-  manifest artificially aged: the cache survived the failed refresh untouched.
-- **Named playlists, one browser, and no folder grants (reworked 2026-09-10).** Juri's rules, from
-  the specification in `../spec-screensaver-picture-mode.md` and his sketch
-  `../folders-pictures-selection.jpg`: several named playlists exist, exactly one plays, a playlist
-  holds individually chosen pictures from any number of folders, a deleted picture leaves the
-  playlist, and a picture removed from a playlist is **not** deleted from disk. His words on the
-  browser settle the shape: "Tablet and phone behaves identically when creating playlist and
-  selecting photos. Even if the phone has the possibility to exit muralis and use the android's file
-  browser, it is still Muralis that must handle the folder and image selections, reason why the
-  build is one only and it must integrate on both devices the in-muralis picture browser."
-  **`PlaylistDocument`** (pure, host-tested) holds the whole set and the rules: unique case-folded
-  names, at most one active, an ordered item list, a duplicate add is a no-op, 32 playlists and
-  1,000 pictures each. **`PicturePlaylists`** is only its storage: one JSON document at
-  `files/playlists.json` replaced by an atomic rename, which is what makes "zero or one active" and
-  "a reorder is one transaction" true by construction without a database. Items are a **list**
-  because the selection this replaced was a `StringSet` and therefore had no order a slideshow
-  could honour; `reorder` takes the whole new order and answers "the playlist changed while it was
-  being reordered" rather than half-applying a stale one. Malformed JSON **throws** and the file is
-  left on disk, because reading it as empty would discard somebody's playlists after one
-  interrupted write.
-- **One browser on every device, reading MediaStore.** `PictureBrowser` replaced
-  `PicturePlaylist`, and the whole SAF path is deleted with it: `ACTION_OPEN_DOCUMENT_TREE`,
-  `takePersistableUriPermission`, granted roots, `MAX_FOLDERS`, the picker's two-minute patience
-  timer, "a saved folder has lost access", and a picture that could be held twice under two
-  different addresses. What differs between devices is only how the read permission arrives: a
-  device owner grants it to itself silently in `KioskService.grantOwnRuntimePermissions`, an
-  ordinary install is asked once by the system dialog from the Screensaver page, which is the one
-  thing Android will not let an app do for itself. **Why MediaStore and not directories:**
-  `File.listFiles()` on `/storage/emulated/0` was written first and does not work, because at
-  Play's `targetSdk` floor scoped storage grants shared media *through MediaStore* and not through
-  the filesystem, so it returns null (measured on the Lenovo). The alternative that does give paths
-  is `MANAGE_EXTERNAL_STORAGE`, which Play treats as very restricted. So a folder is MediaStore's
-  `RELATIVE_PATH` and a picture is a `content://media/...` id. **There is no depth limit.** A
-  `maxdepth` of 3 was built on the morning of 2026-09-10 and deleted the same day: Juri agreed with
-  the specification against his own earlier instruction, because `Pictures/2026/Italy/Rome/Vatican`
-  is depth five and ordinary, and there is nothing for a cap to save when the folders come from an
-  index rather than a walk. Verified on the API 26 tablet: that exact path is reachable and its
-  pictures selectable. The folder index is cached for 30 s and dropped by `refresh()`, so going
-  back into a folder is instant, which is the thing the gallery apps this was modelled on get wrong.
-- **The playlist page is one page for creating and editing**, built from the sketch: Folders on the
-  left, Content on the right (the tapped folder, named on its first line), and In this playlist
-  under Folders, with its folder path prepended so two files called `test.jpg` read apart; where
-  two lanes fit, Folders and In this playlist share the left lane and Content has the right one
-  (2026-09-19). Content shows ten pictures at a time, with Show 10 25 50 100 under the list
-  (`PictureBrowser.PAGE_SIZES`, the same four on the web page); a new size starts the folder over.
-  Each held row carries the box that names the picture for its credit, with Save beside it and
-  Remove in the main colour, the web page's row copied (2026-09-19) in place of a Name button that
-  opened a page; the name is the existing caption, stored at once because it belongs to the file,
-  and only a refusal is said. Since 2026-09-25 the box has no save tick either: it stores itself
-  when it lets go of the focus, or on Enter or the keyboard's Done, only when its words changed,
-  and the web page sends it without re-reading the list so the focus can move on to the next
-  control (Juri: "is the V necessary?"). The panel takes the focus out of a box in the pane before
-  it repaints the rows and before Save or leaving the page, since a box removed with the focus in
-  it never hears that it lost it; the web page queues its posts, so a name and the eye pressed with
-  the same click arrive in that order. **The held list is the order the screensaver shows (2026-09-25):** a
-  picture is dragged by the grip beside it, Material's six-dot `drag_indicator`, or by its
-  thumbnail, on both surfaces, the neighbours sliding aside; grip and thumbnail claim the touch the
-  moment it lands, so a swipe that starts on one moves the picture and a swipe anywhere else
-  scrolls; near the top or bottom edge the page scrolls by itself. The
-  web page posts the whole order at the drop to `/api/playlists/order` (one address per line,
-  refused whole by `PlaylistDocument.reorder` unless it is exactly the playlist's pictures, so a
-  stale page is told and re-reads the list) and moves a focused thumbnail with the arrow keys; the
-  panel changes the draft, stored with Save like everything else there, and offers Move up and Move
-  down to a screen reader on the grip. Nothing is explained in a sentence: the grip says a row
-  moves (drawn only with scripting on the web, and only for two pictures or more), and a shuffling
-  screensaver puts the shuffle glyph in the pane's head as a mark, not a button. A first version
-  said all of this in sentences, and Juri replaced them with the glyphs the same day (see the
-  Design language section). **Each row also has an eye** that
-  switches that picture's credit off or back on, stored at once like the name, and an empty name box
-  shows, greyed, the file name the screensaver prints instead (`PictureSources.creditFromLabel`,
-  worked out from the label already on the page, so no second MediaStore query). Juri asked for a
-  hide switch because an empty box already meant "the file name"; the eye keeps the typed name, so
-  switching the line back on brings the same words back. With the screensaver's own credit switch
-  off, every eye stands crossed out and inert, its tooltip saying why. The pencil sits against the title's last letter, a 14 dp glyph with
-  no pill, the title capped in width so a long name cannot push it off the row. **The playlist's name is the page's title, with a pencil beside it that turns
-  the title into a box** (2026-09-19, the way a pull request's title is edited); the Name card went
-  with it, a new playlist opens with the box already showing, and the box's Save only settles the
-  draft's name. The count beside a folder is the pictures directly in it, not everything below it,
-  which read as a miscount. Nothing is written until Save, which is what makes Cancel mean
-  something. The Screensaver
-  page lists the playlists as the web page does, name, count, Use or "In use", Edit and Delete, with
-  the "New playlist name" box and Create under the list (2026-09-19, the web panel copied;
-  the button used to sit above the list and open the draft page); Create makes an empty playlist at
-  once and Edit is where its pictures are picked. The active row says "In use" in the same column so
-  the action columns stay aligned.
-  Deleting the playlist in use leaves none in use and the sentence says so, rather than a black
-  panel. Every question this feature asks is a screen the app draws itself: an `AlertDialog` came up
-  in Android's light theme over a dark panel **and took the immersive mode with it**, so a
-  navigation bar appeared on a locked kiosk (measured on API 26).
-- **Every tap on that page repaints one pane, not the screen.** The first version answered a folder
-  tap, a tick and a Remove by calling `showPlaylistPage` again, which is correct and unusable: the
-  page was rebuilt from the top, so picking twenty pictures meant scrolling back down twenty times.
-  `PlaylistPage` holds the three panes and the tick box of every picture on screen, and each action
-  touches only what it changed: a folder tap repaints the folder list from the tree already in
-  memory and re-reads the right pane, a tick repaints the Selected pane alone, and Remove also
-  unticks the box if that folder happens to be open, so the two panes cannot disagree. A background
-  read that finishes for a page that has been left, or for a folder somebody has since navigated
-  away from, is dropped rather than painted. `showPlaylistPage` itself is now only arrival and
-  rotation. **List actions use a smaller button than the rest of the app** (`rowButton`): a wall
-  panel's buttons are sized for standing distance and three of them at that size fill a playlist row
-  and crowd out the name they belong to. And a pair of short labels stays side by side on a phone
-  (`pairedButtonRow`, Select all/Select none and Cancel/Save), where `buttonRow` would stack them;
-  above 600 dp it defers to `buttonRow`, because stretching two buttons across a 1200 px card is the
-  bar-shaped button that rule exists to prevent. **An editor that can also delete puts its three
-  buttons on one row** (`editorButtonRow`, the web `.actions.editor`, 2026-09-28): Delete at the
-  start, apart from the pair it must not be taken for, Cancel then Save at the end, the confirming
-  action last, Material's placement; on the web Save stays first in the DOM so Enter saves. **The
-  first card of a `cardGrid` lane carries no top margin**: the grid is placed with its own 16 dp,
-  and two margins stacked was the gap over the first panels of the Screensaver, Escape sequences
-  and About pages (Juri, 2026-09-28). The Escape sequences page carries no paragraph explaining
-  what a combination is; its cards say it. On a phone the Selected rows put the path on its
-  own line above its two buttons, since side by side it was ellipsized to `./Pictures.../pd_1.jpg`
-  for two different pictures in different folders.
-- **The migration off document URIs is deliberately unable to lose a selection.** It matches each
-  old address to a media id by the path its document id encodes, which for the external-storage
-  provider is exactly MediaStore's relative path plus display name, with the display name alone as
-  the fallback for genuinely opaque providers. That difference is not academic: the phone held two
-  files called `pd_1.jpg` in different folders, which a name cannot tell apart and a path can. It
-  waits for the read permission, and it only counts itself finished once every address matched, so
-  a later run picks up what an earlier one could not. **What it cannot match is kept, not removed**:
-  the first version deleted it, and on the phone that emptied a playlist of five files that were on
-  disk the whole time and simply not indexed yet, because they arrived over adb. "The index has not
-  caught up" and "the picture is gone" are not the same thing. A kept item still opens on its own
-  persisted grant, and one sentence names it. Measured on the phone: all five repointed, none lost.
-- **The web admin's screensaver is a page of its own (`/screensaver`), a playlist is a page of its
-  own under it (`/playlist?id=`), and neither reloads while it is used.** The screensaver page was
-  a `<details>` inside the settings grid, so a two-pane browser and a playlist table were unfolding
-  inside a 300 px column of a multi-column page. That page now holds the mode, the options named
-  after it, and the list of playlists: name, count, Use or "In use", a green Edit and a red Delete,
-  and nothing else. **Edit opens the playlist's own page**, arranged as the panel's own since
-  2026-09-19: the name is the title, renamed through the pencil beside it (a `<details>`, so it
-  opens, closes and posts with no scripting, and the script only keeps the answer on the page);
-  Folders, with the upload at its foot because that is where a picture arrives, and Content side by
-  side; In this playlist under Folders in the left column, Content with the right column to itself,
-  placed by hand like the screensaver page's panels (In this playlist is the panel's own pane, with
-  the folder prepended, the box that names a picture for its credit with a plain Save, and Remove).
-  Content shows ten pictures at a time and offers Show 10 25 50 100 under the list where there is
-  more than ten to show; the choice rides in the address as `n=` and in every fragment request, and
-  a new size starts the folder over. Every one of them is scoped to
-  that playlist rather
-  than to whichever one happens to be playing (Juri, 2026-09-12: the two surfaces should be arranged
-  alike and the panel's shape is the better one). The rename box that used to own a column of the
-  table went with it: nobody renames a playlist often enough to spend a column on it. Unlike the
-  panel the page applies as it goes rather than collecting a draft behind a Save, because every
-  other control in this admin already works that way and a draft would need the whole selection
-  carried in the browser. **A folder is a link**, not a
-  form button, with a real `/playlist?id=<id>&at=<path>` address, so a folder can be reloaded,
-  bookmarked or opened in a second tab; the address bar follows by `replaceState`, without a history entry per
-  folder. That is also what fixed a stale-address 404: a folder used to be a POST to
-  `/api/pictures/folder/browse`, whose URL then sat in the address bar and answered nothing on a
-  reload. `admin_pictures.js` intercepts those links and every POST form on the page, not only the
-  ones inside the browser: the name box and the held-pictures list sit outside it and would
-  otherwise navigate to `/api/...` and leave that address in the bar. It re-reads three fragments
-  after every change, Folders (`/api/pictures/folders`), Content (`/api/pictures/content`) and what
-  the playlist holds, because a tick changes the row and the list, an upload changes a count, and a
-  page whose panels disagree is a page nobody trusts. An upload carries its playlist in the
-  form's action instead, since a multipart body is not parsed for anything but the file. The
-  server answers each change twice over, as a sentence and a flag for `?fragment=1` and as the whole
-  page for a browser with no scripting, so nothing navigates and nothing scrolls. Form bodies are
-  URL-encoded, deliberately: a `FormData` body is sent as multipart and this server parses multipart
-  for the upload alone, so posting a tick that way arrived with no fields at all. The upload's answer
-  is a banner directly under the Upload button, red for a refusal, with a cross and a five-second
-  timer; **a success says nothing on this page** (Juri, 2026-09-19: "Playlist updated." on every
-  added picture was noise), the panels re-read after it are the answer, and "Uploading..." shows
-  while a file is on its way.
-  The stats poll runs on this page too, for the chip and for the fields it keeps current, so its
-  readout element is optional: writing to the missing `#stats` threw on every tick and took the rest
-  of the poll down with it. **Use, Delete and Create are silent since 2026-09-19:**
-  `admin_playlists.js` posts them as fragments from the screensaver page and re-reads the table
-  (`GET /api/playlists/table`) in place, so the "In use" mark moving, a row going or a row appearing
-  is the whole answer; only a refusal is said, red, in the banner under the table. Before that, Use
-  came back as the whole page with "Playlist in use." on top and `/api/playlists/activate` in the
-  address bar, which said nothing the mark did not (Juri: tap the playlist you want and simply
-  switch). Without scripting the forms still post for real and the page comes back with its
-  sentence, or with none for Use; an empty sentence in a fragment answer hides the banner instead
-  of showing the raw JSON, on both pages.
-- **Wording both surfaces share, trimmed 2026-09-11**: "One picture per screensaver" (not "..., the
-  next one next time"), "Show the title and credit line" (not "... (always on for the online
-  sources)"), "Preview" rather than "Show it now", and every way back is the arrow in the app bar.
-  Upload's row reads Browse, the chosen file, then Upload against the right edge.
-- **The palette is the app's own, and the accents are chosen for contrast, not for a name.** It
-  began near a well-known palette and diverged accent by accent ("intensified at the user's
-  request"); on 2026-09-19 Juri judged it similar but not that palette any more, and its credit
-  went from the About screen, the README, the site's imprint and every comment, the flavour names
-  with it (`KioskTheme.darkPalette()` and `lightPalette()`). On 2026-09-12 the light theme's
-  accents were darkened, because the earlier values did not clear WCAG's 4.5:1 for text on this
-  app's card colour: measured, subtext 3.73, blue 3.71, red 4.10, green 2.58, yellow 2.28. The app's stats
-  readout was worse still, 1.02 to 2.13 on the light card, because the service bakes its colours
-  into the markup and has no screen; it recolours itself for a light surface now, and is unchanged
-  over the dashboard, where it sits on a black plate. Hue and saturation are kept exactly in every
-  case; only lightness moved, by the smallest amount that clears the minimum, and the dark theme
-  needed nothing. **Both surfaces are audited by measurement rather than by eye**: every pair
-  either one actually draws is listed and checked, and the only remaining miss is the 1 px row
-  separator, which is decorative. Juri's rule, 2026-09-12: "we must make the themes look good",
-  and no palette's name is a constraint.
-- **What the review of 2026-09-19 found and fixed, all on the branch's last day.** An upload from
-  a playlist's page landed in whichever playlist was in use, because the upload handler never
-  passed the page's id to `saveLocal`; it does now. Every playlist edit goes through
-  `PictureLibrary.editPlaylists`, one lock for the web admin, Home Assistant and the panel, where
-  each had its own load-modify-store and a tick in the browser could undo a switch from a card.
-  A playlists file that cannot be parsed is moved aside under a dated name and said for a day,
-  instead of being overwritten by the next save. A picture is dropped from a playlist only when
-  MediaStore answered for every picture and at least one is still there: a provider that does not
-  answer throws `PictureBrowser.Unavailable` rather than looking like a missing row, and every
-  picture vanishing at once is treated as an ejected card, not a deletion. The migration stores
-  only when it changed something, which ends a loop on an ordinary install waiting for its
-  permission (store, publish, list, migrate, store). The dropped-pictures sentence lasts ten
-  minutes instead of being swallowed by the first reader, which was the telemetry publish.
-  Discovery goes out again before a state publish when the playlist names differ from what it
-  announced, so a new or renamed playlist reaches the Home Assistant select without a reconnect.
-  `screensaver.start` was refused while an operator was in the settings, because the activity
-  answered it by showing the dashboard over a half-made draft; since 2026-09-24 it shows as a
-  preview over the open settings instead and a tap brings the same screen back, so nothing is
-  thrown away (Juri: "Preview should work anyway"). The web's Delete asks first, as the
-  panel does. The held rows' labels are looked up on the worker and cached per page. The
-  retired folder feature's leftovers went: the SAF keys in `KioskConfig`, the picker runnable, the
-  `screensaver.folder` and `screensaver.pick_folder` commands with their test, and the
-  `/api/pictures/folder/pick` route. `READ_MEDIA_VISUAL_USER_SELECTED` is declared and accepted
-  as a partial grant on Android 14, per the vendor's page; **not yet tried on an Android 14
-  device**. A second pass on 2026-09-20 closed what the first left half done: the panel's own Save,
-  Use, Delete and Create go through `editPlaylists` too; the permission result is judged by what
-  the browser can now read, not by the first answer; a `screensaver.start` that arrives with the
-  settings open no longer shows the dashboard over them (a preview since 2026-09-24); the migration's matching step
-  retries by the minute, not per listing; playlist names for discovery come from the document last
-  read or written, not a third file read per publish; MediaStore names are cached for half a
-  minute so a listing under a stats poll is not a query per picture; a one-picture playlist whose
-  file is gone is still cleaned; and a store that throws without the permission still says
-  "picture". A separate security pass found nothing.
-- **The launcher icon is the app's own palette, and the camera is in the bezel** (2026-09-23).
-  `ic_launcher_foreground.xml` is the one drawing; `media/google-play/render-icon-pngs.py` renders
-  the three 512 PNG copies from it, so they cannot drift. The camera used to be a dot just inside
-  the frame, which is where no tablet has one, and it is now a hole in the bezel stroke in the
-  background colour. The tiles are `#c08cff` and `#7aa2ff`, KioskTheme's two dark accents.
-- **Both surfaces are Material 3 since 2026-09-23, one design drawn once.** Decided from the drawings
-  in `../media/drafts/material3/` (generated by `build_final.py`; `INVENTORY.md` beside them lists
-  every control on both surfaces with its decision, and a redesign is checked against that list,
-  never against a screenshot of one surface, because the first drawings were made from web
-  screenshots and missed the panel's Open dashboard button). The rules: the colour roles are
-  derived from the palette (`KioskTheme.card/primaryContainer/secondaryContainer/...` and the
-  `--card/--primary-container/...` mixes in `admin.css`), so a card, a container and its ink match
-  across the two surfaces; **every page is a centred column with a gutter of 5% of the width
-  each side, in every orientation and on both surfaces** (Juri, 2026-09-23; landscape had 10%
-  first and it was too much), floored at Material's own margin and capped so the column stops
-  growing at 1000 dp, past which the cap makes the gutter wider than 5%, and the app bar spans exactly that column,
-  which is what keeps the theme control off the glass; cards are the base lifted a step with a
-  12 dp corner and no border;
-  text fields are outlined with the label on the border and the helper text under the box in the
-  field's own slot, keeping its wording ("(blank keeps the current one)" is the one text that
-  moved out of a label); buttons are 40 dp pills, filled for a card's one main action, tonal for
-  the second, outlined for a command that acts now and stores nothing, text for navigation, and
-  red only inside a confirmation; **anything repeated in a row is a 40 dp icon button** with a
-  48 dp target, a tooltip and a spoken name (edit, delete, remove, save the name, the pager's
-  chevrons, the view); on/off settings are switches drawn from the palette as the Pixel draws them (measured on Juri's, Android 17, 2026-10-04): Material 3's switch with icons, a 52 by 32 dp
-  track outlined and dark (`surface`) when off, a 24 dp handle in both states with a 16 dp check or cross (the mark layer sized by hand: its 24 dp vector once widened the handle and the Switch sized its track from it, 72 dp wide), the on handle `onAccent` with the check `onPrimaryContainer`, the off handle `subtext` with the cross in the track's colour, on both surfaces (the panel's come from `switchTrack`/`switchThumb`, because the
-  platform's track is translucent and turned the accent into a muddy purple), the playlist in use
-  is a radio, pictures in
-  a playlist are check boxes on rows and check circles on tiles, and the header box over a page
-  ticks or clears the page shown (the Select all and Select none buttons went). **The settings are
-  one menu of sections**, each a glyph, its name and a one-line summary of stored values only:
-  below 840 dp an accordion no wider than 720 dp with one section open, kept for the visit only
-  and all closed when a visit starts (Juri, 2026-10-07: `KioskActivity.openSection`, cleared by
-  the settings combination; a page below the settings and back shows what is stored, as a
-  typed but unsaved connection box is lost on every page below; `admin_menu.js` remembers
-  nothing, and the section a Save posted from, or a page's arrow leads back to, comes back open
-  from its `/#box-<section>` address, the certificate choice's reload from `/?open=webadmin`,
-  since a change of the hash alone reloads nothing), from 840 dp Material's
-  list-detail, the list half the open section with Material's 24 dp gutter between them, so no
-  panel spans a landscape tablet; Quick actions (web only) and This panel are the last two sections,
-  This panel holding the legal pages and the version, which links to the repository on the web. The
-  summaries carry stored values and nothing the page already says, because the list is a third of
-  the column. **Open dashboard is a menu of one entry** under the panel's menu, in the main
-  colour, a card's gap below the list, and under the list in the two-column layout. It is the
-  same card as the menu above it, corner for corner and edge for edge, and only the colour sets
-  it apart; in the two-column layout it carries the list card's 8 dp of padding itself, so the
-  two glyph columns are one; it is still
-  the button that saves the connection fields before it opens the page. **A button beside a field
-  sits on the centre line of the box**, never the label's and never the helper line's
-  (`addBesideBox` on the panel, `.beside` on the web). The certificate's SHA-256
-  fingerprint and the system stats readout are code blocks on both surfaces, on the lowest
-  surface: white on a light theme, near-black on a dark one (`KioskTheme.lowest`, `--lowest`).
-  The privacy policy and the terms are rows of This panel and nowhere else: the panel's
-  Version and device details page carried them a second time until 2026-09-23, and a legal page's
-  back arrow returns to the settings. **Back is the arrow in the app
-  bar, once**; the "← Back" buttons at head and foot went. On an ordinary install the system
-  Back, gesture or key, goes where the arrow goes, on a question with no arrow its Cancel or
-  OK (never an OK that opens another app: Back on "Blocked in Android settings" returns to the
-  page), and on a preview back to where it was started (Juri, 2026-10-07: people move around inside
-  an app with the gesture); drawing the heading sets it (`pageHeading`, `pendingBack`, taken up
-  by `setContentView` as the screen's `pageBack`), so the two cannot part and a screen that sets
-  none has none. The settings screen's Back still opens the dashboard, and a device owner's Back
-  stays inert; a showing keyboard takes the first Back on every install. The theme control is a sun or a moon in
-  the This panel section on both surfaces (beside Display until 2026-10-04, moved by Juri to sit with the look's other choices; it stayed at This panel's name when they moved to the Appearance page below it on 2026-10-07): **the panel's at the right of the section's name**
-  (Juri, 2026-09-23), which is the accordion's row or the open card's title, the only section
-  that carries a control beside its name (`Section.action`); the web's beside the section's
-  name too, in the accordion's row and, from 840 px, in the open card's top corner, cycling
-  automatic, light and dark, the glyph following the theme in force. The web's app bar carried an Auto/Light/Dark picker until 2026-09-27
-  (Juri: it did not fit there). **The Folders pane is a tree** (Juri, 2026-09-23): a caret on every folder with
-  folders under it opens and closes that branch and leaves the pictures alone, the head's one
-  icon button opens or closes every branch, a tap on a folder opens it and its branch and a second tap closes the branch, and the tree
-  starts on the top of the volume and the way down to the open folder (`PlaylistPage.expanded`
-  on the panel, `branches` in `admin_pictures.js` on the web, both seeded from that rule; the
-  server draws that opening position, which is also the tree a browser with no scripting gets,
-  since the carets and the button need it). **How a picture fills the screen** is one setting
-  for every picture, `screensaver.picture_fit`: Fit (the whole picture, the default and what the
-  panel always did), Fill (cropped to the edges), Stretch (pulled out of shape) or Actual size,
-  radios on the panel, a menu on the web, a select over MQTT, applied as the `ImageView` scale
-  type when the `PictureFrame` is built. **A folder is shown in one of four views**, list, details, small and big thumbnails,
-  cycled by one icon button in the Content card's head and stored as one preference for both
-  surfaces (`KioskConfig.pictureViewOf`); thumbnails are made once by the panel into
-  `cache/thumbs/` (`PictureLibrary.thumbnail`, 256 px JPEG, keyed by address) and served to the
-  web page by `GET /api/pictures/thumb`, which answers only for MediaStore rows and uploads. The
-  details view reads size, date and dimensions from the same MediaStore row. A dark panel reports
-  `brightness_percent` 0 rather than null (same day, at Juri's request). The bullets below that
-  describe the earlier button weights, the button colour rule and the smaller row buttons are
-  history from that point on; what they decided about *behaviour* still holds.
-- **Three weights, none of them hollow (chosen 2026-09-12 after five treatments were compared on
-  the live pages).** Filled is the action of the thing it sits in and every action inside a list
-  row; outlined is a command that acts now and stores nothing; **tonal** is navigation. Tonal
-  rather than a text button because the same language is mirrored on the panel's touch UI, where
-  there is no hover, and a control with no body until you point at it is one nobody finds; Material
-  is the precedent ("tonal is useful where a lower-priority button requires slightly more emphasis
-  than an outline would give"). **A tonal label is `--ink-alt`, never the hue**: the
-  hue on a tint of itself cannot reach 4.5:1 at any strength. Measured at 18% into the card: 4.74
-  dark and 5.62 light, borders clearing 3:1 in both. There is one tonal hue, the blue; a purple one
-  was built the same day and deleted unused rather than left in the stylesheet. The panel carries
-  the same tier (`KioskActivity.tonalButton`, `KioskTheme.inkAlt`), so the two surfaces are one
-  design rather than two that resemble each other. **A navigation button that carries a role class
-  is that role first**: Edit is a GET form and green, and only an unclassed button in a GET form is
-  tonal, which is what the `:not([class])` in that rule is for. Counted across the whole admin
-  the same day, exactly **two rows** mixed a filled button with a hollow one, Save + Open once and
-  Browse + Upload; a hollow button beside a filled sibling is what reads as abandoned, so both
-  gained a body. The unit for counting filled buttons is the **card**, following Atlassian's
-  per-section and Polaris's per-card rule rather than Material's, Carbon's and Primer's
-  one-per-page, which is a deliberate relaxation.
-  **The panel's buttons carry the web's measurements since 2026-09-19** (Juri: the same colours and
-  style everywhere in the app, the screensaver pages in particular): padding .5rem .9rem, a 10 px
-  radius, a 1 px border, a 2 px hard edge and .9rem text become 8 by 14 dp, 10 dp, 1 dp, 2 dp and
-  14 sp (the Material 3 pass of 2026-09-23 then made both surfaces draw pills,
-  `KioskActivity.pillShaped`), a row button .25rem .6rem at .8rem, the tonal edge the hue at
-  45% over the card, and the platform Button's 48 dp minimum height and 88 dp minimum width are
-  cleared, which is what had made them slabs beside the browser's; `buttonRow` no longer forces a
-  160 dp minimum either. Inputs, radios and check boxes keep their touch sizes.
-- **Every delete asks in the same words** (Juri, 2026-10-01): title `Delete "name"?`, text `"name" will be deleted.` followed by what else changes, button Delete (`confirmDelete` on the panel; the web's `confirm()` carries the title and the text). Only things made in Muralis or uploaded to it are deleted (playlists, uploaded pictures, automations, the uploaded certificate); settings have no Delete. Fleet words appear only where the fleet is on: a thing the fleet owns is deleted only from the fleet's control panel, and there the text adds "Changes will be synced across all devices.", which they then are.
-- **A button's colour says what it does, on both surfaces.** Juri's rule, 2026-09-11: the main
-  colour is a press that applies a setting permanently (every Save, Rename, Use, and "In the
-  playlist" as the mark that something is enabled); a plain outline is a visible action that saves
-  nothing (Open once, Reboot, Reload, Display on and off, Preview, Back); **red deletes
-  something**: outlined red for a Delete that asks first (an editor's row, `dangerOutlinedButton`,
-  the web's `button.danger`) and filled red for the confirm screen's own Delete alone
-  (`dangerButton`; Juri, 2026-10-01); **green
-  adds something** (Create playlist, Upload, Add to playlist, and **Edit**, which opens the page
-  where pictures are added: Juri's call on the glass, 2026-09-12, "it looks like it fits better"). **A quick action the panel refuses says so on the page** (2026-09-24): `admin_command.js`
-  puts the playlist page's red banner under the pressed button's row, for example "Not done:
-  the escape combination recorder is on screen.", gone after five seconds, and a panel that does not answer
-  gets the same sentence the playlist page uses. Before that a refusal went to the console
-  alone and Preview, pressed while the panel's settings were open, looked broken. A success
-  still says nothing on the page.
-  Taking a picture out of a playlist is the main colour and never red, on both surfaces: red here
-  deletes a file or a playlist and this deletes neither. `button.danger` and `button.add` in
-  `admin.css`, `dangerButton` and the `ADD` colour of `rowButton` in `KioskActivity`, both built on the same shape and
-  lift as the main button so a row of mixed buttons still reads as one family. The rule is applied
-  across the pictures and screensaver surfaces; everything else it names already followed it.
-  Buttons on the web page also take the page's own font, not the browser's button font, which is
-  what left the Browse label three pixels taller than the Upload button beside it.
-- **The screensaver page is two panels, on both surfaces, in the Sensors page's shape.** The
-  mode is chosen in the settings page's Screensaver section alone, radios on the panel and a menu
-  on the web; the page stopped repeating the chooser on 2026-09-28 (Juri: "when the user changes
-  the screensaver mode from the previous page, this is enough"). The page holds **"Playlist"**,
-  at the left from 840 dp/px like a sensors list, and the options panel at the right, one to two
-  (`listDetailPair` on the panel, `.ld` on the web); below that width one under the other,
-  Playlist first. A mode without playlists leaves the options the page's only panel, and it
-  moves to the middle at the legal pages' width (`afterPlaylist` relays it, the web toggles
-  `.ld.one`), live when the mode changes under an open page. The options panel is named after the mode (`ScreensaverPolicy.optionsTitle`,
-  `Dimmed page options`, `Web page options`, `Pictures options`) and holds everything that mode
-  uses, in the order idle, display-off, the mode's own field, the wake choice, then the sentence
-  it all adds up to, then Preview; Playlist appears only for the Pictures mode with this panel as
-  the source. **Off has no options panel at all**, Juri's decision of 2026-09-11 ("it is Off so
-  there is no settings for it in any case"), and so **Off hides "More screensaver settings"** in
-  the section on both surfaces (`moreRow`, `#screensaver-more`): the page would be empty. The
-  times keep applying the moment a mode is picked. A mode changed elsewhere renames the panel
-  live: the panel's `sync` repaints the title, and the web page's shell (`#screensaver-page`)
-  carries `data-mode`, kept current by `admin_stats.js`, and `data-titles`, every mode's title
-  rendered once by the server, so `admin_setting.js` never holds a second copy of a word. **A
-  mode with no wake choice shows none**, rather than a disabled one with a note explaining it:
-  the black film has nothing to look at on waking, and a control that can never be enabled is
-  clutter.
-- **The web browser has the panel's "nothing opened yet" state.** It used to open the top of the
-  volume on arrival, so it had no way to say "pick a folder"; the top of the volume is a folder
-  like any other and is now reached by tapping it. Absent and empty are different answers for the
-  `at` parameter, which is why `browseTarget` returns null rather than "" when it is missing.
-- **A page's only panel sits in the middle at the legal pages' width**, never at one side of a
-  grid with an empty column beside it (Juri, 2026-09-28): 640 dp centred from 720 dp on the panel
-  (`singlePanelWidth`, `singlePanelParams`), `max-width:640px` centred on the web (`.one`). The
-  privacy and terms pages, every confirm screen (`showConfirm`, its buttons in the same column) and the Screensaver page for a mode without playlists follow it; a new one-panel page takes the same helper or class.
-- **The screensaver page does not use the settings page's multicol.** It is the `.ld` grid the
-  Sensors and Automations pages use, explicit columns placed by hand. Multicol balances by
-  height, and with two boxes in four columns it put one at the far left and one at the far right
-  with a hand's width of nothing between them, and moved the right one every time a scrollbar
-  changed the width by a pixel (Juri, 2026-09-11, with a screenshot). The playlist table is
-  sized to its content rather than stretched, for the same reason: at full width the Rename cell
-  took every spare pixel and pushed Delete to the far edge of the card.
-- **Two things the screensaver page deliberately does not have.** There is no "Back to the page"
-  button beside "Preview": it ends a showing screensaver, which is what Display on already does
-  to a lit panel, and on a dark panel it ends one without lighting the panel, which nobody presses a
-  button for; the tablet's own page never had it (Juri asked what distinguished them, 2026-09-11).
-  The `screensaver.stop` command is unchanged for MQTT and the API. And a page below the settings
-  page carries its heading alone, with no subtitle and no status chip: the panel's id, its address
-  and its load belong where somebody is configuring the panel, not on a page about one feature of
-  it. The way back is the arrow in the app bar, the same on the privacy and terms pages.
-- **`screensaver.playlist` switches the playlist by name**, and a Home Assistant select carries the
-  panel's own names. By name because that is what a person and a card know, and an unknown name is
-  refused with the names that do exist. The select's "no playlist" option is the word `None`,
-  because a select cannot hold an empty option, so the panel treats that word as none unless a
-  playlist is actually called that; without it, clearing the playlist from a card was refused
-  (found over MQTT, 2026-09-10). Uploads appear as their own folder in the browser, and **work
-  without the picture permission** (2026-10-05; found 2026-09-25 that nothing did): on an
-  ordinary install that refused it, the playlists, the playlist page and the Uploaded folder stay
-  on both surfaces, and the upload on the web admin, where it always was, with one sentence (`PictureLibrary.OWN_PICTURES_NEED_PERMISSION`)
-  and on the panel the Allow button, since only the panel's own pictures need it. **A picture
-  whose file is gone keeps its name**: every label the playlist page lists is remembered by
-  address (`last_names.json` beside the captions, written once a moment after a listing, pruned to
-  what some playlist holds), so a gone one reads "./Pictures/Italy/rome.jpg (not found)" where it
-  read "186 (not found)", and without the permission a held picture shows that name too, never
-  "not found". **Android 14's partial grant ("Allow limited access") is not a licence to drop**:
-  the store answers only for the photos somebody picked, so a picture is called gone, and taken
-  out of its playlist, only with the full permission (`PictureBrowser.readsEveryPicture`); found
-  on the Pixel 2026-10-05 by reading the cleanup, and checked there after the fix (a playlist kept
-  its two unpicked pictures through a screensaver run under the partial grant).
-- **Captions and uploads.** A caption is keyed by the picture's own address, at most 200
-  characters, and there is no file-name fallback any more: reading the name as a fallback is what
-  crossed captions between same-named pictures in different folders (a second folder's `pd_2.jpg`
-  shown on the glass under the first folder's "The Great Wave off Kanagawa, Hokusai", measured
-  2026-09-10). `migrateCaptionKeys` moved the old name keys onto the addresses they were written
-  for and then dropped every bare name; `captions_key_version` is 2, so a panel that already ran
-  the first pass gets the second sweep too. A picture whose credit is switched off is listed by
-  address in `credits_hidden.json` beside `captions.json` (`PictureLibrary.hiddenCredits`), a file
-  of its own so the name survives the switch; the screensaver draws no line for it
-  (`creditLineFor`), while the status document still names the picture. Neither file is cleaned
-  when an upload is deleted, so a re-upload under the same name inherits both, as captions always
-  did. The caption is also the friendly name the playlist page
-  edits, not a second field. Only uploaded picture files may be deleted; a picture chosen from the
-  panel's own storage is only removed from the playlist. Multipart parsing rejects the whole
-  truncated request and preserves boundary-prefix bytes inside images. Authentication and
-  cross-site checks precede body allocation. Only exact POST `/api/pictures` gets 24 MiB/120 s; one
-  process-wide upload permit prevents multiplying that allocation by worker count. A playlist's
-  order (`/api/playlists/order`, every address in it) gets 256 KiB in the same 8 s, since 16 KiB
-  held about 170 addresses; other requests retain 16 KiB/8 s. Uploads are not streamed: body and part copies still cost memory.
-- **Credited display.** Decode uses a power-of-two sample with at most 2,097,152 ARGB pixels
-  (8 MiB) per bitmap, independent of image shape. Generation and frame/source checks discard stale
-  work, including work invalidated by sleep. Wake resumes an interrupted initial decode even for
-  one-picture-per-cycle. **The credit line is the title and the names, and never a web address**
-  (2026-09-10, after reading the lines on the panel): Commons carries artist, licence short name,
-  "Wikimedia Commons" and the supplied Credit and Attribution notices, and Bing its `copyright`
-  line verbatim, while the licence address and the source-page address stay in the picture and in
-  the cache manifest without reaching the glass, because a wall panel is read from across a room
-  and nobody types a URL off one. A supplied notice that is nothing but an address is dropped for
-  the same reason; one that names somebody is shown as the source worded it. Online credits cannot
-  be disabled. **One credit panel at a time**, decided the same day: the outgoing picture keeps the
-  line until it has left the glass and the incoming one takes it in the transition's end action.
-  Stacking both attributions was built that morning and rejected that afternoon, because a second
-  panel appearing over a picture still on screen reads as a fault; the caption always names a
-  picture that is visible either way. If a full credit cannot fit, refuse the image rather than
-  ellipsize, because an ellipsis is not attribution. Error messages clear old pictures and picture
-  telemetry. The composed credit is what a cache manifest stores, so
-  `PictureLibrary.ATTRIBUTION_VERSION` invalidates every manifest an older build wrote; it is 3.
-  Attribution is not evidence of permission to redistribute Bing photographs: its unofficial
-  endpoint remains an opt-in product/legal risk, not a licence supplied by Muralis.
-- **Settings stay shared.** The existing dispatcher validates every screensaver setting on all
-  three surfaces. Every screensaver setting is a discovery entity (read back off the broker
-  2026-09-10: 36 components on the device-owner Lenovo, sixteen of them the screensaver's, the
-  newest being the playlist select), and
-  the four boolean switches use a template that renders `None`, which Home Assistant reads as
-  unknown, for a missing field, a null, a non-boolean and a `screensaver` block that is not a
-  mapping; nine such payloads were rendered through Jinja to check it. **Verified against a real instance 2026-09-10**: a throwaway Home
-  Assistant in podman consumed the discovery document and built 35 entities per panel, fifteen of
-  them the screensaver's, 22 entity round trips through Home Assistant services all matched the
-  panel, and the four boolean switches read `unknown` for each of the four bad payload shapes. **A mode changed under a showing
-  screensaver ends it** and the next one comes after the idle time in the new mode, which is
-  deliberate and documented at `tickScreensaver`; a same-mode change (a dim floor, a transition,
-  a playlist revision) is re-applied in place **with the clock towards display off left where it
-  was**, measured on the Lenovo: a 40 s off timer still fired at 40 s across an in-place change at
-  10 s. The same-boot screensaver start timestamp survives an activity rebuild too, measured the
-  same way across `kiosk.restart`. **A local decode failure used to be remembered until the
-  process restarted**, so a panel whose storage came back kept saying a selected picture cannot be
-  read through three clean cycles and a rebuild, cleared only by a reboot, because the record was an
-  in-memory `problems` map with no counterpart on success. Fixed 2026-09-10: a successful local
-  decode clears it, which is the only event that actually answers the question the sentence asks. The secondary WebView handles renderer death and leaves the
-  saver, **demonstrated on the Lenovo 2026-09-10** once rooted debugging was enabled (killing
-  another app's isolated renderer needs root): `Renderer process crash detected` was followed by
-  `Screensaver off (screensaver renderer ended)`, `renderer_deaths=1`, HTTPS still answering 200,
-  MQTT still accepting commands, a new renderer spawned and the dashboard back. Renderer memory cannot be
-  inferred from the app's own heap and is reported as its own process: on the Lenovo the app sat
-  at 162 to 187 MB and the renderer at 95 to 126 MB across dashboard, second WebView, one picture,
-  repeated fades, four source changes and six stop/start cycles, with no growth, no OOM, no
-  renderer death, and file descriptors steady at 188 to 191 (210 while the second WebView is up).
-- **A connection is kept open between requests** (keep-alive, 2026-10-05): a GET or POST of
-  HTTP/1.1 read whole (headers ended on their blank line, a Content-Length that is one plain
-  number, else 400 and close) is answered `Connection: keep-alive`, the next request is awaited on the
-  same connection for 3 s (`KEEP_ALIVE_IDLE_MS`), up to 100 requests, so a page and its burst of
-  scripts and thumbnails share one TLS handshake per connection. Everything answered before its
-  body was read (a refusal, a 401, a 413), a HEAD, HTTP/1.0, a chunked body, `Connection: close`
-  and the camera stream still close; an idle kept connection closes without a log line. A
-  change of certificate closes the connection that asked for it after its answer, every kept
-  connection waiting for a next request, and any that shook hands with the old one, so the page
-  announcing a certificate is fetched with it; the 500 of the failure barrier is written only
-  where nothing was answered yet. Measured
-  on the tablet: five requests on one connection in 0.73 s, the idle close at 3.0 s, the
-  thumbnail page whole in Chrome and Firefox, the per-host cap unchanged.
-- **The HTTPS server's capacity is sized for a browser, not for curl.** 16 workers, 12 connections
-  per host, a queue depth of 8, and a socket that has sent nothing by 8 s is closed (2 s until
-  2026-10-01, when a lossy Wi-Fi link cut one request in seven; the per-host cap still bounds
-  what a browser's speculative connections can hold, and the measurement below is the 2 s one,
-  to be repeated), which is what
-  keeps a browser's speculative connections from spending the whole per-host budget. Measured on
-  the Lenovo 2026-09-10 against the failure reported that morning: six silent sockets held open
-  from one address no longer cost anything, the admin page still loads in half a second; twelve or
-  twenty do refuse the next connection, immediately rather than after a ten-second hang, and
-  capacity is back inside 2.6 s without anyone closing them. Capacity refusals are logged, one
-  line per 30 s. Failed TLS wrappers and queued sockets close on shutdown. **The plain-HTTP redirect
-  was broken for a real browser and is fixed** (2026-09-10): the 301 arrived with its headers and
-  `Content-Length: 50`, the body never did, and the connection ended in a reset, so Chrome rendered
-  an empty document and Firefox hung. curl printed the headers it got and looked fine, which is how
-  it survived a first diagnosis. Three causes, all now closed. `handleConnection` had begun
-  assigning `channel = tls` *before* the handshake, so the `finally` block closed the TLS wrapper
-  over the same file descriptor the raw-socket 301 had just been written to; the channel is now the
-  TLS socket only after a successful handshake, with a separate `tlsToRelease` so a failed wrapper
-  is still freed. The header and the body left in two writes and now leave in one. And every
-  connection ends with a **lingering close**, FIN, then drain the client's unread bytes to a 500 ms
-  deadline, then close, which is what Apache's `ap_lingering_close` and nginx's `lingering_close`
-  do and what any early refusal needs anyway: a 401 answered before a 24 MiB upload is read leaves
-  unread bytes by design. Measured afterwards: 186 bytes, the full declared body, a clean FIN.
-- **Fleet is not implemented by a local playlist.** Section 10b of the fleet design still owns
-  content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
-  never cross-panel IDs. Keep uploads alongside the panel's own pictures so removed or cloud storage is not required
-  for a self-contained panel. No claim of fleet compatibility, and none of unattended readiness:
-  the open items are in `../review-screensaver-keyguard-2026-09-10.md`. The three that were defects
-  rather than gaps, the plain-HTTP redirect, the legacy caption keys and the uncleared decode
-  failure, were all fixed and measured on 2026-09-10; what remains there are gaps, and a soak is
-  still the largest of them.
+## Platform
 
-## Platform constraints that shape the code
+- minSdk 26 is a real target; every call newer than that needs a working fallback and a version
+  check. targetSdk follows Google Play's yearly floor.
+- Device owner (by QR during setup, or over adb on a fresh device) is the highest privilege the
+  app can reach. Features that need it degrade visibly without it.
+- Three kinds of window to keep in mind: a device-owner panel (full screen), an ordinary install
+  with system bars, and recent Android, which draws apps edge to edge under transparent bars.
+- Boxes for machine values (addresses, ports, ids) switch off the keyboard's corrections; boxes
+  for names and captions stay ordinary text.
 
-- **minSdk 26 is a real target, not a floor kept for form.** Any `SDK_INT`-gated code path for 26/27
-  is expected to actually run on hardware, not just exist defensively.
-- **Every version-gated call needs an explicit fallback, not a silent no-op.** `setLockTaskFeatures`/
-  `WindowInsetsController`-family APIs arrived at 28/30; `scripts/test-host.sh` fails the build if
-  such a call appears with no `SDK_INT` check nearby, specifically so this can't be forgotten
-  silently.
-- **Three window worlds, and the phone that shows the third is Juri's Pixel.**
-  A device-owner panel is `FLAG_FULLSCREEN` with both bars hidden; an ordinary install below
-  Android 15 shows its bars and its window starts below them; from Android 15 an ordinary install
-  is laid out edge to edge, the bars are transparent over the page and `setDecorFitsSystemWindows`
-  is ignored, so nothing but the app's own padding keeps a page out from under the clock. Every
-  page of the app's own sits in `KioskActivity.PageScroll`, which turns the system-bar and cutout
-  insets (API 30 and up) into its padding and folds the keyboard's measured inset into the same
-  bottom, and `applyBarIconContrast` darkens the bar icons over a light-themed page from Android
-  15 only (below it the theme paints the bars black). Found 2026-09-25 on the Pixel 9 Pro XL
-  (Android 17), which then ran the Play build; since that night it runs the debug-keyed build, so
-  a local build installs over it with its settings kept (the Play build would need an uninstall). The two Huawei devices (Android 8 and 9) and the
-  Lenovo (10) cannot show any of this; a change to insets, immersive flags or the keyboard is not
-  done until it has been reasoned through for that third world.
-- **No privileged permissions are available at all.** `DEVICE_POWER`, `REBOOT`, `STATUS_BAR`,
-  `WRITE_SECURE_SETTINGS` are all unobtainable outside a signature/platform build. Device-owner
-  status (via `dpm set-device-owner` over adb, or QR provisioning during setup) is the ceiling of
-  privilege this app can ever reach, and several capabilities (reboot, silent permission grants,
-  full lock-task feature masking, `HardwarePropertiesManager`) exist only conditional on it. The
-  app must work, in a visibly degraded way, without it too, see the device-owner warning banner
-  pattern in the config screen.
-- **A QR enrolment needs two screens from Android 12** (2026-10-07: the Mi 9T on Android 16
-  downloaded Muralis and then failed "Can't set up device" every time, while Android 8 and 10 were
-  fine). AOSP's ManagedProvisioning installs the app, then refuses an app that does not answer both
-  `GET_PROVISIONING_MODE` and `ADMIN_POLICY_COMPLIANCE`; on a device with Google's apps, Android 13
-  and newer hand the whole enrolment to Google's Android Device Policy (the holder of the device
-  policy management role, `cmd role get-role-holders android.app.role.DEVICE_POLICY_MANAGEMENT`),
-  which asks the same two questions, and the Mi 9T's failed install was recorded as made by it. `ProvisioningModeActivity` answers a fully
-  managed device (`Provisioning.fullyManagedOffered`, host-tested; it cancels when the setup wizard
-  offers only a work profile, which cannot lock), `PolicyComplianceActivity` answers OK at once,
-  since lock task and HOME wait for the first-start wizard. Both are declared as Google's TestDPC,
-  Headwind MDM and FreeKiosk declare them: `BIND_DEVICE_ADMIN`, category `DEFAULT`,
-  `Theme.NoDisplay`. Android 10 and 11 ask the same questions once both screens exist (with no list
-  of allowed modes), Android 8 and 9 never. In that flow the setup wizard sends a device owner no
-  `PROFILE_PROVISIONING_COMPLETE` and no `PROVISIONING_SUCCESSFUL`; Muralis uses neither, since
-  `onEnabled` still arrives and its process start brings the service, which brings the panel up once
-  setup has finished. Never answer the mode with `EXTRA_PROVISIONING_SENSORS_PERMISSION_GRANT_OPT_OUT`:
-  it takes away the device owner's silent sensor grants. The QR payload needed no change; the
-  checksum without its `=` padding is accepted (`Base64.URL_SAFE`).
-- **`WRITE_SETTINGS` is a user grant, and device-owner status cannot substitute for it.** The
-  brightness pair writes `Settings.System.SCREEN_BRIGHTNESS` and `SCREEN_BRIGHTNESS_MODE`, and
-  that namespace has no device-owner setter, unlike Global and Secure. So the one permission this
-  app needs a human for is the one that looks most like it should come free with enrolment. It is
-  declared in the manifest, granted from `ACTION_MANAGE_WRITE_SETTINGS` or by
-  `adb shell appops set org.spazio17.muralis WRITE_SETTINGS allow`, and until it is granted both
-  brightness controls are inert: the switch cannot write the mode, and the slider is separately
-  disabled while the light sensor owns the backlight, which on an unconfigured device it does by
-  default. That combination reads as two bugs, and on 2026-09-07 it read that way to the maintainer on a
-  freshly provisioned panel, so **all three surfaces now name the missing grant rather than
-  failing quietly**: the tablet's Display card carries the sentence and a button, the web admin
-  carries the same sentence and the adb command, and the slider's refusal is a toast rather than
-  only a log line. A device with no light sensor is the case that needs the toast, because nothing
-  disables its slider.
-  **The card's claim is kept true while it is on screen**: `watchForWriteSettingsGrant` watches the
-  app op through `AppOpsManager` while the red line is drawn, and the moment the grant is made it
-  redraws the configuration screen in place (typed boxes and scroll kept) and starts the activity
-  again, which brings a `singleTask` activity forward, so a panel whose Settings screen has no
-  navigation bar comes back by itself; the setup page promises exactly that. Found 2026-09-07 on
-  the phone: granted, returned by hand, and the card still said the grant was missing. A device
-  owner may start an activity from the background on every Android; an ordinary install on
-  Android 10+ is refused silently and `onResume` does the redraw when the operator comes back.
-- **Every text box on both settings surfaces is a machine value, so no keyboard prose habits.**
-  The panel's own keyboard (SwiftKey on both Huawei test devices) reads a full stop as the end of
-  a sentence: it adds a space, capitalises what follows and corrects the word, so
-  `test.mosquitto.org` typed into the broker box arrived as `test. mosquito. org` (seen
-  2026-09-07; the capture script had recorded the same on 2026-08-31 and worked around it by not
-  typing the host). Measured on the phone that day: `TYPE_TEXT_FLAG_NO_SUGGESTIONS` alone stops
-  the correcting but not the space after the full stop, so `themedInput` gives every plain box the
-  visible-password variation, which keyboards treat as "type exactly this", the dashboard URL and
-  the broker host the URI variation (the URL keyboard, measured intact), and ports the number
-  class. The web admin's text inputs carry `autocapitalize="off" autocorrect="off"
-  spellcheck="false"`, which Chrome on Android maps onto the same flags, and the two address boxes
-  add `inputmode="url"`. Not `type="url"` there: the browser would refuse a host without a scheme
-  before the server's normalisation could add one.
-- **`targetSdk` tracks Play's rolling floor.** It moves every August; re-check
-  https://developer.android.com/google/play/requirements/target-sdk before any submission rather
-  than trusting a remembered number.
+## Building
 
-## Toolchain
-
-Fully containerized: the image carries a fixed JDK/Gradle/cmdline-tools, and the SDK packages and
-Gradle caches live on gitignored bind mounts regenerated by `scripts/build-container.sh`. Versions
-are pinned deliberately (AGP, Gradle, cmdline-tools), this app is meant to run unattended for
-months at a time, and an unplanned toolchain upgrade on rebuild is a liability, not a convenience.
-A Gradle wrapper pinned to the same version exists for GitHub Actions (`.github/workflows/`): CI
-builds a debug APK on every push, the manual release workflow tags main and attaches the APK and
-the upload-key-signed AAB to a GitHub Release. The release's description is the list of pull request titles merged since the previous tag,
-read from the merge commits; there is no changelog file to keep in step. **The app's version is
-derived from git, never edited in `app/build.gradle`**: versionName from `git describe` against the latest `v*` tag,
-versionCode from the commit count, passed into the container by `scripts/gradle.sh` since the
-image has no git. Semantic versions are humans pushing tags; CI never bumps anything. The CI debug
-keystore secret must remain byte-identical to `.gradle/kiosk-debug.keystore`, because the tablet
-runs Muralis as device owner and can never be uninstalled to accept a differently-signed build.
+The build runs in a container with pinned tools (`scripts/build-app.sh`), and the host tests too
+(`scripts/test-host.sh`). The version comes from git (`git describe` against the latest `v*` tag,
+the commit count as version code); nothing in the project is edited to set it. CI builds every push;
+a manual workflow tags a release and attaches the debug APK and the signed bundle. A pull request's
+title is its line in the release notes.

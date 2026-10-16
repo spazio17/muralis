@@ -13,7 +13,7 @@ if(form.dataset.bound){return;}
 form.dataset.bound='1';
 function by(prefix){return form.querySelector('[id^="'+prefix+'-"]');}
 var sensor=by('a-sensor'),action=by('a-action');
-var level=by('a-level'),minutes=by('a-minutes'),tag=by('a-tag');
+var level=by('a-level'),at=by('a-at'),minutes=by('a-minutes'),tag=by('a-tag');
 var argument=by('a-argument');
 var only=by('a-only'),from=by('a-from'),to=by('a-to');
 // The note under the sensor for one that is not running while the display sleeps.
@@ -34,8 +34,10 @@ if(on){var c=group.querySelector('input:checked');
 if(!c){var first=group.querySelector('input');if(first){first.checked=true;first.defaultChecked=true;c=first;}}
 checked=c;}});
 var unit=checked?checked.getAttribute('data-level'):'';
-show(level,!!unit);
-if(unit){label(level,'Level ('+unit+')');}
+// A time of day has its own box, the browser's time picker.
+show(level,!!unit&&unit!=='time');
+show(at,unit==='time');
+if(unit&&unit!=='time'){label(level,'Level ('+unit+')');}
 show(minutes,!!(checked&&checked.getAttribute('data-holds')));
 show(tag,!!(checked&&checked.getAttribute('data-tag')));
 var opt=action&&action.options[action.selectedIndex];
@@ -43,7 +45,7 @@ var arg=opt?opt.getAttribute('data-argument'):'';
 show(argument,!!arg);
 if(arg){label(argument,arg);}
 // The address keyboard for a sound address, as the panel's box has it.
-if(argument){if(opt&&opt.value==='play_sound'){argument.setAttribute('inputmode','url');}else{argument.removeAttribute('inputmode');}}
+if(argument){if(opt&&(opt.value==='play_sound'||opt.value==='open_page'||opt.value==='call_url')){argument.setAttribute('inputmode','url');}else{argument.removeAttribute('inputmode');}}
 var windowed=only&&only.checked;
 show(from,!!windowed);show(to,!!windowed);}
 Array.prototype.forEach.call(form.querySelectorAll('select,input[type=radio],input[type=checkbox]'),function(el){el.addEventListener('change',paint);});
