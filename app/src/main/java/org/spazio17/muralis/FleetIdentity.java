@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -24,7 +24,7 @@ import java.util.Date;
 
 /**
  * This panel's identity in a fleet: an EC P-256 key pair made once, at the first start that needs
- * it, and a self-signed certificate over it (the fleet design).
+ * it, and a self-signed certificate over it.
  *
  * <p>Separate from the web admin's key on purpose: a person may upload a certificate for the web
  * admin, and that must never change who this panel is to the other panels. The identity is the

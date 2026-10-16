@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -13,11 +13,10 @@ import java.util.Map;
  *
  * <p>Home Assistant keeps an entity it discovered until the panel says otherwise: a component left
  * out of the device payload stays, "unavailable", forever. The documented removal is the component
- * once more with only its platform ({@code "p"}), then an update without it. Until 2026-10-06 the
- * panel sent such an empty entry for every sensor that was off or missing, on every connect, the
- * fixed-list way Tasmota and FreeKiosk do it, so a panel that never had a humidity sensor told Home
- * Assistant to remove one. Juri's rule of that day: Muralis starts on MQTT as if it were used for
- * the first time, so a removal is only for something this panel announced. That is zigbee2mqtt's
+ * once more with only its platform ({@code "p"}), then an update without it. A removal is only for
+ * something this panel announced, so a fresh install starts on MQTT with nothing to remove, unlike
+ * the fixed-list way (an empty entry for every sensor off or missing, on every connect, so a panel
+ * that never had a humidity sensor tells Home Assistant to remove one). That is zigbee2mqtt's
  * way: it remembers what it published and, at its start, reads its own retained configs back from
  * the broker; {@code MqttController} does both and asks this class what to remove.
  *
