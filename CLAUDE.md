@@ -42,8 +42,9 @@ on purpose.
   them on the panel itself.
 - **Fleet (being built).** Panels on one network will trust each other by their own keys, and any
   panel's web admin will manage all of them. No server, no cloud. So far each panel has its fleet
-  key and a member endpoint, announces itself on the local network (mDNS), which the person can
-  switch off, and joins a fleet with a single-use code shown on its Join screen, or leaves it.
+  key and a member endpoint, announces itself on the local network (mDNS), joins a fleet with a
+  single-use code shown on its Join screen, or leaves it, and creates a fleet or adds another
+  panel by reading that code with its camera.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

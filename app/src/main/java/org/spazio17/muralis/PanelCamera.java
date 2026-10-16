@@ -115,8 +115,15 @@ final class PanelCamera implements Sensors.Reading {
         return name.isEmpty() ? defaultName(context) : name;
     }
 
+    /**
+     * Add a panel's scanner holds the camera (block 11d): the sensor lets go of it meanwhile, as
+     * if switched off, and takes it again at the next refresh after the scanner closes.
+     */
+    static volatile boolean heldByScanner;
+
     /** Opens or closes the camera to match the stored switch; safe to call again. */
     synchronized void refresh(boolean wanted) {
+        wanted &= !heldByScanner;
         long now = SystemClock.elapsedRealtime();
         if (wanted && !open) {
             if (now >= retryAtMs) {

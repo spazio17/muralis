@@ -79,7 +79,7 @@
          hides every iBeacon from Android 12 on; "while using the app" is enough, because the
          service holds the location foreground type while the sensor is on (Juri, 2026-10-01).
          No position is ever read. NFC: tags read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
-         motion detection. Microphone: a sound level, nothing recorded. Each runtime permission
+         motion detection, and reading another panel's join code in the Fleet section. Microphone: a sound level, nothing recorded. Each runtime permission
          is asked for once from the Sensors page on an ordinary install and granted silently on a
          device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need their use described
          in the listing's Data safety form, and the camera and microphone foreground types a

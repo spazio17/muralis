@@ -821,6 +821,10 @@ public final class KioskActivity extends Activity {
         }
         inFront = true;
         KioskRuntimeState.publishActivityInFront(true);
+        if (scanAfterResume) {
+            scanAfterResume = false;
+            showAddPanelScanner();
+        }
         // Every Muralis screen is fullscreen, including configuration: a kiosk should never show a
         // system bar, and the settings screen used to keep the navigation bar for the keyboard's
         // dismiss key, which also handed anyone standing at the panel a Back button.
@@ -890,6 +894,9 @@ public final class KioskActivity extends Activity {
         inFront = false;
         KioskRuntimeState.publishActivityInFront(false);
         applyNfcReader();
+        // The camera is let go with the screen, and taken again in onResume.
+        scanAfterResume = scanner != null;
+        stopScanner();
         // Belt and braces for the same invariant: a bar disabled while nothing is pinned is a
         // tablet nobody can use.
         disableStatusBarIfPinned();
@@ -2908,31 +2915,31 @@ public final class KioskActivity extends Activity {
                 config.volumeButtonsDisabled);
         volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
                 applyLiveSetting(editor -> editor.volumeButtonsDisabled(checked)));
-        // The Fleet section's switch, made here so the live sync below can follow it.
-        CompoundButton fleetAnnounceInput = themedSwitch(theme,
-                "Announce this panel on the network", config.fleetAnnounce);
-        fleetAnnounceInput.setOnCheckedChangeListener((button, checked) -> {
-            applyLiveSetting(editor -> editor.fleetAnnounce(checked));
-            KioskService.reloadConfiguration(this);
-        });
         // Whether this panel is in a fleet, and its one button, Join or Leave (block 11c); made
         // here so the sync below can follow a join or a leave made from elsewhere.
         TextView fleetMember = new FlushText(this);
         fleetMember.setTextSize(14);
         // Two buttons rather than one relabelled, so Leave is red like every button that ends
         // something, on both surfaces; each asks the stored state when it is tapped.
-        Button fleetJoinButton = tonalButton(theme, "Join a fleet");
+        Button fleetJoinButton = tonalButton(theme, "Join");
         fleetJoinButton.setOnClickListener(view -> {
             FleetServer.openJoinCode(this);
             showJoinPage();
         });
-        Button fleetLeaveButton = dangerButton(theme, "Leave the fleet");
+        Button fleetLeaveButton = dangerButton(theme, "Leave");
         fleetLeaveButton.setOnClickListener(view -> {
             if (!KioskConfig.fleetIdOf(this).isEmpty()) {
                 confirmLeaveFleet();
             }
         });
-        paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, theme);
+        // Create a fleet or Add a panel (block 11d): this panel's camera reads another panel's Join
+        // screen; the first panel added creates the fleet, so the label says which it is.
+        Button fleetAddButton = tonalButton(theme, addPanelLabel());
+        fleetAddButton.setOnClickListener(view -> showAddPanelScanner());
+        fleetAddButton.setEnabled(KioskRuntimeState.fleetListening()
+                && !JoinScanner.lenses(this).isEmpty());
+        paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, fleetAddButton,
+                theme);
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -2959,9 +2966,8 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(volumeButtonsInput,
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
-                    setCheckedIfChanged(fleetAnnounceInput,
-                            KioskConfig.fleetAnnounceOf(KioskActivity.this));
-                    paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, theme);
+                    paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton,
+                            fleetAddButton, theme);
                     checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
@@ -3146,13 +3152,11 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fleetStateParams.topMargin = dp(10);
         fleetCard.addView(fleetState, fleetStateParams);
-        LinearLayout.LayoutParams fleetAnnounceParams = matchWrapClose();
-        fleetAnnounceParams.topMargin = dp(14);
-        fleetCard.addView(fleetAnnounceInput, fleetAnnounceParams);
         LinearLayout.LayoutParams fleetMemberParams = matchWrap();
         fleetMemberParams.topMargin = dp(14);
         fleetCard.addView(fleetMember, fleetMemberParams);
-        fleetCard.addView(buttonRow(fleetJoinButton, fleetLeaveButton), matchWrapClose());
+        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetLeaveButton, fleetAddButton),
+                matchWrapClose());
         int adminPortNow = config.httpPort;
         memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(memberPortInput, theme);
@@ -4040,6 +4044,7 @@ public final class KioskActivity extends Activity {
     }
 
     private static final int REQUEST_SENSOR_PERMISSION = 22;
+    private static final int REQUEST_SCAN_CAMERA = 23;
     /** The sensor whose permission was just asked for, redrawn when the answer arrives. */
     private String permissionAskedFor;
 
@@ -5983,7 +5988,8 @@ public final class KioskActivity extends Activity {
      * The Fleet section's membership line and its button: Join a fleet, which needs the member
      * endpoint listening, or Leave the fleet; from what is stored now.
      */
-    private void paintFleetMembership(TextView line, Button join, Button leave, KioskTheme theme) {
+    private void paintFleetMembership(TextView line, Button join, Button leave, Button add,
+            KioskTheme theme) {
         boolean member = !KioskConfig.fleetIdOf(this).isEmpty();
         String text = FleetServer.memberLine(this);
         if (!text.contentEquals(line.getText())) {
@@ -5993,6 +5999,20 @@ public final class KioskActivity extends Activity {
         join.setVisibility(member ? View.GONE : View.VISIBLE);
         join.setEnabled(KioskRuntimeState.fleetListening());
         leave.setVisibility(member ? View.VISIBLE : View.GONE);
+        String addLabel = addPanelLabel();
+        if (!addLabel.contentEquals(add.getText())) {
+            add.setText(addLabel);
+        }
+    }
+
+    /** Add a panel in a fleet; Create a fleet outside one, since the first panel added founds it. */
+    private String addPanelTitle() {
+        return KioskConfig.fleetIdOf(this).isEmpty() ? "Create a fleet" : "Add a panel";
+    }
+
+    /** The same on the Fleet section's button, where the section already says fleet. */
+    private String addPanelLabel() {
+        return KioskConfig.fleetIdOf(this).isEmpty() ? "Create" : "Add a panel";
     }
 
     /** Asks before this panel leaves its fleet; it keeps its own settings, id and name. */
@@ -6100,6 +6120,357 @@ public final class KioskActivity extends Activity {
             }
         };
         paint.run();
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** The camera of Add a panel while its page is up; see showAddPanelScanner. */
+    private JoinScanner scanner;
+    /** Which of the device's lenses Add a panel reads with; Switch camera moves it on. */
+    private int scanLens;
+    /** The scanner was reading when the activity paused; onResume opens it again. */
+    private boolean scanAfterResume;
+
+    private void stopScanner() {
+        if (scanner != null) {
+            scanner.stop();
+            scanner = null;
+        }
+    }
+
+    /**
+     * Add a panel (block 11d, path A): this panel's camera reads the QR on another panel's Join
+     * screen, then asks the names (showAddPanelForm). The preview is the camera's brightness,
+     * grey and upright; Switch camera where there is more than one. A QR that is not a Join
+     * screen's says so and the camera keeps reading. Panel only: the camera is at the panel.
+     */
+    private void showAddPanelScanner() {
+        currentScreen = this::showAddPanelScanner;
+        stopScanner();
+        LinearLayout page = subPage(addPanelTitle(), () -> {
+            stopScanner();
+            showSettings();
+        });
+        KioskTheme theme = currentTheme();
+        LinearLayout box = card(theme, null);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView hint = new FlushText(this);
+        hint.setTextSize(16);
+        hint.setTextColor(theme.text);
+        hint.setGravity(Gravity.CENTER);
+        hint.setText("On the other panel, open Fleet and tap Join, then point this camera at"
+                + " its code.");
+        box.addView(hint, matchWrap());
+        ImageView preview = new ImageView(this);
+        preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        preview.setContentDescription("What the camera sees");
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(320));
+        previewParams.topMargin = dp(12);
+        box.addView(preview, previewParams);
+        TextView problem = new FlushText(this);
+        problem.setTextSize(14);
+        problem.setTextColor(theme.bad);
+        problem.setGravity(Gravity.CENTER);
+        problem.setVisibility(View.GONE);
+        LinearLayout.LayoutParams problemParams = matchWrap();
+        problemParams.topMargin = dp(12);
+        box.addView(problem, problemParams);
+        Button cancel = textButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> {
+            stopScanner();
+            showSettings();
+        });
+        List<String> lenses = JoinScanner.lenses(this);
+        Button switchLens = tonalButton(theme, "Switch camera");
+        switchLens.setOnClickListener(view -> {
+            scanLens++;
+            showAddPanelScanner();
+        });
+        switchLens.setVisibility(lenses.size() > 1 ? View.VISIBLE : View.GONE);
+        Button allow = primaryButton(theme, "Allow the camera");
+        allow.setOnClickListener(view -> askScanCamera());
+        boolean permitted = checkSelfPermission(android.Manifest.permission.CAMERA)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        allow.setVisibility(permitted ? View.GONE : View.VISIBLE);
+        box.addView(buttonRow(cancel, switchLens, allow), matchWrapClose());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, matchWrap());
+        page.addView(column, singlePanelParams());
+        if (!permitted || lenses.isEmpty()) {
+            preview.setVisibility(View.GONE);
+            problem.setText(lenses.isEmpty() ? "This device has no camera."
+                    : "Muralis needs the camera to read the code.");
+            problem.setVisibility(View.VISIBLE);
+            setContentView(scrollPage(theme, page));
+            return;
+        }
+        int rotation = getWindowManager().getDefaultDisplay().getRotation() * 90;
+        JoinScanner reading = new JoinScanner(this, rotation, new JoinScanner.Listener() {
+            @Override
+            public void preview(Bitmap frame) {
+                preview.setImageBitmap(frame);
+            }
+
+            @Override
+            public void found(String text) {
+                FleetJoin.Invitation invitation = FleetJoin.parseQr(text);
+                if (invitation == null) {
+                    problem.setText("This is not the code of a Muralis Join screen.");
+                    problem.setVisibility(View.VISIBLE);
+                    return;
+                }
+                if (invitation.spki.equals(KioskRuntimeState.fleetKey())) {
+                    problem.setText("This is this panel's own code. Scan the other panel's.");
+                    problem.setVisibility(View.VISIBLE);
+                    return;
+                }
+                stopScanner();
+                showAddPanelForm(invitation);
+            }
+
+            @Override
+            public void failed(String reason) {
+                problem.setText(reason);
+                problem.setVisibility(View.VISIBLE);
+            }
+        });
+        scanner = reading;
+        page.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View view) {
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View view) {
+                if (scanner == reading) {
+                    stopScanner();
+                }
+            }
+        });
+        setContentView(scrollPage(theme, page));
+        reading.start(lenses.get(scanLens % lenses.size()));
+    }
+
+    /**
+     * The names, after the code was read: the new panel's, its id to start with, and the fleet's
+     * when this panel founds one, with a Muralis-digits suggestion (fleet design, 2026-09-24).
+     * Add sends the code to the other panel, pinned to the key in its QR, and records it here.
+     */
+    private void showAddPanelForm(FleetJoin.Invitation invitation) {
+        currentScreen = () -> showAddPanelForm(invitation);
+        LinearLayout page = subPage(addPanelTitle(), this::showSettings);
+        KioskTheme theme = currentTheme();
+        LinearLayout box = card(theme, null);
+        boolean founding = KioskConfig.fleetIdOf(this).isEmpty();
+        String suggested = "Muralis-" + (1000 + new java.security.SecureRandom().nextInt(9000));
+        // Made once for this form, so Add tapped again after a lost answer founds the same fleet.
+        String foundingId = newFleetId();
+        // Names are words, not machine values: the ordinary text box (CLAUDE.md, Platform).
+        EditText fleetName = proseInput(theme, "");
+        fleetName.setHint(suggested);
+        if (founding) {
+            addField(box, theme, "Name of the new fleet", fleetName);
+        }
+        EditText panelName = proseInput(theme, invitation.id);
+        addField(box, theme, "Name of the panel", panelName);
+        TextView about = new FlushText(this);
+        about.setTextSize(13);
+        about.setTextColor(theme.subtext);
+        about.setText("Panel " + invitation.id + ". "
+                + FleetServer.joinDetail(invitation.spki, invitation.address, invitation.port));
+        LinearLayout.LayoutParams aboutParams = matchWrap();
+        aboutParams.topMargin = dp(8);
+        box.addView(about, aboutParams);
+        TextView problem = new FlushText(this);
+        problem.setTextSize(14);
+        problem.setTextColor(theme.bad);
+        problem.setVisibility(View.GONE);
+        LinearLayout.LayoutParams problemParams = matchWrap();
+        problemParams.topMargin = dp(12);
+        box.addView(problem, problemParams);
+        Button cancel = textButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> showSettings());
+        Button add = primaryButton(theme, "Add");
+        add.setOnClickListener(view -> {
+            // Read at the tap: the panel may have joined or left a fleet since the form was drawn.
+            String joined = KioskConfig.fleetIdOf(this);
+            String fleet = joined.isEmpty() ? fleetName.getText().toString().trim()
+                    : KioskConfig.fleetNameOf(this);
+            if (fleet.isEmpty()) {
+                fleet = suggested;
+            }
+            String name = panelName.getText().toString().trim();
+            String invalid = FleetJoin.validateName("the fleet name", fleet);
+            if (invalid == null) {
+                invalid = FleetJoin.validateName("the panel's name", name);
+            }
+            if (invalid != null) {
+                problem.setText("Not added: " + invalid + ".");
+                problem.setVisibility(View.VISIBLE);
+                return;
+            }
+            add.setEnabled(false);
+            problem.setVisibility(View.GONE);
+            addPanel(invitation, joined.isEmpty() ? foundingId : joined, fleet, name, page,
+                    reason -> {
+                        add.setEnabled(true);
+                        problem.setText("Not added: " + reason + ".");
+                        problem.setVisibility(View.VISIBLE);
+                    });
+        });
+        box.addView(buttonRow(cancel, add), matchWrapClose());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, matchWrap());
+        page.addView(column, singlePanelParams());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * Asks for the camera as the Sensors page asks for the Camera sensor's, sharing its record of
+     * a refusal Android will not ask about again, which sends the person to Android's settings.
+     */
+    private void askScanCamera() {
+        android.content.SharedPreferences ui = KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+        if (ui.getBoolean("permission_blocked_" + Sensors.CAMERA.id, false)) {
+            showNotice("Blocked in Android settings", "Android will not ask for this permission "
+                    + "again. OK opens Muralis's page in Android's settings: allow it in "
+                    + "Permissions.", () -> {
+                        try {
+                            startActivity(new Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:" + getPackageName())));
+                        } catch (android.content.ActivityNotFoundException noSettings) {
+                            Log.w(TAG, "No settings page to open", noSettings);
+                        }
+                        showAddPanelScanner();
+                    }, this::showAddPanelScanner);
+            return;
+        }
+        try {
+            requestPermissions(new String[] {android.Manifest.permission.CAMERA},
+                    REQUEST_SCAN_CAMERA);
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Cannot ask for the permission", refused);
+            Toast.makeText(this, "This device would not show the permission request.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** A new fleet's id: random, so two fleets founded apart never share one. */
+    private static String newFleetId() {
+        byte[] bytes = new byte[8];
+        new java.security.SecureRandom().nextBytes(bytes);
+        StringBuilder id = new StringBuilder("fleet-");
+        for (byte b : bytes) {
+            id.append(Character.forDigit((b >> 4) & 0xF, 16))
+                    .append(Character.forDigit(b & 0xF, 16));
+        }
+        return id.toString();
+    }
+
+    /**
+     * Sends the code to the other panel, off the main thread, then asks it {@code GET /fleet} as
+     * its new manager to see that it took this panel's key; records it here and says so, on the
+     * form's page if it is still the one shown. A refusal comes back in the other panel's words.
+     */
+    private void addPanel(FleetJoin.Invitation invitation, String fleetId, String fleetName,
+            String name, View form, java.util.function.Consumer<String> refused) {
+        new Thread(() -> {
+            String problem;
+            try {
+                org.json.JSONObject request = new org.json.JSONObject()
+                        .put("code", invitation.code)
+                        .put("fleet", new org.json.JSONObject().put("id", fleetId)
+                                .put("name", fleetName));
+                FleetServer.Reply joined = FleetServer.call(this, invitation.address,
+                        invitation.port, invitation.spki, "POST", "/fleet/join", request);
+                if (joined.status != 200) {
+                    problem = joined.reason();
+                } else {
+                    KioskConfig.edit(this).addFleetMember(this, fleetId, fleetName,
+                            new org.json.JSONObject()
+                                    .put("id", joined.body.optString("id", invitation.id))
+                                    .put("name", name)
+                                    .put("spki", invitation.spki)
+                                    .put("address", invitation.address)
+                                    .put("port", invitation.port)).apply();
+                    // Added whatever the check says: the other panel already took this one's key.
+                    String unconfirmed;
+                    try {
+                        FleetServer.Reply member = FleetServer.call(this, invitation.address,
+                                invitation.port, invitation.spki, "GET", "/fleet", null);
+                        org.json.JSONObject fleet = member.body.optJSONObject("fleet");
+                        unconfirmed = member.status == 200 && fleet != null
+                                && fleetId.equals(fleet.optString("id")) ? null : member.reason();
+                    } catch (java.io.IOException lost) {
+                        unconfirmed = plainNetworkReason(lost);
+                    }
+                    String check = unconfirmed;
+                    Log.i(TAG, "Added " + name + " (" + FleetTls.shortForm(invitation.spki)
+                            + ") to the fleet " + fleetName + (check == null ? ", confirmed"
+                            : ", not confirmed: " + check));
+                    mainHandler.post(() -> {
+                        if (form.isAttachedToWindow()) {
+                            showAddPanelResult(name + " joined the fleet " + fleetName + "."
+                                    + (check == null ? ""
+                                    : " It did not confirm afterwards: " + check + "."));
+                        }
+                    });
+                    return;
+                }
+            } catch (javax.net.ssl.SSLException refusedKey) {
+                // The other panel let no stranger in: its code is no longer open, or the QR was
+                // another panel's (its key did not match).
+                problem = "the other panel did not let this one in; its code may have expired or"
+                        + " been closed. Make a new code there and scan it again";
+            } catch (java.io.IOException failed) {
+                problem = plainNetworkReason(failed);
+            } catch (org.json.JSONException impossible) {
+                problem = "the request could not be made";
+            }
+            String reason = problem;
+            Log.w(TAG, "Adding " + name + " refused: " + reason);
+            mainHandler.post(() -> refused.accept(reason));
+        }, "MuralisAddPanel").start();
+    }
+
+    /** A failed call to another panel, in words for the person at this one. */
+    private static String plainNetworkReason(java.io.IOException failed) {
+        if (failed instanceof java.net.SocketTimeoutException) {
+            return "the other panel did not answer in time";
+        }
+        if (failed instanceof java.net.ConnectException
+                || failed instanceof java.net.NoRouteToHostException
+                || failed instanceof java.net.UnknownHostException) {
+            return "the other panel could not be reached; both must be on networks that reach"
+                    + " each other";
+        }
+        return "the connection to the other panel broke off";
+    }
+
+    /** What Add a panel came to, with Add another and Done. */
+    private void showAddPanelResult(String message) {
+        currentScreen = () -> showAddPanelResult(message);
+        LinearLayout page = subPage(addPanelTitle(), this::showSettings);
+        KioskTheme theme = currentTheme();
+        LinearLayout box = card(theme, null);
+        TextView text = new FlushText(this);
+        text.setTextSize(16);
+        text.setTextColor(theme.text);
+        text.setText(message);
+        box.addView(text, matchWrapClose());
+        Button another = textButton(theme, "Add another");
+        another.setOnClickListener(view -> showAddPanelScanner());
+        Button done = primaryButton(theme, "Done");
+        done.setOnClickListener(view -> showSettings());
+        box.addView(buttonRow(another, done), matchWrapClose());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, matchWrap());
+        page.addView(column, singlePanelParams());
         setContentView(scrollPage(theme, page));
     }
 
@@ -7207,6 +7578,17 @@ public final class KioskActivity extends Activity {
             if (currentScreen != null && configurationVisible) {
                 // The service rebuilds the sensors block on its next tick; the page reads it.
                 mainHandler.postDelayed(() -> redrawInPlace(currentScreen), 400);
+            }
+            return;
+        }
+        if (requestCode == REQUEST_SCAN_CAMERA) {
+            boolean blocked = granted.length > 0
+                    && granted[0] != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    && !shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA);
+            KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                    .edit().putBoolean("permission_blocked_" + Sensors.CAMERA.id, blocked).apply();
+            if (currentScreen != null && configurationVisible) {
+                redrawInPlace(currentScreen);
             }
             return;
         }
@@ -13891,11 +14273,50 @@ public final class KioskActivity extends Activity {
         for (int i = 0; i < buttons.length; i++) {
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (i > 0 && wide) {
-                params.leftMargin = dp(8);
+            // After each button but the last, not before: a hidden first button leaves no gap at
+            // the start, and a centred row stays centred.
+            if (i < buttons.length - 1) {
+                params.rightMargin = dp(8);
             }
             params.topMargin = dp(8);
             row.addView(buttons[i], params);
+        }
+        return row;
+    }
+
+    /**
+     * The same buttons side by side whenever they fit the row, phones included, and one under the
+     * other only when they do not (a small screen, a large font or display size), as Material
+     * places buttons. Measured on every layout, so it follows a label that changes.
+     */
+    private LinearLayout fittingButtonRow(Button... buttons) {
+        LinearLayout built = buttonRow(buttons);
+        LinearLayout row = new LinearLayout(this) {
+            @Override
+            protected void onMeasure(int widthSpec, int heightSpec) {
+                int needed = getPaddingLeft() + getPaddingRight();
+                for (int i = 0; i < getChildCount(); i++) {
+                    View child = getChildAt(i);
+                    if (child.getVisibility() == View.GONE) {
+                        continue;
+                    }
+                    child.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
+                    LayoutParams params = (LayoutParams) child.getLayoutParams();
+                    needed += child.getMeasuredWidth() + params.leftMargin + params.rightMargin;
+                }
+                boolean fits = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+                        || needed <= MeasureSpec.getSize(widthSpec);
+                setOrientation(fits ? HORIZONTAL : VERTICAL);
+                super.onMeasure(widthSpec, heightSpec);
+            }
+        };
+        row.setBaselineAligned(false);
+        row.setGravity(built.getGravity());
+        while (built.getChildCount() > 0) {
+            View child = built.getChildAt(0);
+            ViewGroup.LayoutParams params = child.getLayoutParams();
+            built.removeViewAt(0);
+            row.addView(child, params);
         }
         return row;
     }

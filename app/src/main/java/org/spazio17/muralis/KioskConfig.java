@@ -24,8 +24,6 @@ final class KioskConfig {
     private static final String STATS_OVERLAY = "stats_overlay";
     /** Whether the device's volume buttons do nothing while Muralis is on screen. */
     private static final String VOLUME_BUTTONS_DISABLED = "volume_buttons_disabled";
-    /** Whether the panel announces itself on the local network for the fleet; on by default. */
-    private static final String FLEET_ANNOUNCE = "fleet_announce";
     /** Where the stats overlay was dragged to; see statsOverlayPlace and KioskActivity. */
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
@@ -129,7 +127,6 @@ final class KioskConfig {
      * volume.
      */
     boolean volumeButtonsDisabled;
-    boolean fleetAnnounce = true;
     String appearanceColour = Palettes.COLOURS[0];
     String separators = SEPARATORS_LINES;
     /**
@@ -220,7 +217,6 @@ final class KioskConfig {
         config.httpUploadUntil = certificate.httpUploadUntil;
         config.statsOverlay = statsOverlayEnabled(context);
         config.volumeButtonsDisabled = volumeButtonsDisabled(context);
-        config.fleetAnnounce = fleetAnnounceOf(context);
         config.appearanceColour = appearanceColourOf(context);
         config.separators = separatorsOf(context);
         config.orientation = orientationOf(context);
@@ -327,11 +323,6 @@ final class KioskConfig {
             return this;
         }
 
-        Editor fleetAnnounce(boolean value) {
-            plain.putBoolean(FLEET_ANNOUNCE, value);
-            return this;
-        }
-
         /** Joined: the fleet, and its manager's key as the one key this panel trusts so far. */
         Editor joinFleet(String id, String name, String managerSpki) {
             plain.putString(FLEET_ID, id);
@@ -347,6 +338,41 @@ final class KioskConfig {
             plain.remove(FLEET_NAME);
             plain.remove(FLEET_TRUSTED);
             plain.remove(FLEET_REVOKED);
+            plain.remove(FLEET_MEMBERS);
+            return this;
+        }
+
+        /**
+         * A panel added from here (block 11d): its key trusted, and its entry kept, so this
+         * panel knows whom it added until the fleet document lists every member (block 12).
+         * The first one also founds the fleet, {@code fleetId} and {@code fleetName}.
+         */
+        Editor addFleetMember(Context context, String fleetId, String fleetName,
+                org.json.JSONObject member) {
+            if (fleetIdOf(context).isEmpty()) {
+                plain.putString(FLEET_ID, fleetId);
+                plain.putString(FLEET_NAME, fleetName.trim());
+                plain.putString(FLEET_REVOKED, "");
+            }
+            java.util.Set<String> trusted = fleetTrusted(context);
+            org.json.JSONArray members = fleetMembersOf(context);
+            org.json.JSONArray kept = new org.json.JSONArray();
+            for (int i = 0; i < members.length(); i++) {
+                org.json.JSONObject one = members.optJSONObject(i);
+                if (one == null) {
+                    continue;
+                }
+                if (one.optString("id").equals(member.optString("id"))) {
+                    // Added again (a reset panel has a new key): its old key is trusted no more.
+                    trusted.remove(one.optString("spki"));
+                } else {
+                    kept.put(one);
+                }
+            }
+            trusted.add(member.optString("spki"));
+            plain.putString(FLEET_TRUSTED, String.join(",", trusted));
+            kept.put(member);
+            plain.putString(FLEET_MEMBERS, kept.toString());
             return this;
         }
 
@@ -911,6 +937,18 @@ final class KioskConfig {
     private static final String FLEET_TRUSTED = "fleet_trusted";
     private static final String FLEET_REVOKED = "fleet_revoked";
     private static final String FLEET_ID = "fleet_id";
+    private static final String FLEET_MEMBERS = "fleet_members";
+
+    /** The panels added from this one: id, name, spki, address, port each; see addFleetMember. */
+    static org.json.JSONArray fleetMembersOf(Context context) {
+        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(FLEET_MEMBERS, "[]");
+        try {
+            return new org.json.JSONArray(stored);
+        } catch (org.json.JSONException damaged) {
+            return new org.json.JSONArray();
+        }
+    }
     private static final String FLEET_NAME = "fleet_name";
 
     /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */
@@ -1027,13 +1065,6 @@ final class KioskConfig {
         return key.replace('_', ' ') + " must be " + String.join(", ",
                 java.util.Arrays.copyOf(offered, offered.length - 1)) + " or "
                 + offered[offered.length - 1];
-    }
-
-    /** Narrow reader for Announce this panel on the network, asked at every reload. */
-    static boolean fleetAnnounceOf(Context context) {
-        return storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(FLEET_ANNOUNCE, true);
     }
 
     /** Narrow reader for Disable volume buttons, asked on every press of one. */

@@ -184,10 +184,98 @@ final class FleetServer {
         }
     }
 
-    /** The Fleet section's membership line on both surfaces. */
+    /** The Fleet section's membership line on both surfaces, with the panels added here. */
     static String memberLine(Context context) {
-        return KioskConfig.fleetIdOf(context).isEmpty() ? "Not in a fleet"
-                : "Member of the fleet " + KioskConfig.fleetNameOf(context);
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "Not in a fleet";
+        }
+        StringBuilder added = new StringBuilder();
+        org.json.JSONArray members = KioskConfig.fleetMembersOf(context);
+        for (int i = 0; i < members.length(); i++) {
+            JSONObject one = members.optJSONObject(i);
+            if (one != null) {
+                added.append(added.length() == 0 ? "" : ", ").append(one.optString("name"));
+            }
+        }
+        return "Member of the fleet " + KioskConfig.fleetNameOf(context)
+                + (added.length() == 0 ? "" : ". Added here: " + added);
+    }
+
+    /** What another panel's member endpoint answered: its status and its JSON. */
+    static final class Reply {
+        final int status;
+        final JSONObject body;
+
+        Reply(int status, JSONObject body) {
+            this.status = status;
+            this.body = body;
+        }
+
+        /** The refusal as the other panel worded it. */
+        String reason() {
+            return body.optString("error", "the other panel answered " + status);
+        }
+    }
+
+    /**
+     * One call to another panel's member endpoint, as this panel with its fleet key, and only to
+     * the panel whose key hash is {@code spki}: the handshake fails against any other, so an
+     * address taken over on the network gets nothing. Not on the main thread.
+     */
+    static Reply call(Context context, String address, int port, String spki, String method,
+            String path, JSONObject body) throws IOException {
+        FleetIdentity identity = FleetIdentity.load(context);
+        if (identity == null) {
+            throw new IOException("this panel's fleet key cannot be read");
+        }
+        SSLSocketFactory factory = FleetTls.context(identity.key, identity.certificate,
+                spki::equals).getSocketFactory();
+        Socket raw = new Socket();
+        try {
+            raw.connect(new InetSocketAddress(address, port), CONNECTION_DEADLINE_MS);
+            raw.setSoTimeout(CONNECTION_DEADLINE_MS);
+            SSLSocket channel = (SSLSocket) factory.createSocket(raw, address, port, true);
+            channel.setUseClientMode(true);
+            channel.startHandshake();
+            byte[] content = body == null ? new byte[0]
+                    : body.toString().getBytes(StandardCharsets.UTF_8);
+            OutputStream output = channel.getOutputStream();
+            output.write((method + " " + path + " HTTP/1.1\r\nHost: panel\r\n"
+                    + "Content-Type: application/json\r\nContent-Length: " + content.length
+                    + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            output.write(content);
+            output.flush();
+            InputStream input = channel.getInputStream();
+            String statusLine = readLine(input);
+            String[] parts = statusLine == null ? new String[0] : statusLine.split(" ");
+            if (parts.length < 2 || !parts[1].matches("[0-9]{3}")) {
+                throw new IOException("the other panel did not answer as a member endpoint");
+            }
+            int length = -1;
+            for (int lines = 0; lines < MAX_HEADER_LINES; lines++) {
+                String header = readLine(input);
+                if (header == null || header.isEmpty()) {
+                    break;
+                }
+                int colon = header.indexOf(':');
+                if (colon > 0 && header.substring(0, colon).trim()
+                        .equalsIgnoreCase("Content-Length")
+                        && header.substring(colon + 1).trim().matches("[0-9]{1,5}")) {
+                    length = Integer.parseInt(header.substring(colon + 1).trim());
+                }
+            }
+            byte[] reply = length < 0 || length > MAX_BODY * 4 ? new byte[0]
+                    : readBody(input, length);
+            JSONObject json;
+            try {
+                json = new JSONObject(new String(reply, StandardCharsets.UTF_8));
+            } catch (JSONException notJson) {
+                json = new JSONObject();
+            }
+            return new Reply(Integer.parseInt(parts[1]), json);
+        } finally {
+            closeQuietly(raw);
+        }
     }
 
     /**

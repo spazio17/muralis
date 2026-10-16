@@ -1440,12 +1440,6 @@ final class HttpAdminServer {
                         }
                     }
                 }
-                if (form.containsKey("fleet_announce")) {
-                    KioskConfig.edit(context).fleetAnnounce(isTrue(form.get("fleet_announce")))
-                            .apply();
-                    // The service announces the panel or withdraws it on a reload.
-                    KioskService.reloadConfiguration(context);
-                }
                 if (form.containsKey("volume_buttons_disabled")) {
                     KioskConfig.edit(context)
                             .volumeButtonsDisabled(isTrue(form.get("volume_buttons_disabled")))
@@ -3364,11 +3358,6 @@ final class HttpAdminServer {
                 + "<p class=\"hint" + (KioskRuntimeState.fleetListening() ? "" : " bad")
                 + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
                 + sectionFormEnd("Save")
-                // An instant switch, outside the form, like the volume buttons' in This panel.
-                + "<div class=\"switches\">"
-                + switchRow("fleet-announce", "Announce this panel on the network",
-                        " data-setting=\"fleet_announce\"", config.fleetAnnounce)
-                + "</div>"
                 + fleetMembership();
     }
 
@@ -3383,9 +3372,9 @@ final class HttpAdminServer {
                 + "<div class=\"actions\">"
                 + "<button type=\"button\" class=\"tonal\" id=\"fleet-join-open\""
                 + (member ? " hidden" : "")
-                + (KioskRuntimeState.fleetListening() ? "" : " disabled") + ">Join a fleet</button>"
+                + (KioskRuntimeState.fleetListening() ? "" : " disabled") + ">Join</button>"
                 + "<button type=\"button\" class=\"danger\" id=\"fleet-leave\""
-                + (member ? "" : " hidden") + ">Leave the fleet</button></div>"
+                + (member ? "" : " hidden") + ">Leave</button></div>"
                 + "<p class=\"hint bad\" id=\"fleet-error\" role=\"alert\" hidden></p>"
                 + "<div class=\"fleet-join\" id=\"fleet-join\" hidden>"
                 + "<img id=\"fleet-join-qr\" alt=\"Join code as a QR code\" width=\"240\""

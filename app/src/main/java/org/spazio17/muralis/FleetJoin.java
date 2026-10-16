@@ -131,6 +131,59 @@ final class FleetJoin {
                 + ";code=" + code;
     }
 
+    /** A join code read from a QR: where the panel listens, its key and the code. */
+    static final class Invitation {
+        final String id;
+        final String address;
+        final int port;
+        final String spki;
+        final String code;
+
+        Invitation(String id, String address, int port, String spki, String code) {
+            this.id = id;
+            this.address = address;
+            this.port = port;
+            this.spki = spki;
+            this.code = code;
+        }
+    }
+
+    /**
+     * The QR of a Join screen read back (fleet design, section 5), or null when the text is not
+     * one: another QR, another version, or a field missing or malformed. Of a list of addresses
+     * the first is taken.
+     */
+    static Invitation parseQr(String text) {
+        if (text == null || !text.startsWith("muralis-join:2;")) {
+            return null;
+        }
+        java.util.Map<String, String> fields = new java.util.HashMap<>();
+        for (String part : text.substring("muralis-join:2;".length()).split(";")) {
+            int equals = part.indexOf('=');
+            if (equals > 0) {
+                fields.put(part.substring(0, equals), part.substring(equals + 1));
+            }
+        }
+        String id = fields.get("id");
+        String[] addresses = fields.get("addr") == null ? new String[0]
+                : fields.get("addr").split(",");
+        String address = addresses.length == 0 ? null : addresses[0];
+        String port = fields.get("port");
+        String spki = fields.get("spki");
+        String code = fields.get("code");
+        // A literal address only, IPv4 or IPv6, never a name a lookup would resolve.
+        if (id == null || !id.matches("[A-Za-z0-9._-]{1,64}") || address == null
+                || !(address.matches("([0-9]{1,3}\\.){3}[0-9]{1,3}")
+                        || address.matches("[0-9A-Fa-f:]{2,39}") && address.contains(":"))
+                || port == null
+                || !port.matches("[0-9]{1,5}") || Integer.parseInt(port) < 1
+                || Integer.parseInt(port) > 65535 || spki == null || !spki.matches("[0-9a-f]{64}")
+                || code == null || !code.matches("[0-9]{8}")) {
+            return null;
+        }
+        return new Invitation(id, address, Integer.parseInt(port), spki, code);
+    }
+
     /**
      * Null when a joining manager's fleet id and name can be stored, the reason otherwise: an id
      * of letters, digits, dot, underscore and hyphen, and a name of up to 64 characters with no
@@ -141,13 +194,18 @@ final class FleetJoin {
             return "the fleet id may only use letters, digits, dot, underscore and hyphen, up to 64"
                     + " characters";
         }
+        return validateName("the fleet name", name);
+    }
+
+    /** Null when {@code name} can name a fleet or a panel: 1 to 64 characters, none a control. */
+    static String validateName(String what, String name) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty() || trimmed.length() > NAME_LIMIT) {
-            return "the fleet name must have 1 to " + NAME_LIMIT + " characters";
+            return what + " must have 1 to " + NAME_LIMIT + " characters";
         }
         for (int i = 0; i < trimmed.length(); i++) {
             if (Character.isISOControl(trimmed.charAt(i))) {
-                return "the fleet name must not contain control characters";
+                return what + " must not contain control characters";
             }
         }
         return null;

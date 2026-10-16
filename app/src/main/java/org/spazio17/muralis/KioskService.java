@@ -764,15 +764,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * Announces this panel as {@code _muralis._tcp} on the local network (mDNS, Android's own
-     * service discovery) while its member endpoint listens and the person has not switched the
-     * announcement off, with its id, name, member port, key hash and the protocol version, so a
+     * service discovery) whenever its member endpoint listens, with no switch, as Matter devices
+     * and printers do, with its id, name, member port, key hash and the protocol version, so a
      * console can find it. Announced again when any of them changes, and a minute after Android
      * reports a failed announcement (its discovery daemon can fail while the device boots);
      * withdrawn when the endpoint stops. Main thread.
      */
     private void refreshAnnouncement() {
         FleetServer server = fleetServer;
-        boolean on = server != null && KioskConfig.fleetAnnounceOf(this);
+        boolean on = server != null;
         String id = KioskConfig.deviceIdOf(this);
         String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() : "";
         if (key.equals(announcedKey)) {
@@ -1224,7 +1224,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("fleet_port", config.fleetPort);
                 applied.put("fleet_listening", KioskRuntimeState.fleetListening());
                 applied.put("fleet_state", FleetServer.stateLine());
-                applied.put("fleet_announce", config.fleetAnnounce);
                 // Membership and the Join code as the panel shows them; admin only, never on MQTT.
                 applied.put("fleet_join", FleetServer.joinState(this));
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());

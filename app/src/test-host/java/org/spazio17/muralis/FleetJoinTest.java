@@ -82,6 +82,36 @@ public final class FleetJoinTest {
                 "muralis-join:2;id=kiosk-1;addr=192.0.2.5;port=8081;spki=ab;code=12345678"),
                 "the QR content is not the design's");
 
+        String key = repeat('a', 64);
+        FleetJoin.Invitation read = FleetJoin.parseQr(FleetJoin.qrContent("kiosk-1", "192.0.2.5",
+                8081, key, "12345678"));
+        require(read != null && read.id.equals("kiosk-1") && read.address.equals("192.0.2.5")
+                && read.port == 8081 && read.spki.equals(key) && read.code.equals("12345678"),
+                "the design's QR did not read back");
+        FleetJoin.Invitation two = FleetJoin.parseQr("muralis-join:2;id=k;addr=192.0.2.5,192.0.2.6;"
+                + "port=8081;spki=" + key + ";code=12345678");
+        require(two != null && two.address.equals("192.0.2.5"), "the first of two addresses");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=2001:db8::5;port=8081;spki=" + key
+                + ";code=12345678") != null, "an IPv6 address was refused");
+        require(FleetJoin.parseQr(null) == null, "null read as a code");
+        require(FleetJoin.parseQr("https://example.com") == null, "another QR read as a code");
+        require(FleetJoin.parseQr("muralis-join:1;id=k;addr=192.0.2.5;port=8081;spki=" + key
+                + ";code=12345678") == null, "another version read as a code");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=192.0.2.5;port=8081;spki=" + key)
+                == null, "a QR with no code read");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=192.0.2.5;port=70000;spki=" + key
+                + ";code=12345678") == null, "port 70000 read");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=192.0.2.5;port=8081;spki=ab;"
+                + "code=12345678") == null, "a short key read");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=host.example;port=8081;spki=" + key
+                + ";code=12345678") == null, "a host name read as an address");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=192.0.2.5;port=8081;spki=" + key
+                + ";code=1234") == null, "a short code read");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=,;port=8081;spki=" + key
+                + ";code=12345678") == null, "an empty address list read, or crashed");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=cafe.be;port=8081;spki=" + key
+                + ";code=12345678") == null, "a host name of hex letters read as an address");
+
         require(FleetJoin.validateFleet("home-1", "Home") == null, "a plain fleet was refused");
         require(FleetJoin.validateFleet("", "Home") != null, "an empty id was taken");
         require(FleetJoin.validateFleet("a b", "Home") != null, "an id with a space was taken");
