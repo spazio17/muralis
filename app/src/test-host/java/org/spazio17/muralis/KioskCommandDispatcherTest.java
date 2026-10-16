@@ -579,34 +579,34 @@ public final class KioskCommandDispatcherTest {
      */
     private static void testScreensaverCommands() {
         RecordingExecutor executor = new RecordingExecutor();
-        require(KioskCommandDispatcher.dispatch("screensaver.start",
+        require(KioskCommandDispatcher.dispatch("ambient.start",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
                 "start with a runnable screensaver must be accepted");
         require(executor.calls.contains("screensaverStart"), "start did not reach the executor");
-        executor.screensaverProblem = "the screensaver mode is off";
+        executor.screensaverProblem = "the Ambient mode is off";
         KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
-                "screensaver.start", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+                "ambient.start", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(refused.status.equals("rejected") && refused.detail.contains("mode is off"),
                 "a screensaver that cannot run must say so: " + refused.detail);
-        require(KioskCommandDispatcher.dispatch("screensaver.stop",
+        require(KioskCommandDispatcher.dispatch("ambient.stop",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted"),
                 "stop is always accepted");
         require(executor.calls.contains("screensaverStop"), "stop did not reach the executor");
-        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+        require(KioskCommandDispatcher.dispatch("ambient.mode",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
                 "mode without a value must be rejected");
-        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+        require(KioskCommandDispatcher.dispatch("ambient.mode",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "photos"), executor)
                 .status.equals("rejected"), "an unknown mode must be rejected");
         require(executor.screensaverSettings.isEmpty(), "executor ran despite a bad mode");
-        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+        require(KioskCommandDispatcher.dispatch("ambient.mode",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "url"), executor)
                 .status.equals("accepted"), "url is a mode");
         require("url".equals(executor.screensaverSettings.get(
                 KioskCommandDispatcher.ScreensaverSetting.MODE)), "mode not forwarded");
-        require(KioskCommandDispatcher.dispatch("screensaver.mode",
+        require(KioskCommandDispatcher.dispatch("ambient.mode",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "off"), executor)
-                .status.equals("accepted"), "off is a mode too: it is how the screensaver is switched off");
+                .status.equals("accepted"), "off is a mode too: it is how Ambient is switched off");
         testScreensaverSettingCommands();
     }
 
@@ -618,15 +618,14 @@ public final class KioskCommandDispatcherTest {
     private static void testScreensaverSettingCommands() {
         RecordingExecutor executor = new RecordingExecutor();
         String[][] good = {
-                {"screensaver.source", "wikimedia", "SOURCE", "wikimedia"},
-                {"screensaver.idle_seconds", " 45 ", "IDLE_SECONDS", "45"},
-                {"screensaver.off_seconds", "0", "OFF_SECONDS", "0"},
-                {"screensaver.picture_seconds", "30", "PICTURE_SECONDS", "30"},
-                {"screensaver.dim_percent", "8", "DIM_PERCENT", "8"},
-                {"screensaver.transition", "slide", "TRANSITION", "slide"},
-                {"screensaver.picture_fit", "fill", "PICTURE_FIT", "fill"},
-                {"screensaver.credit_corner", "top_right", "CREDIT_CORNER", "top_right"},
-                {"screensaver.on_wake", "dashboard", "ON_WAKE", "dashboard"},
+                {"ambient.idle_seconds", " 45 ", "IDLE_SECONDS", "45"},
+                {"ambient.off_seconds", "0", "OFF_SECONDS", "0"},
+                {"ambient.picture_seconds", "30", "PICTURE_SECONDS", "30"},
+                {"ambient.dim_percent", "8", "DIM_PERCENT", "8"},
+                {"ambient.transition", "slide", "TRANSITION", "slide"},
+                {"ambient.picture_fit", "fill", "PICTURE_FIT", "fill"},
+                {"ambient.credit_corner", "top_right", "CREDIT_CORNER", "top_right"},
+                {"ambient.on_wake", "dashboard", "ON_WAKE", "dashboard"},
         };
         for (String[] row : good) {
             KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
@@ -638,15 +637,14 @@ public final class KioskCommandDispatcherTest {
                             KioskCommandDispatcher.ScreensaverSetting.valueOf(row[2])));
         }
         String[][] bad = {
-                {"screensaver.source", "nasa"},
-                {"screensaver.idle_seconds", "2 min"},
-                {"screensaver.off_seconds", "-1"},
-                {"screensaver.picture_seconds", "0"},
-                {"screensaver.dim_percent", "0"},
-                {"screensaver.transition", "zoom"},
-                {"screensaver.picture_fit", "zoom"},
-                {"screensaver.credit_corner", "centre"},
-                {"screensaver.on_wake", "later"},
+                {"ambient.idle_seconds", "2 min"},
+                {"ambient.off_seconds", "-1"},
+                {"ambient.picture_seconds", "0"},
+                {"ambient.dim_percent", "0"},
+                {"ambient.transition", "zoom"},
+                {"ambient.picture_fit", "zoom"},
+                {"ambient.credit_corner", "centre"},
+                {"ambient.on_wake", "later"},
         };
         for (String[] row : bad) {
             KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
@@ -654,9 +652,17 @@ public final class KioskCommandDispatcherTest {
             require(result.status.equals("rejected"), row[0] + " accepted " + row[1]);
             require(!result.detail.isEmpty(), row[0] + " refused without a reason");
         }
+        // The picture source left with Bing and Wikimedia, and the screensaver became Ambient
+        // with no alias: neither command is answered any more.
+        require(KioskCommandDispatcher.dispatch("ambient.source",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "local"), executor)
+                .status.equals("unsupported"), "ambient.source is gone");
+        require(KioskCommandDispatcher.dispatch("screensaver.start",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, null), executor)
+                .status.equals("unsupported"), "the old screensaver.* names are gone");
         // The three flags take the same enabled parsing as every other flag in this app.
-        for (String command : new String[] {"screensaver.shuffle", "screensaver.one_per_cycle",
-                "screensaver.credit"}) {
+        for (String command : new String[] {"ambient.shuffle", "ambient.one_per_cycle",
+                "ambient.credit"}) {
             require(KioskCommandDispatcher.dispatch(command,
                     KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
                     command + " without a flag was accepted");
@@ -667,15 +673,15 @@ public final class KioskCommandDispatcherTest {
         require("true".equals(executor.screensaverSettings.get(
                 KioskCommandDispatcher.ScreensaverSetting.SHUFFLE)), "shuffle stored");
         // The screensaver's page: the dashboard's own validator, and empty is how it is cleared.
-        require(KioskCommandDispatcher.dispatch("screensaver.url",
+        require(KioskCommandDispatcher.dispatch("ambient.url",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "example.com"), executor)
                 .status.equals("rejected"), "a schemeless page address was accepted");
-        require(KioskCommandDispatcher.dispatch("screensaver.url",
+        require(KioskCommandDispatcher.dispatch("ambient.url",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "https://example.com/frame"),
                 executor).status.equals("accepted"), "a page address was rejected");
         require("https://example.com/frame".equals(executor.screensaverSettings.get(
                 KioskCommandDispatcher.ScreensaverSetting.URL)), "the page address is stored");
-        require(KioskCommandDispatcher.dispatch("screensaver.url",
+        require(KioskCommandDispatcher.dispatch("ambient.url",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
                 .status.equals("accepted"), "an empty address clears it");
         require("".equals(executor.screensaverSettings.get(
@@ -688,22 +694,22 @@ public final class KioskCommandDispatcherTest {
      */
     private static void screensaverPlaylistIsChosenByName() {
         RecordingExecutor executor = new RecordingExecutor();
-        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+        require(KioskCommandDispatcher.dispatch("ambient.playlist",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Holidays"), executor)
                 .status.equals("accepted"), "a playlist name must be accepted");
         require("Holidays".equals(executor.lastPlaylist), "the name must reach the executor");
-        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+        require(KioskCommandDispatcher.dispatch("ambient.playlist",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
                 .status.equals("accepted"), "an empty name means none and must be accepted");
         require("".equals(executor.lastPlaylist), "the empty name must reach the executor");
         // No value at all is a caller mistake rather than a request for none.
-        require(KioskCommandDispatcher.dispatch("screensaver.playlist",
+        require(KioskCommandDispatcher.dispatch("ambient.playlist",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
                 "a playlist command with no value must be rejected");
         // The executor's own refusal is what the caller is told, so a wrong name names the right ones.
         executor.playlistProblem = "no playlist called Nope; this panel has Holidays";
         KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
-                "screensaver.playlist",
+                "ambient.playlist",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Nope"), executor);
         require(refused.status.equals("rejected") && refused.detail.contains("has Holidays"),
                 "an unknown playlist must be refused with the names that exist: " + refused.detail);
@@ -828,7 +834,7 @@ public final class KioskCommandDispatcherTest {
 
         @Override
         public String setScreensaverPlaylist(String name) {
-            calls.add("setScreensaverPlaylist:" + name);
+            calls.add("setAmbientPlaylist:" + name);
             if (playlistProblem != null) {
                 return playlistProblem;
             }
@@ -839,7 +845,7 @@ public final class KioskCommandDispatcherTest {
         @Override
         public void setScreensaverSetting(KioskCommandDispatcher.ScreensaverSetting setting,
                 String value) {
-            calls.add("setScreensaverSetting:" + setting + "=" + value);
+            calls.add("setAmbientSetting:" + setting + "=" + value);
             screensaverSettings.put(setting, value);
         }
 

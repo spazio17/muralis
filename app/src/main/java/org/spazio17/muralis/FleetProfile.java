@@ -60,7 +60,7 @@ final class FleetProfile {
                 // panels would then correct each other forever.
                 values.put("auto_brightness", KioskService.isAutoBrightnessOn(context));
                 break;
-            case "screensaver": {
+            case "ambient": {
                 ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
                 values.put("mode", saver.mode);
                 values.put("idle_seconds", (long) saver.idleSeconds);
@@ -68,7 +68,6 @@ final class FleetProfile {
                 values.put("url", saver.url);
                 values.put("dim_percent", (long) saver.dimPercent);
                 values.put("on_wake", saver.onWake);
-                values.put("source", saver.source);
                 values.put("picture_seconds", (long) saver.pictureSeconds);
                 values.put("transition", saver.transition);
                 values.put("picture_fit", saver.pictureFit);
@@ -172,17 +171,17 @@ final class FleetProfile {
                         flag(values, "auto_brightness", false), "auto_brightness", now, values,
                         refused);
                 break;
-            case "screensaver":
-                for (String key : new String[] {"mode", "source", "idle_seconds", "off_seconds",
+            case "ambient":
+                for (String key : new String[] {"mode", "idle_seconds", "off_seconds",
                         "picture_seconds", "dim_percent", "url", "on_wake", "transition",
                         "picture_fit", "credit_corner"}) {
                     Object value = values.get(key);
-                    command(service, "screensaver." + key, null,
+                    command(service, "ambient." + key, null,
                             value instanceof Number ? String.valueOf(((Number) value).longValue())
                                     : text(values, key), null, key, now, values, refused);
                 }
                 for (String key : new String[] {"shuffle", "one_per_cycle", "credit"}) {
-                    command(service, "screensaver." + key, null, null, flag(values, key, false),
+                    command(service, "ambient." + key, null, null, flag(values, key, false),
                             key, now, values, refused);
                 }
                 break;
@@ -449,7 +448,7 @@ final class FleetProfile {
                         DisplayOffPolicy.FILM, "Black overlay"));
                 fields.add(new Field("auto_brightness", "Automatic brightness", "switch"));
                 break;
-            case "screensaver":
+            case "ambient":
                 fields.add(new Field("mode", "Mode", "select", ScreensaverPolicy.OFF, "Off",
                         ScreensaverPolicy.DIM, "Dimmed page", ScreensaverPolicy.FILM, "Black",
                         ScreensaverPolicy.URL, "Web page", ScreensaverPolicy.PICTURES, "Pictures"));
@@ -459,11 +458,8 @@ final class FleetProfile {
                 fields.add(new Field("url", "Web page address", "url"));
                 fields.add(new Field("dim_percent", "Dim to (percent)", "number"));
                 fields.add(new Field("on_wake", "On a touch", "select",
-                        ScreensaverPolicy.WAKE_SCREENSAVER, "Show the screensaver first",
+                        ScreensaverPolicy.WAKE_SCREENSAVER, "Show Ambient first",
                         ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once"));
-                fields.add(new Field("source", "Pictures from", "select", PictureSources.LOCAL,
-                        "This panel's playlist", PictureSources.BING, "Bing image of the day",
-                        PictureSources.WIKIMEDIA, "Wikimedia Commons picture of the day"));
                 fields.add(new Field("picture_seconds", "Seconds per picture", "number"));
                 fields.add(new Field("transition", "Transition", "select",
                         ScreensaverPolicy.TRANSITION_NONE, "None", ScreensaverPolicy.TRANSITION_FADE,

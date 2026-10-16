@@ -955,7 +955,7 @@ final class HttpAdminServer {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(refused, form.getOrDefault("scope",
                             queryValue(query, "scope")))));
-        } else if (path.equals("/screensaver") && method.equals("GET")) {
+        } else if (path.equals("/ambient") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
         } else if (path.equals("/playlist") && method.equals("GET")) {
@@ -1032,11 +1032,6 @@ final class HttpAdminServer {
         } else if (path.equals("/api/playlists") && method.equals("GET")) {
             writeResponse(output, 200, "application/json; charset=utf-8",
                     bytes(playlistsJson()));
-        } else if (path.equals("/api/pictures/refresh") && method.equals("POST")) {
-            PictureLibrary.get(context).refresh(KioskConfig.screensaverOf(context).source, null);
-            answerPictureChange(query, parseFormBody(headers, body),
-                    "Fetching the pictures again.",
-                    true, output);
         } else if (path.equals("/api/command") && method.equals("POST")) {
             handleCommand(method, query, headers, body, output);
         } else if (path.equals("/api/command") && method.equals("GET")) {
@@ -1858,7 +1853,7 @@ final class HttpAdminServer {
         paths.put("display", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M8 21h8\"/>");
         paths.put("automations", "<path d=\"M17 21H7a3 3 0 01-3-3v-1h10v1a3 3 0 006 0V5a2 2 0 00-2-2H9a2 2 0 00-2 2v12M11 8h5M11 12h5\"/>");
         paths.put("asleep_off", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14M3 3l18 18\"/>");
-        paths.put("screensaver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
+        paths.put("ambient", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
         paths.put("battery", "<rect x=\"3\" y=\"7\" width=\"16\" height=\"10\" rx=\"2\"/><path d=\"M21 11v2M6 10v4M9 10v4\"/>");
         paths.put("power", "<path d=\"M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0zM12 18v3\"/>");
         paths.put("network", "<path d=\"M2 9a15 15 0 0120 0M5.5 12.5a10 10 0 0113 0M9 16a5 5 0 016 0\"/><circle cx=\"12\" cy=\"19\" r=\"1\"/>");
@@ -1997,7 +1992,7 @@ final class HttpAdminServer {
         sections.add(new String[] {"sequences", "esc", "Escape sequences",
                 sequencesSummary(config), sequencesBody(config, notice, noticeSection)});
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
-        sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
+        sections.add(new String[] {"ambient", "saver", "Ambient", screensaverSummary(),
                 screensaverBody()});
         sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
                 sensorsSectionBody()});
@@ -3833,10 +3828,10 @@ final class HttpAdminServer {
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
         // A menu here and radios on the screensaver page, deliberately: this is one section among
         // nine, while the page's chooser decides what the rest of that page says.
-        return sharedLine("screensaver")
-                + selectField("screensaver-mode", null, "Mode", "screensaver_mode",
+        return sharedLine("ambient")
+                + selectField("ambient-mode", null, "Mode", "ambient_mode",
                 screensaverModeOptions(saver), null)
-                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
+                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"ambient-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
                 + "</p>"
                 // No "Back to the page" beside these: it ends a showing screensaver, which is what
@@ -3845,9 +3840,9 @@ final class HttpAdminServer {
                 // (Juri, 2026-09-11), and since the page stopped carrying the chooser
                 // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
                 + "<div class=\"actions\">"
-                + quickAction("screensaver.start", "Preview", "tonal", null)
+                + quickAction("ambient.start", "Preview", "tonal", null)
                 + "<a class=\"btn text" + (ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
-                + "\" id=\"screensaver-more\" href=\"/screensaver\">More screensaver settings"
+                + "\" id=\"ambient-more\" href=\"/ambient\">More Ambient settings"
                 + glyph("next") + "</a></div>";
     }
 
@@ -4040,8 +4035,8 @@ final class HttpAdminServer {
         if ("display_off".equals(source)) {
             return "display off";
         }
-        if ("screensaver".equals(source)) {
-            return "screensaver";
+        if ("ambient".equals(source)) {
+            return "ambient";
         }
         return autoMode ? "automatic" : "manual";
     }
@@ -4137,14 +4132,6 @@ final class HttpAdminServer {
 
     private String pictureOptions(ScreensaverPolicy.Settings saver) {
         PictureLibrary library = PictureLibrary.get(context);
-        boolean local = PictureSources.LOCAL.equals(saver.source);
-        StringBuilder sources = new StringBuilder();
-        sources.append(selectOption(PictureSources.LOCAL,
-                "This panel: uploads and folders of your own", saver.source));
-        sources.append(selectOption(PictureSources.BING, "Bing image of the day (unofficial, credited)",
-                saver.source));
-        sources.append(selectOption(PictureSources.WIKIMEDIA,
-                "Wikimedia Commons picture of the day (credited)", saver.source));
         StringBuilder transitions = new StringBuilder();
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_NONE, "Cut", saver.transition));
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_FADE, "Fade", saver.transition));
@@ -4160,43 +4147,31 @@ final class HttpAdminServer {
         corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_LEFT, "Top left", saver.creditCorner));
         corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right", saver.creditCorner));
 
-        String online = "<div id=\"screensaver-online\"" + (local ? " class=\"gone\"" : "") + ">"
-                + "<div class=\"actions tight\"><form method=\"post\" action=\"/api/pictures/refresh\">"
-                + "<button type=\"submit\">Fetch the pictures again</button></form></div>"
-                + "<p class=\"hint\">Bing's archive is an unofficial endpoint; its pictures are "
-                + "copyrighted and shown with the line Bing prints under them. Wikimedia Commons "
-                + "pictures carry free licences that require the author and licence to be named, "
-                + "which the credit line does.</p></div>";
-
-        String sourceProblem = library.problem(saver.source);
-        return "<div id=\"screensaver-pictures\""
+        String picturesProblem = library.problem();
+        return "<div id=\"ambient-pictures\""
                 + (ScreensaverPolicy.PICTURES.equals(saver.mode) ? "" : " class=\"gone\"") + ">"
-                + selectField("screensaver-source", null, "Pictures from", "screensaver_source",
-                        sources.toString(), null)
-                + "<p class=\"hint" + (sourceProblem != null ? " bad" : "") + "\" id=\"screensaver-source-note\">"
-                + escapeHtml(library.state(saver.source)) + "</p>"
-                + online
-                + fieldWithId("screensaver-picture-s", "number", null,
+                + "<p class=\"hint" + (picturesProblem != null ? " bad" : "") + "\" id=\"ambient-pictures-note\">"
+                + escapeHtml(library.state()) + "</p>"
+                + fieldWithId("ambient-picture-s", "number", null,
                         "Each picture stays for (seconds)", String.valueOf(saver.pictureSeconds),
-                        " data-setting=\"screensaver_picture_s\" min=\"1\" max=\""
+                        " data-setting=\"ambient_picture_s\" min=\"1\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
-                + selectField("screensaver-transition", null, "Change of picture",
-                        "screensaver_transition", transitions.toString(), null)
-                + selectField("screensaver-fit", null, "How a picture fills the screen",
-                        "screensaver_picture_fit", fits.toString(),
+                + selectField("ambient-transition", null, "Change of picture",
+                        "ambient_transition", transitions.toString(), null)
+                + selectField("ambient-fit", null, "How a picture fills the screen",
+                        "ambient_picture_fit", fits.toString(),
                         "Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
                         + "it out of shape, Actual size does not scale it.")
                 + "<div class=\"switches\">"
-                + switchRow("screensaver-shuffle", "Shuffle the order",
-                        " data-setting=\"screensaver_shuffle\"", saver.shuffle)
-                + switchRow("screensaver-one", "One picture per screensaver",
-                        " data-setting=\"screensaver_one_per_cycle\"", saver.onePerCycle)
-                + switchRow("screensaver-credit", "Show the title and credit line",
-                        " data-setting=\"screensaver_credit\"" + (local ? "" : " disabled"),
-                        saver.creditShown())
+                + switchRow("ambient-shuffle", "Shuffle the order",
+                        " data-setting=\"ambient_shuffle\"", saver.shuffle)
+                + switchRow("ambient-one", "One picture per cycle",
+                        " data-setting=\"ambient_one_per_cycle\"", saver.onePerCycle)
+                + switchRow("ambient-credit", "Show the title and credit line",
+                        " data-setting=\"ambient_credit\"", saver.credit)
                 + "</div>"
-                + selectField("screensaver-corner", null, "Credit line in the corner",
-                        "screensaver_credit_corner", corners.toString(), null)
+                + selectField("ambient-corner", null, "Credit line in the corner",
+                        "ambient_credit_corner", corners.toString(), null)
                 + "</div>";
     }
 
@@ -4204,21 +4179,19 @@ final class HttpAdminServer {
     /**
      * The playlists on the screensaver page: the list and nothing else.
      *
-     * <p>Shown only for the Pictures mode with this panel as the source; there is nothing to list
-     * when the pictures come from Bing. A card since 2026-09-23, with the list re-read in place by
+     * <p>Shown only for the Pictures mode. A card since 2026-09-23, with the list re-read in place by
      * {@code admin_playlists.js} and the banner under it speaking only for a refusal: the radio
      * moving or a row appearing is the whole answer to Use and Create; Delete is on the
      * playlist's own page.
      */
     private String pictureLibraryBox() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
-        boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode)
-                && PictureSources.LOCAL.equals(saver.source);
+        boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode);
         PictureLibrary library = PictureLibrary.get(context);
         // The cell around the panel is what leaves for another mode, so the options keep
         // the right-hand column of the grid whether or not the playlists are shown.
         StringBuilder html = new StringBuilder("<div")
-                .append(shown ? "" : " class=\"gone\"").append(" id=\"screensaver-library\">")
+                .append(shown ? "" : " class=\"gone\"").append(" id=\"ambient-library\">")
                 .append("<section class=\"card\"><h2>Playlists</h2>");
         // Without the permission the playlists stay: uploads need none (2026-10-05).
         if (!library.browsesOwnStorage()) {
@@ -4240,11 +4213,11 @@ final class HttpAdminServer {
         String said = notice == null || notice.isEmpty() ? ""
                 : "<p class=\"notice\">" + escapeHtml(notice) + "</p>";
         if (playlist == null) {
-            return pageStart("Picture playlist", null, "/screensaver")
+            return pageStart("Picture playlist", null, "/ambient")
                     + said + "<p class=\"hint bad\">That playlist is gone.</p>" + pageEnd();
         }
         StringBuilder html = new StringBuilder(pageStartWith(playlistHeading(playlist),
-                "/screensaver", false));
+                "/ambient", false));
         html.append(said)
                 .append("<div class=\"two playlist\">")
                 .append("<section class=\"card\" id=\"playlist-folders\">")
@@ -4282,7 +4255,7 @@ final class HttpAdminServer {
                 .append(hidden("playlist", playlist.id))
                 .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
                 .append(escapeHtml(deleteQuestion(playlist.name) + (playlist.active
-                        ? " It is the playlist in use, so the screensaver will have none until you "
+                        ? " It is the playlist in use, so Ambient will have none until you "
                                 + "choose another." : "") + " The pictures themselves are not deleted."))
                 .append("\">Delete</button></form>");
         return html.append(pageEnd()).toString();
@@ -4298,7 +4271,7 @@ final class HttpAdminServer {
         if (!KioskConfig.screensaverOf(context).shuffle) {
             return "";
         }
-        String says = "Shuffle is on, so the screensaver does not follow this order";
+        String says = "Shuffle is on, so Ambient does not follow this order";
         return "<span class=\"mark\" role=\"img\" title=\"" + says + "\" aria-label=\"" + says
                 + "\">" + glyph("shuffle") + "</span>";
     }
@@ -4401,7 +4374,7 @@ final class HttpAdminServer {
                     .append(creditsShown ? iconButton(off ? "eye_off" : "eye",
                             off ? "Show the credit" : "Hide the credit", "")
                             : iconButton("eye_off",
-                                    "Credits are off in the screensaver settings", "", true))
+                                    "Credits are off in the Ambient settings", "", true))
                     .append("</form>")
                     .append("<form method=\"post\" action=\"/api/pictures/select\">")
                     .append(hidden("uri", uri)).append(hidden("playlist", playlist.id))
@@ -4471,7 +4444,7 @@ final class HttpAdminServer {
      */
     private static String ownPicturesHint() {
         return "<p class=\"hint bad\">" + escapeHtml(PictureLibrary.OWN_PICTURES_NEED_PERMISSION)
-                + " Allow it on the panel's Screensaver settings; Android only asks there.</p>";
+                + " Allow it on the panel's Ambient settings; Android only asks there.</p>";
     }
 
     /** Why the panels cannot show pictures, as the hint both of them then carry, or null. */
@@ -4835,7 +4808,7 @@ final class HttpAdminServer {
             // (review, 2026-10-04). A playlist already gone is sent on too, gone it is either
             // way; any other refusal, a failed save, is answered here with its reason.
             writeResponse(output, 303, "text/plain", bytes("deleted"),
-                    Collections.singletonMap("Location", "/screensaver"));
+                    Collections.singletonMap("Location", "/ambient"));
             return;
         }
         answerPictureChange(query, form,
@@ -5259,10 +5232,10 @@ final class HttpAdminServer {
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
         String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
-                "Show the screensaver first, a touch opens the page", saver.onWake)
+                "Show Ambient first, a touch opens the page", saver.onWake)
                 + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once", saver.onWake);
-        StringBuilder html = new StringBuilder(pageStart("Screensaver", null,
-                settingsAt("screensaver")));
+        StringBuilder html = new StringBuilder(pageStart("Ambient", null,
+                settingsAt("ambient")));
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
@@ -5282,56 +5255,55 @@ final class HttpAdminServer {
         }
         // A mode without playlists leaves the options the page's only panel, centred at the
         // legal pages' width (class one); admin_setting.js keeps the class with the mode.
-        boolean library = ScreensaverPolicy.PICTURES.equals(saver.mode)
-                && PictureSources.LOCAL.equals(saver.source);
+        boolean library = ScreensaverPolicy.PICTURES.equals(saver.mode);
         html.append("<div class=\"ld").append(library ? "" : " one")
-                .append("\" id=\"screensaver-page\" data-mode=\"")
+                .append("\" id=\"ambient-page\" data-mode=\"")
                 .append(escapeHtml(saver.mode)).append("\" data-titles=\"")
                 .append(escapeHtml(titles.toString())).append("\">")
                 .append(pictureLibraryBox())
                 .append("<div class=\"detail\"><section class=\"card")
                 .append(ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
-                .append("\" id=\"screensaver-options\"><h2 id=\"screensaver-options-title\">")
+                .append("\" id=\"ambient-options\"><h2 id=\"ambient-options-title\">")
                 .append(escapeHtml(ScreensaverPolicy.optionsTitle(saver.mode))).append("</h2>")
-                .append(fieldWithId("screensaver-idle", "number", null,
-                        "Idle before the screensaver (seconds, 0 = off)",
+                .append(fieldWithId("ambient-idle", "number", null,
+                        "Idle before Ambient (seconds, 0 = off)",
                         String.valueOf(saver.idleSeconds),
-                        " data-setting=\"screensaver_idle_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_idle_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
-                .append(fieldWithId("screensaver-off", "number", null,
-                        "Screensaver before display off (seconds, 0 = never)",
+                .append(fieldWithId("ambient-off", "number", null,
+                        "Ambient before display off (seconds, 0 = never)",
                         String.valueOf(saver.offSeconds),
-                        " data-setting=\"screensaver_off_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_off_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
-                .append("<div id=\"screensaver-url-field\"")
+                .append("<div id=\"ambient-url-field\"")
                 .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("screensaver-url", "text", null, "Web page to show", saver.url,
-                        " data-setting=\"screensaver_url\" inputmode=\"url\"", null))
+                .append(fieldWithId("ambient-url", "text", null, "Web page to show", saver.url,
+                        " data-setting=\"ambient_url\" inputmode=\"url\"", null))
                 .append("</div>")
-                .append("<div id=\"screensaver-dim-field\"")
+                .append("<div id=\"ambient-dim-field\"")
                 .append(ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("screensaver-dim", "number", null,
+                .append(fieldWithId("ambient-dim", "number", null,
                         "Brightness while dimmed (percent)", String.valueOf(saver.dimPercent),
-                        " data-setting=\"screensaver_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
+                        " data-setting=\"ambient_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
                         null))
                 .append("</div>")
                 // Gone rather than greyed out where it does not apply: a control that can never
                 // be enabled is clutter (Juri, 2026-09-11).
-                .append("<div id=\"screensaver-wake-field\"")
+                .append("<div id=\"ambient-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
                 .append(">")
-                .append(selectField("screensaver-on-wake", null, "After a wake from display off",
-                        "screensaver_on_wake", onWake, null))
+                .append(selectField("ambient-on-wake", null, "After a wake from display off",
+                        "ambient_on_wake", onWake, null))
                 .append("</div>")
                 .append(pictureOptions(saver))
                 // The sentence it all adds up to, last in the panel, which is where Juri put it:
                 // the settings above it, then what they mean in one line.
-                .append("<p class=\"hint").append(problem ? " bad" : "").append("\" id=\"screensaver-note\">")
+                .append("<p class=\"hint").append(problem ? " bad" : "").append("\" id=\"ambient-note\">")
                 .append(escapeHtml(ScreensaverPolicy.describe(saver,
                         KioskRuntimeState.screensaverActive())))
                 .append("</p>")
                 .append("<div class=\"actions\">")
-                .append(quickAction("screensaver.start", "Preview", "tonal", null))
+                .append(quickAction("ambient.start", "Preview", "tonal", null))
                 .append("</div>")
                 .append("</section></div>")
                 .append("</div>");
@@ -5353,24 +5325,24 @@ final class HttpAdminServer {
     private String saveScreensaverSettings(Map<String, String> form) {
         KioskConfig.Editor editor = KioskConfig.edit(context);
         boolean changed = false;
-        if (form.containsKey("screensaver_mode")) {
-            String mode = form.get("screensaver_mode");
+        if (form.containsKey("ambient_mode")) {
+            String mode = form.get("ambient_mode");
             if (!ScreensaverPolicy.isMode(mode)) {
-                return "Not saved: the screensaver mode must be off, dim, film, url or pictures.";
+                return "Not saved: the Ambient mode must be off, dim, film, url or pictures.";
             }
             editor.screensaverMode(mode);
             changed = true;
         }
-        if (form.containsKey("screensaver_idle_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("screensaver_idle_s"));
+        if (form.containsKey("ambient_idle_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_idle_s"));
             if (seconds == null) {
                 return "Not saved: the idle time " + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverIdleSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("screensaver_off_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("screensaver_off_s"));
+        if (form.containsKey("ambient_off_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_off_s"));
             if (seconds == null) {
                 return "Not saved: the time before display off "
                         + ScreensaverPolicy.SECONDS_RULE + ".";
@@ -5378,8 +5350,8 @@ final class HttpAdminServer {
             editor.screensaverOffSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("screensaver_url")) {
-            String url = form.get("screensaver_url").trim();
+        if (form.containsKey("ambient_url")) {
+            String url = form.get("ambient_url").trim();
             if (!url.isEmpty()) {
                 String problem = KioskCommandDispatcher.validateDashboardUrl(url);
                 if (problem != null) {
@@ -5389,68 +5361,60 @@ final class HttpAdminServer {
             editor.screensaverUrl(url);
             changed = true;
         }
-        if (form.containsKey("screensaver_dim_percent")) {
-            Integer percent = ScreensaverPolicy.parseDimPercent(form.get("screensaver_dim_percent"));
+        if (form.containsKey("ambient_dim_percent")) {
+            Integer percent = ScreensaverPolicy.parseDimPercent(form.get("ambient_dim_percent"));
             if (percent == null) {
                 return "Not saved: the dimmed brightness " + ScreensaverPolicy.DIM_RULE + ".";
             }
             editor.screensaverDimPercent(percent);
             changed = true;
         }
-        if (form.containsKey("screensaver_on_wake")) {
-            String onWake = form.get("screensaver_on_wake");
+        if (form.containsKey("ambient_on_wake")) {
+            String onWake = form.get("ambient_on_wake");
             if (!ScreensaverPolicy.isOnWake(onWake)) {
-                return "Not saved: the wake choice must be screensaver or dashboard.";
+                return "Not saved: the wake choice must be ambient or dashboard.";
             }
             editor.screensaverOnWake(onWake);
             changed = true;
         }
-        if (form.containsKey("screensaver_source")) {
-            String source = form.get("screensaver_source");
-            if (!PictureSources.isSource(source)) {
-                return "Not saved: the picture source must be local, bing or wikimedia.";
-            }
-            editor.screensaverSource(source);
-            changed = true;
-        }
-        if (form.containsKey("screensaver_picture_s")) {
-            Integer seconds = ScreensaverPolicy.parsePictureSeconds(form.get("screensaver_picture_s"));
+        if (form.containsKey("ambient_picture_s")) {
+            Integer seconds = ScreensaverPolicy.parsePictureSeconds(form.get("ambient_picture_s"));
             if (seconds == null) {
                 return "Not saved: the time per picture " + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".";
             }
             editor.screensaverPictureSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("screensaver_transition")) {
-            String transition = form.get("screensaver_transition");
+        if (form.containsKey("ambient_transition")) {
+            String transition = form.get("ambient_transition");
             if (!ScreensaverPolicy.isTransition(transition)) {
                 return "Not saved: the transition must be none, fade or slide.";
             }
             editor.screensaverTransition(transition);
             changed = true;
         }
-        if (form.containsKey("screensaver_picture_fit")) {
-            String fit = form.get("screensaver_picture_fit");
+        if (form.containsKey("ambient_picture_fit")) {
+            String fit = form.get("ambient_picture_fit");
             if (!ScreensaverPolicy.isFit(fit)) {
                 return "Not saved: the fit must be fit, fill, stretch or actual.";
             }
             editor.screensaverPictureFit(fit);
             changed = true;
         }
-        if (form.containsKey("screensaver_shuffle")) {
-            editor.screensaverShuffle(isTrue(form.get("screensaver_shuffle")));
+        if (form.containsKey("ambient_shuffle")) {
+            editor.screensaverShuffle(isTrue(form.get("ambient_shuffle")));
             changed = true;
         }
-        if (form.containsKey("screensaver_one_per_cycle")) {
-            editor.screensaverOnePerCycle(isTrue(form.get("screensaver_one_per_cycle")));
+        if (form.containsKey("ambient_one_per_cycle")) {
+            editor.screensaverOnePerCycle(isTrue(form.get("ambient_one_per_cycle")));
             changed = true;
         }
-        if (form.containsKey("screensaver_credit")) {
-            editor.screensaverCredit(isTrue(form.get("screensaver_credit")));
+        if (form.containsKey("ambient_credit")) {
+            editor.screensaverCredit(isTrue(form.get("ambient_credit")));
             changed = true;
         }
-        if (form.containsKey("screensaver_credit_corner")) {
-            String corner = form.get("screensaver_credit_corner");
+        if (form.containsKey("ambient_credit_corner")) {
+            String corner = form.get("ambient_credit_corner");
             if (!ScreensaverPolicy.isCorner(corner)) {
                 return "Not saved: the corner must be bottom_left, bottom_right, top_left or top_right.";
             }

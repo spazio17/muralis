@@ -235,8 +235,6 @@ public final class KioskActivity extends Activity {
     private java.util.List<PictureSources.Picture> pictureSet;
     private int pictureIndex;
     private int pictureCycles;
-    private long lastPictureRefreshCheckMs;
-    private String lastSeenPictureSource = "";
     private ScreensaverPolicy.Settings pictureSettings;
     private volatile int pictureGeneration;
     private final Runnable pictureAdvance = this::advancePicture;
@@ -2896,10 +2894,10 @@ public final class KioskActivity extends Activity {
         // now", is on its own page, reached by the button (Juri, 2026-09-09: the times were on
         // the card too and were the same boxes twice).
         LinearLayout screensaverCard = sectionBody(theme);
-        addSharedLine(screensaverCard, theme, "screensaver");
+        addSharedLine(screensaverCard, theme, "ambient");
         ScreensaverControls screensaverControls =
                 addScreensaverControls(screensaverCard, screensaverCard, null, theme, false);
-        Button screensaverMore = textButtonOnward(theme, "More screensaver settings");
+        Button screensaverMore = textButtonOnward(theme, "More Ambient settings");
         screensaverMore.setOnClickListener(view -> showScreensaverSettings());
         LinearLayout screensaverMoreRow = buttonRow(screensaverMore);
         screensaverCard.addView(screensaverMoreRow, matchWrap());
@@ -3303,7 +3301,7 @@ public final class KioskActivity extends Activity {
                 new Section(R.drawable.ic_escape, "Escape sequences", sequencesSummary(config),
                         escapeCard),
                 new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard),
-                new Section(R.drawable.ic_screensaver, "Screensaver", screensaverSummary(),
+                new Section(R.drawable.ic_screensaver, "Ambient", screensaverSummary(),
                         screensaverCard),
                 new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
                 new Section(R.drawable.ic_automations, "Automations", automationsSummary(),
@@ -4664,7 +4662,7 @@ public final class KioskActivity extends Activity {
             case "temperature": return R.drawable.ic_sensor_temperature;
             case "humidity": return R.drawable.ic_sensor_humidity;
             case "display": return R.drawable.ic_sensor_display;
-            case "screensaver": return R.drawable.ic_sensor_screensaver;
+            case "ambient": return R.drawable.ic_sensor_screensaver;
             case "battery": return R.drawable.ic_sensor_battery;
             case "power": return R.drawable.ic_sensor_power;
             case "network": return R.drawable.ic_sensor_network;
@@ -7253,7 +7251,7 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         // The title alone, as the web page has it: the subtitle and the paragraph that explained
         // the two timers went on 2026-09-19 at Juri's request, the panels say it themselves.
-        page.addView(pageHeading(theme, "Screensaver", null,
+        page.addView(pageHeading(theme, "Ambient", null,
                 this::showSettings), matchWrap());
 
         // The mode is chosen on the settings page, whose Screensaver section leads here, so this
@@ -7313,7 +7311,7 @@ public final class KioskActivity extends Activity {
         Button showNow = tonalButton(theme, "Preview");
         showNow.setOnClickListener(view -> {
             ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
-            String problem = !settings.enabled() ? "the screensaver mode is off"
+            String problem = !settings.enabled() ? "the Ambient mode is off"
                     : KioskConfig.kioskStopped(this) ? "the kiosk is stopped"
                     : ScreensaverPolicy.modeProblem(settings.mode, settings.url);
             if (problem != null) {
@@ -7369,11 +7367,8 @@ public final class KioskActivity extends Activity {
         TextView onWakeLabel;
         // The Pictures mode's controls, one group shown for that mode only.
         LinearLayout picturesGroup;
-        RadioGroup sourceInput;
-        TextView sourceState;
-        Button refreshButton;
-        /** The Create button and the playlist rows under it. */
-        LinearLayout playlistsGroup;
+        /** The playlist's sentence: how many pictures from which playlist, or what is wrong. */
+        TextView pictureState;
         /** The options panel's heading, which names the mode its fields belong to. */
         TextView optionsTitle;
         /** The whole options panel, hidden for Off: a screensaver that is off has no settings. */
@@ -7384,7 +7379,6 @@ public final class KioskActivity extends Activity {
         Runnable afterPlaylist;
         /** The settings section's way to the page, which Off has no page for. */
         View moreRow;
-        LinearLayout sourceButtons;
         EditText pictureSecondsInput;
         RadioGroup transitionInput;
         RadioGroup fitInput;
@@ -7442,8 +7436,6 @@ public final class KioskActivity extends Activity {
             }
             if (playlistCard != null) {
                 playlistCard.setVisibility(ScreensaverPolicy.PICTURES.equals(mode)
-                        && PictureSources.LOCAL.equals(
-                                KioskConfig.screensaverOf(KioskActivity.this).source)
                         ? View.VISIBLE : View.GONE);
             }
             if (afterPlaylist != null) {
@@ -7459,59 +7451,18 @@ public final class KioskActivity extends Activity {
             optionsTitle.setText(ScreensaverPolicy.optionsTitle(mode));
         }
 
-        /**
-         * The source decides the rest of the group: playlist access belongs to the local source,
-         * fetching to online sources, whose credit switch remains forced on.
-         */
-        void applySource(String source) {
-            if (picturesGroup == null) {
+        /** The playlist's sentence, read on the worker so storage never blocks the main thread. */
+        void paintPictureState() {
+            if (pictureState == null) {
                 return;
             }
-            boolean local = PictureSources.LOCAL.equals(source);
-            // The playlists belong to the local source; fetching belongs to the online ones.
-            // Nothing here opens a system picker on either device any more (2026-09-10).
-            if (playlistCard != null) {
-                // The panel belongs to this source only: there is nothing to browse when the
-                // pictures come from Bing, and an empty panel is worse than no panel.
-                playlistCard.setVisibility(local
-                        && ScreensaverPolicy.PICTURES.equals(KioskConfig.screensaverOf(
-                                KioskActivity.this).mode)
-                        ? View.VISIBLE : View.GONE);
-                if (afterPlaylist != null) {
-                    afterPlaylist.run();
-                }
-            }
-            if (playlistsGroup != null) {
-                playlistsGroup.setVisibility(View.VISIBLE);
-            }
-            // The row itself, not only the button in it: an empty row still spends its own 16 dp
-            // margin, and that margin plus the playlists' own is the gap Juri measured between
-            // the source sentence and Create (2026-09-10, B1).
-            refreshButton.setVisibility(local ? View.GONE : View.VISIBLE);
-            sourceButtons.setVisibility(local ? View.GONE : View.VISIBLE);
-            creditBox.setEnabled(local);
-            creditBox.setAlpha(local ? 1f : 0.45f);
-            if (!local) {
-                boolean wasSyncing = syncingLiveControls;
-                syncingLiveControls = true;
-                try {
-                    setCheckedIfChanged(creditBox, true);
-                } finally {
-                    syncingLiveControls = wasSyncing;
-                }
-            }
-            paintSourceState(source);
-        }
-
-        /** The source's sentence, read on the worker so storage never blocks the main thread. */
-        void paintSourceState(String source) {
             PictureLibrary library = PictureLibrary.get(KioskActivity.this);
-            TextView target = sourceState;
+            TextView target = pictureState;
             library.run(() -> {
-                String sentence = library.state(source);
-                // Red for a folder whose grant is gone as well as a failed fetch: the operator
-                // has to point at it again, which is the rule the brightness grant follows.
-                boolean bad = library.problem(source) != null;
+                String sentence = library.state();
+                // Red for a folder whose grant is gone: the operator has to point at it again,
+                // which is the rule the brightness grant follows.
+                boolean bad = library.problem() != null;
                 library.onMain(() -> {
                     if (target.isAttachedToWindow()) {
                         target.setText(sentence);
@@ -7537,15 +7488,14 @@ public final class KioskActivity extends Activity {
                     checkRadioIfChanged(onWakeInput, settings.onWake);
                 }
                 if (picturesGroup != null) {
-                    checkRadioIfChanged(sourceInput, settings.source);
                     followIfIdle(pictureSecondsInput, String.valueOf(settings.pictureSeconds));
                     checkRadioIfChanged(transitionInput, settings.transition);
                     checkRadioIfChanged(fitInput, settings.pictureFit);
                     setCheckedIfChanged(shuffleBox, settings.shuffle);
                     setCheckedIfChanged(onePerCycleBox, settings.onePerCycle);
-                    setCheckedIfChanged(creditBox, settings.creditShown());
+                    setCheckedIfChanged(creditBox, settings.credit);
                     checkRadioIfChanged(cornerInput, settings.creditCorner);
-                    applySource(settings.source);
+                    paintPictureState();
                 }
                 applyMode(settings.mode);
                 // The page has no chooser of its own since 2026-09-28: a mode picked on the
@@ -7610,9 +7560,9 @@ public final class KioskActivity extends Activity {
         TextView onWakeLabel = null;
         if (full) {
             idleInput = secondsInput(theme, settings.idleSeconds);
-            addField(options, theme, "Idle before the screensaver (seconds, 0 = off)", idleInput);
+            addField(options, theme, "Idle before Ambient (seconds, 0 = off)", idleInput);
             offInput = secondsInput(theme, settings.offSeconds);
-            addField(options, theme, "Screensaver before display off (seconds, 0 = never)",
+            addField(options, theme, "Ambient before display off (seconds, 0 = never)",
                     offInput);
             urlInput = themedInput(theme, settings.url, false);
             urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
@@ -7629,7 +7579,7 @@ public final class KioskActivity extends Activity {
             onWakeLabelParams.topMargin = dp(14);
             options.addView(onWakeLabel, onWakeLabelParams);
             onWakeInput = new RadioGroup(this);
-            radioChoice(theme, onWakeInput, "Show the screensaver first, a touch opens the page",
+            radioChoice(theme, onWakeInput, "Show Ambient first, a touch opens the page",
                     ScreensaverPolicy.WAKE_SCREENSAVER);
             radioChoice(theme, onWakeInput, "Show the page at once",
                     ScreensaverPolicy.WAKE_DASHBOARD);
@@ -7748,47 +7698,20 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Pictures mode's controls on the Screensaver page: the source with its sentence and its
-     * button (permission for the folder, fetch for the online sources), then how long each picture
-     * stays, how it changes, shuffle, one per cycle, and the credit line with its corner.
+     * The Pictures mode's controls on the Screensaver page: the playlist's sentence, then how long
+     * each picture stays, how it changes, shuffle, one per cycle, and the credit line with its
+     * corner.
      */
     private void addPicturesControls(LinearLayout group, LinearLayout playlistCard,
             KioskTheme theme, ScreensaverPolicy.Settings settings, ScreensaverControls controls) {
         controls.picturesGroup = group;
-        TextView sourceCaption = fieldCaption(theme, "Pictures from");
-        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        captionParams.topMargin = dp(14);
-        group.addView(sourceCaption, captionParams);
-        RadioGroup sourceInput = new RadioGroup(this);
-        radioChoice(theme, sourceInput, "This panel: uploads and folders of your own",
-                PictureSources.LOCAL);
-        radioChoice(theme, sourceInput, "Bing image of the day (unofficial, credited)",
-                PictureSources.BING);
-        radioChoice(theme, sourceInput, "Wikimedia Commons picture of the day (credited)",
-                PictureSources.WIKIMEDIA);
-        checkRadioIfChanged(sourceInput, settings.source);
-        group.addView(sourceInput, matchWrapClose());
-        controls.sourceInput = sourceInput;
-
-        TextView sourceState = new FlushText(this);
-        sourceState.setTextColor(theme.subtext);
-        sourceState.setTextSize(12);
+        TextView pictureState = new FlushText(this);
+        pictureState.setTextColor(theme.subtext);
+        pictureState.setTextSize(12);
         LinearLayout.LayoutParams stateParams = matchWrapClose();
-        stateParams.topMargin = dp(6);
-        group.addView(sourceState, stateParams);
-        controls.sourceState = sourceState;
-
-        Button refresh = secondaryButton(theme, "Fetch the pictures again");
-        refresh.setOnClickListener(view -> {
-            String source = KioskConfig.screensaverOf(this).source;
-            sourceState.setText("Fetching...");
-            PictureLibrary.get(this).refresh(source, () -> controls.paintSourceState(source));
-        });
-        controls.refreshButton = refresh;
-        LinearLayout sourceButtons = buttonRow(refresh);
-        controls.sourceButtons = sourceButtons;
-        group.addView(sourceButtons, matchWrap());
+        stateParams.topMargin = dp(14);
+        group.addView(pictureState, stateParams);
+        controls.pictureState = pictureState;
 
         // The playlists, under the button that makes one, which is how Juri asked for it on
         // 2026-09-10: "The button 'Choose pictures' must be renamed to 'Create playlist' and if
@@ -7799,7 +7722,6 @@ public final class KioskActivity extends Activity {
         // In the Playlist panel, not in this one, since 2026-09-11. On a card of its own they are
         // one subject rather than a list buried between the source and the time per picture.
         (playlistCard == null ? group : playlistCard).addView(playlists, matchWrapClose());
-        controls.playlistsGroup = playlists;
         addPlaylistRows(playlists, theme);
 
         EditText pictureSeconds = themedInput(theme, String.valueOf(settings.pictureSeconds), false);
@@ -7850,11 +7772,11 @@ public final class KioskActivity extends Activity {
         group.addView(shuffle, boxParams);
         controls.shuffleBox = shuffle;
         CompoundButton onePerCycle = themedSwitch(theme,
-                "One picture per screensaver", settings.onePerCycle);
+                "One picture per cycle", settings.onePerCycle);
         group.addView(onePerCycle, matchWrapClose());
         controls.onePerCycleBox = onePerCycle;
         CompoundButton credit = themedSwitch(theme,
-                "Show the title and credit line", settings.creditShown());
+                "Show the title and credit line", settings.credit);
         group.addView(credit, matchWrapClose());
         controls.creditBox = credit;
 
@@ -7872,18 +7794,6 @@ public final class KioskActivity extends Activity {
         group.addView(cornerInput, matchWrapClose());
         controls.cornerInput = cornerInput;
 
-        sourceInput.setOnCheckedChangeListener((radios, checkedId) -> {
-            View checked = radios.findViewById(checkedId);
-            if (checked == null || syncingLiveControls) {
-                return;
-            }
-            String source = (String) checked.getTag();
-            KioskConfig.edit(this).screensaverSource(source).apply();
-            KioskService.publishTelemetrySoon(this);
-            controls.applySource(source);
-            controls.paintSummary();
-            PictureLibrary.get(this).refreshIfStale(source, () -> controls.paintSourceState(source));
-        });
         onApply(pictureSeconds, () -> {
             Integer seconds = ScreensaverPolicy.parsePictureSeconds(pictureSeconds.getText().toString());
             if (seconds == null) {
@@ -7939,7 +7849,7 @@ public final class KioskActivity extends Activity {
             KioskConfig.edit(this).screensaverCreditCorner((String) checked.getTag()).apply();
             KioskService.publishTelemetrySoon(this);
         });
-        controls.applySource(settings.source);
+        controls.paintPictureState();
     }
 
     /**
@@ -8157,7 +8067,7 @@ public final class KioskActivity extends Activity {
     private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist, Runnable back) {
         confirmDelete(playlist.name,
                 playlist.active
-                        ? "It is the playlist in use, so the screensaver will have none until you "
+                        ? "It is the playlist in use, so Ambient will have none until you "
                                 + "choose another. The pictures themselves are not deleted."
                         : "The pictures themselves are not deleted.",
                 () -> {
@@ -9549,8 +9459,8 @@ public final class KioskActivity extends Activity {
                     // Every credit is off in the screensaver settings: the eye says so, crossed
                     // out and inert, and the picture's own choice waits underneath.
                     eye.setImageResource(R.drawable.ic_visibility_off);
-                    eye.setContentDescription("Credits are off in the screensaver settings");
-                    eye.setTooltipText("Credits are off in the screensaver settings");
+                    eye.setContentDescription("Credits are off in the Ambient settings");
+                    eye.setTooltipText("Credits are off in the Ambient settings");
                     eye.setEnabled(false);
                     eye.setAlpha(0.38f);
                     label.setText("Name for the credit");
@@ -9651,7 +9561,7 @@ public final class KioskActivity extends Activity {
         mark.setScaleType(ImageView.ScaleType.CENTER);
         mark.setMinimumWidth(dp(48));
         mark.setMinimumHeight(dp(48));
-        String says = "Shuffle is on, so the screensaver does not follow this order";
+        String says = "Shuffle is on, so Ambient does not follow this order";
         mark.setContentDescription(says);
         mark.setTooltipText(says);
         return mark;
@@ -13536,7 +13446,7 @@ public final class KioskActivity extends Activity {
                 }
                 break;
             }
-            case "screensaver.start": {
+            case "ambient.start": {
                 if (wizardVisible || recorderVisible) {
                     // The service refuses both; a broadcast that still arrives here is ignored
                     // rather than drawn over the wizard or a recording in progress.
@@ -13564,7 +13474,7 @@ public final class KioskActivity extends Activity {
                 startScreensaver(settings, "asked for");
                 break;
             }
-            case "screensaver.stop":
+            case "ambient.stop":
                 stopScreensaver("asked for");
                 break;
             case "display.orientation":
@@ -13653,16 +13563,6 @@ public final class KioskActivity extends Activity {
                 || launcherHandoff
                 || filmOn || asleep || !inFront || screensaverLayer == null;
         long now = android.os.SystemClock.uptimeMillis();
-        if (ScreensaverPolicy.PICTURES.equals(settings.mode)) {
-            // The online set is kept fresh while the panel sits on the page, so the screensaver
-            // never waits for the network when it starts; a changed source fetches at once.
-            boolean sourceChanged = !settings.source.equals(lastSeenPictureSource);
-            if (sourceChanged || now - lastPictureRefreshCheckMs > 60 * 60_000L) {
-                lastSeenPictureSource = settings.source;
-                lastPictureRefreshCheckMs = now;
-                PictureLibrary.get(this).refreshIfStale(settings.source, null);
-            }
-        }
         switch (ScreensaverPolicy.next(settings, screensaverStage, blocked, screensaverSinceMs,
                 now)) {
             case START:
@@ -13673,7 +13573,7 @@ public final class KioskActivity extends Activity {
                 // Set here, before the service answers with display.visual_off, so the next tick
                 // does not ask twice; the answer sets it again and settles sleep or film.
                 screensaverStage = ScreensaverPolicy.Stage.DARK;
-                Log.i(TAG, "Screensaver showing for "
+                Log.i(TAG, "Ambient showing for "
                         + ScreensaverPolicy.describeDuration(settings.offSeconds)
                         + ", asking for display off");
                 KioskService.displayOff(this);
@@ -13727,7 +13627,7 @@ public final class KioskActivity extends Activity {
             screensaverShowing = settings.mode;
             screensaverShowingDetail = screensaverDetailOf(settings);
             KioskConfig.recordScreensaverBootCount(this, currentBootCount());
-            Log.i(TAG, "Screensaver on: " + settings.mode + " (" + reason + ")");
+            Log.i(TAG, "Ambient on: " + settings.mode + " (" + reason + ")");
         }
         screensaverStage = ScreensaverPolicy.Stage.SCREENSAVER;
         // display.wake clears the window override before it reaches here. Reapply even when
@@ -13760,9 +13660,9 @@ public final class KioskActivity extends Activity {
             case ScreensaverPolicy.DIM:
                 return String.valueOf(settings.dimPercent);
             case ScreensaverPolicy.PICTURES:
-                return settings.source + "|" + settings.pictureSeconds + "|" + settings.transition
+                return settings.pictureSeconds + "|" + settings.transition
                         + "|" + settings.shuffle + "|" + settings.onePerCycle + "|"
-                        + settings.creditShown() + "|" + settings.creditCorner + "|"
+                        + settings.credit + "|" + settings.creditCorner + "|"
                         + PictureLibrary.get(this).revision();
             default:
                 return "";
@@ -13811,7 +13711,7 @@ public final class KioskActivity extends Activity {
         screensaverStage = ScreensaverPolicy.Stage.DASHBOARD;
         screensaverSinceMs = android.os.SystemClock.uptimeMillis();
         if (shown) {
-            Log.i(TAG, "Screensaver off (" + reason + ")");
+            Log.i(TAG, "Ambient off (" + reason + ")");
             KioskService.publishTelemetrySoon(this);
         }
     }
@@ -13900,7 +13800,7 @@ public final class KioskActivity extends Activity {
                     ((ViewGroup) view.getParent()).removeView(view);
                 }
                 view.destroy();
-                stopScreensaver("screensaver renderer ended");
+                stopScreensaver("Ambient renderer ended");
                 return true;
             }
             @Override
@@ -13909,7 +13809,7 @@ public final class KioskActivity extends Activity {
                 if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
                     return false;
                 }
-                Log.w(TAG, "Blocked screensaver navigation to a non-web scheme: " + scheme);
+                Log.w(TAG, "Blocked Ambient navigation to a non-web scheme: " + scheme);
                 return true;
             }
         });
@@ -13920,7 +13820,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Pictures mode: a frame in the layer, the source's current set, one picture at a time.
+     * The Pictures mode: a frame in the layer, the playlist in use, one picture at a time.
      * The set is read and every picture decoded on {@link PictureLibrary}'s worker, and each
      * result is checked against the frame it was meant for, so a screensaver that ended while a
      * decode was in flight gets nothing drawn over the page.
@@ -13932,15 +13832,6 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         screensaverLayer.setVisibility(View.VISIBLE);
         pictureCycles++;
-        PictureLibrary library = PictureLibrary.get(this);
-        PictureFrame frame = pictureFrame;
-        // A stale online set is refreshed in the background; when the fetch lands and nothing
-        // could be shown so far (a first start with no cache), the new set is loaded.
-        library.refreshIfStale(settings.source, () -> {
-            if (pictureFrame == frame && (pictureSet == null || pictureSet.isEmpty())) {
-                loadPictureSet(settings);
-            }
-        });
     }
 
     private void loadPictureSet(ScreensaverPolicy.Settings settings) {
@@ -13949,11 +13840,11 @@ public final class KioskActivity extends Activity {
         int generation = ++pictureGeneration;
         library.run(() -> {
             if (pictureGeneration != generation) return;
-            java.util.List<PictureSources.Picture> set = library.catalog(settings.source);
+            java.util.List<PictureSources.Picture> set = library.catalog();
             if (settings.shuffle) {
                 java.util.Collections.shuffle(set);
             }
-            String empty = set.isEmpty() ? library.state(settings.source) : null;
+            String empty = set.isEmpty() ? library.state() : null;
             library.onMain(() -> {
                 if (pictureFrame != frame || pictureGeneration != generation) {
                     return;
@@ -13984,7 +13875,7 @@ public final class KioskActivity extends Activity {
         android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
         library.run(() -> {
             if (pictureGeneration != generation) return;
-            android.graphics.Bitmap bitmap = library.decode(settings.source, picture,
+            android.graphics.Bitmap bitmap = library.decode(picture,
                     metrics.widthPixels, metrics.heightPixels);
             library.onMain(() -> {
                 if (pictureFrame != frame || pictureSet != set || pictureGeneration != generation) {
@@ -14042,30 +13933,19 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Title and credit as the source demands them, or null for a local picture whose owner has
-     * switched the line off, for every picture or for this one. The online sources' lines are
-     * never switched off: they are the attribution their licences require.
+     * The picture's title, or its credit when it has no title, or null when its owner switched
+     * the line off, for every picture or for this one.
      */
     private static String creditLineFor(PictureSources.Picture picture,
             ScreensaverPolicy.Settings settings) {
-        if (!settings.creditShown()) {
+        if (!settings.credit) {
             return null;
         }
-        if (PictureSources.LOCAL.equals(settings.source)) {
-            // One picture's line switched off on the playlist page; the rest keep theirs.
-            if (picture.creditHidden) {
-                return null;
-            }
-            return picture.title.isEmpty() ? picture.credit : picture.title;
+        // One picture's line switched off on the playlist page; the rest keep theirs.
+        if (picture.creditHidden) {
+            return null;
         }
-        // The title and the names, never the addresses. A wall panel is read from across a room
-        // and nobody types a licence URL off one, so a line of link text costs the readability of
-        // the credit that has to be read and buys nothing (2026-09-10). The source page URL is
-        // kept in the picture and in the cache manifest, just not on the glass.
-        if (picture.title.isEmpty()) {
-            return picture.credit;
-        }
-        return picture.title + "\n" + picture.credit;
+        return picture.title.isEmpty() ? picture.credit : picture.title;
     }
 
     /**
@@ -14371,10 +14251,8 @@ public final class KioskActivity extends Activity {
         String what = ScreensaverPolicy.modeName(settings.mode);
         if (ScreensaverPolicy.DIM.equals(settings.mode)) {
             what += " at " + settings.dimPercent + " %";
-        } else if (ScreensaverPolicy.PICTURES.equals(settings.mode)) {
-            what += " from " + PictureSources.sourceName(settings.source);
         }
-        screensaverPreviewCaption.setText("Screensaver preview: " + what
+        screensaverPreviewCaption.setText("Ambient preview: " + what
                 + ". Tap anywhere to go back to the settings.");
         screensaverPreviewCaption.setVisibility(View.VISIBLE);
     }

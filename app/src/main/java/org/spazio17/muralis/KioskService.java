@@ -1398,7 +1398,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // whether the surface is allowed to exist; the port and addresses stay admin-only.
             applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
-            stats.put("screensaver", screensaverSnapshot(includeAdminDetail));
+            stats.put("ambient", screensaverSnapshot(includeAdminDetail));
             // The sensors the person switched on, with their readings; see Sensors. The block
             // is kept where the panel's rows and discovery can read it without the service.
             publishSensorBlock();
@@ -1481,7 +1481,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // switch fell into in 2026-08. It is an address on the operator's own network, the
             // same class of value as the dashboard URL, which is shared for the same reason.
             saver.put("url", settings.url);
-            saver.put("source", settings.source);
             saver.put("picture_s", settings.pictureSeconds);
             saver.put("transition", settings.transition);
             saver.put("picture_fit", settings.pictureFit);
@@ -1489,13 +1488,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
             saver.put("one_per_cycle", settings.onePerCycle);
             saver.put("credit", settings.credit);
             saver.put("credit_corner", settings.creditCorner);
-            // The source's own sentence and the picture on the glass, so the web admin and a
-            // Home Assistant card can say "Pictures from Bing, 7 pictures" and name what is up.
+            // The playlist's own sentence and the picture on the glass, so the web admin and a
+            // Home Assistant card can say "7 pictures from Kitchen" and name what is up.
             PictureLibrary library = PictureLibrary.get(this);
-            saver.put("source_state", library.state(settings.source));
-            String sourceProblem = library.problem(settings.source);
-            saver.put("source_problem",
-                    sourceProblem == null ? org.json.JSONObject.NULL : sourceProblem);
+            saver.put("pictures_state", library.state());
+            String picturesProblem = library.problem();
+            saver.put("pictures_problem",
+                    picturesProblem == null ? org.json.JSONObject.NULL : picturesProblem);
             // What replaced the folder-grant fields when the SAF path went (2026-09-10): whether
             // this panel may read its own pictures at all, and which playlist is playing.
             saver.put("pictures_readable", library.browsesOwnStorage());
@@ -1583,7 +1582,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 // other dark state and reads zero like a sleeping screen, not the 1% its window
                 // override happens to be.
                 boolean saver = KioskRuntimeState.screensaverActive();
-                source = saver ? "screensaver" : "display_off";
+                source = saver ? "ambient" : "display_off";
                 percent = saver ? override : 0;
             } else {
                 source = auto ? "auto" : "manual";
@@ -2326,7 +2325,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     public String screensaverStart() {
         ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
         if (!settings.enabled()) {
-            return "the screensaver mode is off";
+            return "the Ambient mode is off";
         }
         String problem = ScreensaverPolicy.modeProblem(settings.mode, settings.url);
         if (problem != null) {
@@ -2357,13 +2356,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!screenOn || (visualOffBoot >= 0 && visualOffBoot == bootCount(this))) {
             return "the display is off; Display on first";
         }
-        sendUiCommand("screensaver.start", -1, null);
+        sendUiCommand("ambient.start", -1, null);
         return null;
     }
 
     @Override
     public void screensaverStop() {
-        sendUiCommand("screensaver.stop", -1, null);
+        sendUiCommand("ambient.stop", -1, null);
     }
 
     /**
@@ -2474,7 +2473,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             case "display_on": displayWake(); break;
             case "display_off": displayVisualOff(); break;
             case "dashboard": showMainDashboard(); break;
-            case "screensaver": problem = screensaverStart(); break;
+            case "ambient": problem = screensaverStart(); break;
             case "play_sound": problem = playAudio(rule.argument); break;
             case "say": problem = say(rule.argument); break;
             case "reload": kioskReload(); break;
@@ -3413,9 +3412,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         switch (setting) {
             case MODE:
                 editor.screensaverMode(value);
-                break;
-            case SOURCE:
-                editor.screensaverSource(value);
                 break;
             case IDLE_SECONDS:
                 editor.screensaverIdleSeconds(Integer.parseInt(value));

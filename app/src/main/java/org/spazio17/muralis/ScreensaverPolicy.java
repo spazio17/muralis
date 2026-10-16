@@ -65,7 +65,7 @@ final class ScreensaverPolicy {
     static final String CORNER_TOP_RIGHT = "top_right";
 
     /** After a wake from display off, the screensaver first: a glance, then a touch for the page. */
-    static final String WAKE_SCREENSAVER = "screensaver";
+    static final String WAKE_SCREENSAVER = "ambient";
     /** After a wake from display off, straight to the page. */
     static final String WAKE_DASHBOARD = "dashboard";
 
@@ -96,14 +96,13 @@ final class ScreensaverPolicy {
         final String url;
         final int dimPercent;
         final String onWake;
-        /** The pictures mode: where from, how long each, how they change, in what order. */
-        final String source;
+        /** The pictures mode: how long each, how they change, in what order. */
         final int pictureSeconds;
         final String transition;
         final boolean shuffle;
         /** One picture per screensaver: chosen at the start, kept until the page returns. */
         final boolean onePerCycle;
-        /** The credit line; only the local folder may switch it off, the sources require it. */
+        /** The credit line under a picture. */
         final boolean credit;
         final String creditCorner;
         /** How a picture is laid on the glass: {@link #FIT_WHOLE} and the three beside it. */
@@ -111,13 +110,13 @@ final class ScreensaverPolicy {
 
         Settings(String mode, int idleSeconds, int offSeconds, String url, int dimPercent,
                 String onWake) {
-            this(mode, idleSeconds, offSeconds, url, dimPercent, onWake, PictureSources.LOCAL,
+            this(mode, idleSeconds, offSeconds, url, dimPercent, onWake,
                     DEFAULT_PICTURE_SECONDS, TRANSITION_FADE, false, false, true,
                     CORNER_BOTTOM_LEFT, FIT_WHOLE);
         }
 
         Settings(String mode, int idleSeconds, int offSeconds, String url, int dimPercent,
-                String onWake, String source, int pictureSeconds, String transition,
+                String onWake, int pictureSeconds, String transition,
                 boolean shuffle, boolean onePerCycle, boolean credit, String creditCorner,
                 String pictureFit) {
             this.mode = mode;
@@ -126,7 +125,6 @@ final class ScreensaverPolicy {
             this.url = url == null ? "" : url;
             this.dimPercent = dimPercent;
             this.onWake = onWake;
-            this.source = source;
             this.pictureSeconds = pictureSeconds;
             this.transition = transition;
             this.shuffle = shuffle;
@@ -134,11 +132,6 @@ final class ScreensaverPolicy {
             this.credit = credit;
             this.creditCorner = creditCorner;
             this.pictureFit = pictureFit;
-        }
-
-        /** The credit line as shown: the online sources require it whatever the switch says. */
-        boolean creditShown() {
-            return credit || !PictureSources.LOCAL.equals(source);
         }
 
         boolean enabled() {
@@ -216,7 +209,7 @@ final class ScreensaverPolicy {
      */
     static String modeProblem(String mode, String url) {
         if (URL.equals(mode) && (url == null || url.trim().isEmpty())) {
-            return "the web-page screensaver needs a page address";
+            return "the web page mode needs a page address";
         }
         return null;
     }
@@ -321,16 +314,13 @@ final class ScreensaverPolicy {
      */
     static String describe(Settings settings, boolean active) {
         if (!settings.enabled()) {
-            return "Screensaver off.";
+            return "Ambient off.";
         }
         String problem = modeProblem(settings.mode, settings.url);
         if (problem != null) {
             return modeName(settings.mode) + ": " + problem + ".";
         }
         StringBuilder text = new StringBuilder(modeName(settings.mode));
-        if (PICTURES.equals(settings.mode)) {
-            text.append(" from ").append(PictureSources.sourceName(settings.source));
-        }
         if (settings.idleSeconds > 0) {
             text.append(" after ").append(describeDuration(settings.idleSeconds))
                     .append(" without a touch");

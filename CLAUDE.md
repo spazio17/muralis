@@ -29,9 +29,9 @@ on purpose.
   and restarts itself (or rebuilds its browser engine) once at night. None of this has a setting
   to switch it off.
 - **Display.** Display off (a real sleep where the device can be trusted, a black overlay
-  otherwise), brightness, orientation, and an optional screensaver: a dimmed page, black, another
-  web page, the panel's own pictures from named playlists, or a picture of the day from two public
-  sources, then display off after a second delay.
+  otherwise), brightness, orientation, and Ambient, the optional screen while nobody uses the
+  panel: a dimmed page, black, another web page, or the panel's own pictures from named
+  playlists, then display off after a second delay.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
   uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery. The
   panel and the web admin offer the same settings and show the same thing, except what needs a
@@ -50,7 +50,7 @@ on purpose.
   panel by reading that code with its camera; every member holds the fleet's signed list of
   panels, the members tell each other every few minutes that they are there and which
   version they hold, so one that fell behind fetches the list, and sections of settings (the
-  dashboard, MQTT, the web admin, the display, the screensaver) can be shared in a group of
+  dashboard, MQTT, the web admin, the display, Ambient) can be shared in a group of
   panels or with the whole fleet: groups are sets of panels with the same job, made with a name
   the person gives; a panel ticks the groups it belongs to and may stop following what the whole
   fleet shares; a shared section is applied on every panel of its scope, a group winning over
@@ -81,7 +81,7 @@ on purpose.
   remote surfaces, telemetry, sensors and the supervision that brings the dashboard back if it
   disappears. `MuralisApplication` starts the service on a device-owner install whatever started
   the process.
-- **Decisions in pure classes.** Recovery, restart scheduling, display off, the screensaver clock,
+- **Decisions in pure classes.** Recovery, restart scheduling, display off, the Ambient clock,
   escape sequences, the provisioning check and similar decisions live in classes with no Android
   imports (`RecoveryPolicy`, `RecyclePolicy`, `RelaunchPolicy`, `DisplayOffPolicy`,
   `ScreensaverPolicy`, `EscapeSequence`, `Provisioning` and others), covered by host tests that run

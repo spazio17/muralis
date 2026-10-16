@@ -6,7 +6,6 @@ package org.spazio17.muralis;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
@@ -25,47 +24,32 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.text.DateFormat;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import org.spazio17.muralis.PictureSources.Picture;
 
 /**
- * The Pictures screensaver's pictures: where they are kept, how the online sets are fetched and
- * how each one is decoded for the screen.
+ * Ambient's pictures: where they are kept and how each one is decoded for the screen.
  *
  * <p>Local pictures are the panel's own, read through MediaStore under the read permission (a
  * device owner grants it to itself, an ordinary install asks once), plus the private upload
  * store; they are picked one by one into
  * named playlists inside Muralis, on every device, and the system's picker is not used.
  *
- * <p><b>The online sets</b> (Bing, Wikimedia Commons) are the last {@link PictureSources#ONLINE_DAYS}
- * days' pictures, downloaded into the app's cache with a manifest of their credits, so the
- * screensaver never depends on the network at the moment it starts: a source that cannot be
- * reached shows the last set and says so on the settings page, never a blank screen. A set counts
- * as fresh for {@link #FRESH_MS}; the activity asks for a refresh when the screensaver starts and
- * once an hour while it sits on the dashboard.
- *
- * <p>Network refresh has its own worker, separate from disk/decode work. UI callbacks return to
- * the main thread; the web admin also accesses the library from its request workers. One instance
- * per process. Provider availability is not guaranteed by a persisted grant.
+ * <p>Disk and decode work runs on one worker. UI callbacks return to the main thread; the web
+ * admin also accesses the library from its request workers. One instance per process. Provider
+ * availability is not guaranteed by a persisted grant.
  */
 final class PictureLibrary {
     private static final String TAG = "MuralisPictures";
@@ -79,31 +63,16 @@ final class PictureLibrary {
     private static final String CAPTIONS_KEY_VERSION = "captions_key_version";
     /** 1 moved names onto URIs; 2 also dropped the names nothing had claimed (2026-09-10). */
     private static final int CAPTIONS_KEY_TARGET = 2;
-    /**
-     * The shape of a cached credit. A manifest stores the composed credit line, so a change to
-     * what that line contains has to invalidate every manifest written by an older build, or a
-     * panel keeps showing yesterday's wording from its cache. 2 added the supplied notices;
-     * 3 dropped the licence and source addresses from the line (2026-09-10).
-     */
-    private static final int ATTRIBUTION_VERSION = 3;
-    private static final long FRESH_MS = 20L * 60 * 60 * 1000;
-    private static final int TIMEOUT_MS = 15_000;
-    /** A rendition at 1920 px is a few megabytes; anything past this is not a wallpaper. */
-    private static final int MAX_DOWNLOAD_BYTES = 12 * 1024 * 1024;
-    private static final int PICTURE_WIDTH = 1920;
 
     private static volatile PictureLibrary instance;
 
     private final Context app;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    // Network stalls must not queue the cached slideshow behind fourteen HTTP timeouts.
-    private final ExecutorService downloads = Executors.newSingleThreadExecutor();
     private final java.util.concurrent.ScheduledExecutorService deadlines =
             Executors.newSingleThreadScheduledExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Map<String, String> problems = new ConcurrentHashMap<>();
-    /** Source to the callbacks waiting on the fetch in flight for it; empty list means idle. */
-    private final Map<String, List<Runnable>> refreshing = new java.util.HashMap<>();
+    /** A picture of the playlist that could not be read, said until one reads again. */
+    private volatile String unreadable;
     /** The folder's last count and when it was taken: /api/stats polls the sentence every 5 s. */
     private volatile int localCount = -1;
     private volatile long localCountAtMs;
@@ -117,6 +86,7 @@ final class PictureLibrary {
         browser = new PictureBrowser(app);
         playlists = new PicturePlaylists(app);
         run(this::ensurePlaylist);
+        run(this::dropOldDownloads);
     }
 
     static PictureLibrary get(Context context) {
@@ -149,164 +119,29 @@ final class PictureLibrary {
 
     // ------------------------------------------------------------------ the catalogue
 
-    /** The pictures a source has right now, in order: the folder's files or the cached set. */
-    List<Picture> catalog(String source) {
-        if (PictureSources.LOCAL.equals(source)) {
-            return listLocal();
-        }
-        return readManifest(source);
+    /** The pictures of the playlist in use, in order. */
+    List<Picture> catalog() {
+        return listLocal();
     }
 
     /**
-     * Refreshes an online set when it is missing or older than {@link #FRESH_MS}, once at a
-     * time; {@code onDone} runs on the main thread after a fetch, and not at all when nothing was
-     * fetched, so a caller that only wants "tell me when the pictures changed" can pass its redraw.
+     * The one sentence the settings page and the status document show: how many pictures, from
+     * which playlist, and what is wrong if anything is.
      */
-    void refreshIfStale(String source, Runnable onDone) {
-        if (PictureSources.LOCAL.equals(source)) {
-            return;
+    String state() {
+        int count = localCount();
+        String issue = problem();
+        PlaylistDocument.Playlist active = playlists.load().active();
+        if (active == null) {
+            // Not an error and not an empty playlist: no playlist has been chosen, which is
+            // the state a fresh panel and a panel whose active playlist was just deleted are
+            // both in, and which Ambient must be able to say rather than going black.
+            return "No playlist is in use." + (issue == null ? "" : " " + issue);
         }
-        long age = System.currentTimeMillis() - fetchedAt(source);
-        if (age >= 0 && age < FRESH_MS && !catalog(source).isEmpty()) {
-            return;
-        }
-        refresh(source, onDone);
-    }
-
-    /**
-     * Fetches an online set now, whatever its age. One fetch per source at a time; a caller that
-     * arrives while one is running waits for it rather than losing its callback, which used to
-     * leave the first screensaver of a fresh panel on "fetching" for its whole run
-     * (2026-09-09 review).
-     */
-    void refresh(String source, Runnable onDone) {
-        if (PictureSources.LOCAL.equals(source)) {
-            return;
-        }
-        synchronized (refreshing) {
-            List<Runnable> waiting = refreshing.get(source);
-            if (waiting != null) {
-                if (onDone != null) {
-                    waiting.add(onDone);
-                }
-                return;
-            }
-            waiting = new ArrayList<>();
-            if (onDone != null) {
-                waiting.add(onDone);
-            }
-            refreshing.put(source, waiting);
-        }
-        downloads.execute(() -> {
-            try {
-                List<Picture> pictures = PictureSources.BING.equals(source)
-                        ? fetchBing() : fetchWikimedia();
-                if (pictures.isEmpty()) {
-                    throw new IOException("the service listed no pictures");
-                }
-                File dir = cacheDir(source);
-                if (!dir.isDirectory() && !dir.mkdirs()) {
-                    throw new IOException("cannot create the picture cache");
-                }
-                List<Picture> kept = new ArrayList<>();
-                Set<String> wanted = new HashSet<>();
-                for (Picture picture : pictures) {
-                    File file = cacheFile(source, picture.url);
-                    if (!file.isFile() || file.length() == 0) {
-                        try {
-                            download(picture.url, file);
-                        } catch (IOException one) {
-                            Log.w(TAG, source + ": could not fetch " + picture.url, one);
-                            continue;
-                        }
-                    }
-                    kept.add(picture);
-                    wanted.add(file.getName());
-                }
-                if (kept.isEmpty()) {
-                    throw new IOException("no picture could be downloaded");
-                }
-                writeManifest(source, kept);
-                File[] files = dir.listFiles();
-                if (files != null) {
-                    for (File file : files) {
-                        if (!wanted.contains(file.getName()) && !"manifest.json".equals(file.getName())
-                                && !file.delete()) {
-                            Log.w(TAG, "Could not remove a stale picture: " + file.getName());
-                        }
-                    }
-                }
-                problems.remove(source);
-                revision.incrementAndGet();
-                Log.i(TAG, source + ": " + kept.size() + " picture(s) fetched");
-            } catch (Throwable problem) {
-                // Throwable, not Exception: a hostile or broken answer must never be worse than
-                // a failed fetch, and this runs on the library's only worker thread, where an
-                // Error would reach Android's uncaught handler and end the process
-                // (2026-09-09 review; TinyJson also caps its nesting now).
-                String why = problem.getMessage() == null
-                        ? problem.getClass().getSimpleName() : problem.getMessage();
-                problems.put(source, why);
-                Log.w(TAG, source + ": refresh failed: " + why);
-            } finally {
-                List<Runnable> waiting;
-                synchronized (refreshing) {
-                    waiting = refreshing.remove(source);
-                }
-                KioskService.publishTelemetrySoon(app);
-                if (waiting != null) {
-                    for (Runnable callback : waiting) {
-                        main.post(callback);
-                    }
-                }
-            }
-        });
-    }
-
-    /**
-     * The one sentence the settings page and the status document show for a source: how many
-     * pictures, from where, and what is wrong if anything is.
-     */
-    String state(String source) {
-        if (PictureSources.LOCAL.equals(source)) {
-            int count = localCount();
-            String issue = problem(source);
-            PlaylistDocument.Playlist active = playlists.load().active();
-            if (active == null) {
-                // Not an error and not an empty playlist: no playlist has been chosen, which is
-                // the state a fresh panel and a panel whose active playlist was just deleted are
-                // both in, and which the screensaver must be able to say rather than going black.
-                return "No playlist is in use." + (issue == null ? "" : " " + issue);
-            }
-            return (count < 0 ? "Reading the playlist"
-                    : count + (count == 1 ? " picture" : " pictures"))
-                    + " from " + active.name + "."
-                    + (issue == null ? "" : " " + issue);
-        }
-        return onlineState(source);
-    }
-
-    private String onlineState(String source) {
-        /* Online state uses only the small cache manifest, never a document-provider query. */
-        int count = catalog(source).size();
-        String name = PictureSources.sourceName(source);
-        String problem = problems.get(source);
-        long fetched = fetchedAt(source);
-        StringBuilder sentence = new StringBuilder();
-        if (count == 0) {
-            sentence.append("No pictures from ").append(name).append(" yet");
-            sentence.append(problem == null ? ", fetching." : ": " + problem + ".");
-            return sentence.toString();
-        }
-        sentence.append(count).append(count == 1 ? " picture" : " pictures").append(" from ")
-                .append(name).append(", fetched ")
-                .append(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-                        .format(new Date(fetched))).append(".");
-        if (problem != null) {
-            sentence.append(" The last refresh failed (").append(problem)
-                    .append("); showing the last set.");
-        }
-        return sentence.toString();
+        return (count < 0 ? "Reading the playlist"
+                : count + (count == 1 ? " picture" : " pictures"))
+                + " from " + active.name + "."
+                + (issue == null ? "" : " " + issue);
     }
 
     /**
@@ -339,148 +174,25 @@ final class PictureLibrary {
 
     long revision() { return revision.get(); }
 
-    /** A source's last problem, or null; the status document carries it beside the sentence. */
-    String problem(String source) {
-        if (PictureSources.LOCAL.equals(source)) {
-            String stored = playlists.problem();
-            if (stored != null) {
-                return stored;
-            }
-            String migration = playlists.migrationNote();
-            if (migration != null) {
-                return migration;
-            }
-            String dropped = deletedNote();
-            if (dropped != null) {
-                return dropped;
-            }
-            String browsing = browser.problem();
-            if (browsing != null) {
-                return browsing;
-            }
+    /** The pictures' last problem, or null; the status document carries it beside the sentence. */
+    String problem() {
+        String stored = playlists.problem();
+        if (stored != null) {
+            return stored;
         }
-        return problems.get(source);
-    }
-
-    // ------------------------------------------------------------------ online sources
-
-    private List<Picture> fetchBing() throws IOException {
-        Locale locale = Locale.getDefault();
-        String market = PictureSources.bingMarket(locale.getLanguage(), locale.getCountry());
-        return PictureSources.parseBing(fetchText(PictureSources.bingArchiveUrl(market)));
-    }
-
-    private List<Picture> fetchWikimedia() throws IOException {
-        List<String> dates = new ArrayList<>();
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        for (int back = 0; back < PictureSources.ONLINE_DAYS; back++) {
-            dates.add(today.minusDays(back).toString());
+        String migration = playlists.migrationNote();
+        if (migration != null) {
+            return migration;
         }
-        List<String> titles = PictureSources.parseWikimediaFileTitles(
-                fetchText(PictureSources.wikimediaPotdUrl(dates)));
-        if (titles.isEmpty()) {
-            return new ArrayList<>();
+        String dropped = deletedNote();
+        if (dropped != null) {
+            return dropped;
         }
-        return PictureSources.parseWikimediaImageInfo(
-                fetchText(PictureSources.wikimediaImageInfoUrl(titles, PICTURE_WIDTH)));
-    }
-
-    private String fetchText(String url) throws IOException {
-        HttpURLConnection connection = open(url);
-        java.util.concurrent.ScheduledFuture<?> deadline = deadline(connection);
-        try {
-            int status = connection.getResponseCode();
-            if (status != HttpURLConnection.HTTP_OK) {
-                throw new IOException("HTTP " + status + " from " + connection.getURL().getHost());
-            }
-            try (InputStream in = connection.getInputStream()) {
-                return new String(readAll(in, 4 * 1024 * 1024), StandardCharsets.UTF_8);
-            }
-        } finally {
-            deadline.cancel(false);
-            connection.disconnect();
+        String browsing = browser.problem();
+        if (browsing != null) {
+            return browsing;
         }
-    }
-
-    private void download(String url, File target) throws IOException {
-        HttpURLConnection connection = open(url);
-        java.util.concurrent.ScheduledFuture<?> deadline = deadline(connection);
-        try {
-            int status = connection.getResponseCode();
-            if (status != HttpURLConnection.HTTP_OK) {
-                throw new IOException("HTTP " + status);
-            }
-            File partial = new File(target.getPath() + ".part");
-            try (InputStream in = connection.getInputStream();
-                    OutputStream out = new FileOutputStream(partial)) {
-                byte[] buffer = new byte[64 * 1024];
-                long total = 0;
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    total += read;
-                    if (total > MAX_DOWNLOAD_BYTES) {
-                        throw new IOException("picture larger than " + MAX_DOWNLOAD_BYTES + " bytes");
-                    }
-                    out.write(buffer, 0, read);
-                }
-            } catch (IOException failed) {
-                if (!partial.delete()) {
-                    Log.w(TAG, "Could not remove a partial download: " + partial.getName());
-                }
-                throw failed;
-            }
-            if (!partial.renameTo(target)) {
-                throw new IOException("cannot store the picture");
-            }
-        } finally {
-            deadline.cancel(false);
-            connection.disconnect();
-        }
-    }
-
-    /**
-     * Both services ask that clients identify themselves (Wikimedia's User-Agent policy refuses
-     * the default Java agent outright), so every request names Muralis and where to find it.
-     */
-    private HttpURLConnection open(String url) throws IOException {
-        for (int hop = 0; hop <= 3; hop++) {
-            if (!PictureSources.allowedUrl(url)) throw new IOException("untrusted picture URL");
-            HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-            connection.setConnectTimeout(TIMEOUT_MS);
-            connection.setReadTimeout(TIMEOUT_MS);
-            connection.setInstanceFollowRedirects(false);
-            connection.setRequestProperty("User-Agent", "Muralis/" + appVersion()
-                    + " (https://muralis.spazio17.org; screensaver)");
-            connection.setRequestProperty("Accept", "application/json, image/*;q=0.9, */*;q=0.5");
-            java.util.concurrent.ScheduledFuture<?> timeout = deadline(connection);
-            try {
-                int status = connection.getResponseCode();
-                if (status != 301 && status != 302 && status != 303 && status != 307
-                        && status != 308) return connection;
-                String location = connection.getHeaderField("Location");
-                if (location == null) throw new IOException("redirect without a location");
-                url = new URL(new URL(url), location).toString();
-            } catch (IOException failed) {
-                connection.disconnect();
-                throw failed;
-            } finally {
-                timeout.cancel(false);
-            }
-            connection.disconnect();
-        }
-        throw new IOException("too many picture redirects");
-    }
-
-    private java.util.concurrent.ScheduledFuture<?> deadline(HttpURLConnection connection) {
-        return deadlines.schedule(connection::disconnect, 30, java.util.concurrent.TimeUnit.SECONDS);
-    }
-
-    private String appVersion() {
-        try {
-            return app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName;
-        } catch (PackageManager.NameNotFoundException impossible) {
-            return "0";
-        }
+        return unreadable;
     }
 
     private static byte[] readAll(InputStream in, int max) throws IOException {
@@ -494,83 +206,6 @@ final class PictureLibrary {
             out.write(buffer, 0, read);
         }
         return out.toByteArray();
-    }
-
-    // ------------------------------------------------------------------ the cache
-
-    private File cacheDir(String source) {
-        return new File(new File(app.getCacheDir(), "screensaver"), source);
-    }
-
-    private File cacheFile(String source, String url) {
-        return new File(cacheDir(source), sha1(url) + ".img");
-    }
-
-    private long fetchedAt(String source) {
-        File manifest = new File(cacheDir(source), "manifest.json");
-        if (!manifest.isFile()) {
-            return -1;
-        }
-        try {
-            return new JSONObject(readText(manifest)).optLong("fetched_ms", -1);
-        } catch (IOException | JSONException unreadable) {
-            return -1;
-        }
-    }
-
-    private List<Picture> readManifest(String source) {
-        List<Picture> pictures = new ArrayList<>();
-        File manifest = new File(cacheDir(source), "manifest.json");
-        if (!manifest.isFile()) {
-            return pictures;
-        }
-        try {
-            JSONObject document = new JSONObject(readText(manifest));
-            if (PictureSources.WIKIMEDIA.equals(source)
-                    && document.optInt("attribution_version") < ATTRIBUTION_VERSION) {
-                return pictures;
-            }
-            JSONArray entries = document.optJSONArray("pictures");
-            for (int i = 0; entries != null && i < entries.length(); i++) {
-                JSONObject entry = entries.getJSONObject(i);
-                Picture picture = new Picture(entry.optString("url"), entry.optString("title"),
-                        entry.optString("credit"), entry.optString("link"));
-                if (PictureSources.allowedUrl(picture.url) && !picture.credit.trim().isEmpty()
-                        && cacheFile(source, picture.url).isFile()) {
-                    pictures.add(picture);
-                }
-            }
-        } catch (IOException | JSONException unreadable) {
-            Log.w(TAG, source + ": unreadable manifest, treated as empty", unreadable);
-        }
-        return pictures;
-    }
-
-    private void writeManifest(String source, List<Picture> pictures) throws IOException {
-        JSONObject manifest = new JSONObject();
-        try {
-            manifest.put("fetched_ms", System.currentTimeMillis());
-            manifest.put("attribution_version", ATTRIBUTION_VERSION);
-            JSONArray entries = new JSONArray();
-            for (Picture picture : pictures) {
-                entries.put(new JSONObject()
-                        .put("url", picture.url)
-                        .put("title", picture.title)
-                        .put("credit", picture.credit)
-                        .put("link", picture.link));
-            }
-            manifest.put("pictures", entries);
-        } catch (JSONException impossible) {
-            throw new IllegalStateException(impossible);
-        }
-        File target = new File(cacheDir(source), "manifest.json");
-        File partial = new File(target.getPath() + ".part");
-        try (OutputStream out = new FileOutputStream(partial)) {
-            out.write(manifest.toString().getBytes(StandardCharsets.UTF_8));
-        }
-        if (!partial.renameTo(target)) {
-            throw new IOException("cannot write the manifest");
-        }
     }
 
     private static String readText(File file) throws IOException {
@@ -593,6 +228,26 @@ final class PictureLibrary {
         }
     }
 
+    /**
+     * The folder where the online pictures of the day were cached before they left the app in
+     * 0.7: removed once, at the first start of a build without them.
+     */
+    private void dropOldDownloads() {
+        deleteTree(new File(app.getCacheDir(), "screensaver"));
+    }
+
+    private static void deleteTree(File file) {
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteTree(child);
+            }
+        }
+        if (file.exists() && !file.delete()) {
+            Log.w(TAG, "Could not remove an old download: " + file.getName());
+        }
+    }
+
     // ------------------------------------------------------------------ decoding
 
     /**
@@ -600,21 +255,20 @@ final class PictureLibrary {
      * bounds first, so a 4000 px photo costs the memory of the screen it is shown on and not its
      * own. Worker thread only.
      */
-    Bitmap decode(String source, Picture picture, int maxWidth, int maxHeight) {
-        return decode(source, picture, maxWidth, maxHeight, true);
+    Bitmap decode(Picture picture, int maxWidth, int maxHeight) {
+        return decode(picture, maxWidth, maxHeight, true);
     }
 
     /**
      * The same, with {@code forSlideshow} false for a thumbnail: a folder being browsed is not
      * the playlist, so a picture there that cannot be read must not put "a selected picture
-     * cannot be read" under the screensaver.
+     * cannot be read" under Ambient.
      */
-    private Bitmap decode(String source, Picture picture, int maxWidth, int maxHeight,
-            boolean forSlideshow) {
+    private Bitmap decode(Picture picture, int maxWidth, int maxHeight, boolean forSlideshow) {
         try {
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
-            try (InputStream in = openPicture(source, picture)) {
+            try (InputStream in = openPicture(picture)) {
                 BitmapFactory.decodeStream(in, null, bounds);
             }
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
@@ -626,31 +280,28 @@ final class PictureLibrary {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inSampleSize = PictureSources.decodeSample(bounds.outWidth, bounds.outHeight,
                     maxWidth, maxHeight);
-            try (InputStream in = openPicture(source, picture)) {
+            try (InputStream in = openPicture(picture)) {
                 android.graphics.Bitmap bitmap = BitmapFactory.decodeStream(in, null, options);
-                if (bitmap != null && forSlideshow && PictureSources.LOCAL.equals(source)) {
+                if (bitmap != null && forSlideshow) {
                     // A picture that reads again clears the sentence that said one could not.
                     // Without this the record outlived the fault: a folder renamed away and back
                     // left the panel saying "a selected picture cannot be read" through three
                     // clean cycles and a rebuild, and only the reboot cleared it, because the
                     // record is in memory (found on the panel 2026-09-10).
-                    problems.remove(source);
+                    unreadable = null;
                 }
                 return bitmap;
             }
-        } catch (IOException | OutOfMemoryError | RuntimeException unreadable) {
+        } catch (IOException | OutOfMemoryError | RuntimeException failed) {
             if (forSlideshow) {
-                problems.put(source, "A selected picture cannot be read. Check its storage or remove it from the playlist.");
+                unreadable = "A selected picture cannot be read. Check its storage or remove it from the playlist.";
             }
-            Log.w(TAG, "Cannot decode " + picture.url + ": " + unreadable.getMessage());
+            Log.w(TAG, "Cannot decode " + picture.url + ": " + failed.getMessage());
             return null;
         }
     }
 
-    private InputStream openPicture(String source, Picture picture) throws IOException {
-        if (!PictureSources.LOCAL.equals(source)) {
-            return new FileInputStream(cacheFile(source, picture.url));
-        }
+    private InputStream openPicture(Picture picture) throws IOException {
         if (isUpload(picture.url)) {
             return new FileInputStream(Uri.parse(picture.url).getPath());
         }
@@ -714,7 +365,7 @@ final class PictureLibrary {
             return null;
         }
         Picture picture = new Picture(uri, "", "", "");
-        Bitmap full = decode(PictureSources.LOCAL, picture, THUMBNAIL_PX, THUMBNAIL_PX, false);
+        Bitmap full = decode(picture, THUMBNAIL_PX, THUMBNAIL_PX, false);
         if (full == null) {
             return null;
         }
@@ -1217,7 +868,7 @@ final class PictureLibrary {
 
     /**
      * The line under a local picture, stored by URI in a small JSON file beside the upload store.
-     * Legacy filename keys are read as fallback; online sources never consult local captions.
+     * Legacy filename keys are read as fallback.
      */
     Map<String, String> captions() {
         Map<String, String> captions = new java.util.LinkedHashMap<>();

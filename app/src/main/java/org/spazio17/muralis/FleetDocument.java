@@ -176,7 +176,7 @@ final class FleetDocument {
      * shared, with the values every member applies, or not. Never shared: a panel's name, member
      * port, escape combinations and PIN, calibrations and what belongs to its hardware.
      */
-    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "screensaver",
+    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "ambient",
             "alerts"};
     /** A section's words on both surfaces. */
     static String sectionLabel(String section) {
@@ -186,7 +186,7 @@ final class FleetDocument {
             case "web_admin": return "Local web admin";
             case "display": return "Display";
             case "alerts": return "Alerts";
-            default: return "Screensaver";
+            default: return "Ambient";
         }
     }
 

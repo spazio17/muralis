@@ -27,7 +27,7 @@ final class KioskCommandDispatcher {
      * one {@code KioskConfig.edit} call.
      */
     enum ScreensaverSetting {
-        MODE, SOURCE, IDLE_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
+        MODE, IDLE_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
         PICTURE_FIT, CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
     }
 
@@ -330,23 +330,23 @@ final class KioskCommandDispatcher {
                 }
                 executor.setWebAdminEnabled(args.enabled);
                 return accepted();
-            case "screensaver.start": {
+            case "ambient.start": {
                 String problem = executor.screensaverStart();
                 if (problem != null) {
                     return rejected(problem);
                 }
                 return accepted();
             }
-            case "screensaver.stop":
+            case "ambient.stop":
                 executor.screensaverStop();
                 return accepted();
-            case "screensaver.mode":
+            case "ambient.mode":
                 if (!ScreensaverPolicy.isMode(args.value)) {
                     return rejected("value must be off, dim, film, url or pictures");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.MODE, args.value);
                 return accepted();
-            case "screensaver.playlist":
+            case "ambient.playlist":
                 // By name, not by id: a name is what a person and a Home Assistant card know, and
                 // an id is an implementation detail nobody types. An empty value means "none",
                 // which is a real state since a playlist can be deleted while it is in use.
@@ -358,14 +358,8 @@ final class KioskCommandDispatcher {
                     return rejected(refusal);
                 }
                 return accepted();
-            case "screensaver.source":
-                if (!PictureSources.isSource(args.value)) {
-                    return rejected("value must be local, bing or wikimedia");
-                }
-                executor.setScreensaverSetting(ScreensaverSetting.SOURCE, args.value);
-                return accepted();
-            case "screensaver.idle_seconds":
-            case "screensaver.off_seconds": {
+            case "ambient.idle_seconds":
+            case "ambient.off_seconds": {
                 Integer seconds = ScreensaverPolicy.parseSeconds(args.value);
                 if (seconds == null) {
                     return rejected("value " + ScreensaverPolicy.SECONDS_RULE);
@@ -375,7 +369,7 @@ final class KioskCommandDispatcher {
                         String.valueOf(seconds));
                 return accepted();
             }
-            case "screensaver.picture_seconds": {
+            case "ambient.picture_seconds": {
                 Integer seconds = ScreensaverPolicy.parsePictureSeconds(args.value);
                 if (seconds == null) {
                     return rejected("value " + ScreensaverPolicy.PICTURE_SECONDS_RULE);
@@ -384,7 +378,7 @@ final class KioskCommandDispatcher {
                         String.valueOf(seconds));
                 return accepted();
             }
-            case "screensaver.dim_percent": {
+            case "ambient.dim_percent": {
                 Integer percent = ScreensaverPolicy.parseDimPercent(args.value);
                 if (percent == null) {
                     return rejected("value " + ScreensaverPolicy.DIM_RULE);
@@ -393,7 +387,7 @@ final class KioskCommandDispatcher {
                         String.valueOf(percent));
                 return accepted();
             }
-            case "screensaver.url": {
+            case "ambient.url": {
                 // The one-off page's own rules, and an empty value is how the address is cleared,
                 // which leaves the mode stored and refused at start time with the reason.
                 String url = args.url != null ? args.url : args.value;
@@ -408,34 +402,34 @@ final class KioskCommandDispatcher {
                 executor.setScreensaverSetting(ScreensaverSetting.URL, url.trim());
                 return accepted();
             }
-            case "screensaver.on_wake":
+            case "ambient.on_wake":
                 if (!ScreensaverPolicy.isOnWake(args.value)) {
-                    return rejected("value must be screensaver or dashboard");
+                    return rejected("value must be ambient or dashboard");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.ON_WAKE, args.value);
                 return accepted();
-            case "screensaver.transition":
+            case "ambient.transition":
                 if (!ScreensaverPolicy.isTransition(args.value)) {
                     return rejected("value must be none, fade or slide");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.TRANSITION, args.value);
                 return accepted();
-            case "screensaver.picture_fit":
+            case "ambient.picture_fit":
                 if (!ScreensaverPolicy.isFit(args.value)) {
                     return rejected("value must be fit, fill, stretch or actual");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.PICTURE_FIT, args.value);
                 return accepted();
-            case "screensaver.credit_corner":
+            case "ambient.credit_corner":
                 if (!ScreensaverPolicy.isCorner(args.value)) {
                     return rejected(
                             "value must be bottom_left, bottom_right, top_left or top_right");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.CREDIT_CORNER, args.value);
                 return accepted();
-            case "screensaver.shuffle":
-            case "screensaver.one_per_cycle":
-            case "screensaver.credit": {
+            case "ambient.shuffle":
+            case "ambient.one_per_cycle":
+            case "ambient.credit": {
                 if (args.enabled == null) {
                     return rejected("enabled must be true or false");
                 }

@@ -98,9 +98,9 @@ final class Automations {
         map.put("display", Arrays.asList(
                 new Event("on", "Display switched on", null, false, false),
                 new Event("off", "Display switched off", null, false, false)));
-        map.put("screensaver", Arrays.asList(
-                new Event("started", "Screensaver started", null, false, false),
-                new Event("ended", "Screensaver ended", null, false, false)));
+        map.put("ambient", Arrays.asList(
+                new Event("started", "Ambient started", null, false, false),
+                new Event("ended", "Ambient ended", null, false, false)));
         map.put("battery", Arrays.asList(
                 new Event("below", "Battery below", "%", false, false),
                 new Event("plugged", "Charger plugged in", null, false, false),
@@ -117,7 +117,7 @@ final class Automations {
             new Action("display_on", "Display on", null),
             new Action("display_off", "Display off", null),
             new Action("dashboard", "Show the dashboard", null),
-            new Action("screensaver", "Start the screensaver", null),
+            new Action("ambient", "Start Ambient", null),
             new Action("play_sound", "Play a sound", "Sound address"),
             new Action("say", "Say a sentence", "Sentence"),
             new Action("reload", "Reload the page", null)));
@@ -248,17 +248,23 @@ final class Automations {
         return rules;
     }
 
+    private static String renamed(String id) {
+        return "screensaver".equals(id) ? "ambient" : id;
+    }
+
     /** One rule as stored or posted; an empty id is left for the caller to decide on. */
     static Rule parseRule(JSONObject one) {
         Rule rule = new Rule();
         rule.id = one.optString("id", "");
         rule.name = one.optString("name", "");
-        rule.sensor = one.optString("sensor", "");
+        // Ambient was called screensaver before 0.7, as a sensor and as an action: a rule stored
+        // with the old name means the same thing.
+        rule.sensor = renamed(one.optString("sensor", ""));
         rule.event = one.optString("event", "");
         rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
         rule.minutes = one.optInt("minutes", 0);
         rule.tag = one.optString("tag", "");
-        rule.action = one.optString("action", "");
+        rule.action = renamed(one.optString("action", ""));
         rule.argument = one.optString("argument", "");
         rule.enabled = one.optBoolean("enabled", true);
         rule.onlyFrom = one.optInt("only_from", -1);

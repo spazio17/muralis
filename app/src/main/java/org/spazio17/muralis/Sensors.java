@@ -129,17 +129,16 @@ final class Sensors implements SensorEventListener {
             "measurement", 0, Kind.PANEL, false, "processor");
     static final Def PROXIMITY = new Def("proximity", "Proximity", SENSOR, "distance", "cm",
             "measurement", Sensor.TYPE_PROXIMITY, Kind.SWITCH, true, "proximity");
-    static final Def SCREENSAVER = new Def("screensaver", "Screensaver", BINARY, "running", null,
-            null, 0, Kind.PANEL, false, "screensaver");
+    static final Def SCREENSAVER = new Def("ambient", "Ambient", BINARY, "running", null,
+            null, 0, Kind.PANEL, false, "ambient");
     static final Def TEMPERATURE = new Def("temperature", "Ambient temperature", SENSOR,
             "temperature", "°C", "measurement", Sensor.TYPE_AMBIENT_TEMPERATURE, Kind.SWITCH,
             true, "temperature");
 
     /** Every sensor this app knows, alphabetical by name, which is the order the pages use. */
     static final List<Def> ALL = Collections.unmodifiableList(Arrays.asList(
-            TEMPERATURE, AUDIO, BATTERY, BLUETOOTH, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY,
-            MICROPHONE, MOVEMENT, NETWORK, NFC, POWER, PRESSURE, PROCESSOR, PROXIMITY,
-            SCREENSAVER));
+            SCREENSAVER, TEMPERATURE, AUDIO, BATTERY, BLUETOOTH, CAMERA, DISPLAY, HUMIDITY, LIGHT,
+            MEMORY, MICROPHONE, MOVEMENT, NETWORK, NFC, POWER, PRESSURE, PROCESSOR, PROXIMITY));
 
     /** What the beacons, the camera and the microphone report, asked when a document is built. */
     interface Reading {

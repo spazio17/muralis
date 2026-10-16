@@ -10,15 +10,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A JSON reader with no Android in it, so the parsers that turn Bing's and Wikimedia's answers
- * into credited pictures ({@link PictureSources}) can be host-tested against recorded responses.
- * {@code org.json} lives in the platform jar and is not on the host's class path; the credit line
- * is a licence obligation, which is exactly the kind of code that deserves a test on every build.
+ * A JSON reader and writer with no Android in it, so the fleet's signed list and the playlists
+ * can be host-tested: {@code org.json} lives in the platform jar and is not on the host's class
+ * path.
  *
  * <p>Objects come back as {@link LinkedHashMap}, arrays as {@link ArrayList}, strings as
  * {@link String}, numbers as {@link Double}, booleans as {@link Boolean} and {@code null} as
  * {@code null}. Malformed input throws {@link IllegalArgumentException}; the callers treat that as
- * "the service answered something else" and keep the last good set.
+ * unreadable and keep what they had.
  */
 final class TinyJson {
     /**

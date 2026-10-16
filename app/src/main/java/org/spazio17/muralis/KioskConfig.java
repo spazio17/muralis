@@ -45,7 +45,6 @@ final class KioskConfig {
     private static final String SCREENSAVER_URL = "screensaver_url";
     private static final String SCREENSAVER_DIM_PERCENT = "screensaver_dim_percent";
     private static final String SCREENSAVER_ON_WAKE = "screensaver_on_wake";
-    private static final String SCREENSAVER_SOURCE = "screensaver_source";
     private static final String SCREENSAVER_PICTURE_SECONDS = "screensaver_picture_s";
     private static final String SCREENSAVER_TRANSITION = "screensaver_transition";
     private static final String SCREENSAVER_PICTURE_FIT = "screensaver_picture_fit";
@@ -553,10 +552,6 @@ final class KioskConfig {
             return this;
         }
 
-        Editor screensaverSource(String value) {
-            plain.putString(SCREENSAVER_SOURCE, value);
-            return this;
-        }
 
         Editor screensaverPictureSeconds(int value) {
             plain.putInt(SCREENSAVER_PICTURE_SECONDS, value);
@@ -696,7 +691,6 @@ final class KioskConfig {
         String mode = preferences.getString(SCREENSAVER_MODE, ScreensaverPolicy.OFF);
         String onWake = preferences.getString(SCREENSAVER_ON_WAKE,
                 ScreensaverPolicy.WAKE_SCREENSAVER);
-        String source = preferences.getString(SCREENSAVER_SOURCE, PictureSources.LOCAL);
         String transition = preferences.getString(SCREENSAVER_TRANSITION,
                 ScreensaverPolicy.TRANSITION_FADE);
         String fit = preferences.getString(SCREENSAVER_PICTURE_FIT, ScreensaverPolicy.FIT_WHOLE);
@@ -712,7 +706,6 @@ final class KioskConfig {
                 clamp(preferences.getInt(SCREENSAVER_DIM_PERCENT,
                         ScreensaverPolicy.DEFAULT_DIM_PERCENT), 1, 100),
                 ScreensaverPolicy.isOnWake(onWake) ? onWake : ScreensaverPolicy.WAKE_SCREENSAVER,
-                PictureSources.isSource(source) ? source : PictureSources.LOCAL,
                 clamp(preferences.getInt(SCREENSAVER_PICTURE_SECONDS,
                         ScreensaverPolicy.DEFAULT_PICTURE_SECONDS), 1, ScreensaverPolicy.MAX_SECONDS),
                 ScreensaverPolicy.isTransition(transition) ? transition
@@ -733,9 +726,14 @@ final class KioskConfig {
      * Sensors.enabled knows which start on (the panel's own values) and which start off.
      */
     static boolean sensorEnabled(Context context, String id, boolean fallback) {
-        return storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean("sensor_" + id, fallback);
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // The Ambient sensor was called screensaver before 0.7: a switch stored under that name
+        // still counts until the switch is set again.
+        if (Sensors.SCREENSAVER.id.equals(id) && !prefs.contains("sensor_" + id)) {
+            return prefs.getBoolean("sensor_screensaver", fallback);
+        }
+        return prefs.getBoolean("sensor_" + id, fallback);
     }
 
     private static final String AUTOMATIONS = "automations";

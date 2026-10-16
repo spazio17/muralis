@@ -190,30 +190,29 @@ if(sap&&cfg.appearance_summary!=null&&sap.textContent!==cfg.appearance_summary){
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
 if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_warning?disp.off_method_reason:'';dn.hidden=!disp.off_method_warning;}
-var ss=data.screensaver||{};
-follow('screensaver-mode',ss.mode);
+var ss=data.ambient||{};
+follow('ambient-mode',ss.mode);
 // The screensaver page has no chooser: its shell carries the mode for admin_setting.js.
-var sp=document.getElementById('screensaver-page');
+var sp=document.getElementById('ambient-page');
 if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
-follow('screensaver-idle',ss.idle_s);
-follow('screensaver-off',ss.off_s);
-follow('screensaver-url',ss.url);
-follow('screensaver-dim',ss.dim_percent);
-follow('screensaver-on-wake',ss.on_wake);
-follow('screensaver-source',ss.source);
-follow('screensaver-picture-s',ss.picture_s);
-follow('screensaver-transition',ss.transition);
-follow('screensaver-shuffle',ss.shuffle);
-follow('screensaver-one',ss.one_per_cycle);
-if(ss.source==='local'){follow('screensaver-credit',ss.credit);}
-follow('screensaver-corner',ss.credit_corner);
+follow('ambient-idle',ss.idle_s);
+follow('ambient-off',ss.off_s);
+follow('ambient-url',ss.url);
+follow('ambient-dim',ss.dim_percent);
+follow('ambient-on-wake',ss.on_wake);
+follow('ambient-picture-s',ss.picture_s);
+follow('ambient-transition',ss.transition);
+follow('ambient-shuffle',ss.shuffle);
+follow('ambient-one',ss.one_per_cycle);
+follow('ambient-credit',ss.credit);
+follow('ambient-corner',ss.credit_corner);
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
-var sn=document.getElementById('screensaver-note');
+var sn=document.getElementById('ambient-note');
 if(sn&&ss.summary!=null){sn.textContent=ss.summary;sn.classList.toggle('bad',ss.problem!=null);}
-var so=document.getElementById('screensaver-source-note');
-if(so&&ss.source_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
-so.textContent=ss.source_state+pic;so.classList.toggle('bad',ss.source_problem!=null);}
+var so=document.getElementById('ambient-pictures-note');
+if(so&&ss.pictures_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
+so.textContent=ss.pictures_state+pic;so.classList.toggle('bad',ss.pictures_problem!=null);}
 // The slider follows the real backlight, except while the operator is actually dragging it,
 // and except while the panel is dark: it reports zero then, below this slider's 1% floor, and
 // the mode label below says "display off" for it.
@@ -226,7 +225,7 @@ if(lbl){lbl.textContent=disp.brightness_percent+'%';}}
 // device, not something the operator is mid-way through editing, and it is exactly the
 // thing that was previously stuck reading "automatic" after auto was switched off.
 var md=document.getElementById('brightness-mode');
-if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':disp.source==='screensaver'?'screensaver':(disp.auto?'automatic':'manual'))+')';}
+if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':disp.source==='ambient'?'ambient':(disp.auto?'automatic':'manual'))+')';}
 // The slider follows the mode, since a level set while the sensor is in charge is
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}

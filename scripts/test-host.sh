@@ -272,8 +272,8 @@ javac -d "${test_dir}/screensaver" \
     "${host_test_dir}/ScreensaverPolicyTest.java"
 java -cp "${test_dir}/screensaver" org.spazio17.muralis.ScreensaverPolicyTest
 
-# The picture sources' parsers against recorded Bing and Wikimedia answers: the credit line is a
-# licence obligation. And the upload body parser, where one boundary byte off corrupts pictures.
+# The pictures' pure helpers and the JSON reader under the fleet and the playlists. And the
+# upload body parser, where one boundary byte off corrupts pictures.
 mkdir -p "${test_dir}/pictures"
 javac -d "${test_dir}/pictures" \
     "${pure_java_dir}/PictureSources.java" \

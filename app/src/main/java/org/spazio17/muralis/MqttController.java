@@ -56,7 +56,7 @@ final class MqttController implements MqttCallbackExtended {
 
     /** Missing or non-boolean telemetry resets an MQTT switch to unknown, never confidently off. */
     private static String screensaverBooleanTemplate(String field) {
-        return "{% set s = value_json.get('screensaver', {}) %}{% if s is mapping %}"
+        return "{% set s = value_json.get('ambient', {}) %}{% if s is mapping %}"
                 + "{{ 'ON' if s.get('" + field + "') is sameas true else 'OFF' if s.get('"
                 + field + "') is sameas false else 'None' }}{% else %}None{% endif %}";
     }
@@ -950,11 +950,11 @@ final class MqttController implements MqttCallbackExtended {
             screensaverModes.put(ScreensaverPolicy.FILM);
             screensaverModes.put(ScreensaverPolicy.URL);
             screensaverModes.put(ScreensaverPolicy.PICTURES);
-            components.put("screensaver_mode", select(
-                    "Screensaver mode",
-                    "screensaver.mode",
+            components.put("ambient_mode", select(
+                    "Ambient mode",
+                    "ambient.mode",
                     screensaverModes,
-                    "{{ value_json.screensaver.mode }}"));
+                    "{{ value_json.ambient.mode }}"));
             // The playlists by name, so a card can switch a panel's pictures without knowing an
             // id. "None" is a real option because a playlist can be deleted while it is in use,
             // and an entity that cannot express the state it is in reads as broken.
@@ -965,108 +965,99 @@ final class MqttController implements MqttCallbackExtended {
                 playlistNames.put(playlist.name);
             }
             announcedPlaylists = PicturePlaylists.namesOf(playlists);
-            components.put("screensaver_playlist", select(
-                    "Screensaver playlist",
-                    "screensaver.playlist",
+            components.put("ambient_playlist", select(
+                    "Ambient playlist",
+                    "ambient.playlist",
                     playlistNames,
-                    "{{ value_json.screensaver.playlist if value_json.screensaver is mapping "
-                            + "and value_json.screensaver.playlist else '" + PLAYLIST_NONE + "' }}"));
-            components.put("screensaver", toggle(
-                    "Screensaver",
-                    "{\"command\":\"screensaver.start\"}",
-                    "{\"command\":\"screensaver.stop\"}",
+                    "{{ value_json.ambient.playlist if value_json.ambient is mapping "
+                            + "and value_json.ambient.playlist else '" + PLAYLIST_NONE + "' }}"));
+            components.put("ambient", toggle(
+                    "Ambient",
+                    "{\"command\":\"ambient.start\"}",
+                    "{\"command\":\"ambient.stop\"}",
                     screensaverBooleanTemplate("active")));
             // Every screensaver setting, not a chosen few: "everything must be controllable
             // remotely" (Juri, 2026-09-09). They are all commands as well, so a caller that
             // would rather publish a command than use an entity can.
-            org.json.JSONArray pictureSources = new org.json.JSONArray();
-            pictureSources.put(PictureSources.LOCAL);
-            pictureSources.put(PictureSources.BING);
-            pictureSources.put(PictureSources.WIKIMEDIA);
-            components.put("screensaver_source", select(
-                    "Screensaver source",
-                    "screensaver.source",
-                    pictureSources,
-                    "{{ value_json.screensaver.source }}"));
-            components.put("screensaver_idle", number(
-                    "Screensaver idle time",
-                    "screensaver.idle_seconds",
+            components.put("ambient_idle", number(
+                    "Ambient idle time",
+                    "ambient.idle_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.screensaver.idle_s }}"));
-            components.put("screensaver_display_off", number(
-                    "Screensaver to display off",
-                    "screensaver.off_seconds",
+                    "{{ value_json.ambient.idle_s }}"));
+            components.put("ambient_display_off", number(
+                    "Ambient to display off",
+                    "ambient.off_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.screensaver.off_s }}"));
-            components.put("screensaver_picture_time", number(
-                    "Screensaver picture time",
-                    "screensaver.picture_seconds",
+                    "{{ value_json.ambient.off_s }}"));
+            components.put("ambient_picture_time", number(
+                    "Ambient picture time",
+                    "ambient.picture_seconds",
                     1, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.screensaver.picture_s }}"));
-            components.put("screensaver_dim", number(
-                    "Screensaver dim brightness",
-                    "screensaver.dim_percent",
+                    "{{ value_json.ambient.picture_s }}"));
+            components.put("ambient_dim", number(
+                    "Ambient dim brightness",
+                    "ambient.dim_percent",
                     1, 100, "%",
-                    "{{ value_json.screensaver.dim_percent }}"));
+                    "{{ value_json.ambient.dim_percent }}"));
             org.json.JSONArray transitions = new org.json.JSONArray();
             transitions.put(ScreensaverPolicy.TRANSITION_NONE);
             transitions.put(ScreensaverPolicy.TRANSITION_FADE);
             transitions.put(ScreensaverPolicy.TRANSITION_SLIDE);
-            components.put("screensaver_transition", select(
-                    "Screensaver transition",
-                    "screensaver.transition",
+            components.put("ambient_transition", select(
+                    "Ambient transition",
+                    "ambient.transition",
                     transitions,
-                    "{{ value_json.screensaver.transition }}"));
+                    "{{ value_json.ambient.transition }}"));
             org.json.JSONArray fits = new org.json.JSONArray();
             fits.put(ScreensaverPolicy.FIT_WHOLE);
             fits.put(ScreensaverPolicy.FIT_FILL);
             fits.put(ScreensaverPolicy.FIT_STRETCH);
             fits.put(ScreensaverPolicy.FIT_ACTUAL);
-            components.put("screensaver_picture_fit", select(
-                    "Screensaver picture fit",
-                    "screensaver.picture_fit",
+            components.put("ambient_picture_fit", select(
+                    "Ambient picture fit",
+                    "ambient.picture_fit",
                     fits,
-                    "{{ value_json.screensaver.picture_fit }}"));
+                    "{{ value_json.ambient.picture_fit }}"));
             org.json.JSONArray corners = new org.json.JSONArray();
             corners.put(ScreensaverPolicy.CORNER_BOTTOM_LEFT);
             corners.put(ScreensaverPolicy.CORNER_BOTTOM_RIGHT);
             corners.put(ScreensaverPolicy.CORNER_TOP_LEFT);
             corners.put(ScreensaverPolicy.CORNER_TOP_RIGHT);
-            components.put("screensaver_credit_corner", select(
-                    "Screensaver credit corner",
-                    "screensaver.credit_corner",
+            components.put("ambient_credit_corner", select(
+                    "Ambient credit corner",
+                    "ambient.credit_corner",
                     corners,
-                    "{{ value_json.screensaver.credit_corner }}"));
+                    "{{ value_json.ambient.credit_corner }}"));
             org.json.JSONArray wakeChoices = new org.json.JSONArray();
             wakeChoices.put(ScreensaverPolicy.WAKE_SCREENSAVER);
             wakeChoices.put(ScreensaverPolicy.WAKE_DASHBOARD);
-            components.put("screensaver_on_wake", select(
-                    "Screensaver after a wake",
-                    "screensaver.on_wake",
+            components.put("ambient_on_wake", select(
+                    "Ambient after a wake",
+                    "ambient.on_wake",
                     wakeChoices,
-                    "{{ value_json.screensaver.on_wake }}"));
-            components.put("screensaver_shuffle", toggle(
-                    "Screensaver shuffle",
-                    "{\"command\":\"screensaver.shuffle\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"screensaver.shuffle\",\"args\":{\"enabled\":false}}",
+                    "{{ value_json.ambient.on_wake }}"));
+            components.put("ambient_shuffle", toggle(
+                    "Ambient shuffle",
+                    "{\"command\":\"ambient.shuffle\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.shuffle\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("shuffle")));
-            components.put("screensaver_one_per_cycle", toggle(
-                    "Screensaver one picture per cycle",
-                    "{\"command\":\"screensaver.one_per_cycle\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"screensaver.one_per_cycle\",\"args\":{\"enabled\":false}}",
+            components.put("ambient_one_per_cycle", toggle(
+                    "Ambient one picture per cycle",
+                    "{\"command\":\"ambient.one_per_cycle\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.one_per_cycle\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("one_per_cycle")));
-            components.put("screensaver_credit", toggle(
-                    "Screensaver credit line",
-                    "{\"command\":\"screensaver.credit\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"screensaver.credit\",\"args\":{\"enabled\":false}}",
+            components.put("ambient_credit", toggle(
+                    "Ambient credit line",
+                    "{\"command\":\"ambient.credit\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.credit\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("credit")));
-            components.put("screensaver_url", valueText(
-                    "Screensaver page",
-                    "screensaver.url",
-                    "{{ value_json.screensaver.url }}"));
-            components.put("screensaver_picture", sensor(
-                    "Screensaver picture", null, null, null,
-                    "{{ value_json.screensaver.picture.title | default('', true) }}"));
+            components.put("ambient_url", valueText(
+                    "Ambient page",
+                    "ambient.url",
+                    "{{ value_json.ambient.url }}"));
+            components.put("ambient_picture", sensor(
+                    "Ambient picture", null, null, null,
+                    "{{ value_json.ambient.picture.title | default('', true) }}"));
             // The panel's sensors (see Sensors): one entity each, under the panel's device, named
             // as the companion app names its own. A sensor that is off, or that this device does
             // not have, is left out; one this panel announced before is withdrawn at the publish
