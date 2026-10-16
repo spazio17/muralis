@@ -34,7 +34,7 @@ if(on){var c=group.querySelector('input:checked');
 if(!c){var first=group.querySelector('input');if(first){first.checked=true;first.defaultChecked=true;c=first;}}
 checked=c;}});
 var unit=checked?checked.getAttribute('data-level'):'';
-// A time of day has its own box, the browser's time picker (block 5).
+// A time of day has its own box, the browser's time picker.
 show(level,!!unit&&unit!=='time');
 show(at,unit==='time');
 if(unit&&unit!=='time'){label(level,'Level ('+unit+')');}

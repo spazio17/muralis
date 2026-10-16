@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -16,7 +16,7 @@ import android.graphics.drawable.LayerDrawable;
  *
  * <p>A dark scheme and a light one, chosen by the day and night toggle (follow the device, light,
  * dark); the wall's own screens, parking and Identify, are always dark. One scheme since
- * 2026-10-15: Material 3 from the ultramarine seed, the brand colour (Juri), with no choice of
+ * 2026-10-15: Material 3 from the ultramarine seed, the brand colour, with no choice of
  * colour or separators left to the person.
  *
  * <p>Kept as plain constants and drawable factories rather than XML themes because this app builds

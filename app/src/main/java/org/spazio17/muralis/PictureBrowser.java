@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -21,7 +21,7 @@ import java.util.TreeMap;
 /**
  * The panel's own pictures, browsed inside Muralis on every device.
  *
- * <p><b>One browser, both devices, decided 2026-09-10.</b> Juri: "Tablet and phone behaves
+ * <p><b>One browser, both devices, decided 2026-09-10.</b> The owner: "Tablet and phone behaves
  * identically when creating playlist and selecting photos. Even if the phone has the possibility to
  * exit muralis and use the android's file browser, it is still Muralis that must handle the folder
  * and image selections." So there is one implementation here and no branch on device-owner status.
@@ -39,7 +39,7 @@ import java.util.TreeMap;
  * a {@code content://media/...} id, which survives a reboot and opens with the permission.
  *
  * <p><b>Why there is no depth limit.</b> A {@code maxdepth} of 3 was built on the morning of
- * 2026-09-10 and removed the same day, by the reasoning in the specification and Juri's agreement
+ * 2026-09-10 and removed the same day, by the reasoning in the specification and the owner's agreement
  * with it: {@code Pictures/2026/Italy/Rome/Vatican} is depth five and entirely ordinary, and a cap
  * would hide those photographs without saying so. There is also nothing for a cap to save here,
  * because this asks MediaStore for the folders it already knows rather than walking a tree.
@@ -52,7 +52,7 @@ import java.util.TreeMap;
 final class PictureBrowser {
     /**
      * The page sizes Content offers, smallest first: a folder of thousands opens on the first ten
-     * and the reader asks for more (Juri, 2026-09-19: with many pictures in one folder the panel
+     * and the reader asks for more (2026-09-19: with many pictures in one folder the panel
      * got very long). Both surfaces offer the same four.
      */
     static final int[] PAGE_SIZES = {10, 25, 50, 100};

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -18,7 +18,7 @@ final class KioskConfig {
     private static final String MQTT_USERNAME = "mqtt_username";
     private static final String MQTT_PASSWORD = "mqtt_password";
     private static final String MQTT_TLS = "mqtt_tls";
-    /** App lock (block 9): the package shown instead of the web page; empty when off. */
+    /** App lock: the package shown instead of the web page; empty when off. */
     private static final String APP_LOCK = "app_lock";
     /** What the chosen app is called, kept so a panel can name it after it was uninstalled. */
     private static final String APP_LOCK_LABEL = "app_lock_label";
@@ -103,10 +103,10 @@ final class KioskConfig {
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
 
     static final int DEFAULT_HTTP_PORT = 8080;
-    /** The member endpoint's port until a person sets another (fleet design, 2026-09-24). */
+    /** The member endpoint's port until a person sets another. */
     static final int DEFAULT_FLEET_PORT = 8081;
     private static final String FLEET_PORT = "fleet_port";
-    /** The fleet's alerts (fleet design, section 10), stored under the keys both surfaces use. */
+    /** The fleet's alerts, stored under the keys both surfaces use. */
     private static final String ALERT_OFFLINE_MINUTES = "alert_offline_minutes";
     private static final String ALERT_PAGE_ERROR = "alert_page_error";
     private static final String ALERT_BATTERY_BELOW = "alert_battery_below";
@@ -145,7 +145,7 @@ final class KioskConfig {
     String mqttClientName = "";
     long mqttClientUntil;
     int httpPort = DEFAULT_HTTP_PORT;
-    /** The member endpoint's port, a setting like the web admin's (Juri, 2026-10-08). */
+    /** The member endpoint's port, a setting like the web admin's (2026-10-08). */
     int fleetPort = DEFAULT_FLEET_PORT;
     /** The fleet's alerts: thresholds and destinations; see FleetAlerts. */
     FleetAlerts.Settings alerts = new FleetAlerts.Settings();
@@ -454,7 +454,7 @@ final class KioskConfig {
         }
 
         /**
-         * One value from a settings file (block 8), already checked by SettingsImport: only a
+         * One value from a settings file, already checked by SettingsImport: only a
          * key the file may carry, stored with its own type.
          */
         Editor imported(String key, Object value) {
@@ -553,10 +553,10 @@ final class KioskConfig {
         }
 
         /**
-         * The fleet document this panel took or wrote (block 12a), already checked and merged
+         * The fleet document this panel took or wrote, already checked and merged
          * with the one held: it names the fleet, its members' keys are the ones this panel
          * trusts, and its revoked keys the ones it refuses. The first one written here also
-         * founds the fleet. The profile's secrets (block 12d) go to the SecretStore and the
+         * founds the fleet. The profile's secrets go to the SecretStore and the
          * stored copy has them blanked; fleetDocumentText puts them back for the wire.
          */
         Editor fleetDocument(Context context, String text) {
@@ -580,7 +580,7 @@ final class KioskConfig {
             }
             String stored = FleetDocument.canonical(document);
             plain.putString(FLEET_DOCUMENT, stored);
-            // History (block 15): the last versions held, newest first, the stored copy of
+            // History: the last versions held, newest first, the stored copy of
             // each (secrets blanked like the list itself); the same text twice is kept once.
             java.util.List<String> history = fleetHistory(storageContext);
             if (history.isEmpty() || !history.get(0).equals(stored)) {
@@ -818,7 +818,7 @@ final class KioskConfig {
     }
 
     /**
-     * The screensaver's settings alone, without the secrets a full load decrypts: the activity's
+     * Ambient's settings alone, without the secrets a full load decrypts: the activity's
      * clock reads them every second, and a stored value this build does not know reads as the
      * default rather than being refused, the same rule as {@link #displayOffMethodOf}.
      */
@@ -1206,7 +1206,7 @@ final class KioskConfig {
         return text.isEmpty() ? null : FleetDocument.parse(text);
     }
 
-    /** How many versions of the fleet's list a member keeps (block 15). */
+    /** How many versions of the fleet's list a member keeps. */
     static final int FLEET_HISTORY_SIZE = 20;
     /** Beside the list, in device-protected storage: one stored document per line, newest first. */
     private static final String FLEET_HISTORY_FILE = "fleet_history.jsonl";
@@ -1342,7 +1342,7 @@ final class KioskConfig {
      * its default place. Measured from the edges it was dropped nearest to, as shares of the
      * screen, not of the room left over: the block's own size changes with every line it
      * draws, and a place that depended on it moved a few pixels every second (the flicker
-     * Juri saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
+     * The owner saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
      */
     static OverlayPlace statsOverlayPlace(Context context) {
         android.content.SharedPreferences prefs = storageContext(context)
@@ -1401,7 +1401,7 @@ final class KioskConfig {
     private static final String PROVISIONED_SETTINGS_KEPT = "provisioned_settings_kept";
 
     /**
-     * Keeps the settings file a setup QR carried in its admin extras (block 8) for the service
+     * Keeps the settings file a setup QR carried in its admin extras for the service
      * to apply at its start, and asks a service already running to apply them now; nothing when
      * the QR carried none.
      */
@@ -1613,10 +1613,10 @@ final class KioskConfig {
     }
 
     /**
-     * The boot in which the screensaver was put on the glass, or -1: the same shape as the
+     * The boot in which Ambient was put on the glass, or -1: the same shape as the
      * visual-off record and for the same reason, so the nightly restart and the WebView rebuilds
-     * bring the screensaver back rather than lighting the page for the idle time at four in
-     * the morning. Ends with the screensaver (a touch, a command, the settings screen) or with
+     * bring Ambient back rather than lighting the page for the idle time at four in
+     * the morning. Ends with Ambient (a touch, a command, the settings screen) or with
      * the display going dark, never with a rebuild.
      */
     static void recordScreensaverBootCount(Context context, int bootCount) {

@@ -1,4 +1,4 @@
-// The Fleet page's Screenshots and Identify (block 16). Screenshots asks every panel's
+// The Fleet page's Screenshots and Identify. Screenshots asks every panel's
 // picture at once, each through /api/fleet/screenshot, which this panel answers from its own
 // capture or fetches from the other panel's member endpoint; the pictures load only on the
 // press, never with the page, since each one is a capture on that wall. A panel that does

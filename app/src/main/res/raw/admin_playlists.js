@@ -3,7 +3,7 @@
 // Use and Create playlist used to post for real and come back as the whole screensaver
 // page with a sentence on top ("Playlist in use.") and /api/playlists/activate in the address bar.
 // For Use the sentence said nothing that the "In use" mark moving to the row did not already say
-// (Juri, 2026-09-19: tap the playlist you want and simply switch). So the table is re-read in place
+// (2026-09-19: tap the playlist you want and simply switch). So the table is re-read in place
 // and a success is silent; only a refusal is said, in the banner under the table.
 //
 // One delegated listener on the box rather than one per row: the box's contents are replaced on

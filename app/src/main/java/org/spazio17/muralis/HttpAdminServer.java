@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -75,7 +75,7 @@ final class HttpAdminServer {
     private static final int MAX_HEADER_LINES = 40;
     private static final int MAX_BODY_BYTES = 16_384;
     /**
-     * The one request that carries megabytes: the picture upload for the screensaver's
+     * The one request that carries megabytes: the picture upload for Ambient's
      * playlists. Its body budget and deadline are its own; every other request keeps the 16 KB
      * and eight seconds that suit commands and settings, but for a playlist's order, which gets
      * {@link #MAX_ORDER_BYTES} in the same eight seconds. A browser sends every chosen file in
@@ -110,7 +110,7 @@ final class HttpAdminServer {
      */
     private static final int FLEET_PROXY_DEADLINE_MS = 20_000;
     /**
-     * Add a panel by its code (block 11e) looks for the panel for up to thirty seconds, then
+     * Add a panel by its code looks for the panel for up to thirty seconds, then
      * joins it with calls of their own: the answer must still find the browser connected.
      */
     private static final int ADOPT_DEADLINE_MS = (int) FleetServer.CODE_SEARCH_MS + 20_000;
@@ -711,9 +711,12 @@ final class HttpAdminServer {
                     return;
                 }
                 authThrottle.recordSuccess(remoteHost, nowMs);
+                // Every state-changing route is POST, deliberately, so this one check before the
+                // routing covers all of them, including any handler added later.
                 if (method.equals("POST")) {
                     String refusal = crossSiteRefusal(headers);
                     if (refusal != null) {
+                        Log.w(TAG, "Refused a state-changing request: " + refusal);
                         writeResponse(output, 403, "text/plain", bytes("Forbidden: " + refusal));
                         return;
                     }
@@ -877,18 +880,6 @@ final class HttpAdminServer {
             query = target.substring(questionMark + 1);
         }
 
-        // Every state-changing route below is POST, deliberately, so this one check covers all of
-        // them. Placed before routing rather than inside each handler because the failure mode of
-        // forgetting it in a new handler is silent.
-        if (method.equals("POST")) {
-            String crossSite = crossSiteRefusal(headers);
-            if (crossSite != null) {
-                Log.w(TAG, "Refused a state-changing request: " + crossSite);
-                writeResponse(output, 403, "text/plain", bytes("Forbidden: " + crossSite));
-                return;
-            }
-        }
-
         if (path.equals("/") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage()));
         } else if (path.equals("/") && method.equals("POST") && isMultipart(headers)) {
@@ -1030,7 +1021,7 @@ final class HttpAdminServer {
                     bytes(buildPlaylistPage(null, queryValue(query, "id"), browseTarget(query),
                             PictureBrowser.pageSize(queryValue(query, "n")))));
         } else if (path.equals("/api/playlists/table") && method.equals("GET")) {
-            // The list of playlists as a fragment, for the screensaver page's script to re-read
+            // The list of playlists as a fragment, for the Ambient page's script to re-read
             // after Use, Delete or Create without the page reloading under the reader.
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(playlistTable(PictureLibrary.get(context).playlists().load())));
@@ -1117,7 +1108,7 @@ final class HttpAdminServer {
                     "{\"status\":\"rejected\",\"detail\":\"use POST; GET cannot change state\"}"),
                     java.util.Collections.singletonMap("Allow", "POST"));
         } else if (path.equals("/api/fleet/code") && method.equals("POST")) {
-            // Join a fleet and New code (block 11c): the open code, or a new one when none is.
+            // Join a fleet and New code: the open code, or a new one when none is.
             FleetServer.openJoinCode(context);
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
@@ -1138,6 +1129,11 @@ final class HttpAdminServer {
             FleetServer.leaveFleet(context, "from the web admin", true);
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
+        } else if (path.startsWith("/api/fleet/") && !FleetServer.proStatus(context).pro
+                && (path.equals("/api/fleet/screenshot") || path.equals("/api/fleet/identify"))) {
+            // The Fleet page's own requests, refused like the page itself without Pro.
+            writeResponse(output, 403, "application/json", bytes(rejectedJson(
+                    "the Fleet page is Muralis Pro. " + FleetServer.proLine(context))));
         } else if (path.equals("/api/fleet/screenshot") && method.equals("GET")) {
             serveFleetScreenshot(queryValue(query, "panel"), output);
         } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
@@ -1474,7 +1470,7 @@ final class HttpAdminServer {
             }
             case "panel": {
                 // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
-                // box since 2026-09-27 (Juri: the id is the panel's identity, not the page's).
+                // box since 2026-09-27 (the owner: the id is the panel's identity, not the page's).
                 String stale = staleFormRefusal(form, fresh.deviceId);
                 if (stale != null) {
                     return stale;
@@ -1561,7 +1557,7 @@ final class HttpAdminServer {
             }
             case "fleet": {
                 // The member port, by the web admin port's rules: a number, 1024-65535, never
-                // the web admin's port, and free when it changes (Juri, 2026-10-08).
+                // the web admin's port, and free when it changes (2026-10-08).
                 String stale = staleFormRefusal(form, Integer.toString(fresh.fleetPort));
                 if (stale != null) {
                     return stale;
@@ -1584,7 +1580,7 @@ final class HttpAdminServer {
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
             // POST /api/setting has always accepted. It covers the stats-overlay switch, the
-            // display and screensaver keys, and since the sensors the sensor switches, their
+            // display and Ambient keys, and since the sensors the sensor switches, their
             // options, the automation switches and the beacon names. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
@@ -1594,7 +1590,7 @@ final class HttpAdminServer {
                 // being set. No stale-form guard either: the posted value is what the operator
                 // just touched, not what the page remembered. One key per request, and each key
                 // applies on its own, in this order: a hand-built request carrying several keys
-                // gets the earlier ones applied and the first refusal reported. The screensaver
+                // gets the earlier ones applied and the first refusal reported. Ambient
                 // keys are the exception, checked as a set before any of them is stored.
                 for (String key : form.keySet()) {
                     if (key.startsWith("sensor_") && !key.startsWith("sensor_option_")
@@ -1649,7 +1645,7 @@ final class HttpAdminServer {
                             return "Not changed: " + refused + ".";
                         }
                     } else if (key.startsWith("alert_")) {
-                        // The fleet's alerts (block 15), the same keys the Fleet page shares.
+                        // The fleet's alerts, the same keys the Fleet page shares.
                         String refused = KioskConfig.saveAlertSetting(context, key, form.get(key));
                         if (refused != null) {
                             return "Not saved: " + refused + ".";
@@ -1930,7 +1926,7 @@ final class HttpAdminServer {
     private String pageStart(String title, String subtitle, String backTo) {
         // A page below the settings page says its name and nothing else: the panel's id, its
         // address and its load belong where somebody is configuring the panel, not on a page
-        // about one feature of it (Juri, 2026-09-11, C15).
+        // about one feature of it (2026-09-11, C15).
         String titles = "<div class=\"titles\"><h1>" + escapeHtml(title) + "</h1>"
                 + (subtitle == null ? "" : "<p class=\"sub\">" + escapeHtml(subtitle) + "</p>")
                 + "</div>";
@@ -1941,7 +1937,7 @@ final class HttpAdminServer {
     /**
      * The same shell around a title block a page has built for itself: the playlist's own name.
      *
-     * <p>The {@code js} class on the root element is set by the one inline script this server
+     * <p>The {@code js} class on the root element is set by an inline script this server
      * emits, in the head so it is there before the first paint: the list-detail layout of the
      * settings page needs scripting to open a section from its list, so the stylesheet applies it
      * only where scripting runs and every other browser gets the accordion, which works with none.
@@ -2031,12 +2027,12 @@ final class HttpAdminServer {
         paths.put("storage", "<rect x=\"3\" y=\"6\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 10h18\"/>");
         // A dashboard: four tiles, two tall and two short, Material's own arrangement. The
-        // monitor on a stand it replaces drew hardware, which no wall panel has (Juri,
-        // 2026-09-24).
+        // monitor on a stand it replaces drew hardware, which no wall panel has
+        // (2026-09-24).
         paths.put("dash", "<path d=\"M4 4h6v7H4zM14 4h6v4h-6zM4 15h6v5H4zM14 12h6v8h-6z\"/>");
         // A hub: four things joined to one in the middle, which is what a broker is. The
-        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them (Juri,
-        // 2026-09-23).
+        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them
+        // (2026-09-23).
         paths.put("mqtt", "<circle cx=\"12\" cy=\"12\" r=\"3\"/><circle cx=\"5\" cy=\"5\" r=\"1.5\"/>"
                 + "<circle cx=\"19\" cy=\"5\" r=\"1.5\"/><circle cx=\"5\" cy=\"19\" r=\"1.5\"/>"
                 + "<circle cx=\"19\" cy=\"19\" r=\"1.5\"/>"
@@ -2113,7 +2109,7 @@ final class HttpAdminServer {
 
     /**
      * The settings page: one list of sections, each a glyph, its name and a one-line summary of
-     * what is stored, opening in place (Juri's drawing of 2026-09-23). Inside are the essentials;
+     * what is stored, opening in place (the owner's drawing of 2026-09-23). Inside are the essentials;
      * a section with more behind it ends with a text button that opens its own page.
      *
      * <p>The message about a refused save goes inside the section it is about, and that section
@@ -2349,7 +2345,7 @@ final class HttpAdminServer {
      * The list-detail shell the Sensors and Automations pages share, the settings page's own
      * shape from 840 px: the list at the left, the chosen item's page at the right. Below that
      * one of the two shows, which one {@code detailPage} says, and from 600 px the column is
-     * no wider than 640 px (Juri, 2026-09-27).
+     * no wider than 640 px (2026-09-27).
      */
     private String listDetail(String kind, boolean detailPage, String nav, String detail) {
         return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
@@ -2379,7 +2375,7 @@ final class HttpAdminServer {
             if (one == null || !one.optBoolean("active")) {
                 continue;
             }
-            // The switch on the row too (Juri, 2026-09-27): switched off, admin_stats.js takes
+            // The switch on the row too (2026-09-27): switched off, admin_stats.js takes
             // the row out at the next poll; the Sensors page switches it on again.
             rows.append(navRow(listRow(def.glyph, def.name, null, one.optString("reading", ""),
                     "sensor-" + def.id + "-value", sensorSwitch(def, true, "-home"), false),
@@ -2659,7 +2655,7 @@ final class HttpAdminServer {
                         .replaceFirst("<span class=\"h\">" + java.util.regex.Matcher.quoteReplacement(escapeHtml(label)),
                                 java.util.regex.Matcher.quoteReplacement("<span class=\"h\">" + words)) + "</ul>";
         // The calibration and the test while asleep are the panel's alone: both need a hand
-        // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
+        // at the glass, and a remote button for that is a strange thing (2026-09-27).
         if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
                 || (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted"))) {
             html.append(head).append("</section>");
@@ -2972,7 +2968,7 @@ final class HttpAdminServer {
             }
             events.append("</div>");
         }
-        // The clock, which every panel has (block 5): "At" a time of day.
+        // The clock, which every panel has: "At" a time of day.
         offered |= Automations.TIME.equals(chosenSensor);
         sensorOptions.append(selectOption(Automations.TIME, Automations.TIME_NAME, chosenSensor));
         events.append("<div class=\"radios events\" data-sensor=\"").append(Automations.TIME)
@@ -3047,7 +3043,7 @@ final class HttpAdminServer {
                         typedTo != null ? typedTo
                                 : rule.windowed() ? Automations.clock(rule.onlyTo) : "22:00", "", null)
                 + "</div></section>"
-                // One row, as the panel lays it out (Juri, 2026-09-28): Delete at the start,
+                // One row, as the panel lays it out (2026-09-28): Delete at the start,
                 // Cancel then Save at the end, ordered by the stylesheet. Save is the form's
                 // first submit button in the DOM, so Enter in a box saves (review of
                 // 2026-09-27: Enter in the Name box used to post to Delete). Delete asks first.
@@ -3429,7 +3425,7 @@ final class HttpAdminServer {
     /** System stats and the log, on their own page under This panel. */
     private String buildStatsPage() {
         KioskConfig config = KioskConfig.load(context);
-        // Two panels, as the panel's page has them (Juri, 2026-09-28): side by side from 840 px,
+        // Two panels, as the panel's page has them (2026-09-28): side by side from 840 px,
         // one under the other below, the way every page of several panels without a menu is.
         return pageStart("System stats and log", null, settingsAt("panel"))
                 + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
@@ -3439,8 +3435,8 @@ final class HttpAdminServer {
     }
 
     /**
-     * The screen as the wall shows it, a PNG, or the refusal in the usual JSON with 409: the
-     * panel's switch is off, or no window of the app is in front. See KioskService.captureScreen.
+     * The screen as the wall shows it, a PNG, or the refusal in the usual JSON with 409 when no
+     * window of the app is in front. See KioskService.captureScreen.
      */
     private void serveScreenshot(OutputStream output) throws IOException {
         KioskService.Screenshot shot = kioskService.captureScreen();
@@ -3455,7 +3451,7 @@ final class HttpAdminServer {
 
     /**
      * {@code GET /api/fleet/screenshot?panel=<id>}: one member's screen as the Fleet page's
-     * thumbnail (block 16), this panel's through its own capture and another's fetched from
+     * thumbnail, this panel's through its own capture and another's fetched from
      * its member endpoint, a JPEG with the long side at most 1280 px, or the refusal in the
      * usual JSON: 404 for an id not in the fleet, 409 when the panel did not answer or
      * refused. Never a stale picture: nothing is kept between requests.
@@ -3691,7 +3687,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * App lock (block 9), a page of its own as on the panel: Off or one installed app, and
+     * App lock, a page of its own as on the panel: Off or one installed app, and
      * whether Muralis may display over other apps, which only the panel itself can allow.
      */
     private String buildAppLockPage(String notice, boolean withSystem) {
@@ -3747,6 +3743,9 @@ final class HttpAdminServer {
     /** Stores App lock's choice: Off, or an installed app with something to open. */
     private String saveAppLock(Map<String, String> form) {
         String chosen = form.getOrDefault("app_lock", "").trim();
+        if (context.getPackageName().equals(chosen)) {
+            return "Not saved: Muralis cannot lock the panel to itself.";
+        }
         if (!chosen.isEmpty()
                 && context.getPackageManager().getLaunchIntentForPackage(chosen) == null) {
             return "Not saved: no installed app " + chosen + " has anything to open.";
@@ -3762,7 +3761,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The pop-up cameras (block 6), a page of their own: each camera's form with Save and
+     * The pop-up cameras, a page of their own: each camera's form with Save and
      * Remove, then an empty one to add a camera. The panel's Pop-up cameras page is the same.
      */
     private String buildCamerasPage(String notice) {
@@ -3828,7 +3827,7 @@ final class HttpAdminServer {
     private static final int SETUP_QR_MAX_BYTES = 2_300;
 
     /**
-     * The setup QR for a new tablet (block 8): the site's provisioning values and, in the admin
+     * The setup QR for a new tablet: the site's provisioning values and, in the admin
      * extras, this panel's settings file without passwords; null when it does not fit.
      */
     private String setupQrContent() {
@@ -3855,7 +3854,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The settings file page (block 8): Export (passwords only when asked, then encrypted with
+     * The settings file page: Export (passwords only when asked, then encrypted with
      * a passphrase typed twice), Import (the file, then the list of what changes and Apply),
      * and the setup QR for a new tablet.
      */
@@ -3870,8 +3869,8 @@ final class HttpAdminServer {
         }
         html.append("<form method=\"post\" action=\"/settings-file\" class=\"card\">"
                 + "<h2>Export</h2><input type=\"hidden\" name=\"what\" value=\"export\">"
-                + "<p class=\"hint\">Every setting you set, never this panel's name, keys,"
-                + " fleet, certificates or pictures.</p>"
+                + "<p class=\"hint\">Every setting you set, the corner combinations included,"
+                + " never this panel's name, keys, fleet, certificates or pictures.</p>"
                 + "<div class=\"switches\">" + switchRow("include-passwords", "Include passwords",
                         " name=\"include_passwords\" value=\"1\"", false) + "</div>"
                 + field("password", "passphrase", "Passphrase for the passwords", "", "",
@@ -4049,7 +4048,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The certificates trusted for pages Android does not trust (block 4): the one waiting for
+     * The certificates trusted for pages Android does not trust: the one waiting for
      * an answer with Trust, then each trusted host with its fingerprint and Remove. Each button
      * posts its own small form, so a refusal comes back under this box.
      */
@@ -4099,7 +4098,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The page's browser options (block 3a), a box of their own under the dashboard address,
+     * The page's browser options, a box of their own under the dashboard address,
      * saved together like the panel's Browser options page and checked by the commands' rules.
      */
     private String browserForm(String notice, String noticeSection) {
@@ -4170,16 +4169,20 @@ final class HttpAdminServer {
                             + " class=\"text\">").append(asking ? "Trust" : "Remove")
                     .append("</button></div></form>");
         }
-        // The client certificate: uploaded here only, since files go through the web admin.
+        // The client certificate: uploaded here only, since files go through the web admin, and
+        // like the admin's own certificate never over plain HTTP, where its key would travel
+        // in clear.
+        String locked = KioskRuntimeState.httpAdminSecure() ? "" : " disabled title=\""
+                + escapeHtml(AdminCertificate.UPLOAD_NEEDS_HTTPS) + "\"";
         trust.append("<p class=\"hint\">")
                 .append(escapeHtml(MqttTls.clientLine(config.mqttClientName,
                         config.mqttClientUntil))).append("</p>")
                 .append("<form method=\"post\" action=\"/mqtt-certificate\""
                         + " enctype=\"multipart/form-data\">")
-                .append(fileRow("mqtt-client-file", "certificate", "Client certificate", ""))
-                .append(fileRow("mqtt-client-key", "key", "Its private key", ""))
-                .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\">Upload"
-                        + "</button></div></form>");
+                .append(fileRow("mqtt-client-file", "certificate", "Client certificate", locked))
+                .append(fileRow("mqtt-client-key", "key", "Its private key", locked))
+                .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\"")
+                .append(locked).append(">Upload</button></div></form>");
         if (!config.mqttClientName.isEmpty()) {
             trust.append("<form method=\"post\" action=\"").append(settingsAt("mqtt"))
                     .append("\" class=\"actions\"><input type=\"hidden\" name=\"section\""
@@ -4236,7 +4239,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The Fleet box: the member port (block 11a), saved by its own button like the web admin's
+     * The Fleet box: the member port, saved by its own button like the web admin's
      * port, and whether the member endpoint listens on it.
      */
     private String fleetBody(KioskConfig config, String notice, String noticeSection) {
@@ -4259,10 +4262,8 @@ final class HttpAdminServer {
     }
 
     /**
-     * The groups (fleet design, 2026-10-13): which ones this panel is in, a new one with a name
-     * the person types (generic suggestions offered), Remove for each; then what a group shares,
-     * the group chosen in a menu and the switches for it. Drawn again by a reload after a group
-     * is made or removed (admin_stats.js), since the rows change.
+     * What this panel follows: the whole fleet's shared settings, and the groups it is in, one
+     * switch each. The groups themselves are made, removed and shared from on the Fleet page.
      */
     private String sharedSwitches() {
         if (KioskConfig.fleetIdOf(context).isEmpty()) {
@@ -4276,23 +4277,17 @@ final class HttpAdminServer {
                 + switchRow("fleet-follows", "Follow the fleet's shared settings",
                         " data-setting=\"fleet_follows\"", FleetDocument.followsFleet(me))
                 + "</div><p class=\"hint\">This panel's groups</p><div class=\"switches\">");
-        StringBuilder removes = new StringBuilder();
         for (java.util.Map.Entry<String, String> group : FleetDocument.groups(list).entrySet()) {
-            html.append(switchRow("fleet-group-" + group.getKey(), group.getValue(),
-                    " data-setting=\"fleet_group_" + group.getKey() + "\"",
-                    mine.contains(group.getKey())));
-            removes.append("<button type=\"button\" class=\"text fleet-group-remove\" data-group=\"")
-                    .append(group.getKey()).append("\" data-name=\"")
-                    .append(escapeHtml(group.getValue())).append("\">Remove ")
-                    .append(escapeHtml(group.getValue())).append("</button>");
+            String id = escapeHtml(group.getKey());
+            html.append(switchRow("fleet-group-" + id, group.getValue(),
+                    " data-setting=\"fleet_group_" + id + "\"", mine.contains(group.getKey())));
         }
         html.append("</div>");
         if (FleetDocument.groups(list).isEmpty()) {
             html.append("<p class=\"hint\">No groups yet.</p>");
         }
-        // The groups themselves and what each scope shares: the Fleet page.
-        // The fleet's alerts, a page of their own (the UI round, 2026-10-15): the one shared
-        // section with no section of its own to live in.
+        // The groups themselves and what each scope shares: the Fleet page. The fleet's alerts
+        // have a page of their own: the one shared section with no section of its own to live in.
         return html.append("<div class=\"actions\"><a class=\"onward\" href=\"/fleet\">Open the"
                 + " Fleet page</a><a class=\"onward\" href=\"/alerts\">Alerts</a></div>")
                 .toString();
@@ -4310,7 +4305,7 @@ final class HttpAdminServer {
 
     /**
      * Whether this panel is in a fleet, Join a fleet or Leave the fleet, and the Join code as the
-     * panel's Join screen shows it (block 11c), drawn by admin_stats.js from the status poll.
+     * panel's Join screen shows it, drawn by admin_stats.js from the status poll.
      */
     private String fleetMembership() {
         boolean member = !KioskConfig.fleetIdOf(context).isEmpty();
@@ -4335,7 +4330,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The Add by code form's post (block 11e), on a path of its own so the connection is given
+     * The Add by code form's post, on a path of its own so the connection is given
      * the search's time ({@link #ADOPT_DEADLINE_MS}): the page with who joined, or 400 with why
      * not.
      */
@@ -4367,7 +4362,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * Add a panel by the code under its Join QR (block 11e), for this browser that has no
+     * Add a panel by the code under its Join QR, for this browser that has no
      * camera: the code, the new fleet's name when this panel founds one, and Add, which looks
      * for the panel on the network for up to 30 seconds before it answers.
      */
@@ -4638,7 +4633,7 @@ final class HttpAdminServer {
                 + "</div>";
     }
 
-    /** Integrations (Juri, 2026-10-15): in the menu already, empty until the first ones come. */
+    /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */
     private static String integrationsBody() {
         return "<div class=\"empty\"><p class=\"h\">No integrations yet</p><p class=\"s\">Muralis"
                 + " will show and act on data from other services. The first integrations come"
@@ -4661,7 +4656,7 @@ final class HttpAdminServer {
 
     private String displayBody() {
         // The theme switch stands beside the section's name (see the menu builder); the app
-        // bar's Auto/Light/Dark went (Juri, 2026-09-27).
+        // bar's Auto/Light/Dark went (2026-09-27).
         return sharedLine("display") + "<div class=\"actions tight\">"
                 + quickAction("display.wake", "Display on", "tonal", null)
                 + quickAction("display.visual_off", "Display off", "tonal", null)
@@ -4701,7 +4696,7 @@ final class HttpAdminServer {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
-        // A menu here and radios on the screensaver page, deliberately: this is one section among
+        // A menu here and radios on the Ambient page, deliberately: this is one section among
         // nine, while the page's chooser decides what the rest of that page says.
         return sharedLine("ambient")
                 + selectField("ambient-mode", null, "Mode", "ambient_mode",
@@ -4709,10 +4704,10 @@ final class HttpAdminServer {
                 + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"ambient-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
                 + "</p>"
-                // No "Back to the page" beside these: it ends a showing screensaver, which is what
-                // Display on already does to a lit panel (Juri, 2026-09-11, C16).
+                // No "Back to the page" beside these: it ends a showing Ambient, which is what
+                // Display on already does to a lit panel (2026-09-11, C16).
                 // Off has no page to lead to: the page holds a mode's options and Off has none
-                // (Juri, 2026-09-11), and since the page stopped carrying the chooser
+                // (2026-09-11), and since the page stopped carrying the chooser
                 // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
                 + "<div class=\"actions\">"
                 + quickAction("ambient.start", "Preview", "tonal", null)
@@ -5061,7 +5056,7 @@ final class HttpAdminServer {
 
 
     /**
-     * The playlists on the screensaver page: the list and nothing else.
+     * The playlists on the Ambient page: the list and nothing else.
      *
      * <p>Shown only for the Pictures mode. A card since 2026-09-23, with the list re-read in place by
      * {@code admin_playlists.js} and the banner under it speaking only for a refusal: the radio
@@ -5131,8 +5126,8 @@ final class HttpAdminServer {
                 .append("</section>")
                 .append("</div>")
                 // Delete, outlined red as in every editor (the delete rules, 2026-10-01), asked
-                // first in the panel's words; it left the Screensaver page's row on 2026-10-04.
-                // The answer is the Screensaver page, since this one is gone.
+                // first in the panel's words; it left the Ambient page's row on 2026-10-04.
+                // The answer is the Ambient page, since this one is gone.
                 .append("<form method=\"post\" action=\"/api/playlists/delete\" class=\"actions editor\" data-native=\"1\">")
                 .append(hidden("id", playlist.id))
                 // A refusal other than gone, a failed save, is answered on this page.
@@ -5147,9 +5142,9 @@ final class HttpAdminServer {
 
 
     /**
-     * The shuffle glyph in the held list's head while the screensaver shuffles, or nothing: a
-     * mark and not a button, since shuffle is set with the other screensaver settings, and a mark
-     * rather than a sentence, because a sentence is the last resort (Juri, 2026-09-25).
+     * The shuffle glyph in the held list's head while Ambient shuffles, or nothing: a
+     * mark and not a button, since shuffle is set with the other Ambient settings, and a mark
+     * rather than a sentence, because a sentence is the last resort (2026-09-25).
      */
     private String shuffleMark() {
         if (!KioskConfig.screensaverOf(context).shuffle) {
@@ -5162,7 +5157,7 @@ final class HttpAdminServer {
 
     /**
      * The page's title is the playlist's own name, with the rename pencil beside it in the app
-     * bar, the way a pull request's title is edited (Juri, 2026-09-19).
+     * bar, the way a pull request's title is edited (2026-09-19).
      *
      * <p>A {@code <details>} rather than a box the script makes: it opens, closes and posts with
      * no scripting at all, and the script only keeps the answer on this page. The Cancel button
@@ -5177,7 +5172,7 @@ final class HttpAdminServer {
                 + glyph("pencil") + "</summary>"
                 + "<form method=\"post\" action=\"/api/playlists/rename\">"
                 + hidden("id", playlist.id)
-                // So the answer comes back as this page rather than as the screensaver page,
+                // So the answer comes back as this page rather than as the Ambient page,
                 // which is the rule every form on this page follows.
                 + hidden("playlist", playlist.id)
                 + fieldWithId("rename-name", "text", "name", "Playlist name", playlist.name,
@@ -5193,23 +5188,23 @@ final class HttpAdminServer {
 
 
     /**
-     * Everything the playlist holds, in the order the screensaver shows it: the picture, the
+     * Everything the playlist holds, in the order Ambient shows it: the picture, the
      * folder and the name, then the box that names it for its credit, the eye that switches its
-     * credit off or on, and the remove button, all 40 px on one line (Juri, 2026-09-23 and
+     * credit off or on, and the remove button, all 40 px on one line (2026-09-23 and
      * 2026-09-25). The box has no save tick: {@code admin_pictures.js} stores it when it lets go
      * of the focus, and Enter submits its form, which is also the path with no scripting.
      *
      * <p>The folder is prepended because this list is the one place two pictures with the same
-     * name from two folders sit next to each other (Juri, 2026-09-10). It is a fragment of its
+     * name from two folders sit next to each other (2026-09-10). It is a fragment of its
      * own because a tick in the browser changes it, and the page must not reload to say so.
      * Remove takes the picture out of this playlist and deletes nothing; it posts to the same
      * endpoint the browser's tick does, with the selection off.
      *
      * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
      * thumbnail; {@code admin_pictures.js} does the drag and posts the whole order, and without
-     * scripting the grip is not drawn at all. No sentence explains any of it (Juri, 2026-09-25:
-     * a sentence is the last resort). An empty name box shows, greyed, the words the screensaver
-     * prints instead, the file's name. With every credit switched off in the screensaver
+     * scripting the grip is not drawn at all. No sentence explains any of it (2026-09-25:
+     * a sentence is the last resort). An empty name box shows, greyed, the words Ambient
+     * prints instead, the file's name. With every credit switched off in Ambient
      * settings, each eye stands crossed out and inert, which says the same without a line.
      */
     private String playlistItems(PlaylistDocument.Playlist playlist, PictureLibrary library) {
@@ -5349,14 +5344,14 @@ final class HttpAdminServer {
      * <p>A fragment of its own since 2026-09-19, when the browser's two panes became two panels;
      * {@code admin_pictures.js} fetches it from {@code /api/pictures/folders} and the open folder
      * from {@code /api/pictures/content}, so each action replaces exactly that much of the page
-     * and the reader keeps their place (Juri, 2026-09-10, C3). The whole tree comes down in one
+     * and the reader keeps their place (2026-09-10, C3). The whole tree comes down in one
      * fragment, and which branches are open is decided in the browser: this method opens the top
      * of the volume and the way down to the open folder, which is the tree a browser with no
      * scripting gets and what the script starts from before the reader's own carets take over
-     * (Juri, 2026-09-23: every folder at once was a list nobody could read).
+     * (2026-09-23: every folder at once was a list nobody could read).
      *
      * <p>The count beside a folder is the pictures directly in it, not everything below it: a
-     * folder that said 41 and opened onto three pictures read as a miscount (Juri, 2026-09-19).
+     * folder that said 41 and opened onto three pictures read as a miscount (2026-09-19).
      */
     private String folderList(String location, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -5411,7 +5406,7 @@ final class HttpAdminServer {
      * check circle on every tile, the same control the panel uses, posted the moment it changes;
      * an upload keeps its bin, which asks first. The view is one preference for the panel and
      * this page alike ({@code KioskConfig.pictureViewOf}), so both open the next folder the same
-     * way (Juri, 2026-09-23).
+     * way (2026-09-23).
      */
     private String folderContent(String token, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -5575,7 +5570,7 @@ final class HttpAdminServer {
      * not a button, since without scripting it does nothing and must not look as if it did.
      *
      * <p>A button is a thing that does something; a folder is a place you go, and a list of forty
-     * buttons reads as forty decisions (Juri, 2026-09-10, C7). It is a real {@code href} so it
+     * buttons reads as forty decisions (2026-09-10, C7). It is a real {@code href} so it
      * works with no scripting and can be opened in a second tab; the script intercepts it and
      * swaps the fragment instead of reloading.
      */
@@ -5646,7 +5641,7 @@ final class HttpAdminServer {
             case "/api/playlists/activate":
                 change = document -> document.activate(id);
                 // Nothing to say: the "In use" mark moving to the row is the whole answer, and a
-                // sentence on top of it was noise (Juri, 2026-09-19).
+                // sentence on top of it was noise (2026-09-19).
                 done = null;
                 break;
             case "/api/playlists/rename":
@@ -5686,7 +5681,7 @@ final class HttpAdminServer {
         if (path.equals("/api/playlists/delete")
                 && !"1".equals(queryValue(query, "fragment"))
                 && (refusal == null || PlaylistDocument.GONE.equals(refusal))) {
-            // The playlist page's own Delete, posted by the browser: sent on to the Screensaver
+            // The playlist page's own Delete, posted by the browser: sent on to the Ambient
             // page, as the automation editor's Delete is sent to Automations, so a reload does
             // not post the delete again and Back does not return to a page that is gone
             // (review, 2026-10-04). A playlist already gone is sent on too, gone it is either
@@ -5726,7 +5721,7 @@ final class HttpAdminServer {
 
 
     /**
-     * The playlists as a Material list: the screensaver glyph and the name over its count open
+     * The playlists as a Material list: the Ambient glyph and the name over its count open
      * the playlist's own page, and the Use radio at the end says which one plays. Delete is on
      * the playlist's page.
      *
@@ -5743,7 +5738,7 @@ final class HttpAdminServer {
             html.append("<ul class=\"list seg\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
                 int count = playlist.items.size();
-                // The left menu's row as the panel draws it (Juri, 2026-10-04): the glyph, the
+                // The left menu's row as the panel draws it (2026-10-04): the glyph, the
                 // name over its count, a tap opening the playlist's own page, and Use at the
                 // end, the radio that is state and control at once. Delete lives on that page.
                 html.append("<li class=\"two\">")
@@ -5782,7 +5777,7 @@ final class HttpAdminServer {
      * <p>Two callers and one method. The page's own script asks for a fragment and gets a sentence
      * and a flag, which it shows in the banner and then re-reads the browser with, so nothing
      * navigates and the reader keeps their place. A browser with no scripting posts the form for
-     * real and gets the whole screensaver page back, which is all a form submit can do.
+     * real and gets the whole Ambient page back, which is all a form submit can do.
      */
     private void answerPictureChange(String query, Map<String, String> form, String message,
             boolean ok, OutputStream output) throws IOException {
@@ -5849,8 +5844,8 @@ final class HttpAdminServer {
 
 
     /**
-     * The mode as a menu, for the settings page's own Screensaver card, the one place it is
-     * chosen: the screensaver page stopped repeating it on 2026-09-28.
+     * The mode as a menu, for the settings page's own Ambient card, the one place it is
+     * chosen: Ambient page stopped repeating it on 2026-09-28.
      */
     private String screensaverModeOptions(ScreensaverPolicy.Settings saver) {
         return selectOption(ScreensaverPolicy.OFF, "Off", saver.mode)
@@ -5861,7 +5856,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The Fleet page (block 13, the sketch of 2026-10-13): the panels with their groups and
+     * The Fleet page: the panels with their groups and
      * last contact, the groups, and the shared settings of a scope (the whole fleet or a group)
      * shown and edited here, as the fleet products do. Plain forms, posted to this page: a
      * person managing a fleet sits at a laptop, and nothing here needs to apply as it is typed.
@@ -5878,7 +5873,7 @@ final class HttpAdminServer {
                     + " of panels has not arrived yet.</p></div>").append(pageEnd()).toString();
         }
         if (!FleetServer.proStatus(context).pro) {
-            // The Fleet page is Muralis Pro (block 14); the panels stay members meanwhile.
+            // The Fleet page is Muralis Pro; the panels stay members meanwhile.
             return html.append("<div class=\"card\"><p>The Fleet page is Muralis Pro. ")
                     .append(escapeHtml(FleetServer.proLine(context))).append("</p></div>")
                     .append(pageEnd()).toString();
@@ -5892,7 +5887,7 @@ final class HttpAdminServer {
                 || !(FleetDocument.EVERYONE.equals(scopeAsked) || groups.containsKey(scopeAsked))
                 ? FleetDocument.EVERYONE : scopeAsked;
         // Panels: each with its picture on request, its groups to tick, its last contact and
-        // Identify (block 16). Screenshots fetches every panel's picture at once; the images
+        // Identify. Screenshots fetches every panel's picture at once; the images
         // load only then, never with the page, since each is a capture on that panel.
         html.append("<div class=\"card\"><h2>Panels</h2><div class=\"actions tight\">"
                 + "<button type=\"button\" class=\"tonal\" id=\"fleet-shots\">Screenshots"
@@ -6003,7 +5998,7 @@ final class HttpAdminServer {
         html.append("</div>");
         html.append("<p class=\"hint\">On, the section as it is here applies to every panel of"
                 + " the scope. A group wins over the whole fleet.</p></div>");
-        // History (block 15): the versions this panel held, newest first, each with what it
+        // History: the versions this panel held, newest first, each with what it
         // changed, and Restore as new for every one but the version held.
         html.append("<div class=\"card\"><h2>History</h2>");
         java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(context);
@@ -6109,6 +6104,9 @@ final class HttpAdminServer {
 
     /** What the Alerts page posts: the values, shared with the scope the page named. */
     private String saveAlerts(Map<String, String> form) {
+        if (!FleetServer.proStatus(context).pro) {
+            return "Not changed: the fleet's alerts are Muralis Pro. " + FleetServer.proLine(context);
+        }
         String section = "alerts";
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
         String scope = FleetProfile.alertsScope(list);
@@ -6196,9 +6194,9 @@ final class HttpAdminServer {
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        // The Sensors page's shape (Juri, 2026-09-28): the playlists at the left and the chosen
+        // The Sensors page's shape (2026-09-28): the playlists at the left and the chosen
         // mode's options at the right from 840 px, one under the other below. The mode itself
-        // is chosen on the settings page, whose Screensaver section leads here; the page's
+        // is chosen on the settings page, whose Ambient section leads here; the page's
         // shell carries the mode and every title, so admin_setting.js can rename the options
         // when the mode changes elsewhere, without a chooser of its own.
         org.json.JSONObject titles = new org.json.JSONObject();
@@ -6245,7 +6243,7 @@ final class HttpAdminServer {
                         null))
                 .append("</div>")
                 // Gone rather than greyed out where it does not apply: a control that can never
-                // be enabled is clutter (Juri, 2026-09-11).
+                // be enabled is clutter (2026-09-11).
                 .append("<div id=\"ambient-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
                 .append(">")
@@ -6253,7 +6251,7 @@ final class HttpAdminServer {
                         "ambient_on_wake", onWake, null))
                 .append("</div>")
                 .append(pictureOptions(saver))
-                // The sentence it all adds up to, last in the panel, which is where Juri put it:
+                // The sentence it all adds up to, last in the panel, which is where the owner put it:
                 // the settings above it, then what they mean in one line.
                 .append("<p class=\"hint").append(problem ? " bad" : "").append("\" id=\"ambient-note\">")
                 .append(escapeHtml(ScreensaverPolicy.describe(saver,
@@ -6275,7 +6273,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The screensaver's instant settings. Each field is checked by the same rule the tablet
+     * Ambient's instant settings. Each field is checked by the same rule the tablet
      * applies and refused with the reason, never clamped: a value that cannot be stored is not
      * stored, and the page's field turns red with the sentence.
      */
@@ -6396,7 +6394,7 @@ final class HttpAdminServer {
      * sentence the tablet's Display card shows under it, kept current by the stats poll. The real
      * screen-off is offered only to a device owner, the same gate the tablet applies, and an
      * ordinary install gets the tablet's one greyed choice rather than a menu of Automatic and
-     * Black film that meant the same thing (Juri, 2026-09-24): a disabled menu, which the poll
+     * Black film that meant the same thing (2026-09-24): a disabled menu, which the poll
      * leaves alone and the settings script never posts.
      */
     private String displayOffControl() {
@@ -6815,7 +6813,7 @@ final class HttpAdminServer {
             return "<p class=\"hint bad\">" + AdminCertificate.PLAIN_HTTP_SENTENCE + "</p>";
         }
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
-        // to break at, so inline in the sentence it wrapped mid-value (Juri, 2026-09-23).
+        // to break at, so inline in the sentence it wrapped mid-value (2026-09-23).
         return "<p class=\"hint\">"
                 + escapeHtml(AdminCertificate.servedSentence(certificate.uploaded, "this page"))
                 + "</p><p class=\"mono wrap\">" + escapeHtml(certificate.fingerprint) + "</p>";
@@ -6954,6 +6952,10 @@ final class HttpAdminServer {
                 .append("\r\n");
         header.append("Content-Type: ").append(contentType).append("\r\n");
         header.append("Content-Length: ").append(body.length).append("\r\n");
+        // Never inside another site's frame, where a signed-in browser's clicks would pass the
+        // same-origin check, and never a type guessed from the bytes.
+        header.append("X-Frame-Options: DENY\r\nContent-Security-Policy: frame-ancestors 'none'\r\n"
+                + "X-Content-Type-Options: nosniff\r\n");
         boolean open = keepOpen.get();
         answered.set(true);
         header.append(open ? "Connection: keep-alive\r\nKeep-Alive: timeout="

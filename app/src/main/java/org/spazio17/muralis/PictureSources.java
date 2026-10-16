@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -17,20 +17,17 @@ final class PictureSources {
         final String title;
         /** The credit line its owner typed; empty when none was typed. */
         final String credit;
-        /** Where the credit line could point, kept for the status document; may be empty. */
-        final String link;
         /** The owner switched this picture's credit off on the playlist page. */
         final boolean creditHidden;
 
-        Picture(String url, String title, String credit, String link) {
-            this(url, title, credit, link, false);
+        Picture(String url, String title, String credit) {
+            this(url, title, credit, false);
         }
 
-        Picture(String url, String title, String credit, String link, boolean creditHidden) {
+        Picture(String url, String title, String credit, boolean creditHidden) {
             this.url = url == null ? "" : url;
             this.title = title == null ? "" : title;
             this.credit = credit == null ? "" : credit;
-            this.link = link == null ? "" : link;
             this.creditHidden = creditHidden;
         }
     }
@@ -77,9 +74,9 @@ final class PictureSources {
         return sample;
     }
 
-    /** "File:Great_Wave_off_Kanagawa2.jpg" to "Great Wave off Kanagawa2". */
+    /** A file's name as words: "Great_Wave_off_Kanagawa2.jpg" to "Great Wave off Kanagawa2". */
     static String fileTitleToWords(String fileTitle) {
-        String name = fileTitle.startsWith("File:") ? fileTitle.substring(5) : fileTitle;
+        String name = fileTitle;
         int dot = name.lastIndexOf('.');
         if (dot > 0) {
             name = name.substring(0, dot);
@@ -89,7 +86,7 @@ final class PictureSources {
 
     /**
      * A picture's type by its bytes, never by its name: a browser's declared type is whatever the
-     * file was called. JPEG, PNG and WebP are what the screensaver promises to decode.
+     * file was called. JPEG, PNG and WebP are what Ambient promises to decode.
      *
      * @return the MIME type, or null when the bytes are none of the three
      */

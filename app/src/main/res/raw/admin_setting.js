@@ -44,7 +44,7 @@ row.parentNode.insertBefore(why,row.nextSibling);setTimeout(function(){if(why.pa
 if(!rejected){
 // Stored: every other control of the same setting on the page (a sensor's row in the list and
 // in its detail) shows it at once, and the poll leaves this setting alone until the panel's
-// document has caught up, however slow the path to it is (Juri, 2026-09-27: ten seconds on a
+// document has caught up, however slow the path to it is (2026-09-27: ten seconds on a
 // tablet behind a slow link, the two rows disagreeing meanwhile).
 window.muralisLocal=window.muralisLocal||{};
 window.muralisLocal[el.dataset.setting]={value:value,at:Date.now()};
@@ -92,7 +92,7 @@ var pictures=document.getElementById('ambient-pictures');
 // 2026-09-10 that belongs to the Pictures mode.
 var library=document.getElementById('ambient-library');
 // The second panel is named after the mode it belongs to and is not there at all for Off: a
-// screensaver that is off has no settings (Juri, 2026-09-11). The name comes from the titles
+// screensaver that is off has no settings (2026-09-11). The name comes from the titles
 // the server rendered on the page's shell, so the two surfaces cannot drift apart over a word.
 var options=document.getElementById('ambient-options'),
     title=document.getElementById('ambient-options-title'),

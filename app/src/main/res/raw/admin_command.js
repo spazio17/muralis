@@ -17,7 +17,7 @@ function show(text,ok){if(!ok&&window.console){console.warn('Muralis: '+text);}e
 // the playlist page uses, red, with a cross, kept until it is closed or the next press
 // succeeds, so a refusal is read rather than missed (the UI round, 2026-10-15). Until
 // 2026-09-24 a refused Preview went to the console alone, and a person who pressed it while
-// the panel's settings were open saw a button that did nothing (Juri: "the preview does not
+// the panel's settings were open saw a button that did nothing (the owner: "the preview does not
 // work"). A success still says nothing: the panel itself is the answer. A control that is not
 // a form (the brightness slider, the orientation menu) is marked the way admin_setting.js
 // marks a refused setting, red border and the reason as its tooltip.

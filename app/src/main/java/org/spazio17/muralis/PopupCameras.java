@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The panel's cameras for pop-ups (block 6, after Dashie): each a name, an address, a mode for
+ * The panel's cameras for pop-ups: each a name, an address, a mode for
  * this panel, how long it shows and a cooldown. {@code camera.show} shows one on demand,
  * {@code camera.trigger} is what a doorbell sends. Pure: the list's form, its checks and the
  * decision whether a trigger shows are host-tested.

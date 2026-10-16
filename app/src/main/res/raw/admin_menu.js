@@ -5,7 +5,7 @@
 // list of sections on the left drives the one shown on the right (Material's list-detail; the
 // stylesheet applies that layout only where the html element carries the js class, which the
 // page's head sets before the first paint). Nothing is remembered between visits, as on the
-// panel (Juri, 2026-10-07; the last section came back from storage until then): a page opens
+// panel (2026-10-07; the last section came back from storage until then): a page opens
 // closed, except where the address names a section, "/#box-<section>" after a save (its form
 // posts there) or a page's back arrow, "/?open=<section>" after the certificate choice's reload,
 // and a message about a refused save, which arrives with its section open.

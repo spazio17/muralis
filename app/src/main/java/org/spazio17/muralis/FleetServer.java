@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -32,17 +32,21 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 /**
- * The member endpoint (the fleet design): the member port (8081 until a person sets
+ * The member endpoint: the member port (8081 until a person sets
  * another, {@link KioskConfig#fleetPortOf}) on every panel, free, mutual TLS,
  * independent of the web admin, which may be off. A caller is admitted only if the public key it
  * presents is one this panel trusts and has not revoked ({@link FleetTls}); nothing else
  * authenticates a fleet call, and plain HTTP is dropped, not redirected.
  *
  * <p>It answers {@code GET /fleet} (this panel's id, its fleet key and the fleet it is in),
- * {@code POST /fleet/exchange} and {@code POST /fleet/join} (the two routes an unknown key
- * reaches, while a join code is open: {@link FleetJoin}), {@code POST /fleet/leave}, {@code GET /fleet/screenshot} (this panel's
- * screen as a JPEG, for the Fleet page's thumbnails) and {@code POST /fleet/identify} (the
- * panel's name shown and said on it). One request per connection, small and bounded: a fleet
+ * {@code /fleet/exchange} and {@code /fleet/join} (the two routes an unknown key reaches, while a
+ * join code is open: {@link FleetJoin}), {@code /fleet/document} (the signed list, handed to it or
+ * fetched), {@code /fleet/setup} (a panel at its welcome screen taking the adding panel's
+ * combinations), {@code /fleet/checkin} (the members' few-minute check-in, the one route a
+ * removed key reaches, to be told so), {@code /fleet/left} (a panel leaving by itself),
+ * {@code /fleet/screenshot} (this panel's screen as a JPEG, for
+ * the Fleet page's thumbnails) and {@code /fleet/identify} (the panel's name shown on
+ * it). One request per connection, small and bounded: a fleet
  * call is a few hundred bytes between panels, never a browser's burst, the picture being the
  * one answer that is not.
  */
@@ -60,7 +64,7 @@ final class FleetServer {
     private static final int MAX_LINE = 2_048;
     private static final int MAX_HEADER_LINES = 50;
     private static final int MAX_BODY = 4_096;
-    /** A fleet document: a few hundred bytes per member, and the profile to come (block 12d). */
+    /** A fleet document: a few hundred bytes per member, and the shared settings. */
     private static final int MAX_DOCUMENT = 65_536;
     /** One document change at a time: a delivery taken here and a panel added here. */
     private static final Object DOCUMENT_LOCK = new Object();
@@ -209,7 +213,7 @@ final class FleetServer {
      * Adds another panel to this one's fleet (founding it when this panel has none): the code
      * to its join route, pinned to the key it showed, then this panel's combinations when it
      * asks at its welcome screen, then the member in the fleet's list. The camera's Add a panel
-     * and the typed code (block 11e) both end here. Off the main thread.
+     * and the typed code both end here. Off the main thread.
      */
     static Adopted adopt(Context context, FleetJoin.Invitation invitation, String fleetId,
             String fleetName, String name) {
@@ -322,11 +326,14 @@ final class FleetServer {
     /** A panel that proved a different code than the one typed or read. */
     private static final String OTHER_CODE = "that panel shows another code";
 
-    /** How long a typed code looks for its panel on the network (Juri, 2026-10-14: 30 s). */
+    /** How long a typed code looks for its panel on the network (2026-10-14: 30 s). */
     static final long CODE_SEARCH_MS = 30_000L;
 
+    /** How many panels may fail to prove a typed code before the search gives up. */
+    private static final int MAX_CODE_PROOFS = 3;
+
     /**
-     * Adopts the panel that shows {@code code}, for a device without a camera (block 11e): the
+     * Adopts the panel that shows {@code code}, for a device without a camera: the
      * panels announced on this network as ready to be joined with the code's first two digits
      * as their tag are asked, each once, pinned to the key their announcement carries, until one
      * proves the same code or the time runs out. The code is what proves the person sees that
@@ -378,6 +385,7 @@ final class FleetServer {
         String self = KioskConfig.deviceIdOf(context);
         java.util.Set<String> tried = new java.util.HashSet<>();
         String lastProblem = null;
+        int proofsFailed = 0;
         long deadline = android.os.SystemClock.elapsedRealtime() + CODE_SEARCH_MS;
         try {
             nsd.discoverServices("_muralis._tcp", android.net.nsd.NsdManager.PROTOCOL_DNS_SD,
@@ -405,9 +413,12 @@ final class FleetServer {
                 }
                 if (!"joining".equals(text(txt, "state"))
                         || !digits.substring(0, 2).equals(text(txt, "tag"))) {
-                    // Not showing this code yet: when it opens one it announces itself again,
-                    // and is asked then.
+                    // Not showing this code yet: asked again after a pause, while the time
+                    // lasts. Android 13 and older report no change of a found service's TXT, so
+                    // a panel that opens its code after the search began is caught only so.
                     tried.remove(seen.getServiceName());
+                    Thread.sleep(1_000);
+                    found.add(seen);
                     continue;
                 }
                 String address = resolved.getHost().getHostAddress();
@@ -419,6 +430,11 @@ final class FleetServer {
                     return adopted;
                 }
                 lastProblem = adopted.refusal;
+                // Each panel answering with the right tag is a guess at the code's six secret
+                // digits; a few are honest coincidences, more are someone announcing on purpose.
+                if (++proofsFailed >= MAX_CODE_PROOFS) {
+                    break;
+                }
             }
         } catch (InterruptedException stopped) {
             Thread.currentThread().interrupt();
@@ -906,12 +922,6 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only POST"));
                 }
-            } else if ("/fleet/leave".equals(parts[1])) {
-                if ("POST".equals(parts[0])) {
-                    leave(caller, output);
-                } else {
-                    respond(output, 405, error("only POST"));
-                }
             } else if ("/fleet/screenshot".equals(parts[1])) {
                 if ("GET".equals(parts[0])) {
                     screenshot(output);
@@ -1267,7 +1277,7 @@ final class FleetServer {
     /**
      * Adds a panel that just joined to this panel's fleet document, signed as this panel, and
      * keeps it: the first one founds the fleet. Then hands the document to every other member
-     * once; a member that cannot be reached gets it with the next change (retries are block 12b).
+     * once; a member that cannot be reached fetches it at its next check-in.
      * Returns the new member's refusal or network failure, null when it took the document. Not
      * on the main thread.
      */
@@ -1366,7 +1376,7 @@ final class FleetServer {
     }
 
     /**
-     * This panel's Muralis Pro (block 14): its own verified purchase, or the fleet's lease, at
+     * This panel's Muralis Pro: its own verified purchase, or the fleet's lease, at
      * this moment. A debug build's override stands for its own purchase.
      */
     static FleetTier.Status proStatus(Context context) {
@@ -1495,7 +1505,7 @@ final class FleetServer {
     }
 
     /**
-     * What this panel knows of another from its heartbeats (block 12b): where it was last reached,
+     * What this panel knows of another from its heartbeats: where it was last reached,
      * which version of the list it held, when, its health summary and its clock against this
      * panel's. In memory only: a restart starts with nothing seen.
      */
@@ -1887,7 +1897,7 @@ final class FleetServer {
     }
 
     /**
-     * Restore as new (block 15): the version {@code version} of the history, written as a new,
+     * Restore as new: the version {@code version} of the history, written as a new,
      * higher version by this panel ({@link FleetDocument#restored}: its fleet name, groups and
      * shared settings; the members and revoked keys stay as held now) and handed to every
      * member, which applies it as any change.
@@ -2137,6 +2147,11 @@ final class FleetServer {
             if (!KioskRuntimeState.fleetProfileRefused(section).isEmpty()) {
                 continue;
             }
+            if (!proStatus(context).pro) {
+                // Without Pro the fleet is free: what it shares is still applied here, but a
+                // change made on this panel is no longer handed to the others.
+                continue;
+            }
             java.util.Map<String, Object> own = FleetProfile.read(context, section);
             // A secret is a change only when both sides have one and they differ: one this
             // panel cannot read right now, or one the group shares empty (a member keeps its
@@ -2235,6 +2250,12 @@ final class FleetServer {
             return;
         }
         String pinHash = setup.optString("escape_pin_hash", "");
+        if (!pinHash.isEmpty() && !EscapePin.wellFormed(pinHash)) {
+            // Taken as it is, a malformed PIN could never be matched, or make every try take
+            // minutes: a panel locked in at its first start.
+            respond(output, 400, error("not a PIN this app wrote"));
+            return;
+        }
         try {
             config.settingsSequence = settings;
             config.launcherSequence = launcher;
@@ -2256,7 +2277,7 @@ final class FleetServer {
     /**
      * {@code POST /fleet/left} from a member that is leaving the fleet from its own panel or
      * web admin: taken off the fleet's list here and the list handed to the others, so it
-     * disappears from every Fleet page at once (fleet design: Leave tells one manager).
+     * disappears from every Fleet page at once: Leave tells one manager, which tells the rest.
      */
     private void left(String caller, OutputStream output) throws IOException {
         String refused = removeMember(context, caller, false);
@@ -2269,12 +2290,6 @@ final class FleetServer {
                 throw new IllegalStateException(impossible);
             }
         }
-    }
-
-    /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */
-    private void leave(String caller, OutputStream output) throws IOException {
-        leaveFleet(context, "at the request of key " + FleetTls.shortForm(caller));
-        respond(output, 200, fleetState());
     }
 
     /**
