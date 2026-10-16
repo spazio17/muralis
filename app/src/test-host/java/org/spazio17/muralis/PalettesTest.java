@@ -1,28 +1,25 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
-/** The generated schemes: every colour offered has fifteen colours, dark and light. */
+/** The generated scheme: fifteen colours, dark and light, ultramarine's accent in each. */
 public final class PalettesTest {
     private PalettesTest() {
     }
 
     public static void main(String[] args) {
-        for (String colour : Palettes.COLOURS) {
-            for (boolean dark : new boolean[] {true, false}) {
-                String[] scheme = Palettes.colours(colour, dark);
-                require(scheme != null && scheme.length == 15,
-                        colour + (dark ? " dark" : " light") + " has 15 colours");
-                for (String one : scheme) {
-                    require(one.matches("#[0-9a-f]{6}"), colour + ": " + one);
-                }
+        for (boolean dark : new boolean[] {true, false}) {
+            String[] scheme = Palettes.colours(dark);
+            require(scheme != null && scheme.length == 15,
+                    (dark ? "dark" : "light") + " has 15 colours");
+            for (String one : scheme) {
+                require(one.matches("#[0-9a-f]{6}"), one);
             }
         }
-        require(Palettes.colours("purple", true)[7].equals("#d8baff"), "purple dark primary");
-        require(Palettes.colours("green", true) == null, "a colour not offered has no scheme");
-        require(Palettes.COLOURS[0].equals("purple"), "purple is the default");
+        require(Palettes.colours(true)[7].equals("#b9c3ff"), "the dark accent");
+        require(Palettes.colours(false)[7].equals("#0043ff"), "the light accent");
         System.out.println("PalettesTest passed");
     }
 
