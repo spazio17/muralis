@@ -191,33 +191,152 @@ final class FleetDocument {
     /** Values that are secrets: carried only on the wire, blanked in every stored copy. */
     static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password"};
 
-    /** The shared values of {@code section}, or null when the fleet does not share it. */
-    static Map<String, Object> sectionValues(Map<String, Object> document, String section) {
-        Map<String, Object> entry = profileEntry(document, section);
-        Object values = entry == null ? null : entry.get("values");
-        return values instanceof Map ? TinyJson.object(values) : null;
+    /**
+     * The group every panel is in and nobody removes; the others are made by a person, with a
+     * name (fleet design, groups of 2026-10-13, like WLED's sync groups). A shared section is
+     * shared in one group; a panel applies it only from the groups it is in.
+     */
+    static final String EVERYONE = "everyone";
+    static final String EVERYONE_NAME = "Everyone";
+    /** Offered when a group is made, generic, since a fleet may be a home, a shop or a fair. */
+    static final String[] GROUP_SUGGESTIONS = {"Entrance", "Reception", "Hallway", "Kitchen",
+            "Living room", "Meeting room", "Offices", "Showroom", "Floor 1", "Floor 2"};
+
+    /** The groups a person made, by id: name and at; removed ones left out. */
+    static Map<String, String> groups(Map<String, Object> document) {
+        Map<String, String> groups = new LinkedHashMap<>();
+        Object all = document == null ? null : document.get("groups");
+        if (all instanceof Map) {
+            for (Map.Entry<String, Object> entry : TinyJson.object(all).entrySet()) {
+                if (entry.getValue() instanceof Map) {
+                    Map<String, Object> group = TinyJson.object(entry.getValue());
+                    if (!group.containsKey("removed")) {
+                        groups.put(entry.getKey(), TinyJson.string(group, NAME, entry.getKey()));
+                    }
+                }
+            }
+        }
+        return groups;
     }
 
-    private static Map<String, Object> profileEntry(Map<String, Object> document, String section) {
-        Object profile = document == null ? null : document.get("profile");
-        Object entry = profile instanceof Map ? TinyJson.object(profile).get(section) : null;
-        return entry instanceof Map ? TinyJson.object(entry) : null;
+    /** A group's name, Everyone's for its id, the id itself for one no longer known. */
+    static String groupName(Map<String, Object> document, String id) {
+        if (EVERYONE.equals(id)) {
+            return EVERYONE_NAME;
+        }
+        String name = groups(document).get(id);
+        return name == null ? id : name;
     }
 
-    /** The version at which {@code section} was last shared, changed or unshared; 0 when never. */
-    static long sectionAt(Map<String, Object> document, String section) {
-        Map<String, Object> entry = profileEntry(document, section);
-        return entry == null ? 0 : numberOf(entry, AT);
+    /** Whether a group name is one a person may give: one line, 1 to 40 characters, not Everyone. */
+    static String validateGroupName(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 40 || trimmed.contains("\n")) {
+            return "a group's name is one line of 1 to 40 characters";
+        }
+        if (trimmed.equalsIgnoreCase(EVERYONE_NAME)) {
+            return "every panel is in " + EVERYONE_NAME + " already";
+        }
+        return null;
+    }
+
+    /** The next document with group {@code id} named {@code name}, made or renamed. */
+    static Map<String, Object> withGroup(Map<String, Object> held, String author, String id,
+            String name, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        Map<String, Object> groups = groupEntries(next);
+        Map<String, Object> group = new LinkedHashMap<>();
+        group.put(NAME, name.trim());
+        group.put(AT, version(next));
+        groups.put(id, group);
+        next.put("groups", groups);
+        return next;
     }
 
     /**
-     * The next document with {@code section} shared with {@code values}, or unshared when they
-     * are null, by {@code author}: one version higher, the section stamped with it, everything
-     * else carried over. The entry stays when unsharing, without values, so the version of the
-     * unsharing is known to the merge.
+     * The next document without group {@code id}: its entry stays, marked removed at this
+     * version so a merge never brings it back, and what it shared is gone.
      */
-    static Map<String, Object> withSection(Map<String, Object> held, String author, String section,
-            Map<String, Object> values, String updated) {
+    static Map<String, Object> withoutGroup(Map<String, Object> held, String author, String id,
+            String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        Map<String, Object> groups = groupEntries(next);
+        Map<String, Object> group = new LinkedHashMap<>();
+        group.put(AT, version(next));
+        group.put("removed", version(next));
+        groups.put(id, group);
+        next.put("groups", groups);
+        Map<String, Object> profile = profileEntries(next);
+        profile.remove(id);
+        next.put("profile", profile);
+        return next;
+    }
+
+    /** The groups a member is in: its own, and Everyone first. */
+    static List<String> memberGroups(Map<String, Object> member) {
+        List<String> groups = new ArrayList<>();
+        groups.add(EVERYONE);
+        Object list = member == null ? null : member.get("groups");
+        if (list instanceof List) {
+            for (Object one : (List<?>) list) {
+                if (one instanceof String && !EVERYONE.equals(one) && !groups.contains(one)) {
+                    groups.add((String) one);
+                }
+            }
+        }
+        return groups;
+    }
+
+    /** The member entry with key hash {@code spki}, or null: a panel is known by its key. */
+    static Map<String, Object> memberByKey(Map<String, Object> document, String spki) {
+        for (Map<String, Object> member : members(document)) {
+            if (spki != null && spki.equals(TinyJson.string(member, SPKI, ""))) {
+                return member;
+            }
+        }
+        return null;
+    }
+
+    /** The groups a member is in that still exist, Everyone first; see memberGroups. */
+    static List<String> memberGroups(Map<String, Object> document, Map<String, Object> member) {
+        List<String> groups = new ArrayList<>();
+        Map<String, String> known = groups(document);
+        for (String group : memberGroups(member)) {
+            if (EVERYONE.equals(group) || known.containsKey(group)) {
+                groups.add(group);
+            }
+        }
+        return groups;
+    }
+
+    /**
+     * The next document with the member of key hash {@code spki} in exactly {@code groups} (Everyone
+     * aside); the entry is stamped, so a merge keeps the later of two edits of it.
+     */
+    static Map<String, Object> withMemberGroups(Map<String, Object> held, String author,
+            String spki, List<String> groups, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (spki.equals(TinyJson.string(member, SPKI, ""))) {
+                member = new LinkedHashMap<>(member);
+                List<Object> own = new ArrayList<>();
+                for (String group : groups) {
+                    if (!EVERYONE.equals(group) && !own.contains(group)) {
+                        own.add(group);
+                    }
+                }
+                member.put("groups", own);
+                member.put(AT, version(next));
+            }
+            members.add(member);
+        }
+        next.put("members", members);
+        return next;
+    }
+
+    private static Map<String, Object> bumped(Map<String, Object> held, String author,
+            String updated) {
         Map<String, Object> next = new LinkedHashMap<>(held);
         next.remove("signature");
         long version = version(held) + 1;
@@ -225,32 +344,106 @@ final class FleetDocument {
         next.put("base_version", version - 1);
         next.put("author", author);
         next.put("updated", updated);
+        return next;
+    }
+
+    private static Map<String, Object> groupEntries(Map<String, Object> document) {
+        Map<String, Object> groups = new LinkedHashMap<>();
+        if (document.get("groups") instanceof Map) {
+            groups.putAll(TinyJson.object(document.get("groups")));
+        }
+        return groups;
+    }
+
+    private static Map<String, Object> profileEntries(Map<String, Object> document) {
         Map<String, Object> profile = new LinkedHashMap<>();
-        if (held.get("profile") instanceof Map) {
-            profile.putAll(TinyJson.object(held.get("profile")));
+        if (document.get("profile") instanceof Map) {
+            profile.putAll(TinyJson.object(document.get("profile")));
+        }
+        return profile;
+    }
+
+    /** The values {@code group} shares for {@code section}, or null when it does not. */
+    static Map<String, Object> sectionValues(Map<String, Object> document, String group,
+            String section) {
+        Map<String, Object> entry = profileEntry(document, group, section);
+        Object values = entry == null ? null : entry.get("values");
+        return values instanceof Map ? TinyJson.object(values) : null;
+    }
+
+    private static Map<String, Object> profileEntry(Map<String, Object> document, String group,
+            String section) {
+        Object profile = document == null ? null : document.get("profile");
+        Object ofGroup = profile instanceof Map ? TinyJson.object(profile).get(group) : null;
+        Object entry = ofGroup instanceof Map ? TinyJson.object(ofGroup).get(section) : null;
+        return entry instanceof Map ? TinyJson.object(entry) : null;
+    }
+
+    /** The version at which {@code group} last shared, changed or unshared {@code section}. */
+    static long sectionAt(Map<String, Object> document, String group, String section) {
+        Map<String, Object> entry = profileEntry(document, group, section);
+        return entry == null ? 0 : numberOf(entry, AT);
+    }
+
+    /** The groups that share {@code section}, each with the version of its last change. */
+    static Map<String, Long> sharedBy(Map<String, Object> document, String section) {
+        Map<String, Long> by = new LinkedHashMap<>();
+        Object profile = document == null ? null : document.get("profile");
+        if (!(profile instanceof Map)) {
+            return by;
+        }
+        Map<String, String> known = groups(document);
+        for (String group : TinyJson.object(profile).keySet()) {
+            if ((EVERYONE.equals(group) || known.containsKey(group))
+                    && sectionValues(document, group, section) != null) {
+                by.put(group, sectionAt(document, group, section));
+            }
+        }
+        return by;
+    }
+
+    /**
+     * The next document with {@code section} shared in {@code group} with {@code values}, or
+     * unshared there when they are null, by {@code author}: one version higher, the entry
+     * stamped with it, everything else carried over. The entry stays when unsharing, without
+     * values, so the version of the unsharing is known to the merge.
+     */
+    static Map<String, Object> withSection(Map<String, Object> held, String author, String group,
+            String section, Map<String, Object> values, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        Map<String, Object> profile = profileEntries(next);
+        Map<String, Object> ofGroup = new LinkedHashMap<>();
+        if (profile.get(group) instanceof Map) {
+            ofGroup.putAll(TinyJson.object(profile.get(group)));
         }
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put(AT, version);
+        entry.put(AT, version(next));
         if (values != null) {
             entry.put("values", new LinkedHashMap<>(values));
         }
-        profile.put(section, entry);
+        ofGroup.put(section, entry);
+        profile.put(group, ofGroup);
         next.put("profile", profile);
         return next;
     }
 
-    /** The secrets in {@code document}'s profile, by key, blanked in place; an empty one too. */
+    /**
+     * The secrets in {@code document}'s profile, by group and key ({@code group/key}), blanked
+     * in place; an empty one too.
+     */
     static Map<String, String> stripSecrets(Map<String, Object> document) {
         Map<String, String> secrets = new LinkedHashMap<>();
-        for (String section : SECTIONS) {
-            Map<String, Object> values = sectionValues(document, section);
-            if (values == null) {
-                continue;
-            }
-            for (String key : SECRET_KEYS) {
-                if (values.get(key) instanceof String) {
-                    secrets.put(key, (String) values.get(key));
-                    values.put(key, "");
+        for (String group : profileGroups(document)) {
+            for (String section : SECTIONS) {
+                Map<String, Object> values = sectionValues(document, group, section);
+                if (values == null) {
+                    continue;
+                }
+                for (String key : SECRET_KEYS) {
+                    if (values.get(key) instanceof String) {
+                        secrets.put(group + "/" + key, (String) values.get(key));
+                        values.put(key, "");
+                    }
                 }
             }
         }
@@ -259,17 +452,26 @@ final class FleetDocument {
 
     /** Puts {@code secrets} back where {@link #stripSecrets} blanked them. */
     static void fillSecrets(Map<String, Object> document, Map<String, String> secrets) {
-        for (String section : SECTIONS) {
-            Map<String, Object> values = sectionValues(document, section);
-            if (values == null) {
-                continue;
-            }
-            for (String key : SECRET_KEYS) {
-                if (values.containsKey(key) && secrets.containsKey(key)) {
-                    values.put(key, secrets.get(key));
+        for (String group : profileGroups(document)) {
+            for (String section : SECTIONS) {
+                Map<String, Object> values = sectionValues(document, group, section);
+                if (values == null) {
+                    continue;
+                }
+                for (String key : SECRET_KEYS) {
+                    if (values.containsKey(key) && secrets.containsKey(group + "/" + key)) {
+                        values.put(key, secrets.get(group + "/" + key));
+                    }
                 }
             }
         }
+    }
+
+    /** Every group with an entry in the profile, Everyone included, removed ones too. */
+    static List<String> profileGroups(Map<String, Object> document) {
+        Object profile = document == null ? null : document.get("profile");
+        return profile instanceof Map ? new ArrayList<>(TinyJson.object(profile).keySet())
+                : new ArrayList<>();
     }
 
     /** The revoked key hashes. */
@@ -382,6 +584,13 @@ final class FleetDocument {
         for (Map<String, Object> one : members(held)) {
             if (TinyJson.string(one, SPKI, "").equals(TinyJson.string(self, SPKI, ""))) {
                 self.put(SINCE, numberOf(one, SINCE));
+                // Its groups, and the stamp that keeps them through a merge, carry over.
+                if (one.containsKey("groups")) {
+                    self.put("groups", one.get("groups"));
+                }
+                if (one.containsKey(AT)) {
+                    self.put(AT, one.get(AT));
+                }
             }
             if (replaces(self, one, revoked, version + 1)
                     || replaces(member, one, revoked, version + 1)) {
@@ -490,7 +699,27 @@ final class FleetDocument {
         Set<String> seen = new HashSet<>();
         List<Map<String, Object>> both = new ArrayList<>(members(newer));
         both.addAll(members(older));
+        // Where both list a key, the entry edited last (its groups) wins, the newer document's on
+        // a tie: both is the newer document's entries first.
+        List<Map<String, Object>> picked = new ArrayList<>();
         for (Map<String, Object> member : both) {
+            String key = TinyJson.string(member, SPKI, "");
+            boolean replaced = false;
+            for (int i = 0; i < picked.size(); i++) {
+                Map<String, Object> other = picked.get(i);
+                if (key.equals(TinyJson.string(other, SPKI, ""))) {
+                    if (numberOf(member, AT) > numberOf(other, AT)) {
+                        picked.set(i, member);
+                    }
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                picked.add(member);
+            }
+        }
+        for (Map<String, Object> member : picked) {
             String key = TinyJson.string(member, SPKI, "");
             if (!seen.add(key)) {
                 continue;
@@ -504,15 +733,49 @@ final class FleetDocument {
         }
         merged.put("members", members);
         merged.put("revoked", revokedList(revoked));
-        // Each shared section on its own: the later change wins, the newer document on a tie.
+        // Each group on its own: the entry changed last wins, the newer document on a tie; a
+        // removed group stays removed.
+        Map<String, Object> groups = new LinkedHashMap<>();
+        Set<String> groupIds = new java.util.LinkedHashSet<>(groupEntries(newer).keySet());
+        if (older != null) {
+            groupIds.addAll(groupEntries(older).keySet());
+        }
+        for (String id : groupIds) {
+            Object ours = groupEntries(newer).get(id);
+            Object theirs = older == null ? null : groupEntries(older).get(id);
+            Object winner = theirs instanceof Map && (!(ours instanceof Map)
+                    || numberOf(TinyJson.object(theirs), AT) > numberOf(TinyJson.object(ours), AT))
+                    ? theirs : ours;
+            if (winner instanceof Map) {
+                groups.put(id, winner);
+            }
+        }
+        if (!groups.isEmpty() || newer.containsKey("groups")
+                || (older != null && older.containsKey("groups"))) {
+            merged.put("groups", groups);
+        }
+        // Each shared section of each group on its own: the later change wins, the newer
+        // document on a tie; a removed group shares nothing.
         Map<String, Object> profile = new LinkedHashMap<>();
-        for (String section : SECTIONS) {
-            Map<String, Object> ours = profileEntry(newer, section);
-            Map<String, Object> theirs = profileEntry(older, section);
-            Map<String, Object> winner = theirs != null
-                    && (ours == null || numberOf(theirs, AT) > numberOf(ours, AT)) ? theirs : ours;
-            if (winner != null) {
-                profile.put(section, winner);
+        Set<String> profileGroups = new java.util.LinkedHashSet<>(profileGroups(newer));
+        profileGroups.addAll(profileGroups(older));
+        for (String group : profileGroups) {
+            Object entry = groups.get(group);
+            if (entry instanceof Map && TinyJson.object(entry).containsKey("removed")) {
+                continue;
+            }
+            Map<String, Object> ofGroup = new LinkedHashMap<>();
+            for (String section : SECTIONS) {
+                Map<String, Object> ours = profileEntry(newer, group, section);
+                Map<String, Object> theirs = profileEntry(older, group, section);
+                Map<String, Object> winner = theirs != null && (ours == null
+                        || numberOf(theirs, AT) > numberOf(ours, AT)) ? theirs : ours;
+                if (winner != null) {
+                    ofGroup.put(section, winner);
+                }
+            }
+            if (!ofGroup.isEmpty()) {
+                profile.put(group, ofGroup);
             }
         }
         if (!profile.isEmpty() || newer.containsKey("profile")

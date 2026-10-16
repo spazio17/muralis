@@ -46,9 +46,11 @@ on purpose.
   single-use code shown on its Join screen, or leaves it, and creates a fleet or adds another
   panel by reading that code with its camera; every member holds the fleet's signed list of
   panels, the members tell each other every few minutes that they are there and which
-  version they hold, so one that fell behind fetches the list, and groups of settings (the
-  dashboard, MQTT, the web admin, the display, the screensaver) can be shared: a shared group is
-  applied on every member and a change to it on any panel reaches all of them.
+  version they hold, so one that fell behind fetches the list, and sections of settings (the
+  dashboard, MQTT, the web admin, the display, the screensaver) can be shared in a group of
+  panels: groups are made with a name the person gives, every panel is in "Everyone" and ticks
+  the others it belongs to, a shared section is applied on every panel of its group and a
+  change to it on any of them reaches all of them.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

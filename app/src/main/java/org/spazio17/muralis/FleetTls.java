@@ -52,16 +52,20 @@ final class FleetTls {
     /** The same hash of an encoded public key, which the fleet document's signatures carry. */
     static String spkiOf(byte[] encodedPublicKey) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(encodedPublicKey);
-            StringBuilder hex = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                hex.append(Character.forDigit((b >> 4) & 0xF, 16))
-                        .append(Character.forDigit(b & 0xF, 16));
-            }
-            return hex.toString();
+            return hex(MessageDigest.getInstance("SHA-256").digest(encodedPublicKey));
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /** Bytes as lowercase hex. */
+    static String hex(byte[] bytes) {
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16))
+                    .append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 
     /** The first eight characters, for logs and screens; never enough to trust on. */

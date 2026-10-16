@@ -162,6 +162,15 @@ public final class FleetDocumentTest {
                 && FleetDocument.isManager(founded, managerSpki)
                 && FleetDocument.author(founded).equals("kiosk-a"),
                 "the first document does not list both panels with this one as author");
+        // Adding a panel keeps the adder's own groups and stamp.
+        Map<String, Object> selfInLobby = member("kiosk-a", "kiosk-a", managerSpki, true);
+        Map<String, Object> keptGroups = FleetDocument.withMember(FleetDocument.withMemberGroups(
+                FleetDocument.withGroup(founded, "kiosk-a", "group-9", "Lobby", "2026-10-12T20:01:00Z"),
+                "kiosk-a", managerSpki, Collections.singletonList("group-9"), "2026-10-12T20:02:00Z"),
+                "fleet-9", "Test home", selfInLobby, member("kiosk-z", "Z", repeat('a', 64), true),
+                "2026-10-12T20:03:00Z");
+        require(FleetDocument.memberGroups(keptGroups, FleetDocument.memberByKey(keptGroups,
+                managerSpki)).contains("group-9"), "adding a panel dropped the adder's groups");
         String foundedText = FleetDocument.sign(founded, manager.getPrivate(),
                 manager.getPublic());
         Map<String, Object> foundedRead = FleetDocument.parse(foundedText);
@@ -187,46 +196,99 @@ public final class FleetDocumentTest {
                 && FleetDocument.revoked(back).contains(repeat('e', 64)),
                 "a key joining again stayed revoked, or the reset key was not");
 
-        // The profile: a section shared from one panel, changed apart on two, the later wins;
-        // unsharing is a change too; secrets leave the stored copy and come back for the wire.
+        // The profile, per group: a section shared in Everyone from one panel, changed apart on
+        // two, the later wins; unsharing is a change too; secrets leave the stored copy and come
+        // back for the wire.
+        String all = FleetDocument.EVERYONE;
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("dashboard_url", "https://a.example/");
-        Map<String, Object> shared = FleetDocument.withSection(read, "kiosk-a", "dashboard",
+        Map<String, Object> shared = FleetDocument.withSection(read, "kiosk-a", all, "dashboard",
                 values, "2026-10-12T21:00:00Z");
-        require(FleetDocument.version(shared) == 2 && FleetDocument.sectionAt(shared, "dashboard")
-                == 2 && "https://a.example/".equals(FleetDocument.sectionValues(shared,
+        require(FleetDocument.version(shared) == 2
+                && FleetDocument.sectionAt(shared, all, "dashboard") == 2
+                && "https://a.example/".equals(FleetDocument.sectionValues(shared, all,
                 "dashboard").get("dashboard_url")), "sharing a section did not stamp it");
-        require(FleetDocument.sectionValues(shared, "mqtt") == null
-                && FleetDocument.sectionAt(shared, "mqtt") == 0, "an unshared section read as shared");
+        require(FleetDocument.sectionValues(shared, all, "mqtt") == null
+                && FleetDocument.sectionAt(shared, all, "mqtt") == 0,
+                "an unshared section read as shared");
         Map<String, Object> v2 = new LinkedHashMap<>();
         v2.put("dashboard_url", "https://b.example/");
-        Map<String, Object> byB2 = FleetDocument.withSection(shared, "kiosk-b", "dashboard", v2,
-                "2026-10-12T21:01:00Z");
+        Map<String, Object> byB2 = FleetDocument.withSection(shared, "kiosk-b", all, "dashboard",
+                v2, "2026-10-12T21:01:00Z");
         Map<String, Object> byC2 = FleetDocument.withSection(FleetDocument.withSection(shared,
-                "kiosk-c", "mqtt", Collections.singletonMap("mqtt_host", "broker"),
-                "2026-10-12T21:01:00Z"), "kiosk-c", "dashboard", values, "2026-10-12T21:02:00Z");
+                "kiosk-c", all, "mqtt", Collections.singletonMap("mqtt_host", "broker"),
+                "2026-10-12T21:01:00Z"), "kiosk-c", all, "dashboard", values,
+                "2026-10-12T21:02:00Z");
         Map<String, Object> both = FleetDocument.merge(byB2, byC2);
-        require("https://a.example/".equals(FleetDocument.sectionValues(both, "dashboard")
+        require("https://a.example/".equals(FleetDocument.sectionValues(both, all, "dashboard")
                 .get("dashboard_url")), "the later change of a section lost");
-        require("broker".equals(FleetDocument.sectionValues(both, "mqtt").get("mqtt_host")),
+        require("broker".equals(FleetDocument.sectionValues(both, all, "mqtt").get("mqtt_host")),
                 "a section shared on one side only was lost");
-        Map<String, Object> unshared = FleetDocument.withSection(both, "kiosk-a", "mqtt", null,
-                "2026-10-12T21:03:00Z");
-        require(FleetDocument.sectionValues(unshared, "mqtt") == null
-                && FleetDocument.sectionValues(FleetDocument.merge(byC2, unshared), "mqtt") == null,
-                "unsharing did not hold in a merge");
+        Map<String, Object> unshared = FleetDocument.withSection(both, "kiosk-a", all, "mqtt",
+                null, "2026-10-12T21:03:00Z");
+        require(FleetDocument.sectionValues(unshared, all, "mqtt") == null
+                && FleetDocument.sectionValues(FleetDocument.merge(byC2, unshared), all, "mqtt")
+                        == null, "unsharing did not hold in a merge");
         Map<String, Object> secret = new LinkedHashMap<>();
         secret.put("mqtt_host", "broker");
         secret.put("mqtt_password", "hunter2");
-        Map<String, Object> withSecret = FleetDocument.withSection(read, "kiosk-a", "mqtt", secret,
-                "2026-10-12T21:04:00Z");
+        Map<String, Object> withSecret = FleetDocument.withSection(read, "kiosk-a", all, "mqtt",
+                secret, "2026-10-12T21:04:00Z");
         Map<String, String> taken = FleetDocument.stripSecrets(withSecret);
-        require("hunter2".equals(taken.get("mqtt_password")) && "".equals(
-                FleetDocument.sectionValues(withSecret, "mqtt").get("mqtt_password")),
+        require("hunter2".equals(taken.get(all + "/mqtt_password")) && "".equals(
+                FleetDocument.sectionValues(withSecret, all, "mqtt").get("mqtt_password")),
                 "the secret was not stripped");
         FleetDocument.fillSecrets(withSecret, taken);
-        require("hunter2".equals(FleetDocument.sectionValues(withSecret, "mqtt")
+        require("hunter2".equals(FleetDocument.sectionValues(withSecret, all, "mqtt")
                 .get("mqtt_password")), "the secret did not come back");
+
+        // Groups: made with a name, a member put in one, a section shared in it, two groups
+        // sharing the same section told apart, a removed group gone for good, and the later
+        // edit of a member's groups winning a merge.
+        require(FleetDocument.validateGroupName("Everyone") != null
+                && FleetDocument.validateGroupName(" ") != null
+                && FleetDocument.validateGroupName("Lobby") == null, "the group name rule");
+        Map<String, Object> lobby = FleetDocument.withGroup(shared, "kiosk-a", "group-1", "Lobby",
+                "2026-10-12T21:05:00Z");
+        require("Lobby".equals(FleetDocument.groups(lobby).get("group-1"))
+                && "Lobby".equals(FleetDocument.groupName(lobby, "group-1"))
+                && FleetDocument.EVERYONE_NAME.equals(FleetDocument.groupName(lobby, all)),
+                "the group was not made");
+        Map<String, Object> inLobby = FleetDocument.withMemberGroups(lobby, "kiosk-a", memberSpki,
+                java.util.Arrays.asList("group-1", all), "2026-10-12T21:06:00Z");
+        require(FleetDocument.memberGroups(FleetDocument.memberByKey(inLobby, memberSpki))
+                .equals(java.util.Arrays.asList(all, "group-1"))
+                && FleetDocument.memberGroups(FleetDocument.memberByKey(inLobby, managerSpki))
+                        .equals(Collections.singletonList(all)), "the member's groups are wrong");
+        Map<String, Object> lobbyUrl = new LinkedHashMap<>();
+        lobbyUrl.put("dashboard_url", "https://lobby.example/");
+        Map<String, Object> lobbyShares = FleetDocument.withSection(inLobby, "kiosk-a", "group-1",
+                "dashboard", lobbyUrl, "2026-10-12T21:07:00Z");
+        require(FleetDocument.sharedBy(lobbyShares, "dashboard").keySet()
+                .equals(new HashSet<>(java.util.Arrays.asList(all, "group-1")))
+                && FleetDocument.sharedBy(lobbyShares, "mqtt").isEmpty(),
+                "which groups share a section is wrong");
+        Map<String, Object> removed = FleetDocument.withoutGroup(lobbyShares, "kiosk-a",
+                "group-1", "2026-10-12T21:08:00Z");
+        require(FleetDocument.memberGroups(removed, FleetDocument.memberByKey(removed, memberSpki))
+                .equals(Collections.singletonList(all)), "a removed group still counted for a member");
+        require(!FleetDocument.groups(removed).containsKey("group-1")
+                && FleetDocument.sectionValues(removed, "group-1", "dashboard") == null
+                && !FleetDocument.groups(FleetDocument.merge(lobbyShares, removed))
+                        .containsKey("group-1")
+                && FleetDocument.sectionValues(FleetDocument.merge(removed, lobbyShares),
+                        "group-1", "dashboard") == null,
+                "a removed group came back in a merge");
+        Map<String, Object> editA = FleetDocument.withMemberGroups(inLobby, "kiosk-a", memberSpki,
+                Collections.singletonList(all), "2026-10-12T21:09:00Z");
+        Map<String, Object> editC = FleetDocument.withMemberGroups(FleetDocument.withGroup(inLobby,
+                "kiosk-c", "group-2", "Offices", "2026-10-12T21:09:00Z"), "kiosk-c", memberSpki,
+                java.util.Arrays.asList("group-1", "group-2"), "2026-10-12T21:10:00Z");
+        Map<String, Object> edits = FleetDocument.merge(editA, editC);
+        require(FleetDocument.memberGroups(FleetDocument.memberByKey(edits, memberSpki))
+                .equals(java.util.Arrays.asList(all, "group-1", "group-2"))
+                && "Offices".equals(FleetDocument.groups(edits).get("group-2")),
+                "the later edit of a member's groups lost, or a group made apart was lost");
 
         System.out.println("FleetDocumentTest passed");
     }

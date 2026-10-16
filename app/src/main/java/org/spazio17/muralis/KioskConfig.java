@@ -334,13 +334,13 @@ final class KioskConfig {
         }
 
         /** Left: no fleet, and no key trusted or revoked; the panel keeps its id and name. */
-        Editor leaveFleet() {
+        Editor leaveFleet(Context context) {
             plain.remove(FLEET_ID);
             plain.remove(FLEET_NAME);
             plain.remove(FLEET_TRUSTED);
             plain.remove(FLEET_REVOKED);
             plain.remove(FLEET_DOCUMENT);
-            for (String key : FleetDocument.SECRET_KEYS) {
+            for (String key : FleetDocument.stripSecrets(fleetDocumentOf(context)).keySet()) {
                 secrets.put(FLEET_SECRET + key, "");
             }
             return this;
@@ -363,9 +363,14 @@ final class KioskConfig {
             plain.putString(FLEET_NAME, FleetDocument.fleetName(document));
             plain.putString(FLEET_TRUSTED, String.join(",", FleetDocument.trustedKeys(document)));
             plain.putString(FLEET_REVOKED, String.join(",", revoked));
+            // Every secret slot the new list has (group/key), set or cleared; the slots of a
+            // list held before and gone now are cleared too.
             java.util.Map<String, String> carried = FleetDocument.stripSecrets(document);
-            for (String key : FleetDocument.SECRET_KEYS) {
-                secrets.put(FLEET_SECRET + key, carried.containsKey(key) ? carried.get(key) : "");
+            for (String key : FleetDocument.stripSecrets(fleetDocumentOf(context)).keySet()) {
+                secrets.put(FLEET_SECRET + key, "");
+            }
+            for (java.util.Map.Entry<String, String> secret : carried.entrySet()) {
+                secrets.put(FLEET_SECRET + secret.getKey(), secret.getValue());
             }
             plain.putString(FLEET_DOCUMENT, FleetDocument.canonical(document));
             return this;
@@ -977,10 +982,12 @@ final class KioskConfig {
             if (document != null) {
                 java.util.Map<String, String> secrets = new java.util.LinkedHashMap<>();
                 SecretStore store = new SecretStore(storageContext(context));
-                for (String key : FleetDocument.SECRET_KEYS) {
-                    String value = store.getOrNull(FLEET_SECRET + key);
-                    if (value != null && !value.isEmpty()) {
-                        secrets.put(key, value);
+                for (String group : FleetDocument.profileGroups(document)) {
+                    for (String key : FleetDocument.SECRET_KEYS) {
+                        String value = store.getOrNull(FLEET_SECRET + group + "/" + key);
+                        if (value != null && !value.isEmpty()) {
+                            secrets.put(group + "/" + key, value);
+                        }
                     }
                 }
                 FleetDocument.fillSecrets(document, secrets);

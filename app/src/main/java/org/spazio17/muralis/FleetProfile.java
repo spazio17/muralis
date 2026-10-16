@@ -222,34 +222,68 @@ final class FleetProfile {
     }
 
     /**
-     * What the Fleet section and {@code /api/stats} say per section: whether the fleet shares
-     * it, and what this panel could not apply of it.
+     * What the Fleet section and {@code /api/stats} say: per section, which groups share it
+     * and which one's values apply here, with what this panel could not apply of them; the
+     * groups there are, which of them this panel is in; and the names offered for a new one.
      */
     static JSONObject state(Context context) {
         Map<String, Object> document = KioskConfig.fleetDocumentOf(context);
         JSONObject state = new JSONObject();
         try {
+            JSONObject sections = new JSONObject();
             for (String section : FleetDocument.SECTIONS) {
-                state.put(section, new JSONObject()
-                        .put("shared", FleetDocument.sectionValues(document, section) != null)
+                Map<String, Long> by = FleetDocument.sharedBy(document, section);
+                org.json.JSONArray sharedBy = new org.json.JSONArray();
+                for (String group : by.keySet()) {
+                    sharedBy.put(group);
+                }
+                sections.put(section, new JSONObject()
+                        .put("shared_by", sharedBy)
+                        .put("group", FleetServer.profileSource(section))
                         .put("refused", new org.json.JSONArray(
                                 KioskRuntimeState.fleetProfileRefused(section))));
             }
+            org.json.JSONArray groups = new org.json.JSONArray();
+            List<String> mine = FleetDocument.memberGroups(document, FleetDocument.memberByKey(
+                    document, KioskRuntimeState.fleetKey()));
+            groups.put(new JSONObject().put("id", FleetDocument.EVERYONE)
+                    .put("name", FleetDocument.EVERYONE_NAME).put("in", true));
+            for (Map.Entry<String, String> group : FleetDocument.groups(document).entrySet()) {
+                groups.put(new JSONObject().put("id", group.getKey()).put("name", group.getValue())
+                        .put("in", mine.contains(group.getKey())));
+            }
+            state.put("sections", sections);
+            state.put("groups", groups);
+            state.put("suggestions", new org.json.JSONArray(
+                    java.util.Arrays.asList(FleetDocument.GROUP_SUGGESTIONS)));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
         return state;
     }
 
-    /** A line for a person under a shared section, or null when the fleet does not share it. */
+    /**
+     * A line for a person under a section a group of this panel's shares, or null: which group
+     * sets it here, which other groups share it too, and what was not applied.
+     */
     static String sharedLine(Context context, String section) {
         Map<String, Object> document = KioskConfig.fleetDocumentOf(context);
-        if (FleetDocument.sectionValues(document, section) == null) {
+        String group = FleetServer.profileSource(section);
+        if (group.isEmpty() || document == null) {
             return null;
         }
+        List<String> others = new ArrayList<>();
+        for (String other : FleetDocument.sharedBy(document, section).keySet()) {
+            if (!other.equals(group)) {
+                others.add(FleetDocument.groupName(document, other));
+            }
+        }
+        String line = "Set by the group " + FleetDocument.groupName(document, group)
+                + ". A change here changes every panel of it.";
+        if (!others.isEmpty()) {
+            line += " Also shared by " + String.join(", ", others) + ".";
+        }
         List<String> refused = KioskRuntimeState.fleetProfileRefused(section);
-        String line = "Set by the fleet " + KioskConfig.fleetNameOf(context)
-                + ". A change here changes every panel.";
         if (!refused.isEmpty()) {
             line += " Not applied here: " + String.join("; ", refused) + ".";
             Log.d(TAG, line);

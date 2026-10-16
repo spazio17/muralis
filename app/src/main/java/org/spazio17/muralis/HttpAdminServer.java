@@ -1047,6 +1047,17 @@ final class HttpAdminServer {
                 writeResponse(output, 200, "image/svg+xml", bytes(svg),
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
+        } else if (path.equals("/api/fleet/group") && method.equals("POST")) {
+            // A group made with the name posted, or removed by id with remove=1.
+            Map<String, String> form = parseFormBody(headers, body);
+            String refused = isTrue(form.getOrDefault("remove", "0"))
+                    ? FleetServer.removeGroup(context, form.getOrDefault("id", ""))
+                    : FleetServer.createGroup(context, form.getOrDefault("name", ""),
+                            new String[1]);
+            writeResponse(output, refused == null ? 200 : 400, "application/json",
+                    bytes("{\"status\":\"" + (refused == null ? "accepted" : "rejected")
+                            + "\",\"detail\":" + JSONObject.quote(refused == null ? "" : refused)
+                            + "}"));
         } else if (path.equals("/api/fleet/leave") && method.equals("POST")) {
             FleetServer.leaveFleet(context, "from the web admin");
             writeResponse(output, 200, "application/json",
@@ -1436,10 +1447,26 @@ final class HttpAdminServer {
                         }
                     }
                 }
-                for (String group : FleetDocument.SECTIONS) {
-                    if (form.containsKey("fleet_share_" + group)) {
+                for (String key : form.keySet()) {
+                    // fleet_share_<group>_<section>: the group's id has no underscore.
+                    if (key.startsWith("fleet_share_") && key.indexOf('_', 12) > 12) {
+                        String group = key.substring(12, key.indexOf('_', 12));
                         String refused = FleetServer.shareSection(context, group,
-                                isTrue(form.get("fleet_share_" + group)));
+                                key.substring(key.indexOf('_', 12) + 1), isTrue(form.get(key)));
+                        if (refused != null) {
+                            return "Not changed: " + refused + ".";
+                        }
+                    } else if (key.startsWith("fleet_group_")) {
+                        String id = key.substring("fleet_group_".length());
+                        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+                        java.util.List<String> groups = new java.util.ArrayList<>(
+                                FleetDocument.memberGroups(list, FleetDocument.memberByKey(list,
+                                        KioskRuntimeState.fleetKey())));
+                        groups.remove(id);
+                        if (isTrue(form.get(key))) {
+                            groups.add(id);
+                        }
+                        String refused = FleetServer.setMyGroups(context, groups);
                         if (refused != null) {
                             return "Not changed: " + refused + ".";
                         }
@@ -3367,21 +3394,62 @@ final class HttpAdminServer {
                 + sharedSwitches();
     }
 
-    /** Which groups of settings the fleet shares (block 12d), as instant switches. */
+    /**
+     * The groups (fleet design, 2026-10-13): which ones this panel is in, a new one with a name
+     * the person types (generic suggestions offered), Remove for each; then what a group shares,
+     * the group chosen in a menu and the switches for it. Drawn again by a reload after a group
+     * is made or removed (admin_stats.js), since the rows change.
+     */
     private String sharedSwitches() {
         if (KioskConfig.fleetIdOf(context).isEmpty()) {
             return "";
         }
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
-        StringBuilder rows = new StringBuilder("<p class=\"hint\">Shared with the fleet</p>"
-                + "<div class=\"switches\">");
-        for (String section : FleetDocument.SECTIONS) {
-            rows.append(switchRow("fleet-share-" + section.replace('_', '-'),
-                    FleetDocument.sectionLabel(section),
-                    " data-setting=\"fleet_share_" + section + "\"",
-                    FleetDocument.sectionValues(list, section) != null));
+        java.util.List<String> mine = FleetDocument.memberGroups(list,
+                FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey()));
+        StringBuilder html = new StringBuilder("<p class=\"hint\">Groups</p><div class=\"switches\">"
+                + "<label class=\"switch\"><span>" + FleetDocument.EVERYONE_NAME
+                + "</span><input type=\"checkbox\" checked disabled></label>");
+        StringBuilder removes = new StringBuilder();
+        for (java.util.Map.Entry<String, String> group : FleetDocument.groups(list).entrySet()) {
+            html.append(switchRow("fleet-group-" + group.getKey(), group.getValue(),
+                    " data-setting=\"fleet_group_" + group.getKey() + "\"",
+                    mine.contains(group.getKey())));
+            removes.append("<button type=\"button\" class=\"text fleet-group-remove\" data-group=\"")
+                    .append(group.getKey()).append("\" data-name=\"")
+                    .append(escapeHtml(group.getValue())).append("\">Remove ")
+                    .append(escapeHtml(group.getValue())).append("</button>");
         }
-        return rows.append("</div>").toString();
+        html.append("</div>");
+        if (removes.length() > 0) {
+            html.append("<div class=\"actions\">").append(removes).append("</div>");
+        }
+        StringBuilder suggestions = new StringBuilder();
+        for (String suggestion : FleetDocument.GROUP_SUGGESTIONS) {
+            if (!FleetDocument.groups(list).containsValue(suggestion)) {
+                suggestions.append("<option value=\"").append(escapeHtml(suggestion)).append("\">");
+            }
+        }
+        html.append(fieldWithId("fleet-group-name", "text", null, "New group", "",
+                " list=\"fleet-group-suggestions\" autocomplete=\"off\"", null))
+                .append("<datalist id=\"fleet-group-suggestions\">").append(suggestions)
+                .append("</datalist><div class=\"actions\"><button type=\"button\" class=\"tonal\""
+                        + " id=\"fleet-group-add\">Add group</button></div>");
+        StringBuilder options = new StringBuilder();
+        for (String id : mine) {
+            options.append("<option value=\"").append(escapeHtml(id)).append("\">")
+                    .append(escapeHtml(FleetDocument.groupName(list, id))).append("</option>");
+        }
+        html.append(selectField("fleet-share-group", null, "Shared in", null, options.toString(),
+                null)).append("<div class=\"switches\">");
+        for (String section : FleetDocument.SECTIONS) {
+            html.append(switchRow("fleet-share-" + section.replace('_', '-'),
+                    FleetDocument.sectionLabel(section),
+                    " data-setting=\"fleet_share_" + FleetDocument.EVERYONE + "_" + section + "\""
+                            + " data-section=\"" + section + "\"",
+                    FleetDocument.sectionValues(list, FleetDocument.EVERYONE, section) != null));
+        }
+        return html.append("</div>").toString();
     }
 
     /** "Set by the fleet …" at the top of a section the fleet shares, or nothing. */

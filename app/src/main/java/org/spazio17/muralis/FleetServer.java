@@ -796,11 +796,12 @@ final class FleetServer {
             if (KioskConfig.fleetIdOf(context).isEmpty()) {
                 return;
             }
-            KioskConfig.edit(context).leaveFleet().apply();
+            KioskConfig.edit(context).leaveFleet(context).apply();
         }
         removedFrom = "";
         peers.clear();
         profileApplied.clear();
+        profileSource.clear();
         for (String section : FleetDocument.SECTIONS) {
             KioskRuntimeState.publishFleetProfileRefused(section,
                     java.util.Collections.emptyList());
@@ -1207,30 +1208,108 @@ final class FleetServer {
      * Shares {@code section} with the fleet from this panel's values, or stops sharing it: a new
      * version of the list, signed here and handed to every member. Off the main thread.
      */
-    static String shareSection(Context context, String section, boolean on) {
-        FleetIdentity identity = FleetIdentity.load(context);
-        if (identity == null || KioskConfig.fleetDocumentOf(context) == null) {
+    static String shareSection(Context context, String group, String section, boolean on) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
             return "this panel holds no fleet list yet";
         }
-        return writeSection(context, identity, section,
-                on ? FleetProfile.read(context, section) : null);
+        if (!FleetDocument.EVERYONE.equals(group)
+                && !FleetDocument.groups(held).containsKey(group)) {
+            return "no such group";
+        }
+        if (!FleetDocument.memberGroups(held, FleetDocument.memberByKey(held,
+                KioskRuntimeState.fleetKey())).contains(group)) {
+            return "this panel is not in the group " + FleetDocument.groupName(held, group);
+        }
+        return writeList(context, group, section, (identity, list) -> FleetDocument.withSection(list,
+                KioskConfig.deviceIdOf(context), group, section,
+                on ? FleetProfile.read(context, section) : null,
+                java.time.Instant.now().toString()),
+                (on ? "Shared " : "Stopped sharing ") + section + " in the group "
+                        + FleetDocument.groupName(held, group));
+    }
+
+    /** A group made with the name a person gave; its id comes back, or the refusal. */
+    static String createGroup(Context context, String name, String[] idOut) {
+        String invalid = FleetDocument.validateGroupName(name);
+        if (invalid != null) {
+            return invalid;
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        for (String existing : FleetDocument.groups(held).values()) {
+            if (existing.equalsIgnoreCase(name.trim())) {
+                return "there is a group called " + existing + " already";
+            }
+        }
+        byte[] bytes = new byte[6];
+        new java.security.SecureRandom().nextBytes(bytes);
+        String id = "group-" + FleetTls.hex(bytes);
+        idOut[0] = id;
+        return writeList(context, null, null, (identity, list) -> FleetDocument.withGroup(list,
+                KioskConfig.deviceIdOf(context), id, name,
+                java.time.Instant.now().toString()), "Made the group " + name.trim());
+    }
+
+    /** A group removed for good, what it shared with it. */
+    static String removeGroup(Context context, String id) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        if (FleetDocument.EVERYONE.equals(id) || !FleetDocument.groups(held).containsKey(id)) {
+            return "no such group";
+        }
+        String name = FleetDocument.groupName(held, id);
+        return writeList(context, null, null, (identity, list) -> FleetDocument.withoutGroup(list,
+                KioskConfig.deviceIdOf(context), id, java.time.Instant.now().toString()),
+                "Removed the group " + name);
+    }
+
+    /** This panel in exactly {@code groups} (Everyone aside). */
+    static String setMyGroups(Context context, java.util.List<String> groups) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        for (String group : groups) {
+            if (!FleetDocument.EVERYONE.equals(group)
+                    && !FleetDocument.groups(held).containsKey(group)) {
+                return "no such group";
+            }
+        }
+        return writeList(context, null, null, (identity, list) -> FleetDocument.withMemberGroups(list,
+                KioskConfig.deviceIdOf(context), identity.spki, groups,
+                java.time.Instant.now().toString()), "This panel's groups set");
+    }
+
+    /** How the next list is built from the one held, under the lock. */
+    private interface Change {
+        java.util.Map<String, Object> next(FleetIdentity identity,
+                java.util.Map<String, Object> held);
     }
 
     /**
-     * The next list with {@code section} set as given, built on the list held at that moment,
-     * kept here and handed to every member off the caller's thread.
+     * The next list, built by {@code change} on the list held at that moment, signed here, kept
+     * and handed to every member off the caller's thread. {@code group} and {@code section} name
+     * a section this panel just wrote from its own values into a group, so there is nothing of
+     * it to apply back.
      */
-    private static String writeSection(Context context, FleetIdentity identity, String section,
-            java.util.Map<String, Object> values) {
+    private static String writeList(Context context, String group, String section, Change change,
+            String why) {
+        FleetIdentity identity = FleetIdentity.load(context);
+        if (identity == null) {
+            return "this panel's fleet key cannot be read";
+        }
         String text;
         synchronized (DOCUMENT_LOCK) {
             java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
             if (held == null) {
                 return "this panel holds no fleet list yet";
             }
-            java.util.Map<String, Object> next = FleetDocument.withSection(held,
-                    KioskConfig.deviceIdOf(context), section, values,
-                    java.time.Instant.now().toString());
+            java.util.Map<String, Object> next = change.next(identity, held);
             try {
                 text = FleetDocument.sign(next, identity.key, identity.certificate.getPublicKey());
             } catch (java.security.GeneralSecurityException failed) {
@@ -1238,13 +1317,14 @@ final class FleetServer {
                 return "this panel could not sign the fleet's list";
             }
             KioskConfig.edit(context).fleetDocument(context, text).apply();
-            // What was just written is what this panel has: nothing to apply back.
-            profileApplied.put(section, FleetDocument.version(next));
-            KioskRuntimeState.publishFleetProfileRefused(section,
-                    java.util.Collections.emptyList());
+            if (section != null) {
+                // Written from this panel's own values: nothing of it to apply back.
+                profileApplied.put(section, group + ":" + FleetDocument.version(next));
+                KioskRuntimeState.publishFleetProfileRefused(section,
+                        java.util.Collections.emptyList());
+            }
         }
-        Log.i(TAG, (values == null ? "Stopped sharing " : "Shared ") + section
-                + " with the fleet, version " + FleetDocument.version(FleetDocument.parse(text)));
+        Log.i(TAG, why + ", version " + FleetDocument.version(FleetDocument.parse(text)));
         KioskService.publishTelemetrySoon(context);
         new Thread(() -> {
             for (java.util.Map<String, Object> one
@@ -1263,8 +1343,8 @@ final class FleetServer {
         return null;
     }
 
-    /** Per section, the version of the list whose values this panel applied last. */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Long> profileApplied =
+    /** Per section, the group and version ({@code group:at}) whose values this panel applied last. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> profileApplied =
             new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.concurrent.atomic.AtomicBoolean syncingProfile =
             new java.util.concurrent.atomic.AtomicBoolean();
@@ -1299,46 +1379,73 @@ final class FleetServer {
         if (identity == null || held == null) {
             return;
         }
+        String self = KioskConfig.deviceIdOf(context);
         for (String section : FleetDocument.SECTIONS) {
-            java.util.Map<String, Object> shared = FleetDocument.sectionValues(held, section);
-            long at = FleetDocument.sectionAt(held, section);
-            Long applied = profileApplied.get(section);
-            if (shared == null) {
-                profileApplied.put(section, at);
+            // Among the groups this panel is in, the one that changed the section last.
+            java.util.List<String> mine = FleetDocument.memberGroups(held,
+                    FleetDocument.memberByKey(held, identity.spki));
+            String group = null;
+            long at = 0;
+            for (java.util.Map.Entry<String, Long> by
+                    : FleetDocument.sharedBy(held, section).entrySet()) {
+                if (mine.contains(by.getKey()) && by.getValue() > at) {
+                    group = by.getKey();
+                    at = by.getValue();
+                }
+            }
+            profileSource.put(section, group == null ? "" : group);
+            String applied = profileApplied.get(section);
+            if (group == null) {
+                profileApplied.put(section, "");
                 KioskRuntimeState.publishFleetProfileRefused(section,
                         java.util.Collections.emptyList());
                 continue;
             }
-            if (applied == null || applied < at) {
+            java.util.Map<String, Object> shared = FleetDocument.sectionValues(held, group, section);
+            if (!(group + ":" + at).equals(applied)) {
                 java.util.List<String> refused = FleetProfile.apply(context, section, shared);
-                profileApplied.put(section, at);
+                profileApplied.put(section, group + ":" + at);
                 KioskRuntimeState.publishFleetProfileRefused(section, refused);
-                Log.i(TAG, "Applied the fleet's " + section + " (version " + at + ", " + why + ")"
+                Log.i(TAG, "Applied the group " + FleetDocument.groupName(held, group) + "'s "
+                        + section + " (version " + at + ", " + why + ")"
                         + (refused.isEmpty() ? "" : ", refused: " + refused));
                 continue;
             }
             if (!KioskRuntimeState.fleetProfileRefused(section).isEmpty()) {
                 continue;
             }
-            java.util.Map<String, Object> mine = FleetProfile.read(context, section);
+            java.util.Map<String, Object> own = FleetProfile.read(context, section);
             // A secret is a change only when both sides have one and they differ: one this
-            // panel cannot read right now, or one the fleet shares empty (a member keeps its
+            // panel cannot read right now, or one the group shares empty (a member keeps its
             // own then), must not be pushed out as if a person had typed it.
             for (String key : FleetDocument.SECRET_KEYS) {
-                if (shared.containsKey(key) && (String.valueOf(mine.get(key)).isEmpty()
+                if (shared.containsKey(key) && (String.valueOf(own.get(key)).isEmpty()
                         || String.valueOf(shared.get(key)).isEmpty())) {
-                    mine.put(key, shared.get(key));
+                    own.put(key, shared.get(key));
                 }
             }
-            if (!FleetProfile.same(mine, shared)) {
-                Log.i(TAG, "This panel changed the shared " + section + "; told the fleet");
-                writeSection(context, identity, section, mine);
+            if (!FleetProfile.same(own, shared)) {
+                String name = FleetDocument.groupName(held, group);
+                Log.i(TAG, "This panel changed the shared " + section + "; told the group " + name);
+                String sharing = group;
+                writeList(context, sharing, section, (who, list) -> FleetDocument.withSection(list,
+                        self, sharing, section, own, java.time.Instant.now().toString()),
+                        "Changed " + section + " in the group " + name);
                 held = KioskConfig.fleetDocumentOf(context);
                 if (held == null) {
                     return;
                 }
             }
         }
+    }
+
+    /** Per section, the group whose values apply on this panel; empty when none does. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> profileSource =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    static String profileSource(String section) {
+        String group = profileSource.get(section);
+        return group == null ? "" : group;
     }
 
     /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */
