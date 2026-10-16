@@ -202,6 +202,15 @@ final class ProEntitlement {
         cachedAnswer = Boolean.FALSE;
     }
 
+    /**
+     * Whether a purchase Play signed is stored and verifies in this build, whatever a debug
+     * override says: what a panel may tell its fleet (FleetTier), since a forced answer is no
+     * purchase to lease to others.
+     */
+    static boolean verifiedHere(Context context) {
+        return verifyStored(context);
+    }
+
     /** Drops the memoised answer, so the next {@link #isActive} recomputes it. */
     static void invalidate() {
         cachedAnswer = null;

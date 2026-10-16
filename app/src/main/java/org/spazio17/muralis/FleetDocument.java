@@ -32,7 +32,8 @@ import java.util.TreeMap;
  * the clock: one that revokes a key wins, otherwise the lower author id.
  *
  * <p>Pure, with no Android imports, so the rules are covered by host tests. The profile, the
- * overrides and the tier block are carried but not yet applied (blocks 12d and 14).
+ * overrides are carried but not yet applied (block 12d); the tier block is how Pro reaches
+ * the members (block 14, {@link FleetTier}).
  */
 final class FleetDocument {
     /** A member entry's fields, as the design names them. */
@@ -525,6 +526,20 @@ final class FleetDocument {
                 : new ArrayList<>();
     }
 
+    /** The fleet's Pro block (FleetTier), or null when there is none. */
+    static Map<String, Object> tierOf(Map<String, Object> document) {
+        Object tier = document == null ? null : document.get("tier");
+        return tier instanceof Map && !((Map<?, ?>) tier).isEmpty() ? TinyJson.object(tier) : null;
+    }
+
+    /** The next document with {@code tier} as the fleet's Pro block. */
+    static Map<String, Object> withTier(Map<String, Object> held, String author,
+            Map<String, Object> tier, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        next.put("tier", new LinkedHashMap<>(tier));
+        return next;
+    }
+
     /** The revoked key hashes. */
     static Set<String> revoked(Map<String, Object> document) {
         return revokedAt(document).keySet();
@@ -730,7 +745,8 @@ final class FleetDocument {
      * lists, under the entry of the newer document where both have it; every key either revokes,
      * at the later of the two versions, unless a member entry joined after that (a fresh join
      * after the removal); each shared section of the profile from the document that changed it
-     * last; the fleet, the overrides and the tier of the newer document. Version, author and
+     * last; the fleet and the overrides of the newer document, the tier confirmed later (whoever
+     * wrote the document). Version, author and
      * signature are the newer document's and must be set anew when the result differs from both
      * inputs. {@code held} may be null.
      */
@@ -784,6 +800,12 @@ final class FleetDocument {
         }
         merged.put("members", members);
         merged.put("revoked", revokedList(revoked));
+        // Pro's lease: the later confirmation, so an anchor's renewal is never lost to a document
+        // that changed something else meanwhile.
+        Map<String, Object> tier = FleetTier.newer(tierOf(newer), tierOf(older));
+        if (tier != null) {
+            merged.put("tier", tier);
+        }
         // Each group on its own: the entry changed last wins, the newer document on a tie; a
         // removed group stays removed.
         Map<String, Object> groups = new LinkedHashMap<>();

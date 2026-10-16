@@ -91,7 +91,11 @@ on purpose.
   picture of every panel's screen on request, fetched from each panel over the fleet's own
   link and never stored, and Identify shows a panel's name on its screen.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
-  one-time purchase through Google Play, is the fleet and what only makes sense across panels.
+  one-time purchase through Google Play, is the fleet and what only makes sense across panels:
+  adding panels (at most six to a Pro fleet) and the Fleet page. A panel whose account owns Pro
+  writes it into the fleet's signed list, and the members without Google lease it for thirty
+  days from each confirmation; a refund ends it, a lapse makes the fleet free until a panel with
+  the account confirms again.
 
 ## How the code is shaped
 

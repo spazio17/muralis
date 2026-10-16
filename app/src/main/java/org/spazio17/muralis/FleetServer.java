@@ -336,6 +336,11 @@ final class FleetServer {
      */
     static Adopted adoptByCode(Context context, String code, String fleetId, String fleetName,
             String[] added) {
+        // Before the search: a panel that may not add one need not look for thirty seconds.
+        String refusal = addRefusal(context);
+        if (refusal != null) {
+            return new Adopted(refusal, null);
+        }
         String digits = code == null ? "" : code.replaceAll("\\s", "");
         if (!digits.matches("\\d{8}")) {
             return new Adopted("the code is the eight digits under the panel's Join QR", null);
@@ -1333,6 +1338,18 @@ final class FleetServer {
      * panel is never left in a fleet that does not list it.
      */
     static String addRefusal(Context context) {
+        FleetTier.Status pro = proStatus(context);
+        if (!pro.pro) {
+            return pro.lapsed ? "the fleet's Muralis Pro has not been confirmed for 30 days: open"
+                    + " Muralis on the panel or phone that holds the account"
+                    : "adding panels is Muralis Pro: buy it on a panel signed in to Google, in its"
+                    + " settings, This panel";
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held != null && FleetDocument.members(held).size() >= FleetTier.MAX_PANELS) {
+            return "a Pro fleet holds at most " + FleetTier.MAX_PANELS + " panels, this one"
+                    + " included";
+        }
         if (!KioskConfig.fleetIdOf(context).isEmpty()
                 && KioskConfig.fleetDocumentOf(context) == null) {
             return "this panel has not received the fleet's list of panels yet; add it from the"
@@ -1346,6 +1363,101 @@ final class FleetServer {
             return "this panel has no network address yet";
         }
         return null;
+    }
+
+    /**
+     * This panel's Muralis Pro (block 14): its own verified purchase, or the fleet's lease, at
+     * this moment. A debug build's override stands for its own purchase.
+     */
+    static FleetTier.Status proStatus(Context context) {
+        java.util.Map<String, Object> held = KioskConfig.fleetIdOf(context).isEmpty() ? null
+                : KioskConfig.fleetDocumentOf(context);
+        return FleetTier.status(ProEntitlement.isActive(context), FleetDocument.tierOf(held),
+                System.currentTimeMillis());
+    }
+
+    /**
+     * Google Play answered for this panel's account ({@code owned} only for a purchase that
+     * verifies here): as the fleet's anchor it renews the lease, or, over the block it confirmed
+     * itself, writes the refund; see {@link FleetTier#shouldWrite}. Nothing outside a fleet.
+     * Off the main thread.
+     */
+    static void confirmTier(Context context, boolean owned) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return;
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        String self = KioskConfig.deviceIdOf(context);
+        long now = System.currentTimeMillis();
+        if (held == null || !FleetTier.shouldWrite(owned, self, FleetDocument.tierOf(held), now)) {
+            return;
+        }
+        String refused = writeList(context, null, null, (identity, list) -> FleetDocument.withTier(
+                list, self, FleetTier.confirmed(owned, self, now),
+                java.time.Instant.now().toString()),
+                owned ? "Confirmed Muralis Pro for the fleet" : "Muralis Pro ended for the fleet");
+        if (refused != null) {
+            Log.w(TAG, "The fleet's Pro could not be written: " + refused);
+        }
+    }
+
+    /** Whether "not owned" from this panel's Play would end the fleet's Pro (it anchors it). */
+    static boolean wouldEndPro(Context context) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return false;
+        }
+        return FleetTier.shouldWrite(false, KioskConfig.deviceIdOf(context),
+                FleetDocument.tierOf(KioskConfig.fleetDocumentOf(context)),
+                System.currentTimeMillis());
+    }
+
+    /**
+     * The Pro line for both surfaces, from {@link #proStatus}: whose purchase, until when, and
+     * the warning from day 20.
+     */
+    static String proLine(Context context) {
+        FleetTier.Status pro = proStatus(context);
+        java.text.DateFormat date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM);
+        switch (pro.source) {
+            case OWN:
+                return pro.warn ? "Muralis Pro is on this panel's Google account. The fleet's Pro"
+                        + " was last confirmed " + pro.daysSinceConfirmed + " days ago: sign this"
+                        + " panel in to Google again, or open Muralis on another panel or phone"
+                        + " that holds the account."
+                        : "Muralis Pro is on this panel's Google account.";
+            case FLEET: {
+                String line = "Muralis Pro through the fleet " + KioskConfig.fleetNameOf(context)
+                        + ", confirmed by " + memberName(context, pro.confirmedBy) + " on "
+                        + date.format(new java.util.Date(pro.confirmedMs)) + ", valid until "
+                        + date.format(new java.util.Date(pro.validUntilMs)) + ".";
+                return pro.warn ? line + " Pro was last confirmed " + pro.daysSinceConfirmed
+                        + " days ago: open Muralis on the panel or phone that holds the account."
+                        : line;
+            }
+            default:
+                if (pro.lapsed) {
+                    return "Free: the fleet's Pro has not been confirmed for 30 days. Open Muralis"
+                            + " on the panel or phone that holds the account.";
+                }
+                if (pro.ended) {
+                    return "Free: the Google account that confirmed the fleet's Pro does not own"
+                            + " it any more.";
+                }
+                return KioskConfig.fleetIdOf(context).isEmpty() ? "Free."
+                        : "Free: buy Muralis Pro on a panel signed in to Google, in its settings,"
+                                + " This panel.";
+        }
+    }
+
+    /** A member's name in the fleet's list, or its id. */
+    private static String memberName(Context context, String id) {
+        for (java.util.Map<String, Object> member
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            if (id.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+                return TinyJson.string(member, FleetDocument.NAME, id);
+            }
+        }
+        return id;
     }
 
     /** Hands {@code text} to one member at its first address; null when it took it. */

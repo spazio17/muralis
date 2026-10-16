@@ -3814,20 +3814,29 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         proCaptionParams.topMargin = dp(14);
         aboutCard.addView(proCaption, proCaptionParams);
-        // What Pro is, in one line: the fleet, every panel of this account managed from one
-        // page, which 0.7 brings. Nothing is for sale on this card until the fleet exists (Juri,
-        // 2026-10-06: nothing is sold that gates nothing); the Buy button returns with it.
+        // What Pro is, in one line, with no version promise (block 14): the fleet. A single
+        // panel has everything without it, so a free panel reads "Free" and is never nagged.
         TextView proWhat = new FlushText(this);
         proWhat.setTextColor(theme.subtext);
         proWhat.setTextSize(14);
-        proWhat.setText("The fleet: every panel of this account managed from one page, once "
-                + "0.7 brings it. One panel has everything without it.");
+        proWhat.setText("The fleet: up to " + FleetTier.MAX_PANELS + " panels managed from any of"
+                + " them, sharing their settings, with alerts and history. One panel has"
+                + " everything without it.");
         aboutCard.addView(proWhat, matchWrapClose());
+        TextView proLease = new FlushText(this);
+        proLease.setTextColor(theme.text);
+        proLease.setTextSize(14);
+        proLease.setText(FleetServer.proLine(this));
+        aboutCard.addView(proLease, matchWrapClose());
         TextView proState = new FlushText(this);
         proState.setTextColor(theme.subtext);
         proState.setTextSize(14);
         proState.setText("Checking Google Play…");
         aboutCard.addView(proState, matchWrapClose());
+        Button buyPro = primaryButton(theme, "Buy Muralis Pro");
+        buyPro.setVisibility(View.GONE);
+        buyPro.setOnClickListener(view -> proBilling.buy(this));
+        aboutCard.addView(buttonRow(buyPro), matchWrap());
         // Created at startup, not here: this screen only attaches its row to it. setListener
         // publishes what is already known, synchronously, before re-asking, so the card shows the
         // last answer immediately rather than flashing "Checking Google Play…" on every rebuild.
@@ -3836,7 +3845,7 @@ public final class KioskActivity extends Activity {
         // attachment test alone would silently eat exactly the paint the synchronous publish
         // exists to deliver (and did, before the flag).
         final boolean[] proCardBuilt = {false};
-        proBilling.setListener(proDetail -> {
+        proBilling.setListener((proDetail, buyable) -> {
             // This screen is rebuilt wholesale on rotation and after every save; a result that
             // arrives later for a replaced view tree must not touch it. Same attachment rule as
             // the live-settings sync above, skipped only for the build-time paint.
@@ -3847,6 +3856,10 @@ public final class KioskActivity extends Activity {
             // not, because it was never consulted.
             String override = ProEntitlement.overrideDetail();
             proState.setText(override != null ? override : proDetail);
+            proLease.setText(FleetServer.proLine(this));
+            // Buy only where Play offers it and this panel has no Pro of its own or the fleet's.
+            buyPro.setVisibility(buyable && override == null && !FleetServer.proStatus(this).pro
+                    ? View.VISIBLE : View.GONE);
         });
         proCardBuilt[0] = true;
 
@@ -4186,6 +4199,22 @@ public final class KioskActivity extends Activity {
             page.addView(column, singlePanelParams());
             setContentView(scrollPage(theme, page));
             return;
+        }
+        if (!FleetServer.proStatus(this).pro) {
+            // The Fleet page is Muralis Pro (block 14); the panels stay members meanwhile.
+            TextView free = new FlushText(this);
+            free.setTextColor(theme.text);
+            free.setText("The Fleet page is Muralis Pro. " + FleetServer.proLine(this));
+            column.addView(free, matchWrap());
+            page.addView(column, singlePanelParams());
+            setContentView(scrollPage(theme, page));
+            return;
+        }
+        if (FleetServer.proStatus(this).warn) {
+            TextView lapsing = new FlushText(this);
+            lapsing.setTextColor(theme.warn);
+            lapsing.setText(FleetServer.proLine(this));
+            column.addView(lapsing, matchWrap());
         }
         java.util.Map<String, String> groups = FleetDocument.groups(list);
         // Panels: each with its picture on request, its groups to tick, its last contact and

@@ -5817,6 +5817,16 @@ final class HttpAdminServer {
             return html.append("<div class=\"card\"><p>This panel is not in a fleet, or its list"
                     + " of panels has not arrived yet.</p></div>").append(pageEnd()).toString();
         }
+        if (!FleetServer.proStatus(context).pro) {
+            // The Fleet page is Muralis Pro (block 14); the panels stay members meanwhile.
+            return html.append("<div class=\"card\"><p>The Fleet page is Muralis Pro. ")
+                    .append(escapeHtml(FleetServer.proLine(context))).append("</p></div>")
+                    .append(pageEnd()).toString();
+        }
+        if (FleetServer.proStatus(context).warn) {
+            html.append("<p class=\"notice\">").append(escapeHtml(FleetServer.proLine(context)))
+                    .append("</p>");
+        }
         java.util.Map<String, String> groups = FleetDocument.groups(list);
         String scope = scopeAsked == null || scopeAsked.isEmpty()
                 || !(FleetDocument.EVERYONE.equals(scopeAsked) || groups.containsKey(scopeAsked))
@@ -6001,6 +6011,9 @@ final class HttpAdminServer {
 
     /** What the Fleet page's forms post: a panel's groups, a group, a scope's section. */
     private String saveFleetPage(Map<String, String> form) {
+        if (!FleetServer.proStatus(context).pro) {
+            return "Not changed: the Fleet page is Muralis Pro. " + FleetServer.proLine(context);
+        }
         String what = form.getOrDefault("what", "");
         String refused;
         switch (what) {

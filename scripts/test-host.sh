@@ -338,10 +338,14 @@ java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
 mkdir -p "${test_dir}/fleetdocument"
 javac -d "${test_dir}/fleetdocument" \
     "${pure_java_dir}/FleetDocument.java" \
+    "${pure_java_dir}/FleetTier.java" \
     "${pure_java_dir}/FleetTls.java" \
     "${pure_java_dir}/TinyJson.java" \
-    "${host_test_dir}/FleetDocumentTest.java"
+    "${host_test_dir}/FleetDocumentTest.java" \
+    "${host_test_dir}/FleetTierTest.java"
 java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetDocumentTest
+# Pro's lease through the fleet (block 14).
+java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetTierTest
 
 # The fleet's alerts: each said once, offline by one panel, the settings' checks.
 mkdir -p "${test_dir}/fleetalerts"
