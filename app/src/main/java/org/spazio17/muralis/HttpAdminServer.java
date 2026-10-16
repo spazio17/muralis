@@ -1349,6 +1349,16 @@ final class HttpAdminServer {
                         && !BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)) {
                     problem = BrowserOptions.DARK_RULE;
                 }
+                boolean camera = isTrue(form.getOrDefault("browser_page_camera", "0"));
+                boolean microphone = isTrue(form.getOrDefault("browser_page_microphone", "0"));
+                if (problem == null && ((camera && context.checkSelfPermission(
+                        android.Manifest.permission.CAMERA)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                        || (microphone && context.checkSelfPermission(
+                                android.Manifest.permission.RECORD_AUDIO)
+                                != android.content.pm.PackageManager.PERMISSION_GRANTED))) {
+                    problem = BrowserOptions.PERMISSION_RULE;
+                }
                 if (problem != null) {
                     return "Not saved: " + problem + ".";
                 }
@@ -1358,6 +1368,8 @@ final class HttpAdminServer {
                         .browserPageZoom(zoom)
                         .browserBackAfter(back)
                         .browserDark(isTrue(form.getOrDefault("browser_dark", "0")))
+                        .browserPageCamera(camera)
+                        .browserPageMicrophone(microphone)
                         .browserUser(user);
                 String password = form.getOrDefault("browser_password", "");
                 if (!password.isEmpty() && !user.isEmpty()) {
@@ -3596,6 +3608,12 @@ final class HttpAdminServer {
                 + "</div>"
                 + (BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT) ? ""
                         : "<p class=\"hint\">The dark look needs Android 10 or newer.</p>")
+                + "<p class=\"hint\">The page may use</p><div class=\"switches\">"
+                + switchRow("browser-page-camera", "The camera",
+                        " name=\"browser_page_camera\" value=\"1\"", browser.pageCamera)
+                + switchRow("browser-page-microphone", "The microphone",
+                        " name=\"browser_page_microphone\" value=\"1\"", browser.pageMicrophone)
+                + "</div>"
                 + field("text", "browser_user", "Page sign-in name", browser.signInUser, "",
                         "Empty: no sign-in.")
                 + field("password", "browser_password", "Page sign-in password", "", "",

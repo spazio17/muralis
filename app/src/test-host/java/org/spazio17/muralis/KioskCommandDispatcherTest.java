@@ -828,6 +828,19 @@ public final class KioskCommandDispatcherTest {
                 && !BrowserOptions.timeToGoBack(true, 600_000, 0), "the way back");
         require(!BrowserOptions.darkLookPossible(28) && BrowserOptions.darkLookPossible(29),
                 "the dark look from Android 10");
+        for (String command : new String[] {"browser.page_camera", "browser.page_microphone"}) {
+            require(KioskCommandDispatcher.dispatch(command,
+                    new KioskCommandDispatcher.CommandArgs(-1, null, true), executor)
+                    .status.equals("accepted"), command + " on");
+            require(KioskCommandDispatcher.dispatch(command,
+                    KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                    command + " needs enabled");
+        }
+        require("true".equals(executor.browserOptions.get(
+                KioskCommandDispatcher.BrowserOption.PAGE_CAMERA))
+                && "true".equals(executor.browserOptions.get(
+                        KioskCommandDispatcher.BrowserOption.PAGE_MICROPHONE)),
+                "the page's camera and microphone reach the executor");
     }
 
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {

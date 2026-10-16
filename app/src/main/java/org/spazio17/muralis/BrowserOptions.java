@@ -30,6 +30,8 @@ final class BrowserOptions {
             + MIN_ZOOM + " to " + MAX_ZOOM;
     static final String BACK_AFTER_RULE = "the time before going back must be a whole number of"
             + " seconds, 0 to " + MAX_BACK_AFTER;
+    static final String PERMISSION_RULE = "allow it on the panel first: Android has not"
+            + " given Muralis that permission";
     static final String DARK_RULE = "the page's dark look needs Android 10 or newer";
     static final String USER_RULE = "the sign-in name must be one line of at most " + MAX_USER
             + " characters, without a colon";
@@ -42,15 +44,26 @@ final class BrowserOptions {
         final boolean dark;
         final int backAfterSeconds;
         final String signInUser;
+        /** Whether the page may use the camera and the microphone when it asks (block 3b). */
+        final boolean pageCamera;
+        final boolean pageMicrophone;
 
         Settings(String userAgent, int textSize, int pageZoom, boolean dark,
                 int backAfterSeconds, String signInUser) {
+            this(userAgent, textSize, pageZoom, dark, backAfterSeconds, signInUser, false, false);
+        }
+
+        Settings(String userAgent, int textSize, int pageZoom, boolean dark,
+                int backAfterSeconds, String signInUser, boolean pageCamera,
+                boolean pageMicrophone) {
             this.userAgent = userAgent == null ? "" : userAgent;
             this.textSize = textSize;
             this.pageZoom = pageZoom;
             this.dark = dark;
             this.backAfterSeconds = backAfterSeconds;
             this.signInUser = signInUser == null ? "" : signInUser;
+            this.pageCamera = pageCamera;
+            this.pageMicrophone = pageMicrophone;
         }
     }
 

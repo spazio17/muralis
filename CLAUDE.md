@@ -24,8 +24,9 @@ on purpose.
   The way out is a combination of corner taps the person records, one for the settings and one for
   the system launcher, optionally behind a PIN. A panel with no page shows a parking screen that
   says what to do next. The page's browser options: a sign-in for a page behind HTTP basic
-  auth, the user agent, text size, page zoom, a dark look and the way back to the dashboard
-  after a while.
+  auth, the user agent, text size, page zoom, a dark look, the way back to the dashboard
+  after a while, and the camera and microphone for the page when allowed (the camera handed
+  over by the camera sensor).
 - **Self-recovery.** Retries a page that failed, notices a page that froze or a server that
   restarted and reloads once, rebuilds a crashed browser engine, rebuilds it when memory runs low,
   and restarts itself (or rebuilds its browser engine) once at night. None of this has a setting

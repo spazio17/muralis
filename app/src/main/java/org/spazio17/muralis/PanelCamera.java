@@ -121,9 +121,15 @@ final class PanelCamera implements Sensors.Reading {
      */
     static volatile boolean heldByScanner;
 
+    /**
+     * The shown page was given the camera (block 3b): the sensor lets go of it in the same way,
+     * and takes it again once the page has released it (KioskActivity.holdCameraForPage).
+     */
+    static volatile boolean heldByPage;
+
     /** Opens or closes the camera to match the stored switch; safe to call again. */
     synchronized void refresh(boolean wanted) {
-        wanted &= !heldByScanner;
+        wanted &= !heldByScanner && !heldByPage;
         long now = SystemClock.elapsedRealtime();
         if (wanted && !open) {
             if (now >= retryAtMs) {

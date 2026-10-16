@@ -94,6 +94,9 @@
     <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Granted at install, no prompt: the WebView refuses to open the microphone for a page
+         without it ("Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO"), block 3b. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Not granted by installing: an "appop" the user allows via ACTION_MANAGE_WRITE_SETTINGS, or

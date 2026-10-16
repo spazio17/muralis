@@ -33,7 +33,7 @@ final class KioskCommandDispatcher {
 
     /** The page's browser options a command sets, checked here against BrowserOptions. */
     enum BrowserOption {
-        USER_AGENT, TEXT_SIZE, PAGE_ZOOM, DARK, BACK_AFTER
+        USER_AGENT, TEXT_SIZE, PAGE_ZOOM, DARK, BACK_AFTER, PAGE_CAMERA, PAGE_MICROPHONE
     }
 
     static final class Result {
@@ -162,7 +162,8 @@ final class KioskCommandDispatcher {
         /**
          * Stores one browser option, already checked and canonical (a number as digits, the
          * dark look as true or false), and has the page take it. Returns why it cannot, or
-         * null: the dark look needs Android 10, where the WebView reads it from its theme.
+         * null: the dark look needs Android 10, where the WebView reads it from its theme, and
+         * the page's camera and microphone need Android's permission first.
          */
         String setBrowserOption(BrowserOption option, String value);
 
@@ -394,6 +395,16 @@ final class KioskCommandDispatcher {
                 }
                 executor.setBrowserOption(BrowserOption.BACK_AFTER, String.valueOf(seconds));
                 return accepted();
+            }
+            case "browser.page_camera":
+            case "browser.page_microphone": {
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                String problem = executor.setBrowserOption("browser.page_camera".equals(command)
+                        ? BrowserOption.PAGE_CAMERA : BrowserOption.PAGE_MICROPHONE,
+                        String.valueOf(args.enabled));
+                return problem == null ? accepted() : rejected(problem);
             }
             case "browser.dark_look":
                 if (args.enabled == null) {

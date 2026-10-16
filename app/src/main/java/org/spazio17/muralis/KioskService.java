@@ -1406,7 +1406,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .put("page_zoom", browser.pageZoom)
                     .put("dark_look", browser.dark)
                     .put("back_after_s", browser.backAfterSeconds)
-                    .put("sign_in", !browser.signInUser.isEmpty()));
+                    .put("sign_in", !browser.signInUser.isEmpty())
+                    .put("page_camera", browser.pageCamera)
+                    .put("page_microphone", browser.pageMicrophone));
             stats.put("display", displaySnapshot());
             stats.put("ambient", screensaverSnapshot(includeAdminDetail));
             StatusLight.State light = KioskConfig.statusLightOf(this);
@@ -2112,6 +2114,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 && !BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)) {
             return BrowserOptions.DARK_RULE;
         }
+        String permission = option == KioskCommandDispatcher.BrowserOption.PAGE_CAMERA
+                ? android.Manifest.permission.CAMERA
+                : option == KioskCommandDispatcher.BrowserOption.PAGE_MICROPHONE
+                        ? android.Manifest.permission.RECORD_AUDIO : null;
+        if (permission != null && Boolean.parseBoolean(value)
+                && checkSelfPermission(permission)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return BrowserOptions.PERMISSION_RULE;
+        }
         KioskConfig.Editor editor = KioskConfig.edit(this);
         switch (option) {
             case USER_AGENT: editor.browserUserAgent(value); break;
@@ -2119,6 +2130,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             case PAGE_ZOOM: editor.browserPageZoom(Integer.parseInt(value)); break;
             case DARK: editor.browserDark(Boolean.parseBoolean(value)); break;
             case BACK_AFTER: editor.browserBackAfter(Integer.parseInt(value)); break;
+            case PAGE_CAMERA: editor.browserPageCamera(Boolean.parseBoolean(value)); break;
+            case PAGE_MICROPHONE: editor.browserPageMicrophone(Boolean.parseBoolean(value)); break;
             default: return null;
         }
         editor.apply();

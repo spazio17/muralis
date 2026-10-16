@@ -2319,6 +2319,21 @@ public final class KioskActivity extends Activity {
             pageCard.addView(darkNote, matchWrapClose());
         }
 
+        // What the page may use (block 3b), applied the moment they are touched: on an ordinary
+        // install Android is asked first, and the switch is tapped again once it said yes.
+        LinearLayout useCard = card(theme, "The page may use");
+        CompoundButton cameraInput = themedSwitch(theme, "The camera", browser.pageCamera);
+        CompoundButton microphoneInput = themedSwitch(theme, "The microphone",
+                browser.pageMicrophone);
+        useCard.addView(cameraInput, matchWrapClose());
+        useCard.addView(microphoneInput, matchWrapClose());
+        cameraInput.setOnCheckedChangeListener((button, on) -> setPagePermission(button, on,
+                android.Manifest.permission.CAMERA,
+                editor -> editor.browserPageCamera(on)));
+        microphoneInput.setOnCheckedChangeListener((button, on) -> setPagePermission(button, on,
+                android.Manifest.permission.RECORD_AUDIO,
+                editor -> editor.browserPageMicrophone(on)));
+
         LinearLayout signInCard = card(theme, "Page sign-in");
         EditText userInput = themedInput(theme, browser.signInUser, false);
         userInput.setInputType(InputType.TYPE_CLASS_TEXT
@@ -2379,11 +2394,40 @@ public final class KioskActivity extends Activity {
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
             redrawInPlace(this::showBrowserOptionsPage);
         });
-        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(pageCard, signInCard)),
-                matchWrap());
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(pageCard, useCard,
+                signInCard)), matchWrap());
         page.addView(buttonRow(save), matchWrap());
         setContentView(scrollPage(theme, page));
     }
+
+    /** One of the page's two permissions from the panel: Android first, then stored. */
+    private void setPagePermission(CompoundButton button, boolean on, String permission,
+            java.util.function.Consumer<KioskConfig.Editor> store) {
+        if (syncingLiveControls) {
+            return;
+        }
+        if (on && checkSelfPermission(permission)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            syncingLiveControls = true;
+            button.setChecked(false);
+            syncingLiveControls = false;
+            try {
+                requestPermissions(new String[] {permission}, REQUEST_PAGE_PERMISSION);
+                Toast.makeText(this, "Allow it, then switch it on again.",
+                        Toast.LENGTH_LONG).show();
+            } catch (RuntimeException refused) {
+                Toast.makeText(this, "This device would not show the permission request.",
+                        Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        store.accept(editor);
+        editor.apply();
+        KioskService.publishTelemetrySoon(this);
+    }
+
+    private static final int REQUEST_PAGE_PERMISSION = 7_301;
 
     /** What the browser options' Save compares, the password apart. */
     private static String browserBaseline(BrowserOptions.Settings browser) {
@@ -13317,6 +13361,7 @@ public final class KioskActivity extends Activity {
     }
 
     private void destroyWebView() {
+        releaseCameraFromPage();
         mainHandler.removeCallbacks(overlayTask);
         cancelOverlayPickUp();
         overlayDragging = false;
@@ -13516,8 +13561,125 @@ public final class KioskActivity extends Activity {
         webView.loadUrl(pageUrl(home));
     }
 
+    /**
+     * What the page may have (block 3b): the camera and the microphone each when its switch is
+     * on and Android has given Muralis the permission; everything else, and anything not asked
+     * for this way, is refused as a browser would refuse it. The camera is handed over by the
+     * camera sensor first, which cannot share it.
+     */
+    private void grantPagePermissions(android.webkit.PermissionRequest request) {
+        BrowserOptions.Settings browser = KioskConfig.browserOf(this);
+        java.util.List<String> allowed = new java.util.ArrayList<>();
+        for (String resource : request.getResources()) {
+            if (android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                    && browser.pageCamera && checkSelfPermission(
+                            android.Manifest.permission.CAMERA)
+                            == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                allowed.add(resource);
+            } else if (android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                    && browser.pageMicrophone && checkSelfPermission(
+                            android.Manifest.permission.RECORD_AUDIO)
+                            == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                allowed.add(resource);
+            }
+        }
+        Log.i(TAG, "The page asked for " + java.util.Arrays.toString(request.getResources())
+                + ", given " + allowed);
+        if (allowed.isEmpty()) {
+            request.deny();
+            return;
+        }
+        String[] grant = allowed.toArray(new String[0]);
+        if (allowed.contains(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                && !PanelCamera.heldByPage) {
+            holdCameraForPage();
+            // A moment for the sensor to close the camera, or the page's open finds it busy.
+            // Dropped if the camera goes back to the sensor first (the page went or reloaded).
+            pendingCameraGrant = () -> {
+                pendingCameraGrant = null;
+                pageCameraGrantedAt = android.os.SystemClock.uptimeMillis();
+                request.grant(grant);
+            };
+            mainHandler.postDelayed(pendingCameraGrant, CAMERA_HANDOVER_MS);
+        } else {
+            request.grant(grant);
+        }
+    }
+
+    /** How long the camera sensor is given to let go of the camera before the page opens it. */
+    private static final long CAMERA_HANDOVER_MS = 1_500;
+    /** A grant the page never used gives the camera back to the sensor after this. */
+    private static final long CAMERA_UNUSED_MS = 15_000;
+    private long pageCameraGrantedAt;
+    /** The grant waiting for the sensor to let go of the camera, or null. */
+    private Runnable pendingCameraGrant;
+    private final java.util.Set<String> camerasTakenByPage = new java.util.HashSet<>();
+    private android.hardware.camera2.CameraManager.AvailabilityCallback pageCameraWatch;
+
+    /**
+     * The camera sensor lets go of the camera for the page, and Android's own word that a
+     * camera is free again after the page took it gives it back: the WebView says nothing when
+     * the page stops its stream. A page that goes, reloads or never opens it gives it back too.
+     */
+    private void holdCameraForPage() {
+        PanelCamera.heldByPage = true;
+        KioskService.refreshSensorsSoon(this);
+        pageCameraGrantedAt = Long.MAX_VALUE;
+        camerasTakenByPage.clear();
+        android.hardware.camera2.CameraManager manager =
+                getSystemService(android.hardware.camera2.CameraManager.class);
+        if (manager == null) {
+            return;
+        }
+        pageCameraWatch = new android.hardware.camera2.CameraManager.AvailabilityCallback() {
+            @Override
+            public void onCameraUnavailable(String id) {
+                if (android.os.SystemClock.uptimeMillis() >= pageCameraGrantedAt) {
+                    camerasTakenByPage.add(id);
+                }
+            }
+
+            @Override
+            public void onCameraAvailable(String id) {
+                if (camerasTakenByPage.remove(id) && camerasTakenByPage.isEmpty()) {
+                    Log.i(TAG, "The page let go of the camera; the sensor may take it again");
+                    releaseCameraFromPage();
+                }
+            }
+        };
+        manager.registerAvailabilityCallback(pageCameraWatch, mainHandler);
+        mainHandler.removeCallbacks(cameraUnusedCheck);
+        mainHandler.postDelayed(cameraUnusedCheck, CAMERA_HANDOVER_MS + CAMERA_UNUSED_MS);
+    }
+
+    private final Runnable cameraUnusedCheck = () -> {
+        if (PanelCamera.heldByPage && camerasTakenByPage.isEmpty()) {
+            releaseCameraFromPage();
+        }
+    };
+
+    private void releaseCameraFromPage() {
+        mainHandler.removeCallbacks(cameraUnusedCheck);
+        if (pendingCameraGrant != null) {
+            mainHandler.removeCallbacks(pendingCameraGrant);
+            pendingCameraGrant = null;
+        }
+        android.hardware.camera2.CameraManager manager =
+                getSystemService(android.hardware.camera2.CameraManager.class);
+        if (pageCameraWatch != null && manager != null) {
+            manager.unregisterAvailabilityCallback(pageCameraWatch);
+        }
+        pageCameraWatch = null;
+        camerasTakenByPage.clear();
+        if (PanelCamera.heldByPage) {
+            PanelCamera.heldByPage = false;
+            KioskService.refreshSensorsSoon(this);
+        }
+    }
+
     /** A load of the dashboard (or what stands for it): the page is home again. */
     private void homeLoad() {
+        releaseCameraFromPage();
         pageHome = null;
         touchedSinceHome = false;
         pageAway = false;
@@ -14852,7 +15014,18 @@ public final class KioskActivity extends Activity {
      * while hunting the cause of a slow dashboard, but a live Home Assistant frontend chatters
      * constantly and writing all of it to logcat is pure overhead once the answer is known.
      */
-    private static final class KioskWebChromeClient extends WebChromeClient {
+    private final class KioskWebChromeClient extends WebChromeClient {
+        /** The page asks for the camera or the microphone (getUserMedia); see grantPagePermissions. */
+        @Override
+        public void onPermissionRequest(android.webkit.PermissionRequest request) {
+            runOnUiThread(() -> grantPagePermissions(request));
+        }
+
+        @Override
+        public void onPermissionRequestCanceled(android.webkit.PermissionRequest request) {
+            runOnUiThread(KioskActivity.this::releaseCameraFromPage);
+        }
+
         @Override
         public boolean onConsoleMessage(ConsoleMessage message) {
             if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {

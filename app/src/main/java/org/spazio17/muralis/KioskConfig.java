@@ -28,6 +28,8 @@ final class KioskConfig {
     private static final String BROWSER_PAGE_ZOOM = "browser_page_zoom";
     private static final String BROWSER_DARK = "browser_dark";
     private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
+    private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
+    private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
     private static final String BROWSER_PASSWORD = "browser_password";
     /** The status light (StatusLight): on or off, its colour as 0xRRGGBB, its brightness. */
@@ -408,6 +410,16 @@ final class KioskConfig {
 
         Editor browserBackAfter(int seconds) {
             plain.putInt(BROWSER_BACK_AFTER, seconds);
+            return this;
+        }
+
+        Editor browserPageCamera(boolean value) {
+            plain.putBoolean(BROWSER_PAGE_CAMERA, value);
+            return this;
+        }
+
+        Editor browserPageMicrophone(boolean value) {
+            plain.putBoolean(BROWSER_PAGE_MICROPHONE, value);
             return this;
         }
 
@@ -1397,7 +1409,9 @@ final class KioskConfig {
                         ? zoom : BrowserOptions.AUTO_ZOOM,
                 prefs.getBoolean(BROWSER_DARK, false),
                 BrowserOptions.parseBackAfter(String.valueOf(back)) != null ? back : 0,
-                user == null ? "" : user);
+                user == null ? "" : user,
+                prefs.getBoolean(BROWSER_PAGE_CAMERA, false),
+                prefs.getBoolean(BROWSER_PAGE_MICROPHONE, false));
     }
 
     /** Just the time before going back, read every second while the page is away. */
