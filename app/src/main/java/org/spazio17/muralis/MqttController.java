@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -390,7 +390,7 @@ final class MqttController implements MqttCallbackExtended {
         });
     }
 
-    /** The pop-up cameras' names discovery last announced, one button each (block 6). */
+    /** The pop-up cameras' names discovery last announced, one button each. */
     private volatile String announcedCameras = null;
 
     private String camerasKey() {
@@ -699,7 +699,7 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * A fleet alert on the plain topic the person set (block 15), on this panel's broker: not
+     * A fleet alert on the plain topic the person set, on this panel's broker: not
      * retained, so a subscriber that comes later is not told of a state long gone. False when
      * not connected.
      */
@@ -934,7 +934,7 @@ final class MqttController implements MqttCallbackExtended {
                     "{{ value_json.app_version }}");
             appVersionSensor.put("entity_category", "diagnostic");
             components.put("app_version", appVersionSensor);
-            // App lock (block 9): the app shown instead of the page, "Off" when there is none.
+            // App lock: the app shown instead of the page, "Off" when there is none.
             components.put("app_lock", sensor("App lock", null, null, null,
                     "{{ value_json.app_lock.app if value_json.app_lock is defined"
                             + " and value_json.app_lock.app else 'Off' }}"));
@@ -1003,18 +1003,11 @@ final class MqttController implements MqttCallbackExtended {
                     "display.off_method",
                     displayOffOptions,
                     "{{ value_json.config.display_off_method }}"));
-            // The switch reflects the operator's flag, not whether a socket is bound: with no
-            // admin password stored, "on" is an honest description of intent while the bind
-            // stays refused, and the runtime state carries the difference.
-            // The screensaver (2026-09-09): the mode as a select, and one switch that is both its
-            // state and its control, start on ON and stop on OFF. No separate start/stop buttons:
-            // they would be the switch twice over, and every entity is a row in somebody's device
-            // page. The idle times are settings, set from the web admin or the tablet.
             // The status light as a Home Assistant light: on or off, a colour and a brightness,
             // through the template schema so its commands are the panel's own light.on and
             // light.off. Home Assistant's brightness is 0 to 255, the panel's 1 to 100.
             components.put("status_light", statusLight());
-            // A pop-up on the panel from Home Assistant's notify.send_message (block 6).
+            // A pop-up on the panel from Home Assistant's notify.send_message.
             JSONObject popup = new JSONObject();
             popup.put("p", "notify");
             popup.put("name", "Pop-up");
@@ -1029,6 +1022,10 @@ final class MqttController implements MqttCallbackExtended {
             screensaverModes.put(ScreensaverPolicy.FILM);
             screensaverModes.put(ScreensaverPolicy.URL);
             screensaverModes.put(ScreensaverPolicy.PICTURES);
+            // Ambient: the mode as a select, and one switch that is both its state and its
+            // control, start on ON and stop on OFF. No separate start/stop buttons: they would be
+            // the switch twice over, and every entity is a row in somebody's device page. The
+            // times are numbers of their own.
             components.put("ambient_mode", select(
                     "Ambient mode",
                     "ambient.mode",
@@ -1055,8 +1052,8 @@ final class MqttController implements MqttCallbackExtended {
                     "{\"command\":\"ambient.start\"}",
                     "{\"command\":\"ambient.stop\"}",
                     screensaverBooleanTemplate("active")));
-            // Every screensaver setting, not a chosen few: "everything must be controllable
-            // remotely" (Juri, 2026-09-09). They are all commands as well, so a caller that
+            // Every Ambient setting, not a chosen few: "everything must be controllable
+            // remotely" (2026-09-09). They are all commands as well, so a caller that
             // would rather publish a command than use an entity can.
             components.put("ambient_idle", number(
                     "Ambient idle time",
@@ -1215,12 +1212,13 @@ final class MqttController implements MqttCallbackExtended {
                 clearPicture();
             }
             // The screen as the wall shows it: a button that asks for a picture and an image
-            // entity that shows the last one; the admin password is the gate, as Fully and
-            // FreeKiosk have it, so both are announced whenever MQTT runs. Key, id and name say
+            // entity that shows the last one, retained on the screenshot topic; on MQTT the
+            // broker's credentials are the gate, as for every command, so both are announced
+            // whenever MQTT runs. Key, id and name say
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
-            // One button per pop-up camera, "Show <name>" (block 6); a doorbell's automation in
+            // One button per pop-up camera, "Show <name>"; a doorbell's automation in
             // Home Assistant sends camera.trigger itself.
             for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
                 String name = "Show " + camera.name;
@@ -1259,6 +1257,9 @@ final class MqttController implements MqttCallbackExtended {
             }
             announcedSensors = sensorsKey(sensorBlock, rules);
             announcedCameras = camerasKey();
+            // The Web admin switch reflects the operator's flag, not whether a socket is bound:
+            // with no admin password stored, "on" is an honest description of intent while the
+            // bind stays refused, and the runtime state carries the difference.
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
@@ -1309,8 +1310,8 @@ final class MqttController implements MqttCallbackExtended {
             // entity a new build renamed or dropped), the way zigbee2mqtt does: what it announced
             // is what this process published and, after a restart or an update, the payload the
             // broker kept (readRetainedDiscovery). A new panel finds nothing and sends no removal
-            // at all, so Muralis starts on MQTT as if it were used for the first time (Juri,
-            // 2026-10-06). A removal that Home Assistant misses because it is offline at that
+            // at all, so Muralis starts on MQTT as if it were used for the first time
+            // (2026-10-06). A removal that Home Assistant misses because it is offline at that
             // moment leaves the entity unavailable until a person deletes it, which Tasmota,
             // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: Home
             // Assistant acts on an empty config only for a component it has discovered since it
@@ -1581,7 +1582,7 @@ final class MqttController implements MqttCallbackExtended {
         return box;
     }
 
-    /** A text box whose command takes {@code value}, as the screensaver's settings do. */
+    /** A text box whose command takes {@code value}, as Ambient's settings do. */
     private JSONObject valueText(String name, String command, String valueTemplate)
             throws JSONException {
         JSONObject box = text(name, command, valueTemplate);

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The fleet's shared settings on this panel (block 12d): which sections this panel shares, what
+ * The fleet's shared settings on this panel: which sections this panel shares, what
  * each section's values are here, and how a section the fleet shares is applied, through the
  * same commands and checks a person's own change goes through. The sections are
  * {@link FleetDocument#SECTIONS}; which ones are shared, and their values, live in the fleet
@@ -107,7 +107,7 @@ final class FleetProfile {
      * Applies the fleet's values of {@code section} on this panel, each through the command or
      * the check a person's own change takes, and returns the refusals, one line each, in the
      * words those checks use. Only what differs is touched. Needs the service running for the
-     * display and screensaver commands; without it those are reported as not applied.
+     * display and Ambient commands; without it those are reported as not applied.
      */
     static List<String> apply(Context context, String section, Map<String, Object> values) {
         List<String> refused = new ArrayList<>();
@@ -301,6 +301,28 @@ final class FleetProfile {
         return state;
     }
 
+    /** Whether a section's values here come from the whole fleet, which a panel may stop following. */
+    static boolean fromWholeFleet(String section) {
+        return FleetDocument.EVERYONE.equals(FleetServer.profileSource(section));
+    }
+
+    /**
+     * The scope the Alerts page edits: the one this panel takes them from, else any that shares
+     * them, else the whole fleet, so a Save never makes a second copy beside a group's.
+     */
+    static String alertsScope(Map<String, Object> document) {
+        String source = FleetServer.profileSource("alerts");
+        if (!source.isEmpty()) {
+            return source;
+        }
+        if (document != null) {
+            for (String scope : FleetDocument.sharedBy(document, "alerts").keySet()) {
+                return scope;
+            }
+        }
+        return FleetDocument.EVERYONE;
+    }
+
     /**
      * A line for a person under a section a group of this panel's shares, or null: which group
      * sets it here, which other groups share it too, and what was not applied.
@@ -318,10 +340,13 @@ final class FleetProfile {
                         : FleetDocument.groupName(document, other));
             }
         }
+        boolean pro = FleetServer.proStatus(context).pro;
         String line = FleetDocument.EVERYONE.equals(group)
-                ? "Set by the whole fleet. A change here changes every panel."
-                : "Set by the group " + FleetDocument.groupName(document, group)
-                        + ". A change here changes every panel of it.";
+                ? "From the whole fleet: " + (pro ? "a change here changes every panel."
+                        : "without Pro, a change here stays on this panel.")
+                : "From the group " + FleetDocument.groupName(document, group) + ": "
+                        + (pro ? "a change here changes every panel of it."
+                                : "without Pro, a change here stays on this panel.");
         if (!others.isEmpty()) {
             line += " Also shared by " + String.join(", ", others) + ".";
         }
@@ -447,7 +472,7 @@ final class FleetProfile {
                         "text"));
                 break;
             case "web_admin":
-                fields.add(new Field("web_admin_enabled", "Local web admin on", "switch"));
+                fields.add(new Field("web_admin_enabled", "Web admin on", "switch"));
                 fields.add(new Field("http_port", "Port", "number"));
                 fields.add(new Field("http_admin_password", "Admin password", "password"));
                 break;

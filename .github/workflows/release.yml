@@ -67,8 +67,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          git config user.name 'Juri Calleri'
-          git config user.email 'juricalleri@gmail.com'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "v$VERSION" -m "Muralis $VERSION"
           git push origin "v$VERSION"
 

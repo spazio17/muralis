@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -23,7 +23,7 @@ import org.json.JSONObject;
  * <p>Heard through the voice-recognition source, not the plain microphone: Android requires
  * every device to capture it with noise reduction and automatic gain control off (CDD 5.4.2),
  * so a quiet room is not turned up until it reads like a conversation. The plain source let
- * the gain control lift an empty room to about 30 (Juri, 2026-09-28, the tablet).
+ * the gain control lift an empty room to about 30 (2026-09-28, the tablet).
  *
  * <p>Two readings, for two readers: the automations get each half second as it is, so a knock
  * or a shout reaches "louder than" at once; the reading on the rows and in the state document

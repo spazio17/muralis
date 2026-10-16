@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Applies a settings file read back by {@link SettingsTransfer} (block 8), from the web admin's
+ * Applies a settings file read back by {@link SettingsTransfer}, from the web admin's
  * Import or the provisioning QR: every value through the same check a person's change takes, a
  * value the panel cannot take refused with its reason and the rest applied. What changes is
  * listed first for the web admin's preview.
@@ -84,6 +84,10 @@ final class SettingsImport {
                         + HttpAdminServer.MIN_ADMIN_PASSWORD_LENGTH + " characters");
                 continue;
             }
+            if ("escape_pin_hash".equals(secret.getKey()) && !EscapePin.wellFormed(secret.getValue())) {
+                refused.add("escape_pin_hash: not a PIN this app wrote");
+                continue;
+            }
             editor.importedSecret(secret.getKey(), secret.getValue());
         }
         editor.apply();
@@ -92,6 +96,7 @@ final class SettingsImport {
         }
         KioskService.refreshSensorsSoon(context);
         KioskService.reloadConfiguration(context);
+        KioskService.settingsImported(context);
         KioskService.publishTelemetrySoon(context);
         return refused;
     }
@@ -122,6 +127,9 @@ final class SettingsImport {
             case "mqtt_port":
                 return number >= 1 && number <= 65535 ? null : "not between 1 and 65535";
             case "app_lock":
+                if (context.getPackageName().equals(text)) {
+                    return "Muralis cannot lock the panel to itself";
+                }
                 if (!text.isEmpty() && AppLock.doors(context).contains(text)) {
                     return "it opens Android's settings, a home screen or the Play Store";
                 }
@@ -169,9 +177,6 @@ final class SettingsImport {
                 return number >= 0 && number <= 0xFFFFFF ? null : StatusLight.COLOR_RULE;
             case "status_light_percent":
                 return StatusLight.isPercent(number) ? null : StatusLight.PERCENT_RULE;
-            case "appearance_colour":
-            case "separators":
-                return KioskConfig.checkAppearance(key, text);
             case "orientation":
                 return KioskConfig.ORIENTATION_AUTO.equals(text)
                         || KioskConfig.ORIENTATION_LANDSCAPE.equals(text)
@@ -212,9 +217,13 @@ final class SettingsImport {
                 }
                 // The two must differ, as the web admin's box and the recorder insist, or one
                 // of the ways out stops opening.
+                // The other one from the file only when it is itself valid, since a refused one
+                // leaves the stored one in place.
                 boolean settings = "settings_sequence".equals(key);
                 Object other = imported.get(settings ? "launcher_sequence" : "settings_sequence");
-                String otherText = other instanceof String ? ((String) other).trim()
+                String otherText = other instanceof String
+                        && EscapeSequence.isValid(EscapeSequence.parse(((String) other).trim()))
+                        ? ((String) other).trim()
                         : settings ? current.launcherSequence : current.settingsSequence;
                 return EscapeSequence.parse(text).equals(EscapeSequence.parse(otherText))
                         ? "the settings and launcher combinations must be different" : null;

@@ -1,13 +1,13 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
 import java.util.Map;
 
 /**
- * A pop-up over the screen (block 6), {@code panel.notify}: a message with an optional title,
+ * A pop-up over the screen, {@code panel.notify}: a message with an optional title,
  * and optionally an address shown in the card (a picture, a camera's stream or a page), for a
  * number of seconds or until touched. Pure, so the arguments' checks are host-tested; the card
  * is drawn by {@code KioskActivity}.

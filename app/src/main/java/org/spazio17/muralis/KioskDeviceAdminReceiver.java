@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -29,9 +29,9 @@ import android.util.Log;
  * <p>Provisioned out of band, not by the app, over adb or by QR during out-of-box setup. Muralis degrades to its
  * previous behaviour when it is not the device owner, so an un-provisioned tablet still works.
  * From Android 12 a QR enrolment also needs {@link ProvisioningModeActivity} and
- * {@link PolicyComplianceActivity}; the setup wizard then sends this receiver no
- * provisioning-complete broadcast, and none is needed: {@link #onEnabled} still arrives, and the
- * process it starts brings the service.
+ * {@link PolicyComplianceActivity}, which also receives the setup QR's settings, so nothing depends
+ * on this receiver's provisioning-complete broadcast there: {@link #onEnabled} still arrives, and
+ * the process it starts brings the service.
  */
 public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     private static final String TAG = "MuralisAdmin";
@@ -46,7 +46,10 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
         return policy != null && policy.isDeviceOwnerApp(context.getPackageName());
     }
 
-    /** Android 11 and older hand the setup QR's extras here (block 8); 12 and newer as well. */
+    /**
+     * The setup QR's extras, where Android sends this broadcast; from Android 12
+     * PolicyComplianceActivity keeps them too, and keeping them twice is harmless.
+     */
     @Override
     public void onProfileProvisioningComplete(Context context, android.content.Intent intent) {
         KioskConfig.keepProvisionedSettings(context, intent);
@@ -80,7 +83,7 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
      * and needs no permission beyond ownership. "Persistent" here means the user cannot clear it
      * from Settings, which is the point for a wall panel.
      *
-     * <p>This does <b>not</b> break the nine-tap escape hatch: {@code openSystemLauncher()} resolves
+     * <p>This does <b>not</b> break the escape combination to the launcher: {@code openSystemLauncher()} resolves
      * the OEM launcher and launches it with an explicit {@code setPackage}, which bypasses
      * preferred-activity resolution entirely. Verify that after changing either method.
      *

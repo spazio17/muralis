@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -319,7 +319,7 @@ public final class FleetDocumentTest {
                 "Hall", "", "")) && "https://x/plain".equals(FleetDocument.fillPlaceholders(
                 "https://x/plain", "Hall", "Lobby", "F")), "an empty fact or a plain address is wrong");
 
-        // History (block 15): what a version changed against the one before, in words.
+        // History: what a version changed against the one before, in words.
         Map<String, Object> h1 = document("fleet-1", 1, "kiosk-a", managerSpki, memberSpki,
                 secondSpki);
         require(FleetDocument.describeChange(null, h1).size() == 3
