@@ -1,36 +1,25 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-import org.spazio17.muralis.PictureSources.Picture;
 
 /**
- * The picture sources' parsers and the JSON reader under them, against answers recorded from the
- * live services on 2026-09-09. The credit line is a licence obligation, so its assembly is pinned
- * here field by field.
+ * The pictures' pure helpers (credits from labels, types by bytes, safe names, decode sizes) and
+ * the JSON reader the fleet and the playlists stand on.
  */
 public final class PictureSourcesTest {
     public static void main(String[] args) {
         testJsonReader();
         testJsonRefusesGarbage();
-        testBingMarket();
-        testBingArchive();
-        testWikimediaPotdTitles();
-        testWikimediaImageInfo();
-        testWikimediaNotices();
-        testWikimediaSkipsWhatIsNotAPicture();
-        testHtmlStripping();
+        testFileTitleToWords();
         testImageTypeByBytes();
         testSafeNames();
         testDepthBomb();
-        testUrls();
-        testUntrustedUrls();
         testDecodeBudget();
         testCreditFromLabel();
         System.out.println("PictureSourcesTest passed");
@@ -38,7 +27,7 @@ public final class PictureSourcesTest {
 
     private static void testCreditFromLabel() {
         require("pd 1".equals(PictureSources.creditFromLabel("./Pictures/MuralisTest/pd_1.jpg")),
-                "a folder label gives the file's name in words, as the screensaver prints it");
+                "a folder label gives the file's name in words, as Ambient prints it");
         require("SardineBait-UHD".equals(
                 PictureSources.creditFromLabel("./uploads/SardineBait-UHD.jpg")),
                 "an upload's label works the same");
@@ -98,158 +87,8 @@ public final class PictureSourcesTest {
         }
     }
 
-    private static void testUntrustedUrls() {
-        for (String url : new String[] {"http://upload.wikimedia.org/x", "https://127.0.0.1/x",
-                "https://www.bing.com@192.168.1.1/x", "https://www.bing.com.evil.test/x",
-                "https://www.bing.com:8443/x", "file:///etc/passwd", "https://[::1]/x",
-                "https://www.bing.com/x#fragment"}) {
-            require(!PictureSources.allowedUrl(url), "refuse destination: " + url);
-        }
-        require(PictureSources.allowedUrl("https://thumb.wikimedia.org/x"), "Commons thumbnails");
-        require(PictureSources.allowedUrl("https://www.bing.com/th?id=x"), "Bing pictures");
-        require(PictureSources.parseWikimediaImageInfo(IMAGE_INFO.replace("Public domain", "")
-                .replace("CC BY-SA 4.0", "")).isEmpty(), "no licence means no picture");
-        require(PictureSources.parseBing(BING.replace("/th?id=OHR.GabitKeni_EN-US",
-                "@127.0.0.1/th?id=OHR.GabitKeni_EN-US")).isEmpty(), "Bing cannot replace the authority");
-    }
-
-    private static void testBingMarket() {
-        require(PictureSources.bingMarket("de", "AT").equals("de-AT"), "language-COUNTRY");
-        require(PictureSources.bingMarket("it", "").equals("it"), "language alone");
-        require(PictureSources.bingMarket("", null).equals("en-US"), "nothing known: en-US");
-    }
-
-    /** Recorded 2026-09-09 (one entry of seven, en-US). */
-    private static final String BING = "{\"images\":[{\"startdate\":\"20260909\",\"fullstartdate\":"
-            + "\"202609090700\",\"enddate\":\"20260910\",\"url\":\"/th?id=OHR.GabitKeni_EN-US4620523183_"
-            + "1920x1080.jpg&rf=LaDigue_1920x1080.jpg&pid=hp\",\"urlbase\":\"/th?id=OHR.GabitKeni_EN-US"
-            + "4620523183\",\"copyright\":\"Gabit Keni Beach near Ankola, Karnataka, India (\\u00a9 Amith "
-            + "Nag Photography/Getty Images)\",\"copyrightlink\":\"https://www.bing.com/search?q=Ankola\","
-            + "\"title\":\"Life on India's west coast\",\"quiz\":\"/search?q=Bing+homepage+quiz\","
-            + "\"wp\":true,\"hsh\":\"abc\",\"drk\":1,\"top\":1,\"bot\":1,\"hs\":[]},"
-            + "{\"urlbase\":\"\",\"copyright\":\"no base, skipped\"},"
-            + "{\"urlbase\":\"/th?id=OHR.NoCredit\",\"copyright\":\"  \",\"title\":\"uncredited\"}],"
-            + "\"tooltips\":{\"loading\":\"Loading...\"}}";
-
-    private static void testBingArchive() {
-        List<Picture> pictures = PictureSources.parseBing(BING);
-        require(pictures.size() == 1,
-                "one usable picture: no urlbase and no copyright are both skipped, and an "
-                        + "uncredited picture must never reach the glass");
-        Picture p = pictures.get(0);
-        require(p.url.equals("https://www.bing.com/th?id=OHR.GabitKeni_EN-US4620523183_1920x1080.jpg"),
-                "the picture URL is the base plus the 1920x1080 suffix: " + p.url);
-        require(p.title.equals("Life on India's west coast"), "title");
-        require(p.credit.equals("Gabit Keni Beach near Ankola, Karnataka, India (© Amith Nag "
-                + "Photography/Getty Images)"), "the copyright line is the credit, verbatim: " + p.credit);
-        require(p.link.startsWith("https://www.bing.com/search"), "the copyright link is kept");
-        require(PictureSources.parseBing("{}").isEmpty(), "no images key, no pictures");
-    }
-
-    /** Recorded 2026-09-09: the POTD pages of two days. */
-    private static final String POTD = "{\"batchcomplete\":true,\"query\":{\"pages\":[{\"pageid\":1,"
-            + "\"ns\":10,\"title\":\"Template:Potd/2026-09-07\",\"images\":[{\"ns\":6,\"title\":"
-            + "\"File:Gary Plant Tubular Steel Corporation.jpg\"}]},{\"pageid\":2,\"ns\":10,\"title\":"
-            + "\"Template:Potd/2026-09-06\",\"images\":[{\"ns\":6,\"title\":\"File:Indian rhinoceros "
-            + "(Rhinoceros unicornis) 1.jpg\"}]},{\"ns\":10,\"title\":\"Template:Potd/2026-09-05\","
-            + "\"missing\":true}]}}";
-
-    private static void testWikimediaPotdTitles() {
-        List<String> titles = PictureSources.parseWikimediaFileTitles(POTD);
-        require(titles.size() == 2, "two days with a picture, one day missing");
-        require(titles.get(0).equals("File:Gary Plant Tubular Steel Corporation.jpg"), "first title");
-        require(titles.get(1).equals("File:Indian rhinoceros (Rhinoceros unicornis) 1.jpg"),
-                "second title, spaces and brackets intact");
-    }
-
-    /** Recorded 2026-09-09, metadata trimmed to the filtered fields. */
-    private static final String IMAGE_INFO = "{\"batchcomplete\":true,\"query\":{\"pages\":[{\"pageid\":"
-            + "3,\"ns\":6,\"title\":\"File:Gary Plant Tubular Steel Corporation.jpg\",\"imagerepository\":"
-            + "\"local\",\"imageinfo\":[{\"thumburl\":\"https://thumb.wikimedia.org/wikipedia/commons/"
-            + "thumb/7/7c/Gary_Plant_Tubular_Steel_Corporation.jpg/1920px-Gary_Plant_Tubular_Steel_"
-            + "Corporation.jpg\",\"thumbwidth\":1920,\"thumbheight\":1515,\"url\":\"https://upload."
-            + "wikimedia.org/wikipedia/commons/7/7c/Gary_Plant_Tubular_Steel_Corporation.jpg\","
-            + "\"descriptionurl\":\"https://commons.wikimedia.org/wiki/File:Gary_Plant_Tubular_Steel_"
-            + "Corporation.jpg\",\"mime\":\"image/jpeg\",\"extmetadata\":{\"ObjectName\":{\"value\":"
-            + "\"<div class=\\\"fn\\\">\\n<i>Gary Plant Tubular Alloy Steel Corporation</i></div>\","
-            + "\"source\":\"commons-desc-page\"},\"Artist\":{\"value\":\"<div class=\\\"fn value\\\">\\nM. "
-            + "Marshall</div>\",\"source\":\"commons-desc-page\"},\"LicenseShortName\":{\"value\":"
-            + "\"Public domain\",\"source\":\"commons-desc-page\",\"hidden\":\"\"}}}]},"
-            + "{\"pageid\":4,\"ns\":6,\"title\":\"File:Some_map.svg\",\"imageinfo\":[{\"thumburl\":"
-            + "\"https://thumb.wikimedia.org/x/1920px-Some_map.svg.png\",\"url\":\"https://upload."
-            + "wikimedia.org/x/Some_map.svg\",\"mime\":\"image/svg+xml\",\"extmetadata\":{\"Artist\":"
-            + "{\"value\":\"<a href=\\\"//commons.wikimedia.org/wiki/User:Cartographer\\\" title=\\\"User:"
-            + "Cartographer\\\">Cartographer</a>\"},\"LicenseShortName\":{\"value\":\"CC BY-SA 4.0\"}}}]}]}}";
-
-    private static void testWikimediaImageInfo() {
-        List<Picture> pictures = PictureSources.parseWikimediaImageInfo(IMAGE_INFO);
-        require(pictures.size() == 2, "two pictures");
-        Picture first = pictures.get(0);
-        require(first.url.startsWith("https://thumb.wikimedia.org/") && first.url.contains("1920px"),
-                "the scaled rendition, not the original: " + first.url);
-        require(first.title.equals("Gary Plant Tubular Alloy Steel Corporation"),
-                "the object name, HTML stripped: " + first.title);
-        require(first.credit.equals("M. Marshall, Public domain, Wikimedia Commons"),
-                "artist, licence, source: " + first.credit);
-        require(first.link.equals("https://commons.wikimedia.org/wiki/File:Gary_Plant_Tubular_Steel_Corporation.jpg"),
-                "the file page is the link");
-        Picture second = pictures.get(1);
-        require(second.title.equals("Some map"), "no object name: the file title in words: " + second.title);
-        require(second.credit.equals("Cartographer, CC BY-SA 4.0, Wikimedia Commons"),
-                "a linked author becomes a name: " + second.credit);
-        require(second.url.endsWith(".svg.png"), "an SVG's rendition is a PNG the panel can show");
-    }
-
-    private static void testWikimediaSkipsWhatIsNotAPicture() {
-        String video = "{\"query\":{\"pages\":[{\"title\":\"File:Clip.webm\",\"imageinfo\":[{\"thumburl\":"
-                + "\"https://thumb.wikimedia.org/x/1920px--Clip.webm.jpg\",\"url\":\"https://upload."
-                + "wikimedia.org/x/Clip.webm\",\"mime\":\"video/webm\",\"extmetadata\":{}}]},"
-                + "{\"title\":\"File:Missing.jpg\",\"missing\":true},"
-                + "{\"title\":\"File:NoUrl.jpg\",\"imageinfo\":[{\"mime\":\"image/jpeg\"}]}]}}";
-        require(PictureSources.parseWikimediaImageInfo(video).isEmpty(),
-                "a video's still, a missing file and a file without a URL are all skipped");
-    }
-
-    private static void testWikimediaNotices() {
-        String notices = IMAGE_INFO.replace("\"extmetadata\":{", "\"extmetadata\":{"
-                + "\"Credit\":{\"value\":\"Museum collection\"},"
-                + "\"Attribution\":{\"value\":\"Courtesy of the photographer\"},"
-                + "\"LicenseUrl\":{\"value\":\"https://creativecommons.org/licenses/by/4.0/\"},");
-        java.util.List<Picture> pictures = PictureSources.parseWikimediaImageInfo(notices);
-        require(!pictures.isEmpty(), "the notices fixture still parses");
-        for (Picture picture : pictures) {
-            require(picture.credit.contains("Museum collection")
-                    && picture.credit.contains("Courtesy of the photographer"),
-                    "supplied notices travel with every picture");
-            // A wall panel is read from across a room, so the credit names people and licences
-            // and never carries an address (2026-09-10). The source page stays in Picture.link.
-            require(!picture.credit.contains("http"),
-                    "no web address reaches the credit line");
-            require(picture.link.startsWith("https://commons.wikimedia.org/wiki/"),
-                    "the source page is still recorded, just not shown");
-        }
-        // A supplied notice that is nothing but an address is a link row, not an attribution.
-        String urlOnly = IMAGE_INFO.replace("\"extmetadata\":{", "\"extmetadata\":{"
-                + "\"Credit\":{\"value\":\"https://example.com/photo\"},");
-        for (Picture picture : PictureSources.parseWikimediaImageInfo(urlOnly)) {
-            require(!picture.credit.contains("example.com"),
-                    "a notice that is only an address is dropped");
-        }
-        require(PictureSources.isBareUrl("https://example.com/x")
-                && PictureSources.isBareUrl("www.example.com")
-                && !PictureSources.isBareUrl("Sharp Photography, sharpphotography.co.uk")
-                && !PictureSources.isBareUrl("Museum collection"),
-                "an address alone is recognised, prose that mentions one is not");
-    }
-
-    private static void testHtmlStripping() {
-        require(PictureSources.stripHtml("<div class=\"fn value\">\nM. Marshall</div>")
-                .equals("M. Marshall"), "tags and surrounding whitespace go");
-        require(PictureSources.stripHtml("<a href=\"x\">Ann</a> &amp; <b>Bob</b>").equals("Ann & Bob"),
-                "entities are decoded, tags become spaces: "
-                        + PictureSources.stripHtml("<a href=\"x\">Ann</a> &amp; <b>Bob</b>"));
-        require(PictureSources.stripHtml(null).isEmpty(), "null is empty");
-        require(PictureSources.fileTitleToWords("File:Great_Wave_off_Kanagawa2.jpg")
+    private static void testFileTitleToWords() {
+        require(PictureSources.fileTitleToWords("Great_Wave_off_Kanagawa2.jpg")
                 .equals("Great Wave off Kanagawa2"), "file title to words");
     }
 
@@ -316,19 +155,6 @@ public final class PictureSourcesTest {
             deepButFine.append("]");
         }
         TinyJson.parse(deepButFine.toString());
-    }
-
-    private static void testUrls() {
-        require(PictureSources.bingArchiveUrl("de-AT").equals(
-                "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=7&mkt=de-AT"), "bing URL");
-        String potd = PictureSources.wikimediaPotdUrl(Arrays.asList("2026-09-09", "2026-09-08"));
-        require(potd.endsWith("&titles=Template:Potd/2026-09-09%7CTemplate:Potd/2026-09-08"),
-                "the days joined by an encoded pipe: " + potd);
-        String info = PictureSources.wikimediaImageInfoUrl(
-                Arrays.asList("File:Indian rhinoceros (Rhinoceros unicornis) 1.jpg"), 1920);
-        require(info.contains("iiurlwidth=1920")
-                && info.endsWith("titles=File:Indian%20rhinoceros%20%28Rhinoceros%20unicornis%29%201.jpg"),
-                "titles are percent-encoded, the colon kept: " + info);
     }
 
     private static void require(boolean condition, String message) {
