@@ -1599,7 +1599,8 @@ final class HttpAdminServer {
                         ? KioskRuntimeState.fleetPort() : -1, boundPort);
                 break;
             case "dashboard_url":
-                verdict = SettingProbe.dashboardUrl(value);
+                // Probed as a panel loads it, its placeholders filled.
+                verdict = SettingProbe.dashboardUrl(FleetProfile.fillPlaceholders(context, value));
                 break;
             case "mqtt_host":
                 verdict = SettingProbe.mqttHost(value,

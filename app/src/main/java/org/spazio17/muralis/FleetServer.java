@@ -154,6 +154,7 @@ final class FleetServer {
                 + FleetTls.shortForm(identity.spki));
         KioskRuntimeState.publishFleetState(true, port, "");
         KioskRuntimeState.publishFleetKey(identity.spki);
+        KioskConfig.rememberFleetSelfKey(context, identity.spki);
         return server;
     }
 
@@ -785,7 +786,9 @@ final class FleetServer {
                         + " from key " + FleetTls.shortForm(from) + " brought nothing new");
                 return new Taken(null, null);
             }
+            String before = pageWithFacts(context);
             KioskConfig.edit(context).fleetDocument(context, kept).apply();
+            reloadPageIfFactsChanged(context, before);
         }
         KioskService.publishTelemetrySoon(context);
         Log.i(TAG, "Fleet document version " + FleetDocument.version(incoming) + " taken from key "
@@ -806,7 +809,9 @@ final class FleetServer {
             if (KioskConfig.fleetIdOf(context).isEmpty()) {
                 return;
             }
+            String before = pageWithFacts(context);
             KioskConfig.edit(context).leaveFleet(context).apply();
+            reloadPageIfFactsChanged(context, before);
         }
         removedFrom = "";
         setupTakenFrom = "";
@@ -1341,7 +1346,9 @@ final class FleetServer {
                 Log.w(TAG, "The fleet list could not be signed", failed);
                 return "this panel could not sign the fleet's list";
             }
+            String before = pageWithFacts(context);
             KioskConfig.edit(context).fleetDocument(context, text).apply();
+            reloadPageIfFactsChanged(context, before);
             if (section != null) {
                 // Written from this panel's own values: nothing of it to apply back.
                 profileApplied.put(section, group + ":" + FleetDocument.version(next));
@@ -1467,6 +1474,26 @@ final class FleetServer {
                 if (held == null) {
                     return;
                 }
+            }
+        }
+    }
+
+    /** The page as this panel loads it now, with its facts filled in. */
+    private static String pageWithFacts(Context context) {
+        return FleetProfile.fillPlaceholders(context, KioskConfig.load(context).dashboardUrl);
+    }
+
+    /**
+     * A page with placeholders is loaded again when the facts they stand for changed with the
+     * list (this panel renamed, moved into a group, the fleet renamed): shown everywhere within
+     * seconds, as a change must be.
+     */
+    private static void reloadPageIfFactsChanged(Context context, String before) {
+        String url = KioskConfig.load(context).dashboardUrl;
+        if (!before.equals(FleetProfile.fillPlaceholders(context, url))) {
+            KioskService service = KioskService.liveService();
+            if (service != null) {
+                service.setDashboardUrl(url);
             }
         }
     }

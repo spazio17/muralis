@@ -1006,6 +1006,20 @@ final class KioskConfig {
     }
 
     private static final String FLEET_NAME = "fleet_name";
+    /** This panel's own key hash, kept plain once the key was read, for lookups before it is. */
+    private static final String FLEET_SELF_KEY = "fleet_self_key";
+
+    static void rememberFleetSelfKey(Context context, String spki) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(FLEET_SELF_KEY, spki).apply();
+    }
+
+    static String fleetSelfKeyOf(Context context) {
+        String runtime = KioskRuntimeState.fleetKey();
+        return runtime.isEmpty() ? storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(FLEET_SELF_KEY, "")
+                : runtime;
+    }
 
     /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */
     static final class OverlayPlace {

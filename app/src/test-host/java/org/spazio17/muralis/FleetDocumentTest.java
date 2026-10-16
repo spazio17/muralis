@@ -296,6 +296,17 @@ public final class FleetDocumentTest {
                 && "Offices".equals(FleetDocument.groups(edits).get("group-2")),
                 "the later edit of a member's groups lost, or a group made apart was lost");
 
+        // Placeholders in a page address: plain or percent-encoded, values encoded, none left.
+        require("https://x/rooms/Meeting%20room%202?g=Lobby&f=New%20Home".equals(
+                FleetDocument.fillPlaceholders("https://x/rooms/{panel.name}?g={panel.group}&f={fleet.name}",
+                        "Meeting room 2", "Lobby", "New Home")), "the placeholders were not filled");
+        require("https://x/?room=Hall".equals(FleetDocument.fillPlaceholders(
+                "https://x/?room=%7Bpanel.name%7D", "Hall", "", "")),
+                "a percent-encoded placeholder was not filled");
+        require("https://x/?g=".equals(FleetDocument.fillPlaceholders("https://x/?g={panel.group}",
+                "Hall", "", "")) && "https://x/plain".equals(FleetDocument.fillPlaceholders(
+                "https://x/plain", "Hall", "Lobby", "F")), "an empty fact or a plain address is wrong");
+
         System.out.println("FleetDocumentTest passed");
     }
 

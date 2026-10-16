@@ -2481,7 +2481,8 @@ public final class KioskActivity extends Activity {
             clearPrecheck(urlInput, theme);
             String typed = normalizeUrl(urlInput.getText().toString());
             if (!hasFocus && !typed.isEmpty()) {
-                runPrecheck(urlInput, theme, () -> SettingProbe.dashboardUrl(typed));
+                runPrecheck(urlInput, theme, () -> SettingProbe.dashboardUrl(
+                        FleetProfile.fillPlaceholders(this, typed)));
             }
         });
         Runnable checkBroker = () -> {
@@ -3605,6 +3606,16 @@ public final class KioskActivity extends Activity {
     /** The groups there are, as one string to tell a change by. */
     private static String groupsShape(java.util.Map<String, Object> list) {
         return FleetDocument.groups(list).keySet().toString();
+    }
+
+    /**
+     * A stored page address with this panel's own facts filled in: {@code {panel.name}},
+     * {@code {panel.group}} and {@code {fleet.name}}, so one address shared with a fleet can
+     * show each panel its own page (a booking page per meeting room). Every load goes through
+     * here; what is stored and shown in the settings keeps the placeholders.
+     */
+    private String pageUrl(String stored) {
+        return FleetProfile.fillPlaceholders(this, stored);
     }
 
     /** A small title inside a section's card. */
@@ -12653,7 +12664,7 @@ public final class KioskActivity extends Activity {
         cancelDashboardGate();
         if (NetworkGate.isOnline(this)) {
             beginLoad();
-            webView.loadUrl(url);
+            webView.loadUrl(pageUrl(url));
             return;
         }
         showNetworkWaitLabel(true);
@@ -12661,7 +12672,7 @@ public final class KioskActivity extends Activity {
             showNetworkWaitLabel(false);
             if (webView != null && !kioskStopped) {
                 beginLoad();
-                webView.loadUrl(url);
+                webView.loadUrl(pageUrl(url));
             }
         });
     }
@@ -12954,7 +12965,7 @@ public final class KioskActivity extends Activity {
                 }
                 if (webView != null) {
                     beginLoad();
-                    webView.loadUrl(KioskConfig.load(this).dashboardUrl);
+                    webView.loadUrl(pageUrl(KioskConfig.load(this).dashboardUrl));
                 }
                 break;
             case "kiosk.set_url":
@@ -12969,7 +12980,7 @@ public final class KioskActivity extends Activity {
                     showDashboard(url);
                 } else {
                     beginLoad();
-                    webView.loadUrl(url);
+                    webView.loadUrl(pageUrl(url));
                 }
                 break;
             case "kiosk.open_url":
@@ -13002,7 +13013,7 @@ public final class KioskActivity extends Activity {
                     showDashboard(target);
                 } else {
                     beginLoad();
-                    webView.loadUrl(target);
+                    webView.loadUrl(pageUrl(target));
                 }
                 break;
             }
@@ -13466,7 +13477,7 @@ public final class KioskActivity extends Activity {
         screensaverLayer.addView(screensaverWebView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         screensaverLayer.setVisibility(View.VISIBLE);
-        screensaverWebView.loadUrl(url);
+        screensaverWebView.loadUrl(pageUrl(url));
     }
 
     /**
@@ -14001,7 +14012,7 @@ public final class KioskActivity extends Activity {
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
         // request that produced the cached error page. loadUrl always asks for the configured
         // dashboard, which is what kiosk.restart does and is known to work.
-        webView.loadUrl(url);
+        webView.loadUrl(pageUrl(url));
     }
 
     /** Forgets any pending recovery and any load in flight. Nothing is loading after this. */

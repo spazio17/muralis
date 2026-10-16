@@ -321,4 +321,44 @@ final class FleetProfile {
         }
         return line;
     }
+
+    /** The facts last read, for the stored list they came from, so a page load parses nothing. */
+    private static String factsFor = null;
+    private static String[] facts = {"", "", ""};
+
+    /**
+     * {@code url} with this panel's facts in place of its placeholders: the name the fleet
+     * knows it by (its own name outside a fleet), the first of its groups by name (empty outside
+     * one) and the fleet's name (empty outside a fleet). The facts are read from the list once
+     * per change of it. See FleetDocument.fillPlaceholders.
+     */
+    static String fillPlaceholders(Context context, String url) {
+        if (url == null || (url.indexOf('{') < 0 && !url.contains("%7B"))) {
+            return url;
+        }
+        String stored = KioskConfig.fleetDocumentText(context);
+        String own = KioskConfig.deviceIdOf(context);
+        String[] now;
+        synchronized (FleetProfile.class) {
+            if (!stored.equals(factsFor)) {
+                Map<String, Object> document = stored.isEmpty() ? null
+                        : FleetDocument.parse(stored);
+                Map<String, Object> me = FleetDocument.memberByKey(document,
+                        KioskConfig.fleetSelfKeyOf(context));
+                String name = me == null ? own : TinyJson.string(me, FleetDocument.NAME, own);
+                String group = "";
+                for (String id : FleetDocument.memberGroups(document, me)) {
+                    String candidate = FleetDocument.groupName(document, id);
+                    if (!FleetDocument.EVERYONE.equals(id)
+                            && (group.isEmpty() || candidate.compareTo(group) < 0)) {
+                        group = candidate;
+                    }
+                }
+                facts = new String[] {name, group, KioskConfig.fleetNameOf(context)};
+                factsFor = stored;
+            }
+            now = facts;
+        }
+        return FleetDocument.fillPlaceholders(url, now[0].isEmpty() ? own : now[0], now[1], now[2]);
+    }
 }

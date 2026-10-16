@@ -54,7 +54,9 @@ on purpose.
   the whole fleet, and a change to it on any of them reaches all of them. A panel at its welcome
   screen can be joined before anything locks: it takes the adding panel's escape combinations
   and PIN as its own, once, at that moment, and goes to the dashboard; a panel that has
-  combinations keeps them, they are never shared afterwards.
+  combinations keeps them, they are never shared afterwards. A page address may carry
+  `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by each panel when it loads the
+  page, so one shared address shows each panel its own page.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

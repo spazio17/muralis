@@ -829,4 +829,34 @@ final class FleetDocument {
         }
         return content;
     }
+
+    /**
+     * {@code url} with the panel's facts in place of its placeholders, {@code {panel.name}},
+     * {@code {panel.group}} and {@code {fleet.name}}, written plain or percent-encoded (a browser
+     * may encode the braces of a pasted address), each value encoded for an address; an address
+     * without placeholders comes back as it is. Pure, so the rules are host-tested.
+     */
+    static String fillPlaceholders(String url, String panelName, String group, String fleetName) {
+        if (url == null || (url.indexOf('{') < 0 && !url.contains("%7B"))) {
+            return url;
+        }
+        String filled = url;
+        String[][] facts = {{"panel.name", panelName}, {"panel.group", group},
+                {"fleet.name", fleetName}};
+        for (String[] fact : facts) {
+            String value = urlEncoded(fact[1] == null ? "" : fact[1]);
+            filled = filled.replace("{" + fact[0] + "}", value)
+                    .replace("%7B" + fact[0] + "%7D", value)
+                    .replace("%7b" + fact[0] + "%7d", value);
+        }
+        return filled;
+    }
+
+    private static String urlEncoded(String value) {
+        try {
+            return java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20");
+        } catch (java.io.UnsupportedEncodingException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
 }
