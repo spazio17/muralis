@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -10,7 +10,8 @@ import android.util.Log;
 
 /**
  * The setup wizard's last question to the new device owner during QR enrolment: is the device
- * compliant with its policies? Muralis has nothing to put in place here. Lock task and HOME wait
+ * compliant with its policies? Muralis keeps the settings a setup QR carried, for the service to
+ * apply, and has nothing else to put in place here. Lock task and HOME wait
  * until the first-start wizard has recorded a way out, on purpose (see
  * {@link KioskDeviceAdminReceiver#onEnabled}), and the service's device-owner defaults apply
  * whenever its process runs, as they always have. So the answer is yes, at once, and setup goes
@@ -27,8 +28,11 @@ public final class PolicyComplianceActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // The settings a setup QR carried, handed to the service to apply.
+        KioskConfig.keepProvisionedSettings(this, getIntent());
         setResult(RESULT_OK);
         finish();
-        Log.i(TAG, "Setup asked for policy compliance: nothing to set until the first start");
+        Log.i(TAG, "Setup asked for policy compliance: the QR's settings kept, the rest waits for"
+                + " the first start");
     }
 }

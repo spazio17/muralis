@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Material glyph, the same 24-unit stroke path the web page's glyph map draws for it. White,
      tinted at runtime from the palette. A dashboard: four tiles, two tall and two short. The
-     monitor on a stand it replaces drew hardware, which no wall panel has (Juri, 2026-09-24). -->
+     monitor on a stand it replaces drew hardware, which no wall panel has (2026-09-24). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
