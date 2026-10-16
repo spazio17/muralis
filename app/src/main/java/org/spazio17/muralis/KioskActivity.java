@@ -6301,8 +6301,8 @@ public final class KioskActivity extends Activity {
 
     /**
      * The same page from the first-start wizard ({@code fromWizard}): a panel at its welcome
-     * screen is joined to the fleet before anything locks, and goes back to the wizard, which
-     * then says what the fleet sets here, to record its combinations (never shared).
+     * screen is joined to the fleet before anything locks, takes the adding panel's combinations
+     * once, and goes back to the wizard, which is done then and shows the dashboard.
      */
     private void showJoinPage(boolean fromWizard) {
         currentScreen = () -> showJoinPage(fromWizard);
@@ -6695,6 +6695,23 @@ public final class KioskActivity extends Activity {
                 if (joined.status != 200) {
                     problem = joined.reason();
                 } else {
+                    // A panel at its welcome screen asked for the way out: this panel's
+                    // combinations and PIN, once, at setup (the Esper idea, 2026-10-13), sent
+                    // only now that it is a member and asked, never with the code alone.
+                    if (joined.body.optBoolean("needs_setup", false)) {
+                        KioskConfig own = KioskConfig.load(this);
+                        org.json.JSONObject setup = new org.json.JSONObject()
+                                .put("settings_sequence", own.settingsSequence)
+                                .put("launcher_sequence", own.launcherSequence);
+                        String pinHash = KioskConfig.escapePinHash(this);
+                        if (pinHash != null) {
+                            setup.put("escape_pin_hash", pinHash);
+                        }
+                        FleetServer.Reply given = FleetServer.call(this, invitation.address,
+                                invitation.port, invitation.spki, "POST", "/fleet/setup", setup);
+                        Log.i(TAG, given.status == 200 ? "Gave the new panel the combinations"
+                                : "The new panel did not take the combinations: " + given.reason());
+                    }
                     java.util.Map<String, Object> member = new java.util.LinkedHashMap<>();
                     // The id from the QR, checked when it was read; the reply's is not checked.
                     member.put(FleetDocument.ID, invitation.id);
@@ -9841,8 +9858,8 @@ public final class KioskActivity extends Activity {
         Button start = primaryButton(theme, "Record the first one");
         start.setOnClickListener(view -> showWizardRecorder(false));
         // Joining the fleet from here (block 12e): one scan from another panel, before anything
-        // locks, and the fleet's shared settings apply at once. The combinations stay this
-        // panel's own: never shared, so the way out is recorded here whatever the fleet says.
+        // locks; the adding panel hands over its combinations and PIN, once, so the wizard is
+        // done and the dashboard follows. Afterwards the combinations are this panel's own.
         page.addView(buttonRow(start), matchWrap());
         // Or, as a sign-in page offers its other way: a rule, "or", a rule, then the join. Free
         // on this side (decided 2026-10-08: being joined is free, adding a panel is Pro).
@@ -9887,6 +9904,12 @@ public final class KioskActivity extends Activity {
                 // pass it is not attached yet, and that is no reason to stop.
                 attached[0] |= page.isAttachedToWindow();
                 if (attached[0] && !page.isAttachedToWindow()) {
+                    return;
+                }
+                // The way out may arrive from the fleet (a join made from the web admin's Fleet
+                // section too): the wizard is done then.
+                if (KioskConfig.load(KioskActivity.this).escapeSequencesConfigured()) {
+                    continueAfterFirstStartWizard();
                     return;
                 }
                 String fleet = KioskConfig.fleetNameOf(KioskActivity.this);

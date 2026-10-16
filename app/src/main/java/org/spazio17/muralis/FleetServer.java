@@ -303,7 +303,9 @@ final class FleetServer {
     static String joinLine(Context context) {
         long now = joinClock();
         if (!KioskConfig.fleetIdOf(context).isEmpty()) {
-            return "This panel joined the fleet " + KioskConfig.fleetNameOf(context) + ".";
+            return "This panel joined the fleet " + KioskConfig.fleetNameOf(context) + "."
+                    + (setupTakenFrom.isEmpty() ? ""
+                    : " The fleet's combinations open the settings here too.");
         }
         if (!KioskRuntimeState.fleetListening()) {
             return stateLine() + ".";
@@ -576,6 +578,12 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only PUT or GET"));
                 }
+            } else if ("/fleet/setup".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    setup(caller, body, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
             } else if ("/fleet/checkin".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     checkin(caller, socket.getInetAddress().getHostAddress(), body, output);
@@ -614,7 +622,9 @@ final class FleetServer {
                     .put("fleet", fleetId.isEmpty() ? JSONObject.NULL : new JSONObject()
                             .put("id", fleetId)
                             .put("name", KioskConfig.fleetNameOf(context)))
-                    .put("version", FleetDocument.version(KioskConfig.fleetDocumentOf(context)));
+                    .put("version", FleetDocument.version(KioskConfig.fleetDocumentOf(context)))
+                    // No way out recorded yet: the adder may send its own (POST /fleet/setup).
+                    .put("needs_setup", !KioskConfig.load(context).escapeSequencesConfigured());
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
@@ -799,6 +809,7 @@ final class FleetServer {
             KioskConfig.edit(context).leaveFleet(context).apply();
         }
         removedFrom = "";
+        setupTakenFrom = "";
         peers.clear();
         profileApplied.clear();
         profileSource.clear();
@@ -1467,6 +1478,60 @@ final class FleetServer {
     static String profileSource(String section) {
         String group = profileSource.get(section);
         return group == null ? "" : group;
+    }
+
+    /** The fleet whose combinations this panel took at its setup, for the Join screen's line. */
+    private static volatile String setupTakenFrom = "";
+
+    static String setupTakenFrom() {
+        return setupTakenFrom;
+    }
+
+    /**
+     * {@code POST /fleet/setup} from a key this panel trusts, with the caller's escape
+     * combinations and PIN hash: the way out, once, at setup. Sent only after the join reply
+     * said {@code needs_setup}, so the adder's secrets reach a member that asked, never a
+     * panel that merely showed a code. A panel that has combinations keeps them: never shared
+     * afterwards. The combinations must be two, valid and different, as the recorder insists.
+     */
+    private void setup(String caller, byte[] body, OutputStream output) throws IOException {
+        JSONObject setup;
+        try {
+            setup = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException notJson) {
+            respond(output, 400, error("the body must be a JSON object"));
+            return;
+        }
+        KioskConfig config = KioskConfig.load(context);
+        if (config.escapeSequencesConfigured()) {
+            respond(output, 409, error("this panel has its combinations already"));
+            return;
+        }
+        String settings = setup.optString("settings_sequence", "");
+        String launcher = setup.optString("launcher_sequence", "");
+        if (!EscapeSequence.isValid(EscapeSequence.parse(settings))
+                || !EscapeSequence.isValid(EscapeSequence.parse(launcher))
+                || settings.equals(launcher)) {
+            respond(output, 400, error("two valid, different combinations are needed"));
+            return;
+        }
+        String pinHash = setup.optString("escape_pin_hash", "");
+        try {
+            config.settingsSequence = settings;
+            config.launcherSequence = launcher;
+            config.saveEscapeSequences(context);
+            // The PIN as the adder has it: none clears one set here before the combinations.
+            KioskConfig.setEscapePinHash(context, pinHash.isEmpty() ? null : pinHash);
+        } catch (RuntimeException failed) {
+            Log.w(TAG, "The fleet's combinations could not be kept", failed);
+            respond(output, 500, error("this panel could not keep the combinations"));
+            return;
+        }
+        setupTakenFrom = KioskConfig.fleetNameOf(context);
+        Log.i(TAG, "Took the fleet's combinations" + (pinHash.isEmpty() ? "" : " and PIN")
+                + " at setup, from key " + FleetTls.shortForm(caller));
+        KioskService.publishTelemetrySoon(context);
+        respond(output, 200, fleetState());
     }
 
     /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */

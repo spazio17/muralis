@@ -1841,7 +1841,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // wizard is up): nothing may cover the wizard before the way out exists, whichever
         // surface sent the page, a fleet's shared settings, MQTT or the web admin. The wizard
         // shows the stored page when it is done.
-        if (KioskConfig.load(this).escapeSequencesConfigured()) {
+        if (KioskConfig.load(this).escapeSequencesConfigured()
+                && !KioskRuntimeState.wizardOnScreen()) {
             sendUiCommand("kiosk.set_url", -1, url);
         }
         // dashboard_url rides in the telemetry document, and the web admin calls this method
