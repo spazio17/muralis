@@ -18,6 +18,7 @@ public final class KioskCommandDispatcherTest {
 
         testStatusLightCommands();
         testBrowserOptions();
+        testCertificatePins();
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
@@ -841,6 +842,30 @@ public final class KioskCommandDispatcherTest {
                 && "true".equals(executor.browserOptions.get(
                         KioskCommandDispatcher.BrowserOption.PAGE_MICROPHONE)),
                 "the page's camera and microphone reach the executor");
+    }
+
+    /** The trusted certificates (block 4): the store, the fingerprint's form, never a wildcard. */
+    private static void testCertificatePins() {
+        String fp = CertificatePins.fingerprint("a certificate".getBytes(
+                java.nio.charset.StandardCharsets.UTF_8));
+        require(CertificatePins.isFingerprint(fp) && fp.length() == 95,
+                "SHA-256 in 32 colon-separated pairs: " + fp);
+        java.util.Map<String, String> pins = CertificatePins.with(new java.util.LinkedHashMap<>(),
+                "HA.local", fp);
+        require(CertificatePins.trusted(pins, "ha.local", fp)
+                && !CertificatePins.trusted(pins, "ha.local", fp.replace('A', 'B'))
+                && !CertificatePins.trusted(pins, "other.local", fp)
+                && !CertificatePins.trusted(pins, null, fp), "one fingerprint for one host");
+        java.util.Map<String, String> back = CertificatePins.parse(CertificatePins.format(pins)
+                + "*.local " + fp + "\nbroken line\nhost notafingerprint\n");
+        require(back.equals(pins), "the store reads back and drops what is not a pin: " + back);
+        java.util.Map<String, String> full = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < CertificatePins.MAX_PINS; i++) {
+            full.put("h" + i, fp);
+        }
+        require(CertificatePins.with(full, "new", fp) == null
+                && CertificatePins.with(full, "h3", fp) != null,
+                "a full list refuses a new host and still replaces a known one");
     }
 
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {

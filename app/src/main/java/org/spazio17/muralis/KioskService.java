@@ -1409,6 +1409,21 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .put("sign_in", !browser.signInUser.isEmpty())
                     .put("page_camera", browser.pageCamera)
                     .put("page_microphone", browser.pageMicrophone));
+            // The trusted certificates and the one waiting for an answer (block 4): hosts and
+            // fingerprints, which a certificate makes public anyway.
+            org.json.JSONArray pins = new org.json.JSONArray();
+            for (java.util.Map.Entry<String, String> pin
+                    : KioskConfig.certificatePinsOf(this).entrySet()) {
+                pins.put(new org.json.JSONObject().put("host", pin.getKey())
+                        .put("sha256", pin.getValue()));
+            }
+            applied.put("certificate_pins", pins);
+            CertificatePins.Waiting waiting = CertificatePins.waiting;
+            applied.put("certificate_waiting", waiting == null ? org.json.JSONObject.NULL
+                    : new org.json.JSONObject().put("host", waiting.host)
+                            .put("sha256", waiting.fingerprint)
+                            .put("issued_to", waiting.issuedTo)
+                            .put("valid_until", waiting.validUntil));
             stats.put("display", displaySnapshot());
             stats.put("ambient", screensaverSnapshot(includeAdminDetail));
             StatusLight.State light = KioskConfig.statusLightOf(this);
@@ -2101,6 +2116,47 @@ public final class KioskService extends Service implements KioskCommandDispatche
     public void setStatusLight(boolean on, Integer color, int percent) {
         KioskConfig.edit(this).statusLight(on, color, percent).apply();
         sendUiCommand("light.changed", -1, null);
+    }
+
+    /**
+     * Trusts the certificate waiting for an answer (block 4), from the panel or the web admin:
+     * only that host and that fingerprint, only while it is the one waiting. Returns why not,
+     * or null; the page is loaded again.
+     */
+    static String trustCertificate(Context context, String host, String fingerprint) {
+        CertificatePins.Waiting waiting = CertificatePins.waiting;
+        if (waiting == null || !waiting.host.equalsIgnoreCase(host)
+                || !waiting.fingerprint.equals(fingerprint)) {
+            return "that certificate is not the one waiting for an answer";
+        }
+        java.util.Map<String, String> pins = CertificatePins.with(
+                KioskConfig.certificatePinsOf(context), waiting.host, waiting.fingerprint);
+        if (pins == null) {
+            return "the list is full (" + CertificatePins.MAX_PINS + "): remove one first";
+        }
+        KioskConfig.edit(context).certificatePins(pins).apply();
+        CertificatePins.waiting = null;
+        Log.i(TAG, "Certificate trusted for " + waiting.host);
+        certificatesChanged(context);
+        return null;
+    }
+
+    /** Forgets a trusted certificate: the next load of that host asks again. */
+    static void forgetCertificate(Context context, String host) {
+        java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(context);
+        if (pins.remove(host.toLowerCase(java.util.Locale.ROOT)) != null) {
+            KioskConfig.edit(context).certificatePins(pins).apply();
+            Log.i(TAG, "Certificate forgotten for " + host);
+        }
+        certificatesChanged(context);
+    }
+
+    private static void certificatesChanged(Context context) {
+        context.sendBroadcast(new Intent(KioskActions.UI_CONTROL)
+                .setPackage(context.getPackageName())
+                .putExtra(KioskActions.EXTRA_COMMAND, "certificates.changed"),
+                KioskActions.PERMISSION_UI_CONTROL);
+        publishTelemetrySoon(context);
     }
 
     /** The web admin saved the browser box: the page takes it, as after a command. */

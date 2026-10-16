@@ -1322,6 +1322,22 @@ final class HttpAdminServer {
                 }
                 return null;
             }
+            case "certificates": {
+                String host = form.getOrDefault("host", "");
+                if (!CertificatePins.isHost(host)) {
+                    return "Not done: no such host.";
+                }
+                if ("trust".equals(form.get("action"))) {
+                    String refused = KioskService.trustCertificate(context, host,
+                            form.getOrDefault("sha256", ""));
+                    return refused == null ? null : "Not trusted: " + refused + ".";
+                }
+                if ("forget".equals(form.get("action"))) {
+                    KioskService.forgetCertificate(context, host);
+                    return null;
+                }
+                return "Not done: nothing to do.";
+            }
             case "browser": {
                 String stale = staleFormRefusal(form, browserBaseline(KioskConfig.browserOf(context)));
                 if (stale != null) {
@@ -3578,7 +3594,58 @@ final class HttpAdminServer {
                         "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
                                 + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
                                 + "formmethod=\"post\">Open once</button>")
-                + browserForm(notice, noticeSection);
+                + browserForm(notice, noticeSection)
+                + certificatesBox(notice, noticeSection);
+    }
+
+    /**
+     * The certificates trusted for pages Android does not trust (block 4): the one waiting for
+     * an answer with Trust, then each trusted host with its fingerprint and Remove. Each button
+     * posts its own small form, so a refusal comes back under this box.
+     */
+    private String certificatesBox(String notice, String noticeSection) {
+        StringBuilder html = new StringBuilder("<p class=\"hint\">Trusted certificates</p>");
+        String message = notice != null && "certificates".equals(noticeSection)
+                ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>" : "";
+        html.append(message);
+        CertificatePins.Waiting waiting = CertificatePins.waiting;
+        if (waiting != null) {
+            html.append("<p class=\"hint bad\">Waiting for an answer: ")
+                    .append(escapeHtml(waiting.host))
+                    .append(waiting.issuedTo.isEmpty() ? ""
+                            : ", issued to " + escapeHtml(waiting.issuedTo))
+                    .append(waiting.validUntil.isEmpty() ? ""
+                            : ", valid until " + escapeHtml(waiting.validUntil))
+                    .append("<br>SHA-256 ").append(escapeHtml(waiting.fingerprint)).append("</p>")
+                    .append(certificateForm("trust", waiting.host, waiting.fingerprint,
+                            "Trust this certificate", "tonal"));
+        }
+        java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(context);
+        if (pins.isEmpty() && waiting == null) {
+            html.append("<p class=\"hint\">None. A page whose certificate Android does not trust"
+                    + " asks first.</p>");
+        }
+        for (java.util.Map.Entry<String, String> pin : pins.entrySet()) {
+            html.append("<p class=\"hint\">").append(escapeHtml(pin.getKey()))
+                    .append("<br>SHA-256 ").append(escapeHtml(pin.getValue())).append("</p>")
+                    .append(certificateForm("forget", pin.getKey(), "", "Remove", "text"));
+        }
+        if (!pins.isEmpty()) {
+            html.append("<p class=\"hint\">A removed certificate is refused from the browser's"
+                    + " next connection, at the latest after the nightly restart.</p>");
+        }
+        return html.toString();
+    }
+
+    private static String certificateForm(String action, String host, String fingerprint,
+            String label, String buttonClass) {
+        return "<form method=\"post\" action=\"" + settingsAt("dashboard") + "\">"
+                + "<input type=\"hidden\" name=\"section\" value=\"certificates\">"
+                + "<input type=\"hidden\" name=\"action\" value=\"" + action + "\">"
+                + "<input type=\"hidden\" name=\"host\" value=\"" + escapeHtml(host) + "\">"
+                + "<input type=\"hidden\" name=\"sha256\" value=\"" + escapeHtml(fingerprint)
+                + "\"><div class=\"actions tight\"><button type=\"submit\" class=\""
+                + buttonClass + "\">" + escapeHtml(label) + "</button></div></form>";
     }
 
     /**

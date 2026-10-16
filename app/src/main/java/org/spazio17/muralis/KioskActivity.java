@@ -2394,8 +2394,38 @@ public final class KioskActivity extends Activity {
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
             redrawInPlace(this::showBrowserOptionsPage);
         });
+        // The certificates trusted for pages Android does not trust (block 4), each with Remove:
+        // the next load of that host asks again.
+        LinearLayout pinsCard = card(theme, "Trusted certificates");
+        java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(this);
+        if (pins.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setTextColor(theme.subtext);
+            none.setTextSize(13);
+            none.setText("None. A page whose certificate Android does not trust asks first.");
+            pinsCard.addView(none, matchWrapClose());
+        }
+        for (java.util.Map.Entry<String, String> pin : pins.entrySet()) {
+            TextView row = new FlushText(this);
+            row.setTextColor(theme.text);
+            row.setTextSize(14);
+            row.setText(pin.getKey() + "\nSHA-256 " + pin.getValue());
+            pinsCard.addView(row, matchWrapClose());
+            Button remove = textButton(theme, "Remove");
+            String host = pin.getKey();
+            remove.setOnClickListener(view -> KioskService.forgetCertificate(this, host));
+            pinsCard.addView(buttonRow(remove), matchWrap());
+        }
+        if (!pins.isEmpty()) {
+            TextView later = new FlushText(this);
+            later.setTextColor(theme.subtext);
+            later.setTextSize(13);
+            later.setText("A removed certificate is refused from the browser's next connection, "
+                    + "at the latest after the nightly restart.");
+            pinsCard.addView(later, matchWrapClose());
+        }
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(pageCard, useCard,
-                signInCard)), matchWrap());
+                signInCard, pinsCard)), matchWrap());
         page.addView(buttonRow(save), matchWrap());
         setContentView(scrollPage(theme, page));
     }
@@ -13142,7 +13172,7 @@ public final class KioskActivity extends Activity {
         homeLoad();
         if (NetworkGate.isOnline(this)) {
             beginLoad();
-            webView.loadUrl(pageUrl(url));
+            loadPage(pageUrl(url));
             return;
         }
         showNetworkWaitLabel(true);
@@ -13150,7 +13180,7 @@ public final class KioskActivity extends Activity {
             showNetworkWaitLabel(false);
             if (webView != null && !kioskStopped) {
                 beginLoad();
-                webView.loadUrl(pageUrl(url));
+                loadPage(pageUrl(url));
             }
         });
     }
@@ -13558,7 +13588,7 @@ public final class KioskActivity extends Activity {
         Log.i(TAG, "Back to the dashboard after " + (idle / 1000) + " s without a touch");
         beginLoad();
         homeLoad();
-        webView.loadUrl(pageUrl(home));
+        loadPage(pageUrl(home));
     }
 
     /**
@@ -13674,6 +13704,147 @@ public final class KioskActivity extends Activity {
         if (PanelCamera.heldByPage) {
             PanelCamera.heldByPage = false;
             KioskService.refreshSensorsSoon(this);
+        }
+    }
+
+    /** The certificate's own bytes: Android 10 hands them over, older ones keep them in a bundle. */
+    private static byte[] certificateBytes(android.net.http.SslCertificate certificate) {
+        if (certificate == null) {
+            return null;
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                java.security.cert.X509Certificate x509 = certificate.getX509Certificate();
+                return x509 == null ? null : x509.getEncoded();
+            }
+            return android.net.http.SslCertificate.saveState(certificate)
+                    .getByteArray("x509-certificate");
+        } catch (java.security.cert.CertificateEncodingException | RuntimeException unreadable) {
+            return null;
+        }
+    }
+
+    /** The question over the page (block 4), at most one; see {@link #askAboutCertificate}. */
+    private View certificateQuestion;
+
+    /**
+     * Asks once about a certificate the page offered and Android refused: who it is for, its
+     * fingerprint and its end, Trust this certificate or Not now. The same certificate waiting
+     * already is not asked about twice; Not now leaves it waiting for the web admin.
+     */
+    private void askAboutCertificate(CertificatePins.Waiting offered) {
+        CertificatePins.Waiting before = CertificatePins.waiting;
+        CertificatePins.waiting = offered;
+        KioskService.publishTelemetrySoon(this);
+        if (before != null && before.host.equals(offered.host)
+                && before.fingerprint.equals(offered.fingerprint) && certificateDismissed) {
+            return;
+        }
+        certificateDismissed = false;
+        FrameLayout content = findViewById(android.R.id.content);
+        if (content == null || configurationVisible || !inFront) {
+            return;
+        }
+        removeCertificateQuestion();
+        KioskTheme theme = currentTheme();
+        FrameLayout shade = new FrameLayout(this);
+        shade.setBackgroundColor(Color.argb(170, 0, 0, 0));
+        shade.setClickable(true);
+        LinearLayout box = card(theme, "This page's certificate is not trusted");
+        TextView facts = new FlushText(this);
+        facts.setTextColor(theme.text);
+        facts.setTextSize(15);
+        facts.setText(offered.host + "\n"
+                + (offered.issuedTo.isEmpty() ? "" : "Issued to " + offered.issuedTo
+                        + (offered.validUntil.isEmpty() ? "" : ", valid until "
+                                + offered.validUntil) + "\n")
+                + "SHA-256 " + offered.fingerprint);
+        facts.setTextIsSelectable(false);
+        box.addView(facts, matchWrapClose());
+        TextView why = new FlushText(this);
+        why.setTextColor(theme.subtext);
+        why.setTextSize(13);
+        why.setText("Trust it only if this is your own server and the fingerprint is the one it "
+                + "shows. A different certificate on this address will be asked about again.");
+        box.addView(why, matchWrapClose());
+        Button trust = primaryButton(theme, "Trust this certificate");
+        Button notNow = secondaryButton(theme, "Not now");
+        trust.setOnClickListener(view -> {
+            String refused = KioskService.trustCertificate(this, offered.host,
+                    offered.fingerprint);
+            if (refused != null) {
+                Toast.makeText(this, "Not trusted: " + refused + ".", Toast.LENGTH_LONG).show();
+            }
+        });
+        notNow.setOnClickListener(view -> {
+            certificateDismissed = true;
+            removeCertificateQuestion();
+        });
+        box.addView(buttonRow(trust, notNow), matchWrap());
+        FrameLayout.LayoutParams boxParams = new FrameLayout.LayoutParams(
+                Math.min(dp(560), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        shade.addView(box, boxParams);
+        content.addView(shade, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        certificateQuestion = shade;
+    }
+
+    /**
+     * The address the page last set out for: loaded again once its certificate is trusted. Set
+     * when a load is asked for and when a link is followed, not only when a page starts: a newer
+     * WebView starts nothing for a load whose certificate was refused (seen on Android 16).
+     */
+    private String lastPageStarted;
+
+    /** Every load of the page goes here, so a refused certificate knows what to load again. */
+    private void loadPage(String url) {
+        lastPageStarted = url;
+        webView.loadUrl(url);
+    }
+
+    /** Not now was pressed for the certificate waiting; it is not asked about again until another comes. */
+    private boolean certificateDismissed;
+
+    private void removeCertificateQuestion() {
+        View question = certificateQuestion;
+        certificateQuestion = null;
+        if (question != null && question.getParent() instanceof ViewGroup) {
+            ((ViewGroup) question.getParent()).removeView(question);
+        }
+    }
+
+    /** A pin added or removed here or in the web admin: the question goes and the page loads again. */
+    private void certificatesChanged() {
+        removeCertificateQuestion();
+        if (configurationVisible) {
+            if (currentScreen != null) {
+                redrawInPlace(currentScreen);
+            }
+            return;
+        }
+        if (webView != null) {
+            // The page that was refused, which may be an address shown once rather than the
+            // dashboard; it stays away from the dashboard then, so the way back still works.
+            String home = KioskConfig.load(this).dashboardUrl;
+            String retry = lastPageStarted;
+            boolean away = retry != null && !retry.isEmpty() && !home.isEmpty()
+                    && BrowserOptions.awayFrom(retry, pageUrl(home));
+            String target = retry != null && !retry.isEmpty() ? retry : pageUrl(home);
+            // The WebView remembers a certificate it was told to accept; forgotten here. A
+            // connection the browser engine keeps open still carries it, so a removed pin is
+            // refused from the next new connection, at the latest after the nightly restart
+            // (measured on the phone, 2026-10-14: a reload alone did not ask again).
+            webView.clearSslPreferences();
+            if (!target.isEmpty()) {
+                beginLoad();
+                homeLoad();
+                loadPage(target);
+                if (away) {
+                    pageAway = true;
+                    touchedSinceHome = true;
+                }
+            }
         }
     }
 
@@ -13806,6 +13977,9 @@ public final class KioskActivity extends Activity {
             case "browser.changed":
                 browserOptionsChanged();
                 break;
+            case "certificates.changed":
+                certificatesChanged();
+                break;
             case "kiosk.start":
                 kioskStopped = false;
                 // Persisted (here and in kiosk.stop/set_url) because the flag used to be process
@@ -13820,7 +13994,7 @@ public final class KioskActivity extends Activity {
                 if (webView != null) {
                     beginLoad();
                     homeLoad();
-                    webView.loadUrl(pageUrl(KioskConfig.load(this).dashboardUrl));
+                    loadPage(pageUrl(KioskConfig.load(this).dashboardUrl));
                 }
                 break;
             case "kiosk.set_url":
@@ -13836,7 +14010,7 @@ public final class KioskActivity extends Activity {
                 } else {
                     beginLoad();
                     homeLoad();
-                    webView.loadUrl(pageUrl(url));
+                    loadPage(pageUrl(url));
                 }
                 break;
             case "kiosk.open_url":
@@ -13870,7 +14044,7 @@ public final class KioskActivity extends Activity {
                 } else {
                     beginLoad();
                     homeLoad();
-                    webView.loadUrl(pageUrl(target));
+                    loadPage(pageUrl(target));
                 }
                 // An address shown once is away from the dashboard from the start, so the way
                 // back after a while brings the stored one again.
@@ -14845,7 +15019,7 @@ public final class KioskActivity extends Activity {
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
         // request that produced the cached error page. loadUrl always asks for the configured
         // dashboard, which is what kiosk.restart does and is known to work.
-        webView.loadUrl(pageUrl(url));
+        loadPage(pageUrl(url));
     }
 
     /** Forgets any pending recovery and any load in flight. Nothing is loading after this. */
@@ -14895,6 +15069,36 @@ public final class KioskActivity extends Activity {
             handler.cancel();
         }
 
+        /**
+         * A certificate Android does not trust (block 4): accepted only when the person pinned
+         * that very fingerprint for that host; otherwise refused, and the person asked once,
+         * over the page. Never every certificate.
+         */
+        @Override
+        public void onReceivedSslError(WebView view, android.webkit.SslErrorHandler handler,
+                android.net.http.SslError error) {
+            String host = android.net.Uri.parse(error.getUrl()).getHost();
+            byte[] der = certificateBytes(error.getCertificate());
+            String fingerprint = der == null ? null : CertificatePins.fingerprint(der);
+            if (CertificatePins.trusted(KioskConfig.certificatePinsOf(KioskActivity.this), host,
+                    fingerprint)) {
+                handler.proceed();
+                return;
+            }
+            handler.cancel();
+            Log.w(TAG, "Certificate not trusted for " + host + " (error " + error.getPrimaryError()
+                    + ")");
+            if (host != null && fingerprint != null) {
+                android.net.http.SslCertificate certificate = error.getCertificate();
+                java.util.Date until = certificate.getValidNotAfterDate();
+                askAboutCertificate(new CertificatePins.Waiting(host, fingerprint,
+                        certificate.getIssuedTo() == null ? ""
+                                : certificate.getIssuedTo().getCName(),
+                        until == null ? "" : java.text.DateFormat.getDateInstance(
+                                java.text.DateFormat.MEDIUM).format(until)));
+            }
+        }
+
         @Override
         public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
             if (view == webView) {
@@ -14918,6 +15122,9 @@ public final class KioskActivity extends Activity {
                 android.webkit.WebResourceRequest request) {
             String scheme = request.getUrl() != null ? request.getUrl().getScheme() : null;
             if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                if (request.isForMainFrame()) {
+                    lastPageStarted = request.getUrl().toString();
+                }
                 return false;
             }
             Log.w(TAG, "Blocked dashboard navigation to a non-web scheme: " + scheme);
@@ -14938,6 +15145,7 @@ public final class KioskActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             recovery.pageStarted(android.os.SystemClock.uptimeMillis());
+            lastPageStarted = url;
         }
 
         @Override

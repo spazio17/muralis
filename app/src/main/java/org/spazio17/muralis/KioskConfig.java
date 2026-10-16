@@ -28,6 +28,8 @@ final class KioskConfig {
     private static final String BROWSER_PAGE_ZOOM = "browser_page_zoom";
     private static final String BROWSER_DARK = "browser_dark";
     private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
+    /** The certificates a person trusted, one host and fingerprint a line (CertificatePins). */
+    private static final String CERTIFICATE_PINS = "certificate_pins";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -410,6 +412,11 @@ final class KioskConfig {
 
         Editor browserBackAfter(int seconds) {
             plain.putInt(BROWSER_BACK_AFTER, seconds);
+            return this;
+        }
+
+        Editor certificatePins(java.util.Map<String, String> pins) {
+            plain.putString(CERTIFICATE_PINS, CertificatePins.format(pins));
             return this;
         }
 
@@ -1412,6 +1419,13 @@ final class KioskConfig {
                 user == null ? "" : user,
                 prefs.getBoolean(BROWSER_PAGE_CAMERA, false),
                 prefs.getBoolean(BROWSER_PAGE_MICROPHONE, false));
+    }
+
+    /** The trusted certificates, read for every certificate Android refuses. */
+    static java.util.Map<String, String> certificatePinsOf(Context context) {
+        return CertificatePins.parse(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CERTIFICATE_PINS, ""));
     }
 
     /** Just the time before going back, read every second while the page is away. */
