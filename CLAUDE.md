@@ -38,6 +38,9 @@ on purpose.
   panel: a dimmed page, black, another web page, or the panel's own pictures from named
   playlists, then display off after a second delay. A status light for panels with none of
   their own: a coloured frame around the screen, set like a Home Assistant light.
+  Pop-ups over the screen (a message, a picture, a camera's stream or a page, for some seconds
+  or until touched), from HTTP, MQTT, Home Assistant's notify and the automations, and cameras
+  that pop up on demand or on a doorbell's trigger, each with a mode on each panel and a cooldown.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
   uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery. The
   panel and the web admin offer the same settings and show the same thing, except what needs a

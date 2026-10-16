@@ -19,6 +19,8 @@ public final class KioskCommandDispatcherTest {
         testStatusLightCommands();
         testBrowserOptions();
         testCertificatePins();
+        testPopups();
+        testPopupCameras();
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
@@ -868,7 +870,100 @@ public final class KioskCommandDispatcherTest {
                 "a full list refuses a new host and still replaces a known one");
     }
 
+    /** panel.notify (block 6): the defaults, each argument's limit, the wake. */
+    private static void testPopups() {
+        RecordingExecutor executor = new RecordingExecutor();
+        java.util.Map<String, String> extra = new java.util.HashMap<>();
+        extra.put("title", "Door");
+        KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch("panel.notify",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Someone at the door",
+                        null, extra), executor);
+        require(result.status.equals("accepted") && executor.popup != null
+                && executor.popup.seconds == Popup.DEFAULT_SECONDS && executor.popup.wake
+                && !executor.popup.chime && executor.calls.contains("displayWake"),
+                "a pop-up with the defaults wakes the display: " + result.detail);
+        extra.clear();
+        extra.put("seconds", "0");
+        extra.put("wake", "false");
+        executor.calls.clear();
+        require(KioskCommandDispatcher.dispatch("panel.notify",
+                new KioskCommandDispatcher.CommandArgs(-1, "https://cam.local/snap.jpg", null,
+                        null, null, extra), executor).status.equals("accepted")
+                && executor.popup.seconds == 0 && executor.popup.url.equals(
+                        "https://cam.local/snap.jpg")
+                && !executor.calls.contains("displayWake"), "an address alone, until touched");
+        String[][] bad = {{"", "", ""}, {"x", "seconds", "301"}, {"x", "seconds", "-1"},
+                {"x", "url", "file:///etc/passwd"}, {"x", "wake", "maybe"}};
+        for (String[] row : bad) {
+            java.util.Map<String, String> named = new java.util.HashMap<>();
+            if (!row[1].isEmpty()) {
+                named.put(row[1], row[2]);
+            }
+            require(KioskCommandDispatcher.dispatch("panel.notify",
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[0], null, named),
+                    executor).status.equals("rejected"), "refused: " + java.util.Arrays.toString(row));
+        }
+        StringBuilder long501 = new StringBuilder();
+        for (int i = 0; i < 501; i++) {
+            long501.append('m');
+        }
+        require(KioskCommandDispatcher.dispatch("panel.notify",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, long501.toString()),
+                executor).status.equals("rejected"), "a message past 500 characters");
+    }
+
+    /** The pop-up cameras (block 6): the list, the checks, the modes and the cooldown. */
+    private static void testPopupCameras() {
+        require(PopupCameras.check("Door", "http://cam.local/snap.jpg", "trigger", 30, 60) == null,
+                "a camera");
+        require(PopupCameras.check("", "http://x", "trigger", 30, 60) != null
+                && PopupCameras.check("Door", "rtsp://x", "trigger", 30, 60) != null
+                && PopupCameras.check("Door", "http://x", "always", 30, 60) != null
+                && PopupCameras.check("Door", "http://x", "trigger", 301, 60) != null
+                && PopupCameras.check("Door", "http://x", "trigger", 30, 3601) != null,
+                "each check refuses");
+        java.util.List<PopupCameras.Camera> list = new java.util.ArrayList<>();
+        list = PopupCameras.with(list, new PopupCameras.Camera("Door", "http://cam/door", "alert", 20, 60));
+        list = PopupCameras.with(list, new PopupCameras.Camera("Garden", "http://cam/g", "on_demand", 0, 0));
+        java.util.List<PopupCameras.Camera> back = PopupCameras.parse(PopupCameras.format(list));
+        require(back.size() == 2 && back.get(0).mode.equals("alert") && back.get(1).seconds == 0,
+                "the list round-trips");
+        require(PopupCameras.parse("not json").isEmpty() && PopupCameras.parse("").isEmpty(),
+                "an unreadable list is empty");
+        PopupCameras.Camera door = PopupCameras.find(back, "door");
+        require(door != null, "found by name, any case");
+        require(PopupCameras.refusal(door, true, 0, 100_000) == null, "a first trigger shows");
+        require(PopupCameras.refusal(door, true, 90_000, 100_000) != null, "inside the cooldown");
+        require(PopupCameras.refusal(door, true, 30_000, 100_000) == null, "after the cooldown");
+        PopupCameras.Camera garden = PopupCameras.find(back, "Garden");
+        require(PopupCameras.refusal(garden, true, 0, 1) != null
+                && PopupCameras.refusal(garden, false, 0, 1) == null, "on demand: shown, not triggered");
+        PopupCameras.Camera ignored = new PopupCameras.Camera("X", "http://x", "ignored", 5, 5);
+        require(PopupCameras.refusal(ignored, false, 0, 1) != null
+                && PopupCameras.refusal(null, false, 0, 1) != null, "ignored and unknown");
+        Popup.Request alert = PopupCameras.popup(door, true);
+        require(alert.wake && alert.chime && alert.url.equals("http://cam/door")
+                && alert.seconds == 20, "an alert wakes and chimes");
+        java.util.List<PopupCameras.Camera> full = new java.util.ArrayList<>();
+        for (int i = 0; i < PopupCameras.MAX_CAMERAS; i++) {
+            full = PopupCameras.with(full, new PopupCameras.Camera("c" + i, "http://x", "trigger", 1, 1));
+        }
+        require(PopupCameras.with(full, new PopupCameras.Camera("new", "http://x", "trigger", 1, 1))
+                == null, "an eleventh camera is refused");
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("camera.trigger",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, " Door "), executor)
+                .status.equals("accepted") && "Door".equals(executor.cameraName)
+                && executor.cameraTrigger, "camera.trigger reaches the executor trimmed");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "camera.show needs a name");
+    }
+
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
+        Popup.Request popup;
+        String cameraName;
+        boolean cameraTrigger;
         final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
                 new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
         Boolean lightOn;
@@ -1016,6 +1111,18 @@ public final class KioskCommandDispatcherTest {
         @Override
         public String setBrowserOption(KioskCommandDispatcher.BrowserOption option, String value) {
             browserOptions.put(option, value);
+            return null;
+        }
+
+        @Override
+        public void showPopup(Popup.Request request) {
+            popup = request;
+        }
+
+        @Override
+        public String cameraPopup(String name, boolean trigger) {
+            cameraName = name;
+            cameraTrigger = trigger;
             return null;
         }
 

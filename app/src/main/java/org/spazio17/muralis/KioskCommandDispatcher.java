@@ -72,12 +72,25 @@ final class KioskCommandDispatcher {
 
         CommandArgs(int brightnessPercent, String url, Boolean enabled, String value,
                 String beacon) {
+            this(brightnessPercent, url, enabled, value, beacon,
+                    java.util.Collections.<String, String>emptyMap());
+        }
+
+        CommandArgs(int brightnessPercent, String url, Boolean enabled, String value,
+                String beacon, java.util.Map<String, String> extra) {
             this.brightnessPercent = brightnessPercent;
             this.url = url;
             this.enabled = enabled;
             this.value = value;
             this.beacon = beacon;
+            this.extra = extra;
         }
+
+        /**
+         * Every argument by name as text, for the commands with more than the fields above
+         * (panel.notify's title, seconds, wake, chime); empty when the caller sent none.
+         */
+        final java.util.Map<String, String> extra;
     }
 
     interface Executor {
@@ -158,6 +171,15 @@ final class KioskCommandDispatcher {
          * has the frame drawn or taken away.
          */
         void setStatusLight(boolean on, Integer color, int percent);
+
+        /** Draws a pop-up over the screen (block 6); the display was woken first if asked. */
+        void showPopup(Popup.Request request);
+
+        /**
+         * A camera's pop-up (block 6): shown on demand, or for a doorbell's trigger by the
+         * camera's mode and cooldown. Returns why it does not show, or null.
+         */
+        String cameraPopup(String name, boolean trigger);
 
         /**
          * Stores one browser option, already checked and canonical (a number as digits, the
@@ -363,6 +385,31 @@ final class KioskCommandDispatcher {
             case "light.off":
                 executor.setStatusLight(false, null, -1);
                 return accepted();
+            case "camera.show":
+            case "camera.trigger": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must name the camera");
+                }
+                String problem = executor.cameraPopup(args.value.trim(),
+                        "camera.trigger".equals(command));
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "panel.notify": {
+                java.util.Map<String, String> named = new java.util.HashMap<>(args.extra);
+                if (args.url != null) {
+                    named.put("url", args.url);
+                }
+                String[] problem = new String[1];
+                Popup.Request request = Popup.parse(args.value, named, problem);
+                if (request == null) {
+                    return rejected(problem[0]);
+                }
+                if (request.wake) {
+                    executor.displayWake();
+                }
+                executor.showPopup(request);
+                return accepted();
+            }
             case "browser.user_agent": {
                 String agent = args.value == null ? "" : args.value;
                 String problem = BrowserOptions.checkUserAgent(agent);

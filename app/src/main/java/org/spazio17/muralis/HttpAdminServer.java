@@ -945,6 +945,12 @@ final class HttpAdminServer {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
             serveStream(output, socket);
+        } else if (path.equals("/cameras") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
+        } else if (path.equals("/cameras") && method.equals("POST")) {
+            String refused = saveCamera(parseFormBody(headers, body));
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildCamerasPage(refused)));
         } else if (path.equals("/fleet") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(null, queryValue(query, "scope"))));
@@ -1145,6 +1151,8 @@ final class HttpAdminServer {
         Boolean enabled = null;
         String value = null;
         String beacon = null;
+        // Every argument by name too, for the commands with more than the fields above.
+        Map<String, String> extra = new java.util.HashMap<>();
 
         String contentType = headers.getOrDefault("content-type", "");
         if (method.equals("POST") && contentType.contains("application/json") && body.length > 0) {
@@ -1153,6 +1161,13 @@ final class HttpAdminServer {
                 command = envelope.optString("command", "");
                 JSONObject args = envelope.optJSONObject("args");
                 if (args != null) {
+                    java.util.Iterator<String> names = args.keys();
+                    while (names.hasNext()) {
+                        String name = names.next();
+                        if (!args.isNull(name)) {
+                            extra.put(name, String.valueOf(args.opt(name)));
+                        }
+                    }
                     percent = args.optInt("percent", -1);
                     url = args.has("url") ? args.optString("url", null) : null;
                     value = args.has("value") ? args.optString("value", null) : null;
@@ -1188,6 +1203,7 @@ final class HttpAdminServer {
                 params.putAll(parseFormBody(headers, body));
             }
             command = params.getOrDefault("cmnd", "");
+            extra.putAll(params);
             if (params.containsKey("percent")) {
                 try {
                     percent = Integer.parseInt(params.get("percent"));
@@ -1224,7 +1240,7 @@ final class HttpAdminServer {
 
         KioskCommandDispatcher.Result result = kioskService.dispatch(
                 command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value,
-                        beacon));
+                        beacon, extra));
         JSONObject response = new JSONObject();
         try {
             response.put("status", result.status);
@@ -3614,7 +3630,103 @@ final class HttpAdminServer {
                                 + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
                                 + "formmethod=\"post\">Open once</button>")
                 + browserForm(notice, noticeSection)
-                + certificatesBox(notice, noticeSection);
+                + certificatesBox(notice, noticeSection)
+                + "<div class=\"actions\"><a class=\"onward\" href=\"/cameras\">Pop-up cameras</a>"
+                + "</div>";
+    }
+
+    /**
+     * The pop-up cameras (block 6), a page of their own: each camera's form with Save and
+     * Remove, then an empty one to add a camera. The panel's Pop-up cameras page is the same.
+     */
+    private String buildCamerasPage(String notice) {
+        StringBuilder html = new StringBuilder(pageStart("Pop-up cameras", null,
+                settingsAt("dashboard")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        html.append("<div class=\"card\"><p class=\"hint\">A camera shows in a pop-up on demand"
+                + " (camera.show) or when a doorbell or a motion sensor sends camera.trigger, by"
+                + " its mode on this panel. A trigger inside the cooldown shows nothing.</p></div>");
+        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(context);
+        for (PopupCameras.Camera camera : cameras) {
+            html.append(cameraForm(camera));
+        }
+        if (cameras.size() < PopupCameras.MAX_CAMERAS) {
+            html.append(cameraForm(null));
+        }
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String cameraForm(PopupCameras.Camera camera) {
+        boolean fresh = camera == null;
+        StringBuilder modes = new StringBuilder();
+        for (String[] mode : PopupCameras.MODES) {
+            modes.append(selectOption(mode[0], mode[1],
+                    fresh ? PopupCameras.TRIGGER : camera.mode));
+        }
+        String sfx = fresh ? "-new" : "-" + Integer.toHexString(camera.name.hashCode());
+        return "<form method=\"post\" action=\"/cameras\" class=\"card\">"
+                + "<h2>" + (fresh ? "Add a camera" : escapeHtml(camera.name)) + "</h2>"
+                + "<input type=\"hidden\" name=\"was\" value=\""
+                + (fresh ? "" : escapeHtml(camera.name)) + "\">"
+                + fieldWithId("c-name" + sfx, "text", "name", "Name", fresh ? "" : camera.name,
+                        "", null).replace(MACHINE_TEXT, "")
+                + fieldWithId("c-url" + sfx, "text", "url", "Address", fresh ? "" : camera.url,
+                        " inputmode=\"url\"", "A snapshot, an MJPEG stream or a camera page.")
+                + selectField("c-mode" + sfx, "mode", "Mode on this panel", null,
+                        modes.toString(), null)
+                + fieldWithId("c-seconds" + sfx, "number", "seconds",
+                        "Shows for (seconds, 0 = until touched)",
+                        String.valueOf(fresh ? Popup.DEFAULT_SECONDS : camera.seconds),
+                        " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
+                + fieldWithId("c-cooldown" + sfx, "number", "cooldown", "Cooldown (seconds)",
+                        String.valueOf(fresh ? PopupCameras.DEFAULT_COOLDOWN : camera.cooldown),
+                        " min=\"0\" max=\"" + PopupCameras.MAX_COOLDOWN + "\"", null)
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\" name=\"what\""
+                + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
+                + (fresh ? "" : "<button type=\"submit\" class=\"danger\" name=\"what\""
+                        + " value=\"remove\">Remove</button>")
+                + "</div></form>";
+    }
+
+    /** One camera form's post: saved by the checks both surfaces share, or removed. */
+    private String saveCamera(Map<String, String> form) {
+        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(context);
+        String was = form.getOrDefault("was", "").trim();
+        if ("remove".equals(form.get("what"))) {
+            KioskConfig.edit(context).popupCameras(PopupCameras.without(cameras, was)).apply();
+            KioskService.publishTelemetrySoon(context);
+            return null;
+        }
+        String name = form.getOrDefault("name", "").trim();
+        String url = form.getOrDefault("url", "").trim();
+        String mode = form.getOrDefault("mode", "");
+        int seconds;
+        int cooldown;
+        try {
+            seconds = Integer.parseInt(form.getOrDefault("seconds", "").trim());
+            cooldown = Integer.parseInt(form.getOrDefault("cooldown", "").trim());
+        } catch (NumberFormatException notANumber) {
+            return "Not saved: the time and the cooldown must be whole numbers.";
+        }
+        String problem = PopupCameras.check(name, url, mode, seconds, cooldown);
+        if (problem != null) {
+            return "Not saved: " + problem + ".";
+        }
+        java.util.List<PopupCameras.Camera> base = was.isEmpty() ? cameras
+                : PopupCameras.without(cameras, was);
+        if (!name.equalsIgnoreCase(was) && PopupCameras.find(base, name) != null) {
+            return "Not saved: another camera has that name.";
+        }
+        java.util.List<PopupCameras.Camera> next = PopupCameras.with(base,
+                new PopupCameras.Camera(name, url, mode, seconds, cooldown));
+        if (next == null) {
+            return "Not saved: there are " + PopupCameras.MAX_CAMERAS + " cameras already.";
+        }
+        KioskConfig.edit(context).popupCameras(next).apply();
+        KioskService.publishTelemetrySoon(context);
+        return null;
     }
 
     /**

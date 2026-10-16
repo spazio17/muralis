@@ -132,7 +132,8 @@ final class Automations {
             new Action("brightness", "Set brightness", "Percent"),
             new Action("ambient_mode", "Ambient mode", "Mode"),
             new Action("mqtt_publish", "Publish an MQTT message", "Topic and message"),
-            new Action("call_url", "Call an address", "Address")));
+            new Action("call_url", "Call an address", "Address"),
+            new Action("popup", "Show a pop-up", "Message")));
 
     /** The When choice that is the clock, not a sensor, and its "level", a time of day. */
     static final String TIME = "time";

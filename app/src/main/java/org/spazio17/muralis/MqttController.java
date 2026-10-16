@@ -331,12 +331,24 @@ final class MqttController implements MqttCallbackExtended {
                 if (discoveryStale
                         || (names != null && !names.equals(announcedPlaylists))
                         || !sensorsKey(KioskRuntimeState.sensors(),
-                                KioskRuntimeState.automations()).equals(announcedSensors)) {
+                                KioskRuntimeState.automations()).equals(announcedSensors)
+                        || !camerasKey().equals(announcedCameras)) {
                     runDiscovery();
                 }
             });
             publish(topicPrefix + "state", state.toString(), 0, true);
         });
+    }
+
+    /** The pop-up cameras' names discovery last announced, one button each (block 6). */
+    private volatile String announcedCameras = null;
+
+    private String camerasKey() {
+        StringBuilder key = new StringBuilder();
+        for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+            key.append(camera.name).append(',');
+        }
+        return key.toString();
     }
 
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
@@ -948,6 +960,15 @@ final class MqttController implements MqttCallbackExtended {
             // through the template schema so its commands are the panel's own light.on and
             // light.off. Home Assistant's brightness is 0 to 255, the panel's 1 to 100.
             components.put("status_light", statusLight());
+            // A pop-up on the panel from Home Assistant's notify.send_message (block 6).
+            JSONObject popup = new JSONObject();
+            popup.put("p", "notify");
+            popup.put("name", "Pop-up");
+            popup.put("unique_id", uniqueId("Pop-up"));
+            popup.put("command_topic", topicPrefix + "command");
+            popup.put("command_template",
+                    "{\"command\":\"panel.notify\",\"args\":{\"value\":{{ value | tojson }}}}");
+            components.put("pop_up", popup);
             org.json.JSONArray screensaverModes = new org.json.JSONArray();
             screensaverModes.put(ScreensaverPolicy.OFF);
             screensaverModes.put(ScreensaverPolicy.DIM);
@@ -1145,6 +1166,15 @@ final class MqttController implements MqttCallbackExtended {
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
+            // One button per pop-up camera, "Show <name>" (block 6); a doorbell's automation in
+            // Home Assistant sends camera.trigger itself.
+            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+                String name = "Show " + camera.name;
+                JSONObject show = button(name, new JSONObject().put("command", "camera.show")
+                        .put("args", new JSONObject().put("value", camera.name)).toString());
+                components.put(uniqueId(name).substring(config.deviceId.length() + 1)
+                        .replaceAll("[^a-z0-9_]", "_"), show);
+            }
             JSONObject screen = new JSONObject();
             screen.put("p", "image");
             screen.put("name", "Screenshot");
@@ -1174,6 +1204,7 @@ final class MqttController implements MqttCallbackExtended {
                 components.put("automation_" + id, ruleSwitch);
             }
             announcedSensors = sensorsKey(sensorBlock, rules);
+            announcedCameras = camerasKey();
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",

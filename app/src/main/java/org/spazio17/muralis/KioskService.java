@@ -1455,6 +1455,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         .put("sha256", pin.getValue()));
             }
             applied.put("certificate_pins", pins);
+            org.json.JSONArray cameras = new org.json.JSONArray();
+            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(this)) {
+                cameras.put(new org.json.JSONObject().put("name", camera.name)
+                        .put("url", camera.url).put("mode", camera.mode)
+                        .put("seconds", camera.seconds).put("cooldown", camera.cooldown));
+            }
+            applied.put("cameras", cameras);
             CertificatePins.Waiting waiting = CertificatePins.waiting;
             applied.put("certificate_waiting", waiting == null ? org.json.JSONObject.NULL
                     : new org.json.JSONObject().put("host", waiting.host)
@@ -1802,6 +1809,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return fallback;
     }
 
+    /** Every argument of an MQTT command by name, as text. */
+    private static java.util.Map<String, String> namedArguments(org.json.JSONObject arguments) {
+        java.util.Map<String, String> named = new java.util.HashMap<>();
+        java.util.Iterator<String> names = arguments.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            if (!arguments.isNull(name)) {
+                named.put(name, String.valueOf(arguments.opt(name)));
+            }
+        }
+        return named;
+    }
+
     private void handleMqttCommand(
             String id, String command, org.json.JSONObject arguments) {
         Log.i(TAG, "MQTT command " + command + " id=" + id);
@@ -1822,7 +1842,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 arguments.optString("url", null),
                 enabled,
                 arguments.has("value") ? arguments.optString("value", null) : null,
-                arguments.isNull("beacon") ? null : arguments.optString("beacon", null));
+                arguments.isNull("beacon") ? null : arguments.optString("beacon", null),
+                namedArguments(arguments));
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -2147,6 +2168,36 @@ public final class KioskService extends Service implements KioskCommandDispatche
         DarkWatch.setMethod(this, value);
         publishTelemetrySoon(this);
         return true;
+    }
+
+    /** When each camera last showed on this panel, for its cooldown; forgotten on a restart. */
+    private final java.util.Map<String, Long> cameraShownAt = new java.util.HashMap<>();
+
+    @Override
+    public String cameraPopup(String name, boolean trigger) {
+        PopupCameras.Camera camera = PopupCameras.find(KioskConfig.popupCamerasOf(this), name);
+        long now = android.os.SystemClock.elapsedRealtime();
+        String key = name.toLowerCase(java.util.Locale.ROOT);
+        synchronized (cameraShownAt) {
+            Long last = cameraShownAt.get(key);
+            String refused = PopupCameras.refusal(camera, trigger, last == null ? 0 : last, now);
+            if (refused != null) {
+                return refused;
+            }
+            cameraShownAt.put(key, now);
+        }
+        Popup.Request request = PopupCameras.popup(camera, trigger);
+        if (request.wake) {
+            displayWake();
+        }
+        showPopup(request);
+        return null;
+    }
+
+    @Override
+    public void showPopup(Popup.Request request) {
+        Popup.pending = request;
+        sendUiCommand("popup.show", -1, null);
     }
 
     @Override
@@ -2635,6 +2686,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 problem = "accepted".equals(lit.status) ? null : lit.detail;
                 break;
             }
+            case "popup":
+                problem = refusalOf(dispatch("panel.notify",
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+                break;
             case "light_off":
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);
                 break;

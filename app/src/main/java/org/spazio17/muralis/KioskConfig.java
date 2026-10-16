@@ -30,6 +30,8 @@ final class KioskConfig {
     private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
     /** The certificates a person trusted, one host and fingerprint a line (CertificatePins). */
     private static final String CERTIFICATE_PINS = "certificate_pins";
+    /** The cameras for pop-ups, as PopupCameras writes them. */
+    private static final String POPUP_CAMERAS = "popup_cameras";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -412,6 +414,11 @@ final class KioskConfig {
 
         Editor browserBackAfter(int seconds) {
             plain.putInt(BROWSER_BACK_AFTER, seconds);
+            return this;
+        }
+
+        Editor popupCameras(java.util.List<PopupCameras.Camera> cameras) {
+            plain.putString(POPUP_CAMERAS, PopupCameras.format(cameras));
             return this;
         }
 
@@ -1419,6 +1426,12 @@ final class KioskConfig {
                 user == null ? "" : user,
                 prefs.getBoolean(BROWSER_PAGE_CAMERA, false),
                 prefs.getBoolean(BROWSER_PAGE_MICROPHONE, false));
+    }
+
+    static java.util.List<PopupCameras.Camera> popupCamerasOf(Context context) {
+        return PopupCameras.parse(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(POPUP_CAMERAS, ""));
     }
 
     /** The trusted certificates, read for every certificate Android refuses. */

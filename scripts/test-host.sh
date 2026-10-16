@@ -131,7 +131,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
-            FleetAlerts StatusLight BrowserOptions CertificatePins; do
+            FleetAlerts StatusLight BrowserOptions CertificatePins Popup PopupCameras; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -154,6 +154,8 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/StatusLight.java" \
     "${pure_java_dir}/BrowserOptions.java" \
     "${pure_java_dir}/CertificatePins.java" \
+    "${pure_java_dir}/Popup.java" \
+    "${pure_java_dir}/PopupCameras.java" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
