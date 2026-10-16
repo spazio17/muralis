@@ -2948,9 +2948,9 @@ public final class KioskActivity extends Activity {
         // they stand for.
         java.util.Map<String, CompoundButton> shareSwitches = new java.util.LinkedHashMap<>();
         java.util.Map<String, CompoundButton> groupSwitches = new java.util.LinkedHashMap<>();
-        String builtGroups = FleetDocument.groups(KioskConfig.fleetDocumentOf(this)).keySet()
-                .toString();
+        String builtGroups = groupsShape(KioskConfig.fleetDocumentOf(this));
         shareGroupOf = null;
+        shareGroupChoices = null;
         fleetAddButton.setOnClickListener(view -> showAddPanelScanner());
         fleetAddButton.setEnabled(KioskRuntimeState.fleetListening()
                 && !JoinScanner.lenses(this).isEmpty());
@@ -2987,17 +2987,24 @@ public final class KioskActivity extends Activity {
                     if (!shareSwitches.isEmpty() && shareGroupOf != null) {
                         java.util.Map<String, Object> list =
                                 KioskConfig.fleetDocumentOf(KioskActivity.this);
-                        // A group made or removed elsewhere changes the rows: drawn again.
-                        if (!FleetDocument.groups(list).keySet().toString().equals(builtGroups)) {
+                        // A group made or removed elsewhere, or this panel put in one or taken
+                        // out, changes the rows and the "Shared in" choices: drawn again.
+                        if (!groupsShape(list).equals(builtGroups)) {
                             syncingLiveControls = false;
                             redrawInPlace(() -> showSettings());
                             return;
                         }
-                        java.util.List<String> inGroups = FleetDocument.memberGroups(list,
-                                FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey()));
+                        java.util.Map<String, Object> me = FleetDocument.memberByKey(list,
+                                KioskRuntimeState.fleetKey());
+                        java.util.List<String> inGroups = FleetDocument.memberGroups(list, me);
                         for (java.util.Map.Entry<String, CompoundButton> in
                                 : groupSwitches.entrySet()) {
-                            setCheckedIfChanged(in.getValue(), inGroups.contains(in.getKey()));
+                            setCheckedIfChanged(in.getValue(), in.getKey().isEmpty()
+                                    ? FleetDocument.followsFleet(me)
+                                    : inGroups.contains(in.getKey()));
+                        }
+                        if (shareGroupChoices != null) {
+                            shareGroupChoices.accept(list, inGroups);
                         }
                         for (java.util.Map.Entry<String, CompoundButton> share
                                 : shareSwitches.entrySet()) {
@@ -3204,10 +3211,20 @@ public final class KioskActivity extends Activity {
                     FleetDocument.memberByKey(fleetList, KioskRuntimeState.fleetKey()));
             // The groups (fleet design, 2026-10-13): which ones this panel is in, a new one with
             // a name the person types (generic suggestions offered), and Remove for each.
-            fleetCard.addView(sectionTitle(theme, "Groups", 18), matchWrap());
-            CompoundButton everyone = themedSwitch(theme, FleetDocument.EVERYONE_NAME, true);
-            everyone.setEnabled(false);
-            fleetCard.addView(everyone, matchWrapClose());
+            // Whether this panel takes what the whole fleet shares; its groups it always follows.
+            CompoundButton follows = themedSwitch(theme, "Follow the fleet's shared settings",
+                    FleetDocument.followsFleet(FleetDocument.memberByKey(fleetList,
+                            KioskRuntimeState.fleetKey())));
+            follows.setOnCheckedChangeListener((button, checked) -> {
+                if (!syncingLiveControls) {
+                    fleetWork(app, () -> FleetServer.setFollowsFleet(app, checked));
+                }
+            });
+            LinearLayout.LayoutParams followsParams = matchWrapClose();
+            followsParams.topMargin = dp(10);
+            fleetCard.addView(follows, followsParams);
+            groupSwitches.put("", follows);
+            fleetCard.addView(sectionTitle(theme, "This panel's groups", 18), matchWrap());
             for (java.util.Map.Entry<String, String> group
                     : FleetDocument.groups(fleetList).entrySet()) {
                 String id = group.getKey();
@@ -3296,6 +3313,23 @@ public final class KioskActivity extends Activity {
             }
             checkRadioIfChanged(shareGroupInput, FleetDocument.EVERYONE);
             fleetCard.addView(shareGroupInput, matchWrapClose());
+            // Put in a group or taken out, here or elsewhere: the choices follow, in place, so a
+            // name being typed above is not lost to a redraw.
+            shareGroupChoices = (list, inGroups) -> {
+                if (inGroups.toString().equals(shareGroupInput.getTag())) {
+                    return;
+                }
+                shareGroupInput.setTag(inGroups.toString());
+                shareGroupInput.removeAllViews();
+                for (String id : inGroups) {
+                    radioChoice(theme, shareGroupInput, FleetDocument.groupName(list, id), id);
+                }
+                if (!inGroups.contains(shareGroup[0])) {
+                    shareGroup[0] = FleetDocument.EVERYONE;
+                }
+                checkRadioIfChanged(shareGroupInput, shareGroup[0]);
+            };
+            shareGroupInput.setTag(myGroups.toString());
             for (String section : FleetDocument.SECTIONS) {
                 CompoundButton share = themedSwitch(theme, FleetDocument.sectionLabel(section),
                         FleetDocument.sectionValues(fleetList, shareGroup[0], section) != null);
@@ -3549,6 +3583,9 @@ public final class KioskActivity extends Activity {
     /** A section's contents, built like a card's without the card: the menu draws the frame. */
     /** Which group the Fleet section's sharing switches stand for, while the settings are up. */
     private java.util.function.Supplier<String> shareGroupOf;
+    /** Redraws the "Shared in" choices from the list and this panel's groups, in place. */
+    private java.util.function.BiConsumer<java.util.Map<String, Object>, java.util.List<String>>
+            shareGroupChoices;
 
     /** A fleet change off the main thread; its refusal, if any, as a toast. */
     private void fleetWork(Context app, java.util.function.Supplier<String> work) {
@@ -3563,6 +3600,11 @@ public final class KioskActivity extends Activity {
                 });
             }
         }, "MuralisFleetChange").start();
+    }
+
+    /** The groups there are, as one string to tell a change by. */
+    private static String groupsShape(java.util.Map<String, Object> list) {
+        return FleetDocument.groups(list).keySet().toString();
     }
 
     /** A small title inside a section's card. */

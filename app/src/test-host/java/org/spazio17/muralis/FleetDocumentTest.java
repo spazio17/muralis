@@ -245,6 +245,12 @@ public final class FleetDocumentTest {
         // Groups: made with a name, a member put in one, a section shared in it, two groups
         // sharing the same section told apart, a removed group gone for good, and the later
         // edit of a member's groups winning a merge.
+        require(FleetDocument.validateGroupName("Whole fleet") != null
+                && FleetDocument.followsFleet(FleetDocument.memberByKey(read, memberSpki))
+                && !FleetDocument.followsFleet(FleetDocument.memberByKey(
+                        FleetDocument.withMemberFollowsFleet(read, "kiosk-a", memberSpki, false,
+                                "2026-10-12T21:04:30Z"), memberSpki)),
+                "the follow flag is wrong");
         require(FleetDocument.validateGroupName("Everyone") != null
                 && FleetDocument.validateGroupName(" ") != null
                 && FleetDocument.validateGroupName("Lobby") == null, "the group name rule");

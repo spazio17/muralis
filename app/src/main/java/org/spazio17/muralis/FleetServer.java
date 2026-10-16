@@ -1217,9 +1217,14 @@ final class FleetServer {
                 && !FleetDocument.groups(held).containsKey(group)) {
             return "no such group";
         }
-        if (!FleetDocument.memberGroups(held, FleetDocument.memberByKey(held,
-                KioskRuntimeState.fleetKey())).contains(group)) {
+        java.util.Map<String, Object> me = FleetDocument.memberByKey(held,
+                KioskRuntimeState.fleetKey());
+        if (!FleetDocument.memberGroups(held, me).contains(group)) {
             return "this panel is not in the group " + FleetDocument.groupName(held, group);
+        }
+        if (FleetDocument.EVERYONE.equals(group) && !FleetDocument.followsFleet(me)) {
+            return "this panel does not follow the fleet's shared settings, so it cannot share"
+                    + " into them";
         }
         return writeList(context, group, section, (identity, list) -> FleetDocument.withSection(list,
                 KioskConfig.deviceIdOf(context), group, section,
@@ -1283,6 +1288,15 @@ final class FleetServer {
         return writeList(context, null, null, (identity, list) -> FleetDocument.withMemberGroups(list,
                 KioskConfig.deviceIdOf(context), identity.spki, groups,
                 java.time.Instant.now().toString()), "This panel's groups set");
+    }
+
+    /** Whether this panel follows what the whole fleet shares. */
+    static String setFollowsFleet(Context context, boolean follows) {
+        return writeList(context, null, null, (identity, list) -> FleetDocument
+                .withMemberFollowsFleet(list, KioskConfig.deviceIdOf(context), identity.spki,
+                        follows, java.time.Instant.now().toString()),
+                follows ? "This panel follows the fleet's shared settings"
+                        : "This panel keeps its own values for what the whole fleet shares");
     }
 
     /** How the next list is built from the one held, under the lock. */
@@ -1380,18 +1394,25 @@ final class FleetServer {
             return;
         }
         String self = KioskConfig.deviceIdOf(context);
+        java.util.Map<String, Object> me = FleetDocument.memberByKey(held, identity.spki);
+        java.util.List<String> mine = FleetDocument.memberGroups(held, me);
+        boolean follows = FleetDocument.followsFleet(me);
         for (String section : FleetDocument.SECTIONS) {
-            // Among the groups this panel is in, the one that changed the section last.
-            java.util.List<String> mine = FleetDocument.memberGroups(held,
-                    FleetDocument.memberByKey(held, identity.spki));
+            // The latest of this panel's groups that shares the section; else the whole fleet,
+            // while the panel follows it.
+            java.util.Map<String, Long> by = FleetDocument.sharedBy(held, section);
             String group = null;
             long at = 0;
-            for (java.util.Map.Entry<String, Long> by
-                    : FleetDocument.sharedBy(held, section).entrySet()) {
-                if (mine.contains(by.getKey()) && by.getValue() > at) {
-                    group = by.getKey();
-                    at = by.getValue();
+            for (java.util.Map.Entry<String, Long> candidate : by.entrySet()) {
+                if (!FleetDocument.EVERYONE.equals(candidate.getKey())
+                        && mine.contains(candidate.getKey()) && candidate.getValue() > at) {
+                    group = candidate.getKey();
+                    at = candidate.getValue();
                 }
+            }
+            if (group == null && follows && by.containsKey(FleetDocument.EVERYONE)) {
+                group = FleetDocument.EVERYONE;
+                at = by.get(FleetDocument.EVERYONE);
             }
             profileSource.put(section, group == null ? "" : group);
             String applied = profileApplied.get(section);

@@ -48,9 +48,10 @@ on purpose.
   panels, the members tell each other every few minutes that they are there and which
   version they hold, so one that fell behind fetches the list, and sections of settings (the
   dashboard, MQTT, the web admin, the display, the screensaver) can be shared in a group of
-  panels: groups are made with a name the person gives, every panel is in "Everyone" and ticks
-  the others it belongs to, a shared section is applied on every panel of its group and a
-  change to it on any of them reaches all of them.
+  panels or with the whole fleet: groups are sets of panels with the same job, made with a name
+  the person gives; a panel ticks the groups it belongs to and may stop following what the whole
+  fleet shares; a shared section is applied on every panel of its scope, a group winning over
+  the whole fleet, and a change to it on any of them reaches all of them.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

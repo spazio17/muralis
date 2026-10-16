@@ -192,15 +192,43 @@ final class FleetDocument {
     static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password"};
 
     /**
-     * The group every panel is in and nobody removes; the others are made by a person, with a
-     * name (fleet design, groups of 2026-10-13, like WLED's sync groups). A shared section is
-     * shared in one group; a panel applies it only from the groups it is in.
+     * The scope of the whole fleet, which is no group a person sees; the groups are made by a
+     * person, with a name, as the device groups of the fleet products (settled 2026-10-13). A
+     * shared section is shared in one scope; a panel applies it from its groups, a group winning
+     * over the whole fleet, and from the whole fleet while it follows it.
      */
     static final String EVERYONE = "everyone";
-    static final String EVERYONE_NAME = "Everyone";
-    /** Offered when a group is made, generic, since a fleet may be a home, a shop or a fair. */
-    static final String[] GROUP_SUGGESTIONS = {"Entrance", "Reception", "Hallway", "Kitchen",
-            "Living room", "Meeting room", "Offices", "Showroom", "Floor 1", "Floor 2"};
+    static final String EVERYONE_NAME = "Whole fleet";
+    /**
+     * Offered when a group is made: jobs panels share, not rooms (nobody has several panels in
+     * one room), generic, since a fleet may be a home, a shop or a fair.
+     */
+    static final String[] GROUP_SUGGESTIONS = {"Meeting rooms", "Lobby screens", "Reception",
+            "Shop floor", "Upstairs", "Downstairs", "Guest house"};
+    /** A member entry's flag: whether it follows what the whole fleet shares; true when absent. */
+    static final String FOLLOWS_FLEET = "follows_fleet";
+
+    /** Whether a member follows the whole fleet's shared settings (its groups it always does). */
+    static boolean followsFleet(Map<String, Object> member) {
+        return member == null || TinyJson.flag(member, FOLLOWS_FLEET, true);
+    }
+
+    /** The next document with the member of key hash {@code spki} following the fleet or not. */
+    static Map<String, Object> withMemberFollowsFleet(Map<String, Object> held, String author,
+            String spki, boolean follows, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (spki.equals(TinyJson.string(member, SPKI, ""))) {
+                member = new LinkedHashMap<>(member);
+                member.put(FOLLOWS_FLEET, follows);
+                member.put(AT, version(next));
+            }
+            members.add(member);
+        }
+        next.put("members", members);
+        return next;
+    }
 
     /** The groups a person made, by id: name and at; removed ones left out. */
     static Map<String, String> groups(Map<String, Object> document) {
@@ -234,8 +262,8 @@ final class FleetDocument {
         if (trimmed.isEmpty() || trimmed.length() > 40 || trimmed.contains("\n")) {
             return "a group's name is one line of 1 to 40 characters";
         }
-        if (trimmed.equalsIgnoreCase(EVERYONE_NAME)) {
-            return "every panel is in " + EVERYONE_NAME + " already";
+        if (trimmed.equalsIgnoreCase(EVERYONE_NAME) || trimmed.equalsIgnoreCase(EVERYONE)) {
+            return "the whole fleet is not a group";
         }
         return null;
     }
@@ -584,12 +612,12 @@ final class FleetDocument {
         for (Map<String, Object> one : members(held)) {
             if (TinyJson.string(one, SPKI, "").equals(TinyJson.string(self, SPKI, ""))) {
                 self.put(SINCE, numberOf(one, SINCE));
-                // Its groups, and the stamp that keeps them through a merge, carry over.
-                if (one.containsKey("groups")) {
-                    self.put("groups", one.get("groups"));
-                }
-                if (one.containsKey(AT)) {
-                    self.put(AT, one.get(AT));
+                // Everything else the entry says of this panel (its groups, whether it follows
+                // the fleet, the stamp that keeps them through a merge) carries over.
+                for (Map.Entry<String, Object> field : one.entrySet()) {
+                    if (!self.containsKey(field.getKey())) {
+                        self.put(field.getKey(), field.getValue());
+                    }
                 }
             }
             if (replaces(self, one, revoked, version + 1)

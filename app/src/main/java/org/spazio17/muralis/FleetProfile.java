@@ -244,10 +244,10 @@ final class FleetProfile {
                                 KioskRuntimeState.fleetProfileRefused(section))));
             }
             org.json.JSONArray groups = new org.json.JSONArray();
-            List<String> mine = FleetDocument.memberGroups(document, FleetDocument.memberByKey(
-                    document, KioskRuntimeState.fleetKey()));
-            groups.put(new JSONObject().put("id", FleetDocument.EVERYONE)
-                    .put("name", FleetDocument.EVERYONE_NAME).put("in", true));
+            Map<String, Object> me = FleetDocument.memberByKey(document,
+                    KioskRuntimeState.fleetKey());
+            List<String> mine = FleetDocument.memberGroups(document, me);
+            state.put("follows_fleet", FleetDocument.followsFleet(me));
             for (Map.Entry<String, String> group : FleetDocument.groups(document).entrySet()) {
                 groups.put(new JSONObject().put("id", group.getKey()).put("name", group.getValue())
                         .put("in", mine.contains(group.getKey())));
@@ -275,11 +275,14 @@ final class FleetProfile {
         List<String> others = new ArrayList<>();
         for (String other : FleetDocument.sharedBy(document, section).keySet()) {
             if (!other.equals(group)) {
-                others.add(FleetDocument.groupName(document, other));
+                others.add(FleetDocument.EVERYONE.equals(other) ? "the whole fleet"
+                        : FleetDocument.groupName(document, other));
             }
         }
-        String line = "Set by the group " + FleetDocument.groupName(document, group)
-                + ". A change here changes every panel of it.";
+        String line = FleetDocument.EVERYONE.equals(group)
+                ? "Set by the whole fleet. A change here changes every panel."
+                : "Set by the group " + FleetDocument.groupName(document, group)
+                        + ". A change here changes every panel of it.";
         if (!others.isEmpty()) {
             line += " Also shared by " + String.join(", ", others) + ".";
         }

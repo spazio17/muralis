@@ -1456,6 +1456,11 @@ final class HttpAdminServer {
                         if (refused != null) {
                             return "Not changed: " + refused + ".";
                         }
+                    } else if (key.equals("fleet_follows")) {
+                        String refused = FleetServer.setFollowsFleet(context, isTrue(form.get(key)));
+                        if (refused != null) {
+                            return "Not changed: " + refused + ".";
+                        }
                     } else if (key.startsWith("fleet_group_")) {
                         String id = key.substring("fleet_group_".length());
                         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
@@ -3405,11 +3410,13 @@ final class HttpAdminServer {
             return "";
         }
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
-        java.util.List<String> mine = FleetDocument.memberGroups(list,
-                FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey()));
-        StringBuilder html = new StringBuilder("<p class=\"hint\">Groups</p><div class=\"switches\">"
-                + "<label class=\"switch\"><span>" + FleetDocument.EVERYONE_NAME
-                + "</span><input type=\"checkbox\" checked disabled></label>");
+        java.util.Map<String, Object> me = FleetDocument.memberByKey(list,
+                KioskRuntimeState.fleetKey());
+        java.util.List<String> mine = FleetDocument.memberGroups(list, me);
+        StringBuilder html = new StringBuilder("<div class=\"switches\">"
+                + switchRow("fleet-follows", "Follow the fleet's shared settings",
+                        " data-setting=\"fleet_follows\"", FleetDocument.followsFleet(me))
+                + "</div><p class=\"hint\">This panel's groups</p><div class=\"switches\">");
         StringBuilder removes = new StringBuilder();
         for (java.util.Map.Entry<String, String> group : FleetDocument.groups(list).entrySet()) {
             html.append(switchRow("fleet-group-" + group.getKey(), group.getValue(),

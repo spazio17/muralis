@@ -71,8 +71,14 @@ var fleetProfile=null;
 function fleetGroupsPaint(prof){
 if(!prof||!prof.groups){return;}
 fleetProfile=prof;
-prof.groups.forEach(function(g){if(g.id!=='everyone'){follow('fleet-group-'+g.id,g['in']);}});
+prof.groups.forEach(function(g){follow('fleet-group-'+g.id,g['in']);});
+follow('fleet-follows',prof.follows_fleet);
 var select=document.getElementById('fleet-share-group');if(!select){return;}
+// The menu lists this panel's groups: put in one or taken out, here or elsewhere, the page is
+// loaded again on the Fleet section, as after a group made or removed.
+var mine=['everyone'].concat(prof.groups.filter(function(g){return g['in'];}).map(function(g){return g.id;}));
+var listed=Array.prototype.map.call(select.options,function(o){return o.value;});
+if(mine.join()!==listed.join()&&!document.querySelector('[data-pending]')){window.location.replace('/?open=fleet');return;}
 var group=select.value||'everyone';
 Array.prototype.forEach.call(document.querySelectorAll('[data-section]'),function(sw){
 var section=sw.dataset.section,key='fleet_share_'+group+'_'+section;
