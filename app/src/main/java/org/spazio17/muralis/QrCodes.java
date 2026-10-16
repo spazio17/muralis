@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -15,7 +15,7 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * QR codes drawn with ZXing (Apache 2.0), for the Join screen: the modules themselves, which the
+ * QR codes drawn with ZXing (Apache 2.0), for the Join screen and the setup QR: the modules, which the
  * panel paints into a bitmap, and the same as SVG for the web admin. Always dark on light with
  * a quiet zone, whatever the theme, since that is what a camera reads.
  */

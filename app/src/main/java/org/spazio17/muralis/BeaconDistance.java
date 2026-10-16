@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -14,7 +14,7 @@ import java.util.Arrays;
  *
  * <p>The distance is the log-distance model, d = 10^((t - r) / (10 n)): r the averaged signal,
  * t the signal at one metre, n how fast the signal fades with distance. Each beacon can be
- * calibrated on each panel, both steps optional (Juri, 2026-10-03): held at one metre, the
+ * calibrated on each panel, both steps optional (2026-10-03): held at one metre, the
  * panel learns t; held at three metres too, it learns n for that room. Without a calibration t
  * is what the beacon announces and n is {@link #ROOM_FADE}. AltBeacon's curve, which this
  * replaced, takes no second point, and on the Huawei tablet it read 2.1 m for a beacon three
