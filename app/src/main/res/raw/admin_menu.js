@@ -5,10 +5,35 @@
 // list of sections on the left drives the one shown on the right (Material's list-detail; the
 // stylesheet applies that layout only where the html element carries the js class, which the
 // page's head sets before the first paint). Nothing is remembered between visits, as on the
-// panel (Juri, 2026-10-07; the last section came back from storage until then): a page opens
+// panel (2026-10-07; the last section came back from storage until then): a page opens
 // closed, except where the address names a section, "/#box-<section>" after a save (its form
 // posts there) or a page's back arrow, "/?open=<section>" after the certificate choice's reload,
 // and a message about a refused save, which arrives with its section open.
+// The app bar's overflow menu (Reload, Restart kiosk, Reboot): opens under its button, closes on
+// a choice, a click elsewhere or Escape; the arrows move along it.
+(function(){
+var button=document.getElementById('commands-button'),menu=document.getElementById('commands-menu');
+if(!button||!menu){return;}
+function menuItems(){return Array.prototype.slice.call(menu.querySelectorAll('button'));}
+function close(back){if(!menu.classList.contains('open')){return;}menu.classList.remove('open');button.setAttribute('aria-expanded','false');if(back){button.focus();}}
+menuItems().forEach(function(b){b.setAttribute('role','menuitem');});
+button.addEventListener('click',function(event){event.stopPropagation();
+if(menu.classList.contains('open')){close(true);return;}
+menu.classList.add('open');button.setAttribute('aria-expanded','true');menuItems()[0].focus();});
+menu.addEventListener('submit',function(){close(true);});
+menu.addEventListener('keydown',function(event){var list=menuItems(),at=list.indexOf(document.activeElement);
+if(event.key==='ArrowDown'){event.preventDefault();list[(at+1)%list.length].focus();}
+else if(event.key==='ArrowUp'){event.preventDefault();list[(at+list.length-1)%list.length].focus();}
+else if(event.key==='Escape'){event.preventDefault();close(true);}
+else if(event.key==='Tab'){close(false);}});
+document.addEventListener('click',function(event){if(!menu.contains(event.target)){close(false);}});
+})();
+// "Stop following" on a section the whole fleet shares: this panel stops taking what the whole
+// fleet shares, as the Fleet section's switch does, and the page shows its own values again.
+Array.prototype.forEach.call(document.querySelectorAll('[data-stop-following]'),function(button){
+button.addEventListener('click',function(){button.disabled=true;
+fetch('/api/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'section=behaviour&fleet_follows=0'})
+.then(function(){location.reload();},function(){button.disabled=false;});});});
 (function(){
 // Kept in localStorage until 2026-10-07 and read by nothing since: cleared where a browser still
 // holds it. Bridging code, to go with the first release after 0.6.4.
