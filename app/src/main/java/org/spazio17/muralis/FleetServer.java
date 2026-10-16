@@ -58,6 +58,10 @@ final class FleetServer {
     private static final int MAX_LINE = 2_048;
     private static final int MAX_HEADER_LINES = 50;
     private static final int MAX_BODY = 4_096;
+    /** A fleet document: a few hundred bytes per member, and the profile to come (block 12d). */
+    private static final int MAX_DOCUMENT = 65_536;
+    /** One document change at a time: a delivery taken here and a panel added here. */
+    private static final Object DOCUMENT_LOCK = new Object();
 
     private final Context context;
     private final FleetIdentity identity;
@@ -184,21 +188,22 @@ final class FleetServer {
         }
     }
 
-    /** The Fleet section's membership line on both surfaces, with the panels added here. */
+    /** The Fleet section's membership line on both surfaces, with the other panels listed. */
     static String memberLine(Context context) {
         if (KioskConfig.fleetIdOf(context).isEmpty()) {
             return "Not in a fleet";
         }
-        StringBuilder added = new StringBuilder();
-        org.json.JSONArray members = KioskConfig.fleetMembersOf(context);
-        for (int i = 0; i < members.length(); i++) {
-            JSONObject one = members.optJSONObject(i);
-            if (one != null) {
-                added.append(added.length() == 0 ? "" : ", ").append(one.optString("name"));
+        StringBuilder others = new StringBuilder();
+        String self = KioskConfig.deviceIdOf(context);
+        for (java.util.Map<String, Object> one
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            if (!self.equals(TinyJson.string(one, FleetDocument.ID, ""))) {
+                others.append(others.length() == 0 ? "" : ", ")
+                        .append(TinyJson.string(one, FleetDocument.NAME, ""));
             }
         }
         return "Member of the fleet " + KioskConfig.fleetNameOf(context)
-                + (added.length() == 0 ? "" : ". Added here: " + added);
+                + (others.length() == 0 ? "" : ", with " + others);
     }
 
     /** What another panel's member endpoint answered: its status and its JSON. */
@@ -500,8 +505,9 @@ final class FleetServer {
                 respond(output, 403, error("this key is not a member of this panel's fleet"));
                 return;
             }
-            if (contentLength > MAX_BODY) {
-                respond(output, 413, error("the body must be at most " + MAX_BODY + " bytes"));
+            int limit = "/fleet/document".equals(parts[1]) ? MAX_DOCUMENT : MAX_BODY;
+            if (contentLength > limit) {
+                respond(output, 413, error("the body must be at most " + limit + " bytes"));
                 return;
             }
             byte[] body = readBody(input, contentLength);
@@ -518,6 +524,12 @@ final class FleetServer {
                     join(caller, body, output);
                 } else {
                     respond(output, 405, error("only POST"));
+                }
+            } else if ("/fleet/document".equals(parts[1])) {
+                if ("PUT".equals(parts[0])) {
+                    takeDocument(caller, body, output);
+                } else {
+                    respond(output, 405, error("only PUT"));
                 }
             } else if ("/fleet/leave".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
@@ -550,7 +562,8 @@ final class FleetServer {
                     .put("spki", identity.spki)
                     .put("fleet", fleetId.isEmpty() ? JSONObject.NULL : new JSONObject()
                             .put("id", fleetId)
-                            .put("name", KioskConfig.fleetNameOf(context)));
+                            .put("name", KioskConfig.fleetNameOf(context)))
+                    .put("version", FleetDocument.version(KioskConfig.fleetDocumentOf(context)));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
@@ -587,7 +600,11 @@ final class FleetServer {
         }
         switch (FleetJoin.shared.attempt(request.optString("code", ""), joinClock())) {
             case ADMITTED:
-                KioskConfig.edit(context).joinFleet(fleetId, fleetName, caller).apply();
+                synchronized (DOCUMENT_LOCK) {
+                    KioskConfig.edit(context).joinFleet(fleetId, fleetName, caller).apply();
+                }
+                // Applied outside the dispatcher, so the web admin is told at once.
+                KioskService.publishTelemetrySoon(context);
                 Log.i(TAG, "Joined the fleet " + fleetName.trim() + ", manager key "
                         + FleetTls.shortForm(caller));
                 respond(output, 200, fleetState());
@@ -608,12 +625,253 @@ final class FleetServer {
         }
     }
 
+    /**
+     * {@code PUT /fleet/document} from a key this panel trusts: the fleet document, merged with
+     * the one held when a manager of this fleet signed it (FleetDocument.refusal, merge), refused
+     * with the reason otherwise. Whoever delivers it, the signature decides. The merge is kept as
+     * the incoming document when it adds nothing to it, as the held one when it brings nothing
+     * new, and otherwise signed anew by this panel one version up, so panels that changed the
+     * fleet apart end with the same list. A document that revokes this panel's key removes it
+     * from the fleet.
+     */
+    private void takeDocument(String caller, byte[] body, OutputStream output) throws IOException {
+        String text = new String(body, StandardCharsets.UTF_8);
+        if (FleetDocument.parse(text) == null) {
+            respond(output, 400, error("the body must be a fleet document, a JSON object"));
+            return;
+        }
+        Taken taken = take(context, identity, text, caller);
+        if (taken.refused != null) {
+            respond(output, 409, error(taken.refused));
+            return;
+        }
+        try {
+            JSONObject reply = fleetState();
+            if (taken.merged != null) {
+                // The deliverer holds an older list than the merge: handed back, so it catches
+                // up at once rather than at the next heartbeat.
+                reply.put("document", taken.merged);
+            }
+            respond(output, 200, reply);
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** What taking a document came to: the refusal, or the merged text when it was signed anew. */
+    private static final class Taken {
+        final String refused;
+        final String merged;
+
+        Taken(String refused, String merged) {
+            this.refused = refused;
+            this.merged = merged;
+        }
+    }
+
+    /**
+     * Takes a fleet document, from a delivery or handed back by a member: merged with the one
+     * held when a manager of this fleet signed it (FleetDocument.refusal, merge). The merge is
+     * kept as the incoming document when it adds nothing to it, as the held one when it brings
+     * nothing new, and otherwise signed anew by this panel one version up, so panels that changed
+     * the fleet apart end with the same list. A document that revokes this panel's key removes it
+     * from the fleet. {@code from} is the key it came from, for the log.
+     */
+    private static Taken take(Context context, FleetIdentity identity, String text, String from) {
+        java.util.Map<String, Object> incoming = FleetDocument.parse(text);
+        String rewritten = null;
+        synchronized (DOCUMENT_LOCK) {
+            java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+            String refused = FleetDocument.refusal(held, incoming, FleetDocument.signer(incoming),
+                    KioskConfig.fleetIdOf(context), KioskConfig.fleetTrusted(context),
+                    KioskConfig.fleetRevoked(context));
+            if (refused != null) {
+                Log.w(TAG, "Fleet document refused from key " + FleetTls.shortForm(from) + ": "
+                        + refused);
+                return new Taken(refused, null);
+            }
+            java.util.Map<String, Object> merged = FleetDocument.merge(held, incoming);
+            String kept;
+            if (FleetDocument.sameContent(merged, incoming)) {
+                kept = text;
+            } else if (held != null && FleetDocument.sameContent(merged, held)) {
+                kept = null;
+            } else {
+                long top = Math.max(FleetDocument.version(held), FleetDocument.version(incoming));
+                merged.put("version", top + 1);
+                merged.put("base_version", top);
+                merged.put("author", KioskConfig.deviceIdOf(context));
+                merged.put("updated", java.time.Instant.now().toString());
+                try {
+                    kept = FleetDocument.sign(merged, identity.key,
+                            identity.certificate.getPublicKey());
+                } catch (java.security.GeneralSecurityException failed) {
+                    Log.w(TAG, "The merged fleet document could not be signed", failed);
+                    return new Taken("this panel could not sign the merged document", null);
+                }
+                rewritten = kept;
+                Log.i(TAG, "Fleet document merged: version " + FleetDocument.version(held)
+                        + " held and " + FleetDocument.version(incoming) + " from key "
+                        + FleetTls.shortForm(from) + " became " + (top + 1));
+            }
+            if (FleetDocument.revoked(merged).contains(identity.spki)) {
+                leaveFleet(context, "by version " + FleetDocument.version(incoming)
+                        + " of the fleet's list, which removed it");
+                return new Taken(null, null);
+            }
+            if (kept == null) {
+                Log.i(TAG, "Fleet document version " + FleetDocument.version(incoming)
+                        + " from key " + FleetTls.shortForm(from) + " brought nothing new");
+                return new Taken(null, null);
+            }
+            KioskConfig.edit(context).fleetDocument(context, kept).apply();
+        }
+        KioskService.publishTelemetrySoon(context);
+        Log.i(TAG, "Fleet document version " + FleetDocument.version(incoming) + " taken from key "
+                + FleetTls.shortForm(from));
+        return new Taken(null, rewritten);
+    }
+
+    /**
+     * Forgets the fleet, from any surface, in step with the document changes above, so a leave
+     * is never undone by a list being merged at the same moment. {@code how} says who asked.
+     */
+    static void leaveFleet(Context context, String how) {
+        String name = KioskConfig.fleetNameOf(context);
+        synchronized (DOCUMENT_LOCK) {
+            if (KioskConfig.fleetIdOf(context).isEmpty()) {
+                return;
+            }
+            KioskConfig.edit(context).leaveFleet().apply();
+        }
+        KioskService.publishTelemetrySoon(context);
+        Log.i(TAG, "Left the fleet " + name + " " + how);
+    }
+
+    /**
+     * Adds a panel that just joined to this panel's fleet document, signed as this panel, and
+     * keeps it: the first one founds the fleet. Then hands the document to every other member
+     * once; a member that cannot be reached gets it with the next change (retries are block 12b).
+     * Returns the new member's refusal or network failure, null when it took the document. Not
+     * on the main thread.
+     */
+    static String addMember(Context context, String fleetId, String fleetName,
+            java.util.Map<String, Object> member) {
+        FleetIdentity identity = FleetIdentity.load(context);
+        if (identity == null) {
+            // Checked by addRefusal before the join; the other panel trusts this one already.
+            return "this panel's fleet key cannot be read";
+        }
+        java.util.Map<String, Object> self = new java.util.LinkedHashMap<>();
+        String id = KioskConfig.deviceIdOf(context);
+        self.put(FleetDocument.ID, id);
+        self.put(FleetDocument.NAME, id);
+        self.put(FleetDocument.SPKI, identity.spki);
+        self.put(FleetDocument.MANAGER, true);
+        SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+        String address = facts == null ? "" : facts.ipAddress;
+        self.put("addresses", address.isEmpty() ? new java.util.ArrayList<>()
+                : java.util.Collections.singletonList(address));
+        self.put("port", (long) KioskConfig.fleetPortOf(context));
+        String text;
+        synchronized (DOCUMENT_LOCK) {
+            java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+            // This panel's own entry keeps the name a person gave it and its last known address.
+            for (java.util.Map<String, Object> one : FleetDocument.members(held)) {
+                if (identity.spki.equals(TinyJson.string(one, FleetDocument.SPKI, ""))) {
+                    self.put(FleetDocument.NAME, TinyJson.string(one, FleetDocument.NAME, id));
+                    if (address.isEmpty() && one.get("addresses") != null) {
+                        self.put("addresses", one.get("addresses"));
+                    }
+                }
+            }
+            java.util.Map<String, Object> next = FleetDocument.withMember(
+                    held, fleetId, fleetName, self, member,
+                    java.time.Instant.now().toString());
+            try {
+                text = FleetDocument.sign(next, identity.key, identity.certificate.getPublicKey());
+            } catch (java.security.GeneralSecurityException failed) {
+                Log.w(TAG, "The fleet document could not be signed", failed);
+                return "this panel could not sign the fleet's list";
+            }
+            KioskConfig.edit(context).fleetDocument(context, text).apply();
+        }
+        KioskService.publishTelemetrySoon(context);
+        String newcomer = null;
+        for (java.util.Map<String, Object> one : FleetDocument.members(FleetDocument.parse(text))) {
+            String spki = TinyJson.string(one, FleetDocument.SPKI, "");
+            if (spki.equals(identity.spki)) {
+                continue;
+            }
+            String outcome = deliver(context, one, text);
+            if (spki.equals(TinyJson.string(member, FleetDocument.SPKI, ""))) {
+                newcomer = outcome;
+            } else if (outcome != null) {
+                Log.w(TAG, "Fleet document not delivered to "
+                        + TinyJson.string(one, FleetDocument.NAME, "") + ": " + outcome);
+            }
+        }
+        return newcomer;
+    }
+
+    /**
+     * Why this panel cannot add one now, or null: a member whose fleet's list has not reached it
+     * yet would start a second list of the same fleet, trusting only itself and the newcomer; a
+     * panel whose key cannot be read cannot sign the list; one with no network address yet would
+     * list itself where no member can reach it. Asked before the code is sent, so the other
+     * panel is never left in a fleet that does not list it.
+     */
+    static String addRefusal(Context context) {
+        if (!KioskConfig.fleetIdOf(context).isEmpty()
+                && KioskConfig.fleetDocumentOf(context) == null) {
+            return "this panel has not received the fleet's list of panels yet; add it from the"
+                    + " panel that added this one";
+        }
+        if (FleetIdentity.load(context) == null) {
+            return "this panel's fleet key cannot be read";
+        }
+        SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+        if (facts == null || facts.ipAddress.isEmpty()) {
+            return "this panel has no network address yet";
+        }
+        return null;
+    }
+
+    /** Hands {@code text} to one member at its first address; null when it took it. */
+    private static String deliver(Context context, java.util.Map<String, Object> member,
+            String text) {
+        Object addresses = member.get("addresses");
+        String address = addresses instanceof java.util.List
+                && !((java.util.List<?>) addresses).isEmpty()
+                ? String.valueOf(((java.util.List<?>) addresses).get(0)) : "";
+        if (address.isEmpty()) {
+            return "no address is known for it";
+        }
+        try {
+            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+            Reply reply = call(context, address,
+                    (int) TinyJson.number(member, "port", KioskConfig.DEFAULT_FLEET_PORT),
+                    spki, "PUT", "/fleet/document", new JSONObject(text));
+            if (reply.status != 200) {
+                return reply.reason();
+            }
+            // The member held more than this panel and handed the merge back: taken here too.
+            String handedBack = reply.body.optString("document", "");
+            FleetIdentity identity = FleetIdentity.load(context);
+            if (!handedBack.isEmpty() && identity != null
+                    && FleetDocument.parse(handedBack) != null) {
+                take(context, identity, handedBack, spki);
+            }
+            return null;
+        } catch (IOException | JSONException failed) {
+            Log.d(TAG, "Fleet document delivery failed", failed);
+            return "it did not answer";
+        }
+    }
+
     /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */
     private void leave(String caller, OutputStream output) throws IOException {
-        String name = KioskConfig.fleetNameOf(context);
-        KioskConfig.edit(context).leaveFleet().apply();
-        Log.i(TAG, "Left the fleet " + name + " at the request of key "
-                + FleetTls.shortForm(caller));
+        leaveFleet(context, "at the request of key " + FleetTls.shortForm(caller));
         respond(output, 200, fleetState());
     }
 

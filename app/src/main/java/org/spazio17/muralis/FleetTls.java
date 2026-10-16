@@ -46,9 +46,13 @@ final class FleetTls {
 
     /** SHA-256 of the certificate's public key (its SubjectPublicKeyInfo), lowercase hex. */
     static String spkiOf(X509Certificate certificate) {
+        return spkiOf(certificate.getPublicKey().getEncoded());
+    }
+
+    /** The same hash of an encoded public key, which the fleet document's signatures carry. */
+    static String spkiOf(byte[] encodedPublicKey) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(certificate.getPublicKey().getEncoded());
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(encodedPublicKey);
             StringBuilder hex = new StringBuilder(digest.length * 2);
             for (byte b : digest) {
                 hex.append(Character.forDigit((b >> 4) & 0xF, 16))

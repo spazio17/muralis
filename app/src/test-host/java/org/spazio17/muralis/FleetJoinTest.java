@@ -93,6 +93,10 @@ public final class FleetJoinTest {
         require(two != null && two.address.equals("192.0.2.5"), "the first of two addresses");
         require(FleetJoin.parseQr("muralis-join:2;id=k;addr=2001:db8::5;port=8081;spki=" + key
                 + ";code=12345678") != null, "an IPv6 address was refused");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=999.300.1.1;port=8081;spki=" + key
+                + ";code=12345678") == null, "an address past 255 was taken, which DNS would look up");
+        require(FleetJoin.parseQr("muralis-join:2;id=k;addr=255.0.10.250;port=8081;spki=" + key
+                + ";code=12345678") != null, "a real IPv4 address was refused");
         require(FleetJoin.parseQr(null) == null, "null read as a code");
         require(FleetJoin.parseQr("https://example.com") == null, "another QR read as a code");
         require(FleetJoin.parseQr("muralis-join:1;id=k;addr=192.0.2.5;port=8081;spki=" + key

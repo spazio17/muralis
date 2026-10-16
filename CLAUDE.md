@@ -44,7 +44,8 @@ on purpose.
   panel's web admin will manage all of them. No server, no cloud. So far each panel has its fleet
   key and a member endpoint, announces itself on the local network (mDNS), joins a fleet with a
   single-use code shown on its Join screen, or leaves it, and creates a fleet or adds another
-  panel by reading that code with its camera.
+  panel by reading that code with its camera; every member holds the fleet's signed list of
+  panels.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 
@@ -72,8 +73,9 @@ on purpose.
   the service starts before the first unlock; pictures and playlists are files of the app's normal
   storage, read only once the device is unlocked.
 - **Fleet.** `FleetIdentity` (each panel's own key and certificate), `FleetTls` (mutual TLS that
-  admits a peer by the hash of its public key) and `FleetServer` (the member endpoint on its own
-  port, separate from the web admin).
+  admits a peer by the hash of its public key), `FleetServer` (the member endpoint on its own
+  port, separate from the web admin) and `FleetDocument` (the signed list every member holds,
+  and how two lists changed apart merge into one).
 
 ## Rules the code keeps
 

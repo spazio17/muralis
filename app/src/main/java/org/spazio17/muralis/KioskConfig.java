@@ -329,6 +329,7 @@ final class KioskConfig {
             plain.putString(FLEET_NAME, name.trim());
             plain.putString(FLEET_TRUSTED, managerSpki);
             plain.putString(FLEET_REVOKED, "");
+            plain.remove(FLEET_DOCUMENT);
             return this;
         }
 
@@ -338,41 +339,27 @@ final class KioskConfig {
             plain.remove(FLEET_NAME);
             plain.remove(FLEET_TRUSTED);
             plain.remove(FLEET_REVOKED);
-            plain.remove(FLEET_MEMBERS);
+            plain.remove(FLEET_DOCUMENT);
             return this;
         }
 
         /**
-         * A panel added from here (block 11d): its key trusted, and its entry kept, so this
-         * panel knows whom it added until the fleet document lists every member (block 12).
-         * The first one also founds the fleet, {@code fleetId} and {@code fleetName}.
+         * The fleet document this panel took or wrote (block 12a), already checked and merged
+         * with the one held: it names the fleet, its members' keys are the ones this panel
+         * trusts, and its revoked keys the ones it refuses. The first one written here also
+         * founds the fleet.
          */
-        Editor addFleetMember(Context context, String fleetId, String fleetName,
-                org.json.JSONObject member) {
-            if (fleetIdOf(context).isEmpty()) {
-                plain.putString(FLEET_ID, fleetId);
-                plain.putString(FLEET_NAME, fleetName.trim());
-                plain.putString(FLEET_REVOKED, "");
+        Editor fleetDocument(Context context, String text) {
+            java.util.Map<String, Object> document = FleetDocument.parse(text);
+            if (document == null) {
+                return this;
             }
-            java.util.Set<String> trusted = fleetTrusted(context);
-            org.json.JSONArray members = fleetMembersOf(context);
-            org.json.JSONArray kept = new org.json.JSONArray();
-            for (int i = 0; i < members.length(); i++) {
-                org.json.JSONObject one = members.optJSONObject(i);
-                if (one == null) {
-                    continue;
-                }
-                if (one.optString("id").equals(member.optString("id"))) {
-                    // Added again (a reset panel has a new key): its old key is trusted no more.
-                    trusted.remove(one.optString("spki"));
-                } else {
-                    kept.put(one);
-                }
-            }
-            trusted.add(member.optString("spki"));
-            plain.putString(FLEET_TRUSTED, String.join(",", trusted));
-            kept.put(member);
-            plain.putString(FLEET_MEMBERS, kept.toString());
+            java.util.Set<String> revoked = FleetDocument.revoked(document);
+            plain.putString(FLEET_ID, FleetDocument.fleetId(document));
+            plain.putString(FLEET_NAME, FleetDocument.fleetName(document));
+            plain.putString(FLEET_TRUSTED, String.join(",", FleetDocument.trustedKeys(document)));
+            plain.putString(FLEET_REVOKED, String.join(",", revoked));
+            plain.putString(FLEET_DOCUMENT, text);
             return this;
         }
 
@@ -937,18 +924,15 @@ final class KioskConfig {
     private static final String FLEET_TRUSTED = "fleet_trusted";
     private static final String FLEET_REVOKED = "fleet_revoked";
     private static final String FLEET_ID = "fleet_id";
-    private static final String FLEET_MEMBERS = "fleet_members";
+    private static final String FLEET_DOCUMENT = "fleet_document";
 
-    /** The panels added from this one: id, name, spki, address, port each; see addFleetMember. */
-    static org.json.JSONArray fleetMembersOf(Context context) {
+    /** The fleet document held, as maps and lists; null before the first (see fleetDocument). */
+    static java.util.Map<String, Object> fleetDocumentOf(Context context) {
         String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(FLEET_MEMBERS, "[]");
-        try {
-            return new org.json.JSONArray(stored);
-        } catch (org.json.JSONException damaged) {
-            return new org.json.JSONArray();
-        }
+                .getString(FLEET_DOCUMENT, "");
+        return stored.isEmpty() ? null : FleetDocument.parse(stored);
     }
+
     private static final String FLEET_NAME = "fleet_name";
 
     /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */

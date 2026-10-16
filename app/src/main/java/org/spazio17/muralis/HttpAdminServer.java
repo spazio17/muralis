@@ -1048,11 +1048,7 @@ final class HttpAdminServer {
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
         } else if (path.equals("/api/fleet/leave") && method.equals("POST")) {
-            String fleet = KioskConfig.fleetNameOf(context);
-            if (!KioskConfig.fleetIdOf(context).isEmpty()) {
-                KioskConfig.edit(context).leaveFleet().apply();
-                Log.i(TAG, "Left the fleet " + fleet + " from the web admin");
-            }
+            FleetServer.leaveFleet(context, "from the web admin");
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.equals("/api/stats") && method.equals("GET")) {

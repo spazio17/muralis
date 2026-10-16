@@ -148,6 +148,9 @@ final class FleetJoin {
         }
     }
 
+    /** One part of a dotted IPv4 address, 0 to 255, with no leading zero. */
+    private static final String OCTET = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+
     /**
      * The QR of a Join screen read back (fleet design, section 5), or null when the text is not
      * one: another QR, another version, or a field missing or malformed. Of a list of addresses
@@ -173,7 +176,7 @@ final class FleetJoin {
         String code = fields.get("code");
         // A literal address only, IPv4 or IPv6, never a name a lookup would resolve.
         if (id == null || !id.matches("[A-Za-z0-9._-]{1,64}") || address == null
-                || !(address.matches("([0-9]{1,3}\\.){3}[0-9]{1,3}")
+                || !(address.matches("(" + OCTET + "\\.){3}" + OCTET)
                         || address.matches("[0-9A-Fa-f:]{2,39}") && address.contains(":"))
                 || port == null
                 || !port.matches("[0-9]{1,5}") || Integer.parseInt(port) < 1

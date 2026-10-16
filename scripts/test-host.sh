@@ -130,7 +130,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
-            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin; do
+            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -317,6 +317,15 @@ javac -d "${test_dir}/fleetjoin" \
     "${pure_java_dir}/FleetJoin.java" \
     "${host_test_dir}/FleetJoinTest.java"
 java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
+
+# The fleet document: canonical form, signature, and how two documents changed apart merge.
+mkdir -p "${test_dir}/fleetdocument"
+javac -d "${test_dir}/fleetdocument" \
+    "${pure_java_dir}/FleetDocument.java" \
+    "${pure_java_dir}/FleetTls.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/FleetDocumentTest.java"
+java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetDocumentTest
 
 # What a panel withdraws from Home Assistant: only what it announced itself (2026-10-06).
 mkdir -p "${test_dir}/withdrawals"

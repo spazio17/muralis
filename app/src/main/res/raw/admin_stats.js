@@ -36,7 +36,16 @@ var line=document.getElementById('fleet-join-line');if(line.textContent!==j.line
 var src=j.qr&&j.code?'/api/fleet/code.svg?c='+encodeURIComponent(j.code+' '+j.detail):'';
 if(qr.getAttribute('data-src')!==src){qr.setAttribute('data-src',src);if(src){qr.src=src;}else{qr.removeAttribute('src');}}
 qr.hidden=!src;
-document.getElementById('fleet-join-new').hidden=j.member||!!j.code||j.locked||!j.can_join;}
+document.getElementById('fleet-join-new').hidden=j.member||!!j.code||j.locked||!j.can_join;
+// Once joined, the box closes by itself as the panel's own page does; Close counts down.
+var close=document.getElementById('fleet-join-close');
+if(j.member&&fleetJoinClosing<0){fleetJoinClosing=5;fleetJoinTick(close);}
+if(!j.member&&fleetJoinClosing>=0){fleetJoinClosing=-1;close.textContent='Close';}}
+var fleetJoinClosing=-1;
+function fleetJoinTick(close){
+if(fleetJoinClosing<0||!fleetJoinShown){fleetJoinClosing=-1;close.textContent='Close';return;}
+if(fleetJoinClosing===0){fleetJoinClosing=-1;close.textContent='Close';fleetJoinShown=false;fleetJoinPost('/api/fleet/code/close');return;}
+close.textContent='Close ('+fleetJoinClosing+')';fleetJoinClosing--;setTimeout(function(){fleetJoinTick(close);},1000);}
 // A refusal is said under the buttons, in the words the status poll uses for the same answers.
 function fleetJoinPost(path){
 var error=document.getElementById('fleet-error');error.hidden=true;fleetJoinAt=Date.now();

@@ -823,7 +823,11 @@ public final class KioskActivity extends Activity {
         KioskRuntimeState.publishActivityInFront(true);
         if (scanAfterResume) {
             scanAfterResume = false;
-            showAddPanelScanner();
+            // Only back over the settings it was opened from: a command or Back that showed the
+            // dashboard meanwhile wins, and the scanner page never opens the settings by itself.
+            if (configurationVisible) {
+                showAddPanelScanner();
+            }
         }
         // Every Muralis screen is fullscreen, including configuration: a kiosk should never show a
         // system bar, and the settings screen used to keep the navigation bar for the keyboard's
@@ -6022,8 +6026,7 @@ public final class KioskActivity extends Activity {
                 "This panel stops trusting the fleet's panels and keeps its own settings. It can"
                         + " join again with a new code.",
                 "Leave", true, () -> {
-                    KioskConfig.edit(this).leaveFleet().apply();
-                    Log.i(TAG, "Left the fleet " + fleet + " from the panel");
+                    FleetServer.leaveFleet(this, "from the panel");
                     showSettings();
                 }, this::showSettings);
     }
@@ -6036,6 +6039,9 @@ public final class KioskActivity extends Activity {
      * the code, as the web admin's Close does. Once a second it follows a new code, the lockout,
      * the expiry and the join itself.
      */
+    /** How long the Join page stays once this panel joined, before it shows the dashboard. */
+    private static final int JOIN_CLOSE_SECONDS = 5;
+
     private void showJoinPage() {
         currentScreen = this::showJoinPage;
         Runnable close = () -> {
@@ -6085,6 +6091,9 @@ public final class KioskActivity extends Activity {
         column.addView(box, matchWrap());
         page.addView(column, singlePanelParams());
         String[] drawn = {null};
+        // Once joined, the page closes by itself and shows the dashboard: the person stands at
+        // the panel that scanned, not at this one. Close counts the seconds down.
+        int[] closing = {-1};
         Runnable paint = new Runnable() {
             @Override
             public void run() {
@@ -6093,6 +6102,19 @@ public final class KioskActivity extends Activity {
                 }
                 long at = FleetServer.joinClock();
                 boolean member = !KioskConfig.fleetIdOf(KioskActivity.this).isEmpty();
+                if (member && drawn[0] != null) {
+                    if (closing[0] < 0) {
+                        closing[0] = JOIN_CLOSE_SECONDS;
+                    } else if (--closing[0] <= 0) {
+                        FleetJoin.shared.close();
+                        showDashboard(KioskConfig.load(KioskActivity.this).dashboardUrl);
+                        return;
+                    }
+                    done.setText("Close (" + closing[0] + ")");
+                } else if (closing[0] >= 0) {
+                    closing[0] = -1;
+                    done.setText("Close");
+                }
                 String content = member ? null : FleetServer.joinQrContent(KioskActivity.this);
                 String open = member ? null : FleetJoin.shared.code(at);
                 if (content == null) {
@@ -6372,14 +6394,20 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Sends the code to the other panel, off the main thread, then asks it {@code GET /fleet} as
-     * its new manager to see that it took this panel's key; records it here and says so, on the
-     * form's page if it is still the one shown. A refusal comes back in the other panel's words.
+     * Sends the code to the other panel, off the main thread, then writes it into the fleet
+     * document and hands that to every member (FleetServer.addMember); says so on the form's page
+     * if it is still the one shown. A refusal comes back in the other panel's words.
      */
     private void addPanel(FleetJoin.Invitation invitation, String fleetId, String fleetName,
             String name, View form, java.util.function.Consumer<String> refused) {
         new Thread(() -> {
             String problem;
+            problem = FleetServer.addRefusal(this);
+            if (problem != null) {
+                String reason = problem;
+                mainHandler.post(() -> refused.accept(reason));
+                return;
+            }
             try {
                 org.json.JSONObject request = new org.json.JSONObject()
                         .put("code", invitation.code)
@@ -6390,24 +6418,18 @@ public final class KioskActivity extends Activity {
                 if (joined.status != 200) {
                     problem = joined.reason();
                 } else {
-                    KioskConfig.edit(this).addFleetMember(this, fleetId, fleetName,
-                            new org.json.JSONObject()
-                                    .put("id", joined.body.optString("id", invitation.id))
-                                    .put("name", name)
-                                    .put("spki", invitation.spki)
-                                    .put("address", invitation.address)
-                                    .put("port", invitation.port)).apply();
-                    // Added whatever the check says: the other panel already took this one's key.
-                    String unconfirmed;
-                    try {
-                        FleetServer.Reply member = FleetServer.call(this, invitation.address,
-                                invitation.port, invitation.spki, "GET", "/fleet", null);
-                        org.json.JSONObject fleet = member.body.optJSONObject("fleet");
-                        unconfirmed = member.status == 200 && fleet != null
-                                && fleetId.equals(fleet.optString("id")) ? null : member.reason();
-                    } catch (java.io.IOException lost) {
-                        unconfirmed = plainNetworkReason(lost);
-                    }
+                    java.util.Map<String, Object> member = new java.util.LinkedHashMap<>();
+                    // The id from the QR, checked when it was read; the reply's is not checked.
+                    member.put(FleetDocument.ID, invitation.id);
+                    member.put(FleetDocument.NAME, name);
+                    member.put(FleetDocument.SPKI, invitation.spki);
+                    member.put(FleetDocument.MANAGER, true);
+                    member.put("addresses",
+                            java.util.Collections.singletonList(invitation.address));
+                    member.put("port", (long) invitation.port);
+                    // Added whatever the delivery says: the other panel already took this one's
+                    // key, and the fleet document now lists it.
+                    String unconfirmed = FleetServer.addMember(this, fleetId, fleetName, member);
                     String check = unconfirmed;
                     Log.i(TAG, "Added " + name + " (" + FleetTls.shortForm(invitation.spki)
                             + ") to the fleet " + fleetName + (check == null ? ", confirmed"
@@ -14270,14 +14292,16 @@ public final class KioskActivity extends Activity {
         // which pushed every button 5 px below the row and cut off its bottom edge (2026-09-09).
         row.setBaselineAligned(false);
         row.setGravity(Gravity.START | Gravity.TOP);
+        // The 8 dp between buttons side by side is a divider, which LinearLayout draws only
+        // between visible children: a hidden button, first or last, leaves no gap behind.
+        android.graphics.drawable.GradientDrawable gap =
+                new android.graphics.drawable.GradientDrawable();
+        gap.setSize(dp(8), 0);
+        row.setDividerDrawable(gap);
+        row.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE);
         for (int i = 0; i < buttons.length; i++) {
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            // After each button but the last, not before: a hidden first button leaves no gap at
-            // the start, and a centred row stays centred.
-            if (i < buttons.length - 1) {
-                params.rightMargin = dp(8);
-            }
             params.topMargin = dp(8);
             row.addView(buttons[i], params);
         }
@@ -14295,11 +14319,16 @@ public final class KioskActivity extends Activity {
             @Override
             protected void onMeasure(int widthSpec, int heightSpec) {
                 int needed = getPaddingLeft() + getPaddingRight();
+                boolean first = true;
                 for (int i = 0; i < getChildCount(); i++) {
                     View child = getChildAt(i);
                     if (child.getVisibility() == View.GONE) {
                         continue;
                     }
+                    // The divider's gap before every visible button but the first.
+                    needed += first || getDividerDrawable() == null ? 0
+                            : getDividerDrawable().getIntrinsicWidth();
+                    first = false;
                     child.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
                     LayoutParams params = (LayoutParams) child.getLayoutParams();
                     needed += child.getMeasuredWidth() + params.leftMargin + params.rightMargin;
@@ -14312,6 +14341,8 @@ public final class KioskActivity extends Activity {
         };
         row.setBaselineAligned(false);
         row.setGravity(built.getGravity());
+        row.setDividerDrawable(built.getDividerDrawable());
+        row.setShowDividers(built.getShowDividers());
         while (built.getChildCount() > 0) {
             View child = built.getChildAt(0);
             ViewGroup.LayoutParams params = child.getLayoutParams();
