@@ -1118,7 +1118,7 @@ final class HttpAdminServer {
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.equals("/api/fleet/code.svg") && method.equals("GET")) {
             String content = FleetServer.joinQrContent(context);
-            String svg = content == null ? null : QrCodes.svg(content);
+            String svg = content == null ? null : QrCodes.svg(content, true);
             if (svg == null) {
                 writeResponse(output, 404, "text/plain", bytes("No join code is open"));
             } else {

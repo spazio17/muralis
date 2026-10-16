@@ -7758,7 +7758,7 @@ public final class KioskActivity extends Activity {
                 if (content == null) {
                     qr.setImageDrawable(null);
                 } else if (!content.equals(drawn[0])) {
-                    qr.setImageBitmap(qrBitmap(content, dp(240)));
+                    qr.setImageBitmap(qrBitmap(content, dp(240), true));
                 }
                 drawn[0] = content == null ? "" : content;
                 qr.setVisibility(content == null ? View.GONE : View.VISIBLE);
@@ -8145,9 +8145,12 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
-    /** A QR code as a bitmap of whole pixels per module, no wider than {@code width}. */
-    private static Bitmap qrBitmap(String content, int width) {
-        com.google.zxing.common.BitMatrix modules = QrCodes.matrix(content);
+    /**
+     * A QR code as a bitmap of whole pixels per module, no wider than {@code width}, with the
+     * app's icon in its centre when {@code withIcon}, as {@link QrCodes#svg} draws it for the web.
+     */
+    private static Bitmap qrBitmap(String content, int width, boolean withIcon) {
+        com.google.zxing.common.BitMatrix modules = QrCodes.matrix(content, withIcon);
         if (modules == null) {
             return null;
         }
@@ -8160,7 +8163,40 @@ public final class KioskActivity extends Activity {
                 pixels[y * size + x] = modules.get(x / scale, y / scale) ? Color.BLACK : Color.WHITE;
             }
         }
-        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888);
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
+        if (!withIcon) {
+            return bitmap;
+        }
+        int side = QrCodes.iconModules(modules);
+        float start = (count - side) / 2f * scale;
+        float tile = (side - 1f) * scale;
+        float origin = start + scale / 2f;
+        float unit = tile / QrCodes.ICON_UNITS;
+        android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.WHITE);
+        canvas.drawRect(start, start, start + side * scale, start + side * scale, paint);
+        canvas.translate(origin, origin);
+        canvas.scale(unit, unit);
+        paint.setColor(QrCodes.ICON_TILE);
+        canvas.drawRoundRect(0, 0, QrCodes.ICON_UNITS, QrCodes.ICON_UNITS, 24, 24, paint);
+        canvas.scale(QrCodes.ICON_GLYPH_SCALE, QrCodes.ICON_GLYPH_SCALE, 54, 54);
+        float[] outline = QrCodes.ICON_OUTLINE;
+        paint.setColor(QrCodes.ICON_LIGHT);
+        paint.setStyle(android.graphics.Paint.Style.STROKE);
+        paint.setStrokeWidth(outline[5]);
+        canvas.drawRoundRect(outline[0], outline[1], outline[2], outline[3], outline[4], outline[4],
+                paint);
+        paint.setStyle(android.graphics.Paint.Style.FILL);
+        paint.setColor(QrCodes.ICON_TILE);
+        canvas.drawCircle(QrCodes.ICON_DOT[0], QrCodes.ICON_DOT[1], QrCodes.ICON_DOT[2], paint);
+        float corner = QrCodes.ICON_PANE_CORNER;
+        for (float[] pane : QrCodes.ICON_PANES) {
+            paint.setColor(pane[4] > 0 ? QrCodes.ICON_LIGHT : QrCodes.ICON_DEEP);
+            canvas.drawRoundRect(pane[0], pane[1], pane[2], pane[3], corner, corner, paint);
+        }
+        return bitmap;
     }
 
     /**
