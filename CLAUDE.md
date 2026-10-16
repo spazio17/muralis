@@ -23,7 +23,12 @@ on purpose.
   owner.
   The way out is a combination of corner taps the person records, one for the settings and one for
   the system launcher, optionally behind a PIN. A panel with no page shows a parking screen that
-  says what to do next. The page's browser options: a sign-in for a page behind HTTP basic
+  says what to do next, as does one whose App lock app is gone; over a dashboard that cannot be
+  reached the same screen says so while the page is retried underneath. App lock shows one installed app the person chose instead of the
+  page, opened again whenever it closes, with the escape combinations read in four small
+  corner windows over it (display over other apps), pop-ups and Identify drawn straight over
+  it, Ambient and the dark brought over it on Muralis's own screen, and never Android's
+  Settings, a home screen or the Play Store as the app. The page's browser options: a sign-in for a page behind HTTP basic
   auth, the user agent, text size, page zoom, a dark look, the way back to the dashboard
   after a while, and the camera and microphone for the page when allowed (the camera handed
   over by the camera sensor). A page certificate Android does not trust is asked about once,
@@ -120,9 +125,9 @@ on purpose.
 ## Rules the code keeps
 
 - **Never lock someone in.** Lock task and the home-screen role engage only after both escape
-  combinations are recorded. The escape works from every screen. Only this app is
-  allowed under lock task; another app is reached by releasing lock task first, never by widening
-  that list. Accessibility services and foreign keyboards are restricted where the app is device
+  combinations are recorded. The escape works from every screen, the chosen app of App lock
+  included. Only this app is allowed under lock task, and in App lock the one app the person
+  chose; any other app is reached by releasing lock task first, never by widening that list. Accessibility services and foreign keyboards are restricted where the app is device
   owner, and the page cannot hand control to another app through non-web links.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
   password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member

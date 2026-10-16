@@ -934,6 +934,10 @@ final class MqttController implements MqttCallbackExtended {
                     "{{ value_json.app_version }}");
             appVersionSensor.put("entity_category", "diagnostic");
             components.put("app_version", appVersionSensor);
+            // App lock (block 9): the app shown instead of the page, "Off" when there is none.
+            components.put("app_lock", sensor("App lock", null, null, null,
+                    "{{ value_json.app_lock.app if value_json.app_lock is defined"
+                            + " and value_json.app_lock.app else 'Off' }}"));
 
             // Controls, not just readings. Discovery published sensors only, so a Home Assistant
             // user could see the panel but not touch it without hand-writing mqtt.publish calls in

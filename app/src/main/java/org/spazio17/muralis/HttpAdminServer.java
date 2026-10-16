@@ -975,6 +975,13 @@ final class HttpAdminServer {
                 writeResponse(output, 200, "image/svg+xml", bytes(svg),
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
+        } else if (path.equals("/app-lock") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppLockPage(null,
+                    "1".equals(queryValue(query, "system")))));
+        } else if (path.equals("/app-lock") && method.equals("POST")) {
+            String refused = saveAppLock(parseFormBody(headers, body));
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildAppLockPage(refused == null ? "Saved." : refused, false)));
         } else if (path.equals("/cameras") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
         } else if (path.equals("/adopt") && method.equals("POST")) {
@@ -3673,7 +3680,73 @@ final class HttpAdminServer {
                 + browserForm(notice, noticeSection)
                 + certificatesBox(notice, noticeSection)
                 + "<div class=\"actions\"><a class=\"onward\" href=\"/cameras\">Pop-up cameras</a>"
-                + "</div>";
+                + "<a class=\"onward\" href=\"/app-lock\">App lock</a></div>";
+    }
+
+    /**
+     * App lock (block 9), a page of its own as on the panel: Off or one installed app, and
+     * whether Muralis may display over other apps, which only the panel itself can allow.
+     */
+    private String buildAppLockPage(String notice, boolean withSystem) {
+        StringBuilder html = new StringBuilder(pageStart("App lock", null,
+                settingsAt("dashboard")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        String chosen = KioskConfig.appLockOf(context);
+        html.append("<form method=\"post\" action=\"/app-lock\" class=\"card\">"
+                + "<h2>The app this panel shows</h2><p class=\"hint\">Instead of the web page,"
+                + " one app, opened again whenever it closes. Your corner combinations work over"
+                + " it, in the four corners.</p>");
+        if (!AppLock.canDrawOver(context)) {
+            html.append("<p class=\"hint bad\">Muralis needs to display over other apps: that"
+                    + " is how your corner taps reach it over the app, and how pop-ups and the"
+                    + " status light show over it. Allow it on the panel: Dashboard, App lock,"
+                    + " Allow.</p>");
+        }
+        html.append("<p><a href=\"/app-lock").append(withSystem ? "" : "?system=1")
+                .append("\">").append(withSystem ? "Hide the apps that came with the device"
+                        : "Show the apps that came with the device").append("</a></p>");
+        StringBuilder radios = new StringBuilder();
+        radios.append(plainRadio("app_lock", "", chosen, "Off: the web page"));
+        boolean listed = chosen.isEmpty();
+        for (AppLock.App app : AppLock.launchable(context, withSystem)) {
+            radios.append(plainRadio("app_lock", app.packageName, chosen, app.label));
+            listed |= app.packageName.equals(chosen);
+        }
+        if (!listed) {
+            boolean installed = context.getPackageManager()
+                    .getLaunchIntentForPackage(chosen) != null;
+            radios.append(plainRadio("app_lock", chosen, chosen, KioskConfig.appLockLabelOf(context)
+                    + (installed ? "" : " (not installed)")));
+        }
+        html.append("<div class=\"radios\" role=\"radiogroup\" aria-label=\"The app\">")
+                .append(radios).append("</div><div class=\"actions\"><button type=\"submit\""
+                        + " class=\"primary\">Save</button></div></form>");
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String plainRadio(String name, String value, String current, String label) {
+        return "<label class=\"radio\"><input type=\"radio\" name=\"" + name + "\" value=\""
+                + escapeHtml(value) + "\"" + (value.equals(current) ? " checked" : "") + ">"
+                + escapeHtml(label) + "</label>";
+    }
+
+    /** Stores App lock's choice: Off, or an installed app with something to open. */
+    private String saveAppLock(Map<String, String> form) {
+        String chosen = form.getOrDefault("app_lock", "").trim();
+        if (!chosen.isEmpty()
+                && context.getPackageManager().getLaunchIntentForPackage(chosen) == null) {
+            return "Not saved: no installed app " + chosen + " has anything to open.";
+        }
+        if (AppLock.doors(context).contains(chosen)) {
+            return "Not saved: " + chosen + " opens Android's settings, a home screen or the"
+                    + " Play Store, which would hand the panel's whole device to anyone.";
+        }
+        KioskConfig.edit(context).appLock(chosen).apply();
+        KioskService.appLockChanged();
+        KioskService.publishTelemetrySoon(context);
+        return null;
     }
 
     /**

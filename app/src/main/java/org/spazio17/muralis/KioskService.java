@@ -1541,6 +1541,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .put("on", light.on)
                     .put("color", StatusLight.formatColor(light.color))
                     .put("brightness", light.percent));
+            // App lock (block 9): which app the panel shows instead of the page, if any.
+            String locked = KioskConfig.appLockOf(this);
+            stats.put("app_lock", new org.json.JSONObject()
+                    .put("package", locked)
+                    .put("app", locked.isEmpty() ? "" : AppLock.labelOf(this, locked))
+                    .put("showing", AppLock.appUp)
+                    .put("problem", locked.isEmpty() ? ""
+                            : String.valueOf(AppLock.problem(this, locked) == null ? ""
+                                    : AppLock.problem(this, locked))));
             // The sensors the person switched on, with their readings; see Sensors. The block
             // is kept where the panel's rows and discovery can read it without the service.
             publishSensorBlock();
@@ -1978,6 +1987,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         lastDisplayOffMethod = method;
         sendUiCommand("display.visual_off", method);
+        if (!DisplayOffPolicy.SLEEP.equals(method)) {
+            // App lock: the black film is Muralis's own screen, brought over the app.
+            AppLock.bringMuralisForward(this);
+        }
     }
 
     /** What the last Display off did, sleep or film; the test while asleep needs the sleep. */
@@ -3113,7 +3126,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     @Override
     public String identify() {
-        if (!KioskRuntimeState.activityInFront()) {
+        if (!KioskRuntimeState.activityInFront() && !AppLock.appUp) {
             return SCREEN_NOT_SHOWING;
         }
         sendUiCommand("kiosk.identify", -1, null);
@@ -3819,6 +3832,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // IllegalStateException is documented for an ongoing call. Either way the panel stays up,
             // which is the right failure for a remote command.
             Log.w(TAG, "Device-owner reboot refused", refused);
+        }
+    }
+
+    /** App lock's choice changed outside the panel's own page: the panel follows at once. */
+    static void appLockChanged() {
+        KioskService service = liveService();
+        if (service != null) {
+            service.sendUiCommand("applock.changed", -1, null);
         }
     }
 

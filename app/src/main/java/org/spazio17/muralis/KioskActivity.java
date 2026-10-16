@@ -116,7 +116,7 @@ public final class KioskActivity extends Activity {
      */
     private static final long LIVE_SETTING_SYNC_INTERVAL_MS = 5_000L;
     private static final int OVERLAY_TEXT_SP = 15;
-    private static final int ADMIN_ESCAPE_ZONE_DP = 96;
+    static final int ADMIN_ESCAPE_ZONE_DP = 96;
 
     /**
      * Returns the loaded page's background luminance, 0 dark to 255 light, or -1 when the page
@@ -163,7 +163,10 @@ public final class KioskActivity extends Activity {
      * starting them, which is the case they had to prevent.
      */
     private String[] lockTaskPackages() {
-        return new String[] {getPackageName()};
+        // Muralis and, in App lock, the one app the person chose; nothing else (block 9).
+        String chosen = KioskConfig.load(this).appLockPackage;
+        return chosen.isEmpty() || getPackageManager().getLaunchIntentForPackage(chosen) == null
+                ? new String[] {getPackageName()} : new String[] {getPackageName(), chosen};
     }
 
     /**
@@ -263,6 +266,9 @@ public final class KioskActivity extends Activity {
      * the content it was drawn over.
      */
     private TextView identifyOverlay;
+    /** Identify and the pop-up drawn in a window over App lock's app rather than in this screen. */
+    private boolean identifyOverApp;
+    private boolean popupOverApp;
     /**
      * The status light's frame (StatusLight), a child of the window's content like Identify so
      * every screen gets it; touches fall through. See {@link #syncStatusLight}.
@@ -365,6 +371,22 @@ public final class KioskActivity extends Activity {
      */
     private int carriedScrollY = -1;
     private final java.util.List<EscapeSequence.Tap> escapeTaps = new java.util.ArrayList<>();
+    /** App lock: a combination tapped over the app, handed here to finish (AppLock). */
+    static final String EXTRA_ESCAPE = "org.spazio17.muralis.ESCAPE";
+    static final String ESCAPE_SETTINGS = "settings";
+    static final String ESCAPE_LAUNCHER = "launcher";
+    /** App lock: when the app was last opened, and how often in a row it came straight back. */
+    private long appLockOpenedAtMs;
+    private int appLockQuickReturns;
+    private final Runnable appLockOpen = this::openLockedApp;
+    /** The robot is up because App lock's app is gone. */
+    private boolean appGoneShowing;
+    /** App lock's page lists the device's own apps too; asked for on the page, not stored. */
+    private boolean appLockShowSystem;
+    /** The robot over a dashboard that cannot be reached, while it is retried underneath. */
+    private View unreachable;
+    private String unreachableFor;
+    private boolean appLockScheduled;
     private boolean recorderVisible;
     private boolean recordingForLauncher;
     /**
@@ -711,6 +733,10 @@ public final class KioskActivity extends Activity {
                     if (Popup.pending != null && popupView == null && !configurationVisible) {
                         mainHandler.post(this::showPendingPopup);
                     }
+                    // App lock: whatever Muralis showed over the app has gone; back to the app.
+                    if (inFront && !appLockScheduled && lockedAppToOpen() != null) {
+                        scheduleLockedApp();
+                    }
                 });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // A wall kiosk has nothing to protect behind a swipe-to-unlock screen, and after a reboot
@@ -787,7 +813,7 @@ public final class KioskActivity extends Activity {
             return;
         }
         startProBilling();
-        if (config.dashboardUrl.isEmpty()) {
+        if (config.dashboardUrl.isEmpty() && config.appLockPackage.isEmpty()) {
             showConfiguration(config);
         } else {
             showDashboard(config.dashboardUrl);
@@ -859,6 +885,18 @@ public final class KioskActivity extends Activity {
         }
         inFront = true;
         KioskRuntimeState.publishActivityInFront(true);
+        // App lock: Muralis is back in front, over the app or because the app went away.
+        if (AppLock.appUp || AppLock.opening) {
+            // Muralis called forward on purpose (a pop-up, Identify, Ambient, the dark, a
+            // combination) is not the app coming straight back.
+            boolean quick = !AppLock.calledForward
+                    && android.os.SystemClock.elapsedRealtime() - appLockOpenedAtMs < 5_000L;
+            appLockQuickReturns = quick ? appLockQuickReturns + 1 : 0;
+        }
+        AppLock.appUp = false;
+        AppLock.opening = false;
+        AppLock.calledForward = false;
+        AppLock.hideOverWindows(this);
         if (scanAfterResume) {
             scanAfterResume = false;
             // Only back over the settings it was opened from: a command or Back that showed the
@@ -897,6 +935,12 @@ public final class KioskActivity extends Activity {
         // grant is there now, so redraw before the red line is read again. Here rather than in the
         // watcher's callback because this screen re-applies lock task as it is built, and that is
         // only allowed once this task is in the foreground.
+        if (overlayWatch != null && AppLock.canDrawOver(this)) {
+            stopWatchingOverlay();
+            if (configurationVisible && currentScreen != null) {
+                redrawInPlace(currentScreen);
+            }
+        }
         if (writeSettingsWatch != null && configurationVisible && currentScreen != null
                 && KioskService.canWriteSystemSettings(this)) {
             stopWatchingWriteSettings();
@@ -910,6 +954,13 @@ public final class KioskActivity extends Activity {
             onDisplayWoke();
         } else if (!asleep && screensaverStage == ScreensaverPolicy.Stage.DASHBOARD) {
             screensaverSinceMs = android.os.SystemClock.uptimeMillis();
+        }
+        scheduleLockedApp();
+        // App lock's app went away while Muralis was elsewhere: the robot says so.
+        if (!configurationVisible && !wizardVisible && !recorderVisible
+                && appGoneShowing != appLockGone()) {
+            // Gone meanwhile, or back again: the robot's line follows what is true now.
+            showDashboard(KioskConfig.load(this).dashboardUrl);
         }
     }
 
@@ -935,6 +986,15 @@ public final class KioskActivity extends Activity {
     protected void onPause() {
         inFront = false;
         KioskRuntimeState.publishActivityInFront(false);
+        mainHandler.removeCallbacks(appLockOpen);
+        appLockScheduled = false;
+        if (AppLock.opening) {
+            // The app Muralis just opened is in front: its windows over it, for the way out.
+            AppLock.opening = false;
+            AppLock.appUp = true;
+            AppLock.lastTouchUptimeMs = android.os.SystemClock.uptimeMillis();
+            AppLock.showOverWindows(this);
+        }
         applyNfcReader();
         // The camera is let go with the screen, and taken again in onResume.
         scanAfterResume = scanner != null;
@@ -956,6 +1016,8 @@ public final class KioskActivity extends Activity {
         KioskRuntimeState.publishOperatorOnScreen(false);
         releaseKioskPolicy();
         stopWatchingWriteSettings();
+        stopWatchingOverlay();
+        AppLock.hideOverWindows(this);
         unregisterReceiver(controlReceiver);
         if (unlockReceiverRegistered) {
             unregisterReceiver(unlockReceiver);
@@ -1790,26 +1852,134 @@ public final class KioskActivity extends Activity {
             List<String> sequence = checkLauncher ? toLauncher : toSettings;
             if (EscapeSequence.matchesTail(escapeTaps, sequence, EscapeSequence.MAX_GAP_MS)) {
                 escapeTaps.clear();
-                // The fleet's alert (block 15), said whether or not a PIN then stops the way out.
-                KioskService alerting = KioskService.liveService();
-                if (alerting != null) {
-                    alerting.alertEvent(FleetAlerts.COMBINATION_USED, true,
-                            checkLauncher ? "to the home screen" : "to the settings");
-                }
-                if (checkLauncher) {
-                    gateBehindPin("To leave Muralis for the home screen", true, this::openSystemLauncher);
-                } else {
-                    gateBehindPin("To open Muralis settings", false, () -> {
-                        openSection = "";
-                        showConfiguration(KioskConfig.load(this));
-                        Toast.makeText(this, R.string.configuration_escape_opened,
-                                Toast.LENGTH_SHORT).show();
-                    });
-                }
+                escapeMatched(checkLauncher);
                 return true;
             }
         }
         return false;
+    }
+
+    /** A combination recognised, here or over App lock's app: the PIN, then where it leads. */
+    private void escapeMatched(boolean toLauncher) {
+        // The fleet's alert (block 15), said whether or not a PIN then stops the way out.
+        KioskService alerting = KioskService.liveService();
+        if (alerting != null) {
+            alerting.alertEvent(FleetAlerts.COMBINATION_USED, true,
+                    toLauncher ? "to the home screen" : "to the settings");
+        }
+        if (toLauncher) {
+            gateBehindPin("To leave Muralis for the home screen", true, this::openSystemLauncher);
+        } else {
+            gateBehindPin("To open Muralis settings", false, () -> {
+                openSection = "";
+                showConfiguration(KioskConfig.load(this));
+                Toast.makeText(this, R.string.configuration_escape_opened,
+                        Toast.LENGTH_SHORT).show();
+            });
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String escape = intent == null ? null : intent.getStringExtra(EXTRA_ESCAPE);
+        if (escape != null && KioskConfig.load(this).escapeSequencesConfigured()) {
+            // Only a combination App lock's corners recognised sends this; the activity is not
+            // exported for it to be sent by anyone else (the manifest).
+            escapeMatched(ESCAPE_LAUNCHER.equals(escape));
+        }
+    }
+
+    /**
+     * App lock (block 9): opens the chosen app over Muralis whenever Muralis is uncovered and
+     * shows nothing of its own (the settings, a PIN, a pop-up, Identify, Ambient, the dark).
+     * An app that keeps coming straight back is opened again later each time, up to a minute
+     * apart, so a crashing app is not a loop.
+     */
+    private void scheduleLockedApp() {
+        mainHandler.removeCallbacks(appLockOpen);
+        appLockScheduled = false;
+        if (lockedAppToOpen() == null) {
+            return;
+        }
+        long delay = Math.min(60_000L, 600L << Math.min(appLockQuickReturns, 7));
+        appLockScheduled = mainHandler.postDelayed(appLockOpen, delay);
+    }
+
+    /** The app to open now, or null when App lock is off, cannot run, or Muralis shows something. */
+    private String lockedAppToOpen() {
+        boolean busy = !inFront || configurationVisible || recorderVisible || wizardVisible
+                || kioskStopped || launcherHandoff || filmOn || asleep
+                || screensaverShowing != null || popupView != null || Popup.pending != null
+                || identifyOverlay != null;
+        // Cheap first: this runs on every layout pass, and the full settings read decrypts.
+        String chosen = busy ? "" : KioskConfig.appLockOf(this);
+        // No way out recorded yet means the first-start wizard, which wizardVisible covers.
+        if (chosen.isEmpty() || AppLock.problem(this, chosen) != null) {
+            return null;
+        }
+        return chosen;
+    }
+
+    /** App lock is on and its app has nothing to open any more (uninstalled). */
+    private boolean appLockGone() {
+        String locked = KioskConfig.appLockOf(this);
+        return !locked.isEmpty() && getPackageManager().getLaunchIntentForPackage(locked) == null;
+    }
+
+    /**
+     * The robot over the page with "Can't reach <address>, trying again" (Juri, 2026-10-15):
+     * laid over the dashboard when its load fails, under Ambient and the dark, and taken away
+     * when a load succeeds; the retries go on underneath as before.
+     */
+    private void showUnreachable(String url) {
+        if (webView == null || !(webView.getParent() instanceof FrameLayout)) {
+            return;
+        }
+        FrameLayout dashboard = (FrameLayout) webView.getParent();
+        String shown = shownAddress(url);
+        if (unreachable != null && (unreachable.getParent() != dashboard
+                || !shown.equals(unreachableFor))) {
+            if (unreachable.getParent() instanceof ViewGroup) {
+                ((ViewGroup) unreachable.getParent()).removeView(unreachable);
+            }
+            unreachable = null;
+        }
+        if (unreachable == null) {
+            unreachableFor = shown;
+            unreachable = parkingScene(currentTheme(), "Can't reach " + shown
+                    + ", trying again", "The page comes back by itself once it answers.", false);
+            unreachable.setClickable(true);
+            dashboard.addView(unreachable, dashboard.indexOfChild(webView) + 1,
+                    new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        unreachable.setVisibility(View.VISIBLE);
+    }
+
+    private void hideUnreachable() {
+        if (unreachable != null) {
+            unreachable.setVisibility(View.GONE);
+        }
+    }
+
+    /** An address as a person reads it: no sign-in, query or fragment. */
+    private static String shownAddress(String url) {
+        android.net.Uri uri = android.net.Uri.parse(url == null ? "" : url);
+        if (uri.getHost() == null) {
+            return url == null ? "" : url;
+        }
+        return uri.getScheme() + "://" + uri.getHost()
+                + (uri.getPort() > 0 ? ":" + uri.getPort() : "")
+                + (uri.getPath() == null || uri.getPath().equals("/") ? "" : uri.getPath());
+    }
+
+    private void openLockedApp() {
+        appLockScheduled = false;
+        String chosen = lockedAppToOpen();
+        if (chosen != null && AppLock.open(this, chosen)) {
+            appLockOpenedAtMs = android.os.SystemClock.elapsedRealtime();
+        }
     }
 
     /** Wrong PINs are counted like wrong web admin passwords: five, then a lockout that doubles. */
@@ -2466,6 +2636,135 @@ public final class KioskActivity extends Activity {
     private static final int REQUEST_PAGE_PERMISSION = 7_301;
 
     /**
+     * App lock (block 9): the one app the panel shows instead of the web page, or Off, chosen
+     * from the installed apps and stored at once; the permission it needs, asked for with why.
+     */
+    private void showAppLockPage() {
+        currentScreen = this::showAppLockPage;
+        LinearLayout page = subPage("App lock", this::showSettings);
+        KioskTheme theme = currentTheme();
+        String chosen = KioskConfig.appLockOf(this);
+        LinearLayout card = card(theme, "The app this panel shows");
+        TextView about = new FlushText(this);
+        about.setTextSize(13);
+        about.setTextColor(theme.subtext);
+        about.setText("Instead of the web page, one app, opened again whenever it closes. Your"
+                + " corner combinations work over it, in the four corners.");
+        card.addView(about, matchWrapClose());
+        if (!AppLock.canDrawOver(this)) {
+            TextView needs = new FlushText(this);
+            needs.setTextSize(13);
+            needs.setTextColor(theme.bad);
+            needs.setText("Muralis needs to display over other apps: that is how your corner"
+                    + " taps reach it over the app, and how pop-ups and the status light show"
+                    + " over it. Allow opens Android's page; where it lists apps, tap Muralis,"
+                    + " then the switch, and Muralis comes back by itself.");
+            card.addView(needs, matchWrapClose());
+            Button allow = primaryButton(theme, "Allow");
+            allow.setOnClickListener(view -> offerOverlayGrant());
+            card.addView(buttonRow(allow), matchWrap());
+        }
+        CompoundButton system = themedSwitch(theme, "Show the apps that came with the device",
+                appLockShowSystem);
+        system.setOnCheckedChangeListener((button, checked) -> {
+            appLockShowSystem = checked;
+            redrawInPlace(this::showAppLockPage);
+        });
+        card.addView(system, matchWrapClose());
+        RadioGroup apps = new RadioGroup(this);
+        radioChoice(theme, apps, "Off: the web page", "");
+        boolean listed = chosen.isEmpty();
+        for (AppLock.App app : AppLock.launchable(this, appLockShowSystem)) {
+            radioChoice(theme, apps, app.label, app.packageName);
+            listed |= app.packageName.equals(chosen);
+        }
+        if (!listed) {
+            // Chosen once and since removed, or a device's own app with the list hiding them:
+            // still shown, so it can be switched off.
+            boolean installed = getPackageManager().getLaunchIntentForPackage(chosen) != null;
+            radioChoice(theme, apps, KioskConfig.appLockLabelOf(this)
+                    + (installed ? "" : " (not installed)"), chosen);
+        }
+        checkRadioIfChanged(apps, chosen);
+        apps.setOnCheckedChangeListener((group, id) -> {
+            View checked = group.findViewById(id);
+            String value = checked == null ? "" : (String) checked.getTag();
+            if (value.equals(KioskConfig.appLockOf(this))) {
+                return;
+            }
+            KioskConfig.edit(this).appLock(value).apply();
+            // The lock-task allowlist follows the choice at once.
+            applyKioskPolicy();
+            KioskService.publishTelemetrySoon(this);
+            Toast.makeText(this, value.isEmpty() ? "App lock off"
+                    : "App lock: " + AppLock.labelOf(this, value), Toast.LENGTH_SHORT).show();
+        });
+        card.addView(apps, matchWrapClose());
+        page.addView(card, matchWrap());
+        setContentView(scrollPage(theme, page));
+        if (!AppLock.canDrawOver(this)) {
+            watchForOverlayGrant();
+        }
+    }
+
+    /**
+     * Sends the person to the one Settings screen that grants "Display over other apps", as
+     * {@link #offerWriteSettingsGrant} does for its grant: lock task released first, and the
+     * watcher brings Muralis back once it is allowed.
+     */
+    private void offerOverlayGrant() {
+        releaseForOtherApp();
+        watchForOverlayGrant();
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                    .setData(android.net.Uri.parse("package:" + getPackageName()))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException unavailable) {
+            Log.w(TAG, "No overlay grant screen; use `adb shell appops set " + getPackageName()
+                    + " SYSTEM_ALERT_WINDOW allow`", unavailable);
+        }
+    }
+
+    private android.app.AppOpsManager.OnOpChangedListener overlayWatch;
+
+    private void watchForOverlayGrant() {
+        if (overlayWatch != null) {
+            return;
+        }
+        android.app.AppOpsManager appOps = getSystemService(android.app.AppOpsManager.class);
+        if (appOps == null) {
+            return;
+        }
+        overlayWatch = (op, packageName) -> mainHandler.post(() -> {
+            if (isDestroyed() || isFinishing() || !AppLock.canDrawOver(this)) {
+                return;
+            }
+            if (inFront) {
+                stopWatchingOverlay();
+                if (configurationVisible && currentScreen != null) {
+                    redrawInPlace(currentScreen);
+                }
+            } else {
+                // Settings is in front: come back; onResume redraws.
+                startActivity(new Intent(this, KioskActivity.class));
+            }
+        });
+        appOps.startWatchingMode(android.app.AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
+                getPackageName(), overlayWatch);
+    }
+
+    private void stopWatchingOverlay() {
+        if (overlayWatch == null) {
+            return;
+        }
+        android.app.AppOpsManager appOps = getSystemService(android.app.AppOpsManager.class);
+        if (appOps != null) {
+            appOps.stopWatchingMode(overlayWatch);
+        }
+        overlayWatch = null;
+    }
+
+    /**
      * The pop-up cameras (block 6), a page under Dashboard: each camera's card with Save and
      * Remove, then one to add a camera; the web admin's Pop-up cameras page is the same.
      */
@@ -2774,6 +3073,9 @@ public final class KioskActivity extends Activity {
         Button camerasMore = textButtonOnward(theme, "Pop-up cameras");
         camerasMore.setOnClickListener(view -> showCamerasPage());
         dashboardCard.addView(buttonRow(camerasMore), matchWrap());
+        Button appLockMore = textButtonOnward(theme, "App lock");
+        appLockMore.setOnClickListener(view -> showAppLockPage());
+        dashboardCard.addView(buttonRow(appLockMore), matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -13043,47 +13345,12 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The dashboard view of a panel that has no dashboard URL.
-     *
-     * <p>Reached three ways, all of them "show the dashboard" with nothing to show: the foot button
-     * pressed with the URL box emptied, {@code kiosk.home} or a kiosk restart with nothing stored,
-     * and the nightly and pressure rebuilds on such a panel. Not reached at boot: an unconfigured
-     * panel still opens its settings screen from {@code initializeUserInterface}, because that is
-     * where the missing URL gets typed. Before this existed the empty case was a black WebView
-     * loading "", or nothing happening at all, depending on the route in (found 2026-09-07).
-     *
-     * <p>It is the dashboard state in every respect but the WebView: fullscreen, lock task held,
-     * the escape combinations working from its corners, and the blackout honoured, so
-     * {@code kiosk.stop} and {@code display.visual_off} blank this screen exactly as they blank a
-     * dashboard. There is no supervisor, no frozen-page check and no server probe, because there
-     * is no page; {@link #destroyWebView} has already cancelled them. Rebuilt on rotation like
-     * every native screen.
-     *
-     * <p>The text says the one thing an operator standing in front of the panel needs, and the web
-     * admin address when there is one, because "open the settings" presumes they know the corner
-     * combination and a browser on another device presumes nothing. Above the text sits the
-     * illustration chosen from five on 2026-09-07 (media/drafts/parking-page/, sketch E): the Muralis
-     * billboard with a fresh poster pasted perfectly, upside down, and the Android robot on its
-     * ladder wondering, the one the old black screen with the upside-down robot inspired. It is
-     * {@code R.drawable.parking_billboard}, generated by make-parking-drawable.py beside the
-     * sketches, and the About screen carries the CC BY 3.0 sentence Google requires for the robot.
+     * The robot and its billboard with a title and a line under it: the screen of a panel with
+     * nothing to show (no dashboard, App lock's app gone) and, laid over the page, of a dashboard
+     * that cannot be reached. The web admin's address under it when {@code withAdmin}.
      */
-    private void showParkingPage() {
-        currentScreen = this::showParkingPage;
-        clearStatusChip();
-        destroyWebView();
-        configurationVisible = false;
-        if (proBilling != null) {
-            proBilling.detachListener();
-        }
-        recorderVisible = false;
-        wizardVisible = false;
-        publishOperatorScreenState();
-        setDashboardFullscreen(true);
-        disableStatusBarIfPinned();
-        enterImmersiveMode();
-
-        KioskTheme theme = currentTheme();
+    private FrameLayout parkingScene(KioskTheme theme, String titleText, String bodyText,
+            boolean withAdmin) {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(theme.base);
         LinearLayout column = new LinearLayout(this);
@@ -13097,7 +13364,7 @@ public final class KioskActivity extends Activity {
         int textWidth = metrics.widthPixels - 2 * pad;
         java.util.List<View> lines = new java.util.ArrayList<>();
         TextView title = new FlushText(this);
-        title.setText("No dashboard yet.");
+        title.setText(titleText);
         title.setTextColor(theme.text);
         title.setTextSize(30);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -13105,7 +13372,7 @@ public final class KioskActivity extends Activity {
         title.setLayoutParams(matchWrap());
         lines.add(title);
         TextView body = new FlushText(this);
-        body.setText("Open the Muralis settings and enter one. The panel does the rest.");
+        body.setText(bodyText);
         body.setTextColor(theme.subtext);
         body.setTextSize(18);
         body.setGravity(Gravity.CENTER);
@@ -13114,7 +13381,7 @@ public final class KioskActivity extends Activity {
         bodyParams.topMargin = dp(10);
         body.setLayoutParams(bodyParams);
         lines.add(body);
-        if (KioskRuntimeState.httpAdminListening()) {
+        if (withAdmin && KioskRuntimeState.httpAdminListening()) {
             // The address only when there is one: a panel without a network has nothing another
             // device could open, and the line says that instead of inventing a host name.
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
@@ -13171,6 +13438,58 @@ public final class KioskActivity extends Activity {
         }
         root.addView(column, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return root;
+    }
+
+    /**
+     * The dashboard view of a panel that has no dashboard URL.
+     *
+     * <p>Reached three ways, all of them "show the dashboard" with nothing to show: the foot button
+     * pressed with the URL box emptied, {@code kiosk.home} or a kiosk restart with nothing stored,
+     * and the nightly and pressure rebuilds on such a panel. Not reached at boot: an unconfigured
+     * panel still opens its settings screen from {@code initializeUserInterface}, because that is
+     * where the missing URL gets typed. Before this existed the empty case was a black WebView
+     * loading "", or nothing happening at all, depending on the route in (found 2026-09-07).
+     *
+     * <p>It is the dashboard state in every respect but the WebView: fullscreen, lock task held,
+     * the escape combinations working from its corners, and the blackout honoured, so
+     * {@code kiosk.stop} and {@code display.visual_off} blank this screen exactly as they blank a
+     * dashboard. There is no supervisor, no frozen-page check and no server probe, because there
+     * is no page; {@link #destroyWebView} has already cancelled them. Rebuilt on rotation like
+     * every native screen.
+     *
+     * <p>The text says the one thing an operator standing in front of the panel needs, and the web
+     * admin address when there is one, because "open the settings" presumes they know the corner
+     * combination and a browser on another device presumes nothing. Above the text sits the
+     * illustration chosen from five on 2026-09-07 (media/drafts/parking-page/, sketch E): the Muralis
+     * billboard with a fresh poster pasted perfectly, upside down, and the Android robot on its
+     * ladder wondering, the one the old black screen with the upside-down robot inspired. It is
+     * {@code R.drawable.parking_billboard}, generated by make-parking-drawable.py beside the
+     * sketches, and the About screen carries the CC BY 3.0 sentence Google requires for the robot.
+     */
+    private void showParkingPage() {
+        showParkingPage("No dashboard yet.",
+                "Open the Muralis settings and enter one. The panel does the rest.");
+    }
+
+    /** The parking screen with its own words; see {@link #parkingScene}. */
+    private void showParkingPage(String titleText, String bodyText) {
+        currentScreen = () -> showParkingPage(titleText, bodyText);
+        clearStatusChip();
+        destroyWebView();
+        configurationVisible = false;
+        if (proBilling != null) {
+            proBilling.detachListener();
+        }
+        recorderVisible = false;
+        wizardVisible = false;
+        publishOperatorScreenState();
+        setDashboardFullscreen(true);
+        disableStatusBarIfPinned();
+        enterImmersiveMode();
+
+        KioskTheme theme = currentTheme();
+        FrameLayout root = parkingScene(theme, titleText, bodyText, true);
 
         addScreensaverLayer(root);
         // The same blackout the dashboard carries, for the same two commands, so a panel with no
@@ -13205,6 +13524,14 @@ public final class KioskActivity extends Activity {
     }
 
     private void showDashboard(String url) {
+        appGoneShowing = false;
+        if (appLockGone()) {
+            // App lock's app was uninstalled: the robot says so (Juri, 2026-10-15).
+            appGoneShowing = true;
+            showParkingPage(KioskConfig.appLockLabelOf(this) + " is not installed",
+                    "Choose another app, or Off, in the Muralis settings: Dashboard, App lock.");
+            return;
+        }
         if (url == null || url.trim().isEmpty()) {
             showParkingPage();
             return;
@@ -13568,6 +13895,7 @@ public final class KioskActivity extends Activity {
     }
 
     private void destroyWebView() {
+        unreachable = null;
         releaseCameraFromPage();
         mainHandler.removeCallbacks(overlayTask);
         cancelOverlayPickUp();
@@ -13670,14 +13998,18 @@ public final class KioskActivity extends Activity {
      * taps keep working under it. Nothing while this activity is not in front.
      */
     private void showIdentify() {
-        if (!inFront) {
+        // App lock: drawn in a window of its own straight over the app (AppLock.showOver).
+        boolean overApp = !inFront && AppLock.appUp;
+        if (!inFront && !overApp) {
             return;
         }
         FrameLayout content = findViewById(android.R.id.content);
         if (content == null) {
             return;
         }
-        if (identifyOverlay != null && identifyOverlay.getParent() != content) {
+        if (identifyOverlay != null && identifyOverApp != overApp) {
+            endIdentify();
+        } else if (identifyOverlay != null && !overApp && identifyOverlay.getParent() != content) {
             endIdentify();
         }
         if (identifyOverlay == null) {
@@ -13692,9 +14024,16 @@ public final class KioskActivity extends Activity {
             label.setPadding(pad, pad, pad, pad);
             label.setClickable(false);
             label.setFocusable(false);
-            content.addView(label, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            if (overApp) {
+                if (!AppLock.showOver(this, label, false)) {
+                    return;
+                }
+            } else {
+                content.addView(label, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
             identifyOverlay = label;
+            identifyOverApp = overApp;
         }
         identifyOverlay.setText(FleetProfile.panelName(this));
         identifyOverlay.bringToFront();
@@ -13706,8 +14045,15 @@ public final class KioskActivity extends Activity {
         mainHandler.removeCallbacks(identifyEnd);
         TextView label = identifyOverlay;
         identifyOverlay = null;
-        if (label != null && label.getParent() instanceof ViewGroup) {
+        if (label != null && identifyOverApp) {
+            AppLock.removeOver(this, label);
+        } else if (label != null && label.getParent() instanceof ViewGroup) {
             ((ViewGroup) label.getParent()).removeView(label);
+        }
+        identifyOverApp = false;
+        if (inFront) {
+            // Muralis came forward meanwhile: the app comes back once nothing is drawn.
+            scheduleLockedApp();
         }
     }
 
@@ -13718,6 +14064,8 @@ public final class KioskActivity extends Activity {
      * frame has to come, go, rise to the top or change colour.
      */
     private void syncStatusLight() {
+        // App lock: the frame over the app too, while the app is in front.
+        AppLock.syncLight(this);
         FrameLayout content = findViewById(android.R.id.content);
         StatusLight.State light = KioskConfig.statusLightOf(this);
         boolean dark = blackout != null && blackout.isShown();
@@ -14039,7 +14387,9 @@ public final class KioskActivity extends Activity {
     private void showPendingPopup() {
         Popup.Request request = Popup.pending;
         FrameLayout content = findViewById(android.R.id.content);
-        if (request == null || content == null || configurationVisible || !inFront) {
+        // App lock: drawn in a window of its own straight over the app (AppLock.showOver).
+        boolean overApp = !inFront && AppLock.appUp;
+        if (request == null || content == null || configurationVisible || (!inFront && !overApp)) {
             return;
         }
         Popup.pending = null;
@@ -14088,8 +14438,19 @@ public final class KioskActivity extends Activity {
                 Math.min(dp(720), metrics.widthPixels - dp(32)),
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         shade.addView(box, boxParams);
-        content.addView(shade, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (overApp) {
+            if (!AppLock.showOver(this, shade, true)) {
+                if (popupWeb != null) {
+                    popupWeb.destroy();
+                    popupWeb = null;
+                }
+                return;
+            }
+        } else {
+            content.addView(shade, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        popupOverApp = overApp;
         popupView = shade;
         if (request.seconds > 0) {
             mainHandler.postDelayed(popupEnd, request.seconds * 1000L);
@@ -14113,14 +14474,21 @@ public final class KioskActivity extends Activity {
         mainHandler.removeCallbacks(popupEnd);
         View popup = popupView;
         popupView = null;
-        if (popup != null && popup.getParent() instanceof ViewGroup) {
+        if (popup != null && popupOverApp) {
+            AppLock.removeOver(this, popup);
+        } else if (popup != null && popup.getParent() instanceof ViewGroup) {
             ((ViewGroup) popup.getParent()).removeView(popup);
         }
+        popupOverApp = false;
         WebView web = popupWeb;
         popupWeb = null;
         if (web != null) {
             web.stopLoading();
             web.destroy();
+        }
+        if (inFront) {
+            // Muralis came forward meanwhile: the app comes back once nothing is drawn.
+            scheduleLockedApp();
         }
     }
 
@@ -14189,7 +14557,7 @@ public final class KioskActivity extends Activity {
     }
 
     /** A coloured frame around the edge of the screen that never takes a touch. */
-    private static final class StatusLightFrame extends View {
+    static final class StatusLightFrame extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         StatusLightFrame(Context context, int width) {
@@ -14246,6 +14614,16 @@ public final class KioskActivity extends Activity {
                 break;
             case "kiosk.identify":
                 showIdentify();
+                break;
+            case "applock.changed":
+                // Chosen, changed or switched off elsewhere (the web admin): over the app, Muralis
+                // comes forward and its resume applies the choice; in front, at once.
+                if (AppLock.appUp) {
+                    AppLock.bringMuralisForward(this);
+                } else if (inFront && !configurationVisible) {
+                    applyKioskPolicy();
+                    scheduleLockedApp();
+                }
                 break;
             case "light.changed":
                 syncStatusLight();
@@ -14529,7 +14907,11 @@ public final class KioskActivity extends Activity {
         }
         boolean blocked = configurationVisible || recorderVisible || wizardVisible || kioskStopped
                 || launcherHandoff
-                || filmOn || asleep || !inFront || screensaverLayer == null;
+                || filmOn || asleep || (!inFront && !AppLock.appUp) || screensaverLayer == null;
+        if (AppLock.appUp && screensaverStage == ScreensaverPolicy.Stage.DASHBOARD) {
+            // App lock: the app's touches, seen by its corner window, keep the panel in use.
+            screensaverSinceMs = Math.max(screensaverSinceMs, AppLock.lastTouchUptimeMs);
+        }
         long now = android.os.SystemClock.uptimeMillis();
         switch (ScreensaverPolicy.next(settings, screensaverStage, blocked, screensaverSinceMs,
                 now)) {
@@ -14567,6 +14949,10 @@ public final class KioskActivity extends Activity {
             // the page would draw under the black view while reporting itself active.
             return false;
         }
+        // App lock: Ambient is Muralis's own screen, brought over the app whichever way it
+        // starts (idle, a wake into Ambient, a command), or it would report itself showing
+        // behind the app and later turn the display off under someone using it.
+        AppLock.bringMuralisForward(this);
         if (settings.mode.equals(screensaverShowing) && screensaverWebView != null) {
             screensaverWebView.onResume();
         }
@@ -15258,6 +15644,8 @@ public final class KioskActivity extends Activity {
      */
     private void recordLoadFailure(String description) {
         KioskRuntimeState.recordPageError(description);
+        showUnreachable(lastPageStarted != null ? lastPageStarted
+                : KioskConfig.load(this).dashboardUrl);
         recovery.recordLoadFailure(android.os.SystemClock.uptimeMillis());
         // A dashboard going down is exactly the kind of thing worth knowing about before the next
         // scheduled telemetry tick, which can now be as much as five minutes away.
@@ -15281,6 +15669,8 @@ public final class KioskActivity extends Activity {
         if (hung != null) {
             Log.w(TAG, "Dashboard " + hung + "; retrying");
             KioskRuntimeState.recordPageError(hung);
+            showUnreachable(lastPageStarted != null ? lastPageStarted
+                    : KioskConfig.load(this).dashboardUrl);
             KioskService.publishTelemetrySoon(this);
         }
         if (!recovery.retryDue(now) || !NetworkGate.isOnline(this)) {
@@ -15433,6 +15823,7 @@ public final class KioskActivity extends Activity {
             // reported moments ago; only a genuine success is recorded as one.
             if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
                 KioskRuntimeState.recordPageFinished(url);
+                hideUnreachable();
             }
             signedIn.clear();
             // Asked whatever the policy decided: the icons sit over what is actually on the

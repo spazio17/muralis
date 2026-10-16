@@ -18,6 +18,10 @@ final class KioskConfig {
     private static final String MQTT_USERNAME = "mqtt_username";
     private static final String MQTT_PASSWORD = "mqtt_password";
     private static final String MQTT_TLS = "mqtt_tls";
+    /** App lock (block 9): the package shown instead of the web page; empty when off. */
+    private static final String APP_LOCK = "app_lock";
+    /** What the chosen app is called, kept so a panel can name it after it was uninstalled. */
+    private static final String APP_LOCK_LABEL = "app_lock_label";
     /** The broker certificate a person trusted, its SHA-256 (MqttTls); empty when none. */
     private static final String MQTT_TLS_PIN = "mqtt_tls_pin";
     /** The client certificate's chain and key, in the SecretStore; its name and end in plain. */
@@ -144,6 +148,7 @@ final class KioskConfig {
     String mqttUsername = "";
     String mqttPassword = "";
     boolean mqttTls;
+    String appLockPackage = "";
     String mqttTlsPin = "";
     /** The client certificate's names and when it ends; empty and 0 when none is uploaded. */
     String mqttClientName = "";
@@ -246,6 +251,7 @@ final class KioskConfig {
         String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
         config.mqttTls = preferences.getBoolean(MQTT_TLS, false);
+        config.appLockPackage = preferences.getString(APP_LOCK, "");
         config.mqttTlsPin = preferences.getString(MQTT_TLS_PIN, "");
         config.mqttClientName = preferences.getString(MQTT_CLIENT_NAME, "");
         config.mqttClientUntil = preferences.getLong(MQTT_CLIENT_UNTIL, 0);
@@ -351,6 +357,15 @@ final class KioskConfig {
 
         Editor mqttPort(int value) {
             plain.putInt(MQTT_PORT, value);
+            return this;
+        }
+
+        /** The app App lock shows, a package name; empty switches App lock off. */
+        Editor appLock(String packageName) {
+            String chosen = packageName == null ? "" : packageName.trim();
+            plain.putString(APP_LOCK, chosen)
+                    .putString(APP_LOCK_LABEL, chosen.isEmpty() ? ""
+                            : AppLock.labelOf(storageContext, chosen));
             return this;
         }
 
@@ -1600,6 +1615,20 @@ final class KioskConfig {
     }
 
     /** The status light as stored, for the frame, the status document and both surfaces. */
+    /** App lock's chosen package, empty when off; a plain read, cheap enough for a layout pass. */
+    static String appLockOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(APP_LOCK, "");
+    }
+
+    /** What App lock's app was called when it was chosen; its package when that was not known. */
+    static String appLockLabelOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String label = prefs.getString(APP_LOCK_LABEL, "");
+        return label.isEmpty() ? prefs.getString(APP_LOCK, "") : label;
+    }
+
     static StatusLight.State statusLightOf(Context context) {
         SharedPreferences prefs = storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);

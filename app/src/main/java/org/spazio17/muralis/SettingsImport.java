@@ -121,6 +121,13 @@ final class SettingsImport {
                 return text.length() > 253 || text.contains(" ") ? "not a host name" : null;
             case "mqtt_port":
                 return number >= 1 && number <= 65535 ? null : "not between 1 and 65535";
+            case "app_lock":
+                if (!text.isEmpty() && AppLock.doors(context).contains(text)) {
+                    return "it opens Android's settings, a home screen or the Play Store";
+                }
+                return text.isEmpty()
+                        || context.getPackageManager().getLaunchIntentForPackage(text) != null
+                        ? null : "no installed app " + text + " has anything to open";
             case "mqtt_tls_pin":
                 return text.isEmpty() || CertificatePins.isFingerprint(text) ? null
                         : "not a certificate's SHA-256";
