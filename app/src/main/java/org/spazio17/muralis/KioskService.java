@@ -1837,7 +1837,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public void setDashboardUrl(String url) {
         KioskConfig.edit(this).dashboardUrl(url).apply();
-        sendUiCommand("kiosk.set_url", -1, url);
+        // Stored but not shown while the escape combinations are not recorded (the first-start
+        // wizard is up): nothing may cover the wizard before the way out exists, whichever
+        // surface sent the page, a fleet's shared settings, MQTT or the web admin. The wizard
+        // shows the stored page when it is done.
+        if (KioskConfig.load(this).escapeSequencesConfigured()) {
+            sendUiCommand("kiosk.set_url", -1, url);
+        }
         // dashboard_url rides in the telemetry document, and the web admin calls this method
         // directly, bypassing the dispatcher wrapper that republishes after accepted commands.
         // Without this line a URL saved on the page stayed stale in Home Assistant for up to a

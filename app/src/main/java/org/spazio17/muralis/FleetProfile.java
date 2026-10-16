@@ -100,6 +100,7 @@ final class FleetProfile {
         KioskService service = KioskService.liveService();
         switch (section) {
             case "dashboard":
+                // Stored but not shown at the welcome screen: KioskService.setDashboardUrl.
                 command(service, "kiosk.set_url", url(values, "dashboard_url"), null, null,
                         "dashboard_url", now, values, refused);
                 break;
@@ -290,6 +291,33 @@ final class FleetProfile {
         if (!refused.isEmpty()) {
             line += " Not applied here: " + String.join("; ", refused) + ".";
             Log.d(TAG, line);
+        }
+        return line;
+    }
+
+    /** For the welcome screen: the fleet this panel joined and what it sets here. */
+    static String joinedLine(Context context) {
+        String line = "Joined the fleet " + KioskConfig.fleetNameOf(context) + ".";
+        if (KioskConfig.fleetDocumentOf(context) == null) {
+            return line + " Its list of panels is on its way.";
+        }
+        List<String> set = new ArrayList<>();
+        List<String> notApplied = new ArrayList<>();
+        for (String section : FleetDocument.SECTIONS) {
+            if (FleetServer.profileSource(section).isEmpty()) {
+                continue;
+            }
+            String label = FleetDocument.sectionLabel(section).toLowerCase(java.util.Locale.ROOT);
+            (KioskRuntimeState.fleetProfileRefused(section).isEmpty() ? set : notApplied).add(label);
+        }
+        if (!set.isEmpty()) {
+            line += " It sets here: " + String.join(", ", set) + ".";
+        } else if (notApplied.isEmpty()) {
+            line += " It shares no settings yet.";
+        }
+        if (!notApplied.isEmpty()) {
+            line += " Not applied here: " + String.join(", ", notApplied)
+                    + " (see the Fleet section).";
         }
         return line;
     }

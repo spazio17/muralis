@@ -6296,12 +6296,32 @@ public final class KioskActivity extends Activity {
     private static final int JOIN_CLOSE_SECONDS = 5;
 
     private void showJoinPage() {
-        currentScreen = this::showJoinPage;
+        showJoinPage(false);
+    }
+
+    /**
+     * The same page from the first-start wizard ({@code fromWizard}): a panel at its welcome
+     * screen is joined to the fleet before anything locks, and goes back to the wizard, which
+     * then says what the fleet sets here, to record its combinations (never shared).
+     */
+    private void showJoinPage(boolean fromWizard) {
+        currentScreen = () -> showJoinPage(fromWizard);
         Runnable close = () -> {
             FleetJoin.shared.close();
-            showSettings();
+            if (fromWizard) {
+                showFirstStartWizard();
+            } else {
+                showSettings();
+            }
         };
         LinearLayout page = subPage("Join a fleet", close);
+        if (fromWizard) {
+            // Still the wizard for the service: no screensaver and no automation may run over
+            // a panel whose way out is not recorded yet, whatever the fleet's settings say.
+            wizardVisible = true;
+            configurationVisible = false;
+            publishOperatorScreenState();
+        }
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -6333,7 +6353,7 @@ public final class KioskActivity extends Activity {
         Button again = tonalButton(theme, "New code");
         again.setOnClickListener(view -> {
             FleetServer.openJoinCode(this);
-            showJoinPage();
+            showJoinPage(fromWizard);
         });
         Button done = textButton(theme, "Close");
         done.setOnClickListener(view -> close.run());
@@ -6360,7 +6380,11 @@ public final class KioskActivity extends Activity {
                         closing[0] = JOIN_CLOSE_SECONDS;
                     } else if (--closing[0] <= 0) {
                         FleetJoin.shared.close();
-                        showDashboard(KioskConfig.load(KioskActivity.this).dashboardUrl);
+                        if (fromWizard) {
+                            showFirstStartWizard();
+                        } else {
+                            showDashboard(KioskConfig.load(KioskActivity.this).dashboardUrl);
+                        }
                         return;
                     }
                     done.setText("Close (" + closing[0] + ")");
@@ -9816,9 +9840,70 @@ public final class KioskActivity extends Activity {
 
         Button start = primaryButton(theme, "Record the first one");
         start.setOnClickListener(view -> showWizardRecorder(false));
+        // Joining the fleet from here (block 12e): one scan from another panel, before anything
+        // locks, and the fleet's shared settings apply at once. The combinations stay this
+        // panel's own: never shared, so the way out is recorded here whatever the fleet says.
         page.addView(buttonRow(start), matchWrap());
+        // Or, as a sign-in page offers its other way: a rule, "or", a rule, then the join. Free
+        // on this side (decided 2026-10-08: being joined is free, adding a panel is Pro).
+        LinearLayout or = new LinearLayout(this);
+        or.setOrientation(LinearLayout.HORIZONTAL);
+        or.setGravity(Gravity.CENTER_VERTICAL);
+        for (int side = 0; side < 2; side++) {
+            if (side == 1) {
+                TextView word = new FlushText(this);
+                word.setTextColor(theme.subtext);
+                word.setTextSize(13);
+                word.setText("or");
+                word.setPadding(dp(12), 0, dp(12), 0);
+                or.addView(word, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            View rule = new View(this);
+            rule.setBackgroundColor(theme.outlineVariant);
+            or.addView(rule, new LinearLayout.LayoutParams(0, dp(1), 1));
+        }
+        LinearLayout.LayoutParams orParams = matchWrap();
+        orParams.topMargin = dp(20);
+        orParams.bottomMargin = dp(4);
+        page.addView(or, orParams);
+        Button join = tonalButton(theme, "Join a fleet");
+        join.setOnClickListener(view -> {
+            FleetServer.openJoinCode(this);
+            showJoinPage(true);
+        });
+        page.addView(buttonRow(join), matchWrap());
+        TextView joined = new FlushText(this);
+        joined.setTextColor(theme.subtext);
+        joined.setTextSize(13);
+        page.addView(joined, matchWrap());
+        // The endpoint comes up after this screen on a fresh install, and the fleet's list and
+        // settings land after the join: followed once a second while the screen is up.
+        boolean[] attached = {false};
+        Runnable follow = new Runnable() {
+            @Override
+            public void run() {
+                // Stops once the page has been on screen and left it; before the first layout
+                // pass it is not attached yet, and that is no reason to stop.
+                attached[0] |= page.isAttachedToWindow();
+                if (attached[0] && !page.isAttachedToWindow()) {
+                    return;
+                }
+                String fleet = KioskConfig.fleetNameOf(KioskActivity.this);
+                boolean canJoin = fleet.isEmpty() && KioskRuntimeState.fleetListening();
+                join.setVisibility(canJoin ? View.VISIBLE : View.GONE);
+                or.setVisibility(canJoin ? View.VISIBLE : View.GONE);
+                String line = fleet.isEmpty() ? "" : FleetProfile.joinedLine(KioskActivity.this);
+                if (!line.contentEquals(joined.getText())) {
+                    joined.setText(line);
+                }
+                joined.setVisibility(line.isEmpty() ? View.GONE : View.VISIBLE);
+                mainHandler.postDelayed(this, 1_000);
+            }
+        };
 
         setContentView(scrollPage(theme, page));
+        follow.run();
         currentScreen = this::showFirstStartWizard;
     }
 

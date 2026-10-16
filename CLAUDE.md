@@ -51,7 +51,9 @@ on purpose.
   panels or with the whole fleet: groups are sets of panels with the same job, made with a name
   the person gives; a panel ticks the groups it belongs to and may stop following what the whole
   fleet shares; a shared section is applied on every panel of its scope, a group winning over
-  the whole fleet, and a change to it on any of them reaches all of them.
+  the whole fleet, and a change to it on any of them reaches all of them. A panel at its welcome
+  screen can be joined before anything locks; the fleet's shared settings are stored, and shown
+  once the panel's own escape combinations, never shared, are recorded.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 
