@@ -2907,6 +2907,13 @@ public final class KioskActivity extends Activity {
                 config.volumeButtonsDisabled);
         volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
                 applyLiveSetting(editor -> editor.volumeButtonsDisabled(checked)));
+        // The Fleet section's switch, made here so the live sync below can follow it.
+        CompoundButton fleetAnnounceInput = themedSwitch(theme,
+                "Announce this panel on the network", config.fleetAnnounce);
+        fleetAnnounceInput.setOnCheckedChangeListener((button, checked) -> {
+            applyLiveSetting(editor -> editor.fleetAnnounce(checked));
+            KioskService.reloadConfiguration(this);
+        });
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -2933,6 +2940,8 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(volumeButtonsInput,
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
+                    setCheckedIfChanged(fleetAnnounceInput,
+                            KioskConfig.fleetAnnounceOf(KioskActivity.this));
                     checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
@@ -3117,6 +3126,9 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fleetStateParams.topMargin = dp(10);
         fleetCard.addView(fleetState, fleetStateParams);
+        LinearLayout.LayoutParams fleetAnnounceParams = matchWrapClose();
+        fleetAnnounceParams.topMargin = dp(14);
+        fleetCard.addView(fleetAnnounceInput, fleetAnnounceParams);
         int adminPortNow = config.httpPort;
         memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(memberPortInput, theme);

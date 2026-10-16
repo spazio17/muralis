@@ -24,6 +24,8 @@ final class KioskConfig {
     private static final String STATS_OVERLAY = "stats_overlay";
     /** Whether the device's volume buttons do nothing while Muralis is on screen. */
     private static final String VOLUME_BUTTONS_DISABLED = "volume_buttons_disabled";
+    /** Whether the panel announces itself on the local network for the fleet; on by default. */
+    private static final String FLEET_ANNOUNCE = "fleet_announce";
     /** Where the stats overlay was dragged to; see statsOverlayPlace and KioskActivity. */
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
@@ -127,6 +129,7 @@ final class KioskConfig {
      * volume.
      */
     boolean volumeButtonsDisabled;
+    boolean fleetAnnounce = true;
     String appearanceColour = Palettes.COLOURS[0];
     String separators = SEPARATORS_LINES;
     /**
@@ -217,6 +220,7 @@ final class KioskConfig {
         config.httpUploadUntil = certificate.httpUploadUntil;
         config.statsOverlay = statsOverlayEnabled(context);
         config.volumeButtonsDisabled = volumeButtonsDisabled(context);
+        config.fleetAnnounce = fleetAnnounceOf(context);
         config.appearanceColour = appearanceColourOf(context);
         config.separators = separatorsOf(context);
         config.orientation = orientationOf(context);
@@ -320,6 +324,11 @@ final class KioskConfig {
 
         Editor statsOverlay(boolean value) {
             plain.putBoolean(STATS_OVERLAY, value);
+            return this;
+        }
+
+        Editor fleetAnnounce(boolean value) {
+            plain.putBoolean(FLEET_ANNOUNCE, value);
             return this;
         }
 
@@ -987,6 +996,13 @@ final class KioskConfig {
         return key.replace('_', ' ') + " must be " + String.join(", ",
                 java.util.Arrays.copyOf(offered, offered.length - 1)) + " or "
                 + offered[offered.length - 1];
+    }
+
+    /** Narrow reader for Announce this panel on the network, asked at every reload. */
+    static boolean fleetAnnounceOf(Context context) {
+        return storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(FLEET_ANNOUNCE, true);
     }
 
     /** Narrow reader for Disable volume buttons, asked on every press of one. */

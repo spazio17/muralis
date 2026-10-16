@@ -1414,6 +1414,12 @@ final class HttpAdminServer {
                         }
                     }
                 }
+                if (form.containsKey("fleet_announce")) {
+                    KioskConfig.edit(context).fleetAnnounce(isTrue(form.get("fleet_announce")))
+                            .apply();
+                    // The service announces the panel or withdraws it on a reload.
+                    KioskService.reloadConfiguration(context);
+                }
                 if (form.containsKey("volume_buttons_disabled")) {
                     KioskConfig.edit(context)
                             .volumeButtonsDisabled(isTrue(form.get("volume_buttons_disabled")))
@@ -3331,7 +3337,12 @@ final class HttpAdminServer {
                 + field("number", "fleet_port", "Member port", Integer.toString(config.fleetPort))
                 + "<p class=\"hint" + (KioskRuntimeState.fleetListening() ? "" : " bad")
                 + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
-                + sectionFormEnd("Save");
+                + sectionFormEnd("Save")
+                // An instant switch, outside the form, like the volume buttons' in This panel.
+                + "<div class=\"switches\">"
+                + switchRow("fleet-announce", "Announce this panel on the network",
+                        " data-setting=\"fleet_announce\"", config.fleetAnnounce)
+                + "</div>";
     }
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */

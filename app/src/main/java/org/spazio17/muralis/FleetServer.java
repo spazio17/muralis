@@ -157,6 +157,11 @@ final class FleetServer {
                         ? "not started yet" : KioskRuntimeState.fleetDownReason());
     }
 
+    /** This panel's key hash, as announced on the network and answered by {@code GET /fleet}. */
+    String spki() {
+        return identity.spki;
+    }
+
     /** The port this endpoint listens on. */
     int port() {
         return port;

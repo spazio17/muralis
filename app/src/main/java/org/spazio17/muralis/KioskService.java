@@ -113,6 +113,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private volatile HttpAdminServer httpAdminServer;
     /** The member endpoint (the fleet design); null until the fleet key can be read. */
     private volatile FleetServer fleetServer;
+    /** The panel's announcement on the local network while it stands, and what it announced. */
+    private android.net.nsd.NsdManager.RegistrationListener announcement;
+    private String announcedKey = "";
+    private static final long ANNOUNCE_RETRY_MS = 60_000L;
     private SystemStats systemStats;
     private NetworkGate startupGate;
     /**
@@ -743,6 +747,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         httpAdminServer = new HttpAdminServer(this, this);
         httpAdminServer.start();
         startFleetServer();
+        refreshAnnouncement();
     }
 
     /**
@@ -755,6 +760,106 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (fleetServer == null) {
             fleetServer = FleetServer.start(this);
         }
+    }
+
+    /**
+     * Announces this panel as {@code _muralis._tcp} on the local network (mDNS, Android's own
+     * service discovery) while its member endpoint listens and the person has not switched the
+     * announcement off, with its id, name, member port, key hash and the protocol version, so a
+     * console can find it. Announced again when any of them changes, and a minute after Android
+     * reports a failed announcement (its discovery daemon can fail while the device boots);
+     * withdrawn when the endpoint stops. Main thread.
+     */
+    private void refreshAnnouncement() {
+        FleetServer server = fleetServer;
+        boolean on = server != null && KioskConfig.fleetAnnounceOf(this);
+        String id = KioskConfig.deviceIdOf(this);
+        String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() : "";
+        if (key.equals(announcedKey)) {
+            return;
+        }
+        stopAnnouncement();
+        // The application's NsdManager: each one starts a thread that never ends on Android 8 to
+        // 11, so one per service instance would leak one at every Close and reopen.
+        android.net.nsd.NsdManager nsd =
+                getApplicationContext().getSystemService(android.net.nsd.NsdManager.class);
+        if (!on || nsd == null) {
+            return;
+        }
+        // A DNS-SD instance name holds at most 63 bytes and an id up to 64 characters; the name
+        // is only for people browsing, the full id travels in the TXT record.
+        String name = "Muralis " + id;
+        while (name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 63) {
+            name = name.substring(0, name.length() - 1);
+        }
+        android.net.nsd.NsdManager.RegistrationListener listener =
+                new android.net.nsd.NsdManager.RegistrationListener() {
+                    @Override
+                    public void onServiceRegistered(android.net.nsd.NsdServiceInfo registered) {
+                        Log.i(TAG, "Announced on the network as " + registered.getServiceName());
+                    }
+
+                    @Override
+                    public void onRegistrationFailed(android.net.nsd.NsdServiceInfo failed,
+                            int error) {
+                        Log.w(TAG, "The network announcement failed: " + error
+                                + "; trying again in a minute");
+                        android.net.nsd.NsdManager.RegistrationListener self = this;
+                        mainHandler.postDelayed(() -> {
+                            if (announcement == self) {
+                                announcement = null;
+                                announcedKey = "";
+                                refreshAnnouncement();
+                            }
+                        }, ANNOUNCE_RETRY_MS);
+                    }
+
+                    @Override
+                    public void onServiceUnregistered(android.net.nsd.NsdServiceInfo gone) {
+                        Log.i(TAG, "Network announcement withdrawn");
+                    }
+
+                    @Override
+                    public void onUnregistrationFailed(android.net.nsd.NsdServiceInfo gone,
+                            int error) {
+                        Log.w(TAG, "The network announcement could not be withdrawn: " + error);
+                    }
+                };
+        try {
+            // Inside the try: a TXT entry past 255 bytes (an id stored before ids were checked)
+            // throws here, and an announcement is not worth a crash at every start.
+            android.net.nsd.NsdServiceInfo info = new android.net.nsd.NsdServiceInfo();
+            info.setServiceName(name);
+            info.setServiceType("_muralis._tcp");
+            info.setPort(server.port());
+            info.setAttribute("id", id);
+            info.setAttribute("name", id);
+            info.setAttribute("port", Integer.toString(server.port()));
+            info.setAttribute("spki", server.spki());
+            info.setAttribute("v", "1");
+            nsd.registerService(info, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, listener);
+            announcement = listener;
+            announcedKey = key;
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "The network announcement was refused", refused);
+        }
+    }
+
+    private void stopAnnouncement() {
+        if (announcement == null) {
+            return;
+        }
+        android.net.nsd.NsdManager nsd =
+                getApplicationContext().getSystemService(android.net.nsd.NsdManager.class);
+        if (nsd != null) {
+            try {
+                nsd.unregisterService(announcement);
+            } catch (RuntimeException alreadyGone) {
+                Log.d(TAG, "Network announcement already withdrawn");
+            }
+        }
+        announcement = null;
+        announcedKey = "";
     }
 
     /** Lets go of an old member port; {@link #restartControllers} starts the endpoint again. */
@@ -852,6 +957,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             Log.i(TAG, "Web admin configuration changed, server restarted");
         }
         startFleetServer();
+        refreshAnnouncement();
     }
 
     private void stopControllers() {
@@ -864,6 +970,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (httpAdminServer != null) {
             httpAdminServer.stop();
         }
+        stopAnnouncement();
         if (fleetServer != null) {
             fleetServer.stop();
             fleetServer = null;
@@ -1117,6 +1224,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("fleet_port", config.fleetPort);
                 applied.put("fleet_listening", KioskRuntimeState.fleetListening());
                 applied.put("fleet_state", FleetServer.stateLine());
+                applied.put("fleet_announce", config.fleetAnnounce);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());
@@ -1617,6 +1725,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // Only once the controllers have started: before that, startControllersNow does it.
             if (startupGate == null || !startupGate.isPending()) {
                 startFleetServer();
+                refreshAnnouncement();
             }
         }
     };
