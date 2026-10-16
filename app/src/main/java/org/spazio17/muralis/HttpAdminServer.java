@@ -1029,6 +1029,32 @@ final class HttpAdminServer {
             writeResponse(output, 405, "application/json", bytes(
                     "{\"status\":\"rejected\",\"detail\":\"use POST; GET cannot change state\"}"),
                     java.util.Collections.singletonMap("Allow", "POST"));
+        } else if (path.equals("/api/fleet/code") && method.equals("POST")) {
+            // Join a fleet and New code (block 11c): the open code, or a new one when none is.
+            FleetServer.openJoinCode(context);
+            writeResponse(output, 200, "application/json",
+                    bytes(FleetServer.joinState(context).toString()));
+        } else if (path.equals("/api/fleet/code/close") && method.equals("POST")) {
+            FleetJoin.shared.close();
+            writeResponse(output, 200, "application/json",
+                    bytes(FleetServer.joinState(context).toString()));
+        } else if (path.equals("/api/fleet/code.svg") && method.equals("GET")) {
+            String content = FleetServer.joinQrContent(context);
+            String svg = content == null ? null : QrCodes.svg(content);
+            if (svg == null) {
+                writeResponse(output, 404, "text/plain", bytes("No join code is open"));
+            } else {
+                writeResponse(output, 200, "image/svg+xml", bytes(svg),
+                        java.util.Collections.singletonMap("Cache-Control", "no-store"));
+            }
+        } else if (path.equals("/api/fleet/leave") && method.equals("POST")) {
+            String fleet = KioskConfig.fleetNameOf(context);
+            if (!KioskConfig.fleetIdOf(context).isEmpty()) {
+                KioskConfig.edit(context).leaveFleet().apply();
+                Log.i(TAG, "Left the fleet " + fleet + " from the web admin");
+            }
+            writeResponse(output, 200, "application/json",
+                    bytes(FleetServer.joinState(context).toString()));
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
@@ -3342,7 +3368,35 @@ final class HttpAdminServer {
                 + "<div class=\"switches\">"
                 + switchRow("fleet-announce", "Announce this panel on the network",
                         " data-setting=\"fleet_announce\"", config.fleetAnnounce)
-                + "</div>";
+                + "</div>"
+                + fleetMembership();
+    }
+
+    /**
+     * Whether this panel is in a fleet, Join a fleet or Leave the fleet, and the Join code as the
+     * panel's Join screen shows it (block 11c), drawn by admin_stats.js from the status poll.
+     */
+    private String fleetMembership() {
+        boolean member = !KioskConfig.fleetIdOf(context).isEmpty();
+        return "<div class=\"fleet-member\"><p id=\"fleet-member\">"
+                + escapeHtml(FleetServer.memberLine(context)) + "</p>"
+                + "<div class=\"actions\">"
+                + "<button type=\"button\" class=\"tonal\" id=\"fleet-join-open\""
+                + (member ? " hidden" : "")
+                + (KioskRuntimeState.fleetListening() ? "" : " disabled") + ">Join a fleet</button>"
+                + "<button type=\"button\" class=\"danger\" id=\"fleet-leave\""
+                + (member ? "" : " hidden") + ">Leave the fleet</button></div>"
+                + "<p class=\"hint bad\" id=\"fleet-error\" role=\"alert\" hidden></p>"
+                + "<div class=\"fleet-join\" id=\"fleet-join\" hidden>"
+                + "<img id=\"fleet-join-qr\" alt=\"Join code as a QR code\" width=\"240\""
+                + " height=\"240\" hidden>"
+                + "<p class=\"join-code\" id=\"fleet-join-code\"></p>"
+                + "<p class=\"hint\" id=\"fleet-join-detail\"></p>"
+                + "<p id=\"fleet-join-line\"></p>"
+                + "<div class=\"actions\">"
+                + "<button type=\"button\" class=\"text\" id=\"fleet-join-close\">Close</button>"
+                + "<button type=\"button\" class=\"tonal\" id=\"fleet-join-new\" hidden>New"
+                + " code</button></div></div></div>";
     }
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */

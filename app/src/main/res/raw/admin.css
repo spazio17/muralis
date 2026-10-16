@@ -169,6 +169,13 @@ ul.list,ul.pictures,ul.folders{list-style:none;margin:0;padding:0}
 ul.list li{display:flex;align-items:center;gap:12px;min-height:56px;padding:4px 0;border-bottom:1px solid var(--outline-variant)}
 ul.list li form.use{display:inline-flex;align-items:center;margin:0}
 .switches{margin-top:16px}
+/* The Fleet box's membership and Join code (block 11c): the panel's Join screen, centred, the
+   QR dark on white with its quiet zone in both themes, the digits large and evenly spaced. */
+.fleet-member{margin-top:16px}.fleet-member>p{margin:0}.fleet-member>.actions{margin-top:12px}
+.fleet-join{text-align:center;margin-top:16px}.fleet-member [hidden]{display:none}
+.fleet-join img{display:block;margin:0 auto;width:240px;height:240px;image-rendering:pixelated;border-radius:8px}
+.join-code{font-size:34px;line-height:44px;font-variant-numeric:tabular-nums;margin:12px 0 0}
+.fleet-join .actions{justify-content:center;margin-top:16px}
 ul.list li:last-child{border-bottom:0}
 ul.list li.two{min-height:72px}
 .lead{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;color:var(--subtext)}

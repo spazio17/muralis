@@ -14,6 +14,47 @@ function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}
 function dur(ms){if(ms==null||ms<0){return '--';}
 var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
 return d>0?(d+'d'+h+'h'):(h>0?(h+'h'+m+'m'):(m+'m'));}
+// The Fleet box's membership and the Join code (block 11c), in the panel's words. The code's
+// box shows once Join a fleet was pressed here; Close ends the code on the panel too, and a
+// join made meanwhile turns the box into its sentence. A poll that left before a press here
+// carries the state from before it, so only a poll sent after the press repaints the box.
+var fleetJoinShown=false,fleetName='',fleetJoinAt=0,pollSentAt=0;
+function fleetJoinPaint(j){
+var member=document.getElementById('fleet-member');
+if(!j||!member){return;}
+fleetName=j.fleet||'';
+if(member.textContent!==j.member_line){member.textContent=j.member_line;}
+var join=document.getElementById('fleet-join-open'),leave=document.getElementById('fleet-leave');
+join.hidden=j.member;join.disabled=!j.can_join;leave.hidden=!j.member;
+var box=document.getElementById('fleet-join');box.hidden=!fleetJoinShown;
+if(!fleetJoinShown){return;}
+var code=document.getElementById('fleet-join-code'),qr=document.getElementById('fleet-join-qr');
+if(code.textContent!==j.code){code.textContent=j.code;}code.hidden=!j.code;
+var detail=document.getElementById('fleet-join-detail');detail.textContent=j.code?j.detail:'';detail.hidden=!j.code;
+var line=document.getElementById('fleet-join-line');if(line.textContent!==j.line){line.textContent=j.line;}
+// Fetched again when the address or the port changes too, not only the code.
+var src=j.qr&&j.code?'/api/fleet/code.svg?c='+encodeURIComponent(j.code+' '+j.detail):'';
+if(qr.getAttribute('data-src')!==src){qr.setAttribute('data-src',src);if(src){qr.src=src;}else{qr.removeAttribute('src');}}
+qr.hidden=!src;
+document.getElementById('fleet-join-new').hidden=j.member||!!j.code||j.locked||!j.can_join;}
+// A refusal is said under the buttons, in the words the status poll uses for the same answers.
+function fleetJoinPost(path){
+var error=document.getElementById('fleet-error');error.hidden=true;fleetJoinAt=Date.now();
+return fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:''})
+.then(function(r){
+if(r.status===401||r.status===403){throw new Error('Not done: this browser was not authorised. Reload the page to sign in again.');}
+if(r.status===429){throw new Error('Not done: the panel is refusing this machine after too many failed sign-ins. Wait a minute, then reload.');}
+if(!r.ok){throw new Error('Not done: the panel answered '+r.status+'.');}
+return r.json();})
+.then(fleetJoinPaint)
+.catch(function(e){error.textContent=e&&e.message&&e.message.indexOf('Not done')===0?e.message:'The panel did not answer. It may be rebooting or off the network.';error.hidden=false;});}
+if(document.getElementById('fleet-join-open')){
+document.getElementById('fleet-join-open').addEventListener('click',function(){fleetJoinShown=true;fleetJoinPost('/api/fleet/code');});
+document.getElementById('fleet-join-new').addEventListener('click',function(){fleetJoinPost('/api/fleet/code');});
+document.getElementById('fleet-join-close').addEventListener('click',function(){fleetJoinShown=false;fleetJoinPost('/api/fleet/code/close');});
+document.getElementById('fleet-leave').addEventListener('click',function(){
+if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps its own settings. It can join again with a new code.')){return;}
+fleetJoinPost('/api/fleet/leave');});}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};
 // The same eight rows, in the same order, as the tablet's own overlay; see
@@ -121,6 +162,7 @@ followLook('appearance_colour',cfg.appearance_colour,'data-palette');followLook(
 // The Fleet box's line: whether the member endpoint listens, in the panel's words.
 var fst=document.getElementById('fleet-state');
 if(fst&&cfg.fleet_state!=null){if(fst.textContent!==cfg.fleet_state){fst.textContent=cfg.fleet_state;}fst.classList.toggle('bad',!cfg.fleet_listening);}
+if(pollSentAt>fleetJoinAt){fleetJoinPaint(cfg.fleet_join);}
 // The settings page's Appearance row says the same in words.
 var sap=document.getElementById('sum-appearance');
 if(sap&&cfg.appearance_summary!=null&&sap.textContent!==cfg.appearance_summary){sap.textContent=cfg.appearance_summary;}
@@ -255,7 +297,7 @@ stale.forEach(function(el){var fresh=doc.getElementById(el.id);if(!fresh||editin
 el.innerHTML=fresh.innerHTML;el.setAttribute('data-lists',fresh.getAttribute('data-lists')||'');});
 if(window.muralisBindEditors){window.muralisBindEditors(document);}})
 .catch(function(){}).then(function(){swapping=false;});}
-function poll(){requestedAt=Date.now();fetch('/api/stats',{credentials:'same-origin'})
+function poll(){requestedAt=Date.now();pollSentAt=requestedAt;fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){
 if(r.status===401||r.status===403){stop('stats unavailable: this browser was not authorised. Reload the page to sign in again.');return null;}
 if(r.status===429){stop('stats unavailable: the panel is refusing this machine after too many failed sign-ins. Wait a minute, then reload.');return null;}

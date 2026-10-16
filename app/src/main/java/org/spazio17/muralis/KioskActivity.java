@@ -15,6 +15,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.ColorStateList;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
@@ -2914,6 +2915,24 @@ public final class KioskActivity extends Activity {
             applyLiveSetting(editor -> editor.fleetAnnounce(checked));
             KioskService.reloadConfiguration(this);
         });
+        // Whether this panel is in a fleet, and its one button, Join or Leave (block 11c); made
+        // here so the sync below can follow a join or a leave made from elsewhere.
+        TextView fleetMember = new FlushText(this);
+        fleetMember.setTextSize(14);
+        // Two buttons rather than one relabelled, so Leave is red like every button that ends
+        // something, on both surfaces; each asks the stored state when it is tapped.
+        Button fleetJoinButton = tonalButton(theme, "Join a fleet");
+        fleetJoinButton.setOnClickListener(view -> {
+            FleetServer.openJoinCode(this);
+            showJoinPage();
+        });
+        Button fleetLeaveButton = dangerButton(theme, "Leave the fleet");
+        fleetLeaveButton.setOnClickListener(view -> {
+            if (!KioskConfig.fleetIdOf(this).isEmpty()) {
+                confirmLeaveFleet();
+            }
+        });
+        paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, theme);
 
         // Follow these controls while the screen sits open, so a change made over MQTT or from the
         // web admin shows up here rather than leaving two surfaces disagreeing. The web admin has
@@ -2942,6 +2961,7 @@ public final class KioskActivity extends Activity {
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
                     setCheckedIfChanged(fleetAnnounceInput,
                             KioskConfig.fleetAnnounceOf(KioskActivity.this));
+                    paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, theme);
                     checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
@@ -3129,6 +3149,10 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams fleetAnnounceParams = matchWrapClose();
         fleetAnnounceParams.topMargin = dp(14);
         fleetCard.addView(fleetAnnounceInput, fleetAnnounceParams);
+        LinearLayout.LayoutParams fleetMemberParams = matchWrap();
+        fleetMemberParams.topMargin = dp(14);
+        fleetCard.addView(fleetMember, fleetMemberParams);
+        fleetCard.addView(buttonRow(fleetJoinButton, fleetLeaveButton), matchWrapClose());
         int adminPortNow = config.httpPort;
         memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(memberPortInput, theme);
@@ -5953,6 +5977,148 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
+    }
+
+    /**
+     * The Fleet section's membership line and its button: Join a fleet, which needs the member
+     * endpoint listening, or Leave the fleet; from what is stored now.
+     */
+    private void paintFleetMembership(TextView line, Button join, Button leave, KioskTheme theme) {
+        boolean member = !KioskConfig.fleetIdOf(this).isEmpty();
+        String text = FleetServer.memberLine(this);
+        if (!text.contentEquals(line.getText())) {
+            line.setText(text);
+        }
+        line.setTextColor(member ? theme.text : theme.subtext);
+        join.setVisibility(member ? View.GONE : View.VISIBLE);
+        join.setEnabled(KioskRuntimeState.fleetListening());
+        leave.setVisibility(member ? View.VISIBLE : View.GONE);
+    }
+
+    /** Asks before this panel leaves its fleet; it keeps its own settings, id and name. */
+    private void confirmLeaveFleet() {
+        String fleet = KioskConfig.fleetNameOf(this);
+        showConfirm("Leave the fleet " + fleet + "?",
+                "This panel stops trusting the fleet's panels and keeps its own settings. It can"
+                        + " join again with a new code.",
+                "Leave", true, () -> {
+                    KioskConfig.edit(this).leaveFleet().apply();
+                    Log.i(TAG, "Left the fleet " + fleet + " from the panel");
+                    showSettings();
+                }, this::showSettings);
+    }
+
+    /**
+     * The Join screen (fleet design, section 5): a code a manager scans or types, used once and
+     * valid ten minutes, as a QR and as digits, with this panel's key in short form and where it
+     * listens. Join a fleet and New code open the code (FleetServer.openJoinCode); drawing the
+     * screen never does, so a redraw cannot open one nobody asked for. Its arrow and Close end
+     * the code, as the web admin's Close does. Once a second it follows a new code, the lockout,
+     * the expiry and the join itself.
+     */
+    private void showJoinPage() {
+        currentScreen = this::showJoinPage;
+        Runnable close = () -> {
+            FleetJoin.shared.close();
+            showSettings();
+        };
+        LinearLayout page = subPage("Join a fleet", close);
+        KioskTheme theme = currentTheme();
+        LinearLayout box = card(theme, null);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        // Dark on white with its quiet zone in both themes: what a camera reads.
+        ImageView qr = new ImageView(this);
+        qr.setScaleType(ImageView.ScaleType.CENTER);
+        qr.setContentDescription("Join code as a QR code");
+        box.addView(qr, new LinearLayout.LayoutParams(dp(240), dp(240)));
+        TextView code = new FlushText(this);
+        code.setTextSize(34);
+        code.setTextColor(theme.text);
+        code.setFontFeatureSettings("tnum");
+        code.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams codeParams = matchWrap();
+        codeParams.topMargin = dp(12);
+        box.addView(code, codeParams);
+        TextView detail = new FlushText(this);
+        detail.setTextSize(13);
+        detail.setTextColor(theme.subtext);
+        detail.setGravity(Gravity.CENTER);
+        box.addView(detail, matchWrap());
+        TextView state = new FlushText(this);
+        state.setTextSize(16);
+        state.setTextColor(theme.text);
+        state.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams stateParams = matchWrap();
+        stateParams.topMargin = dp(16);
+        box.addView(state, stateParams);
+        Button again = tonalButton(theme, "New code");
+        again.setOnClickListener(view -> {
+            FleetServer.openJoinCode(this);
+            showJoinPage();
+        });
+        Button done = textButton(theme, "Close");
+        done.setOnClickListener(view -> close.run());
+        LinearLayout buttons = buttonRow(done, again);
+        box.addView(buttons, matchWrapClose());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, matchWrap());
+        page.addView(column, singlePanelParams());
+        String[] drawn = {null};
+        Runnable paint = new Runnable() {
+            @Override
+            public void run() {
+                if (!page.isAttachedToWindow() && drawn[0] != null) {
+                    return;
+                }
+                long at = FleetServer.joinClock();
+                boolean member = !KioskConfig.fleetIdOf(KioskActivity.this).isEmpty();
+                String content = member ? null : FleetServer.joinQrContent(KioskActivity.this);
+                String open = member ? null : FleetJoin.shared.code(at);
+                if (content == null) {
+                    qr.setImageDrawable(null);
+                } else if (!content.equals(drawn[0])) {
+                    qr.setImageBitmap(qrBitmap(content, dp(240)));
+                }
+                drawn[0] = content == null ? "" : content;
+                qr.setVisibility(content == null ? View.GONE : View.VISIBLE);
+                code.setText(open == null ? "" : FleetJoin.grouped(open));
+                code.setVisibility(open == null ? View.GONE : View.VISIBLE);
+                detail.setText(FleetServer.joinDetail(KioskRuntimeState.fleetKey(),
+                        KioskRuntimeState.lastFacts() == null ? ""
+                                : KioskRuntimeState.lastFacts().ipAddress,
+                        KioskRuntimeState.fleetPort()));
+                detail.setVisibility(open == null ? View.GONE : View.VISIBLE);
+                String line = FleetServer.joinLine(KioskActivity.this);
+                if (!line.contentEquals(state.getText())) {
+                    state.setText(line);
+                }
+                // Gone during the lockout, whose sentence says when a new code can be made.
+                again.setVisibility(member || open != null || FleetJoin.shared.lockedUntil(at) > 0
+                        || !KioskRuntimeState.fleetListening() ? View.GONE : View.VISIBLE);
+                mainHandler.postDelayed(this, 1_000);
+            }
+        };
+        paint.run();
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** A QR code as a bitmap of whole pixels per module, no wider than {@code width}. */
+    private static Bitmap qrBitmap(String content, int width) {
+        com.google.zxing.common.BitMatrix modules = QrCodes.matrix(content);
+        if (modules == null) {
+            return null;
+        }
+        int count = modules.getWidth();
+        int scale = Math.max(1, width / count);
+        int size = count * scale;
+        int[] pixels = new int[size * size];
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                pixels[y * size + x] = modules.get(x / scale, y / scale) ? Color.BLACK : Color.WHITE;
+            }
+        }
+        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888);
     }
 
     /**
@@ -10168,6 +10334,7 @@ public final class KioskActivity extends Activity {
 
         LinearLayout creditsCard = card(theme, "Credits");
         addAboutRow(creditsCard, theme, "Eclipse Paho", "MQTT client (EPL/EDL)");
+        addAboutRow(creditsCard, theme, "ZXing", "QR codes (Apache 2.0)");
         // The parking page shows the Android robot, shared by Google under CC BY 3.0, and this is
         // the credit for it: author, licence, modified, like the two rows above it. Here rather than
         // on the parking page itself, because the page is a full-screen illustration and this is

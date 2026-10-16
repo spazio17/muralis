@@ -38,10 +38,11 @@ import javax.net.ssl.SSLSocketFactory;
  * presents is one this panel trusts and has not revoked ({@link FleetTls}); nothing else
  * authenticates a fleet call, and plain HTTP is dropped, not redirected.
  *
- * <p>Block 10 of the 0.7 plan, so it answers one read-only request, {@code GET /fleet}: this
- * panel's id, its fleet key and the fleet it is in (none yet). The join, the document and the
- * commands are the next blocks. One request per connection, small and bounded: a fleet call is a
- * few hundred bytes between panels, never a browser's burst.
+ * <p>It answers {@code GET /fleet} (this panel's id, its fleet key and the fleet it is in),
+ * {@code POST /fleet/join} (the one route an unknown key reaches, while a join code is open:
+ * {@link FleetJoin}) and {@code POST /fleet/leave}. The document and the commands are the next
+ * blocks. One request per connection, small and bounded: a fleet call is a few hundred bytes
+ * between panels, never a browser's burst.
  */
 final class FleetServer {
     private static final String TAG = "MuralisFleet";
@@ -56,6 +57,7 @@ final class FleetServer {
     private static final int CONNECTION_DEADLINE_MS = 8_000;
     private static final int MAX_LINE = 2_048;
     private static final int MAX_HEADER_LINES = 50;
+    private static final int MAX_BODY = 4_096;
 
     private final Context context;
     private final FleetIdentity identity;
@@ -74,7 +76,10 @@ final class FleetServer {
         this.identity = identity;
         this.serverSocket = serverSocket;
         this.port = serverSocket.getLocalPort();
-        this.tls = FleetTls.context(identity.key, identity.certificate, this::admits)
+        // While a join code is open, an unknown key gets through the handshake too; past it, only
+        // the join route serves such a key, and only for the right code (handle).
+        this.tls = FleetTls.context(identity.key, identity.certificate,
+                spki -> admits(spki) || FleetJoin.shared.isOpen(joinClock()))
                 .getSocketFactory();
     }
 
@@ -141,6 +146,7 @@ final class FleetServer {
         Log.i(TAG, "Member endpoint listening on port " + port + ", fleet key "
                 + FleetTls.shortForm(identity.spki));
         KioskRuntimeState.publishFleetState(true, port, "");
+        KioskRuntimeState.publishFleetKey(identity.spki);
         return server;
     }
 
@@ -155,6 +161,109 @@ final class FleetServer {
                 ? "Listening on port " + KioskRuntimeState.fleetPort()
                 : "Not listening: " + (KioskRuntimeState.fleetDownReason().isEmpty()
                         ? "not started yet" : KioskRuntimeState.fleetDownReason());
+    }
+
+    /**
+     * The clock of the join code and its lockout: time since boot, which a change of the
+     * device's date cannot stretch or cut, as {@link AuthThrottle} counts its lockouts.
+     */
+    static long joinClock() {
+        return android.os.SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * Opens a join code for Join a fleet and New code, on either surface, and for nothing else:
+     * never for a member or while the endpoint is down, and the open code is kept, so both
+     * surfaces show the same one.
+     */
+    static void openJoinCode(Context context) {
+        long now = joinClock();
+        if (KioskConfig.fleetIdOf(context).isEmpty() && KioskRuntimeState.fleetListening()
+                && FleetJoin.shared.code(now) == null) {
+            FleetJoin.shared.open(now);
+        }
+    }
+
+    /** The Fleet section's membership line on both surfaces. */
+    static String memberLine(Context context) {
+        return KioskConfig.fleetIdOf(context).isEmpty() ? "Not in a fleet"
+                : "Member of the fleet " + KioskConfig.fleetNameOf(context);
+    }
+
+    /**
+     * The Join screen's sentence on both surfaces, worded once: what the open code is for and
+     * until when, why there is none, or that this panel joined.
+     */
+    static String joinLine(Context context) {
+        long now = joinClock();
+        if (!KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "This panel joined the fleet " + KioskConfig.fleetNameOf(context) + ".";
+        }
+        if (!KioskRuntimeState.fleetListening()) {
+            return stateLine() + ".";
+        }
+        long locked = FleetJoin.shared.lockedUntil(now);
+        if (locked > 0) {
+            return "Five wrong codes were tried. A new code can be made at "
+                    + timeOf(context, locked, now) + ".";
+        }
+        if (FleetJoin.shared.code(now) == null) {
+            return "The code expired or was closed.";
+        }
+        int wrong = FleetJoin.shared.wrongCodes();
+        // Said on the screen, so a person at the panel sees a typo, or a stranger guessing.
+        return (wrong == 0 ? "" : wrong + (wrong == 1 ? " wrong code was" : " wrong codes were")
+                + " tried. ")
+                + "Scan the code with the panel or phone that manages the fleet, or type the numbers"
+                + " there. It works once, until "
+                + timeOf(context, FleetJoin.shared.expiresAt(), now) + ".";
+    }
+
+    /** The QR's content for the open code, or null when none is open. */
+    static String joinQrContent(Context context) {
+        long now = joinClock();
+        String code = FleetJoin.shared.code(now);
+        SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+        String address = facts == null ? "" : facts.ipAddress;
+        if (code == null || !KioskRuntimeState.fleetListening() || address.isEmpty()) {
+            return null;
+        }
+        return FleetJoin.qrContent(KioskConfig.deviceIdOf(context), address,
+                KioskRuntimeState.fleetPort(), KioskRuntimeState.fleetKey(), code);
+    }
+
+    /** What both surfaces draw the Join screen from, for the web page as JSON. */
+    static JSONObject joinState(Context context) {
+        long now = joinClock();
+        try {
+            String code = FleetJoin.shared.code(now);
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            return new JSONObject()
+                    .put("member", !KioskConfig.fleetIdOf(context).isEmpty())
+                    .put("member_line", memberLine(context))
+                    .put("fleet", KioskConfig.fleetNameOf(context))
+                    .put("can_join", KioskRuntimeState.fleetListening())
+                    .put("code", code == null ? "" : FleetJoin.grouped(code))
+                    .put("qr", joinQrContent(context) != null)
+                    .put("detail", joinDetail(KioskRuntimeState.fleetKey(),
+                            facts == null ? "" : facts.ipAddress, KioskRuntimeState.fleetPort()))
+                    .put("locked", FleetJoin.shared.lockedUntil(now) > 0)
+                    .put("line", joinLine(context));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** "Key 1a2b3c4d, at 192.0.2.5 port 8081": what the Join screen says under the code. */
+    static String joinDetail(String key, String address, int port) {
+        return "Key " + FleetTls.shortForm(key) + (address.isEmpty() ? "" : ", at " + address)
+                + " port " + port;
+    }
+
+    /** A moment on the join clock as the time of day, worded as the device words times. */
+    private static String timeOf(Context context, long at, long now) {
+        return android.text.format.DateFormat.getTimeFormat(context)
+                .format(new java.util.Date(System.currentTimeMillis() + (at - now)));
     }
 
     /** This panel's key hash, as announced on the network and answered by {@code GET /fleet}. */
@@ -256,20 +365,15 @@ final class FleetServer {
                 Log.d(TAG, "Member endpoint handshake refused: " + refused.getMessage());
                 return;
             }
-            // Judged again after the handshake, as Syncthing and KDE Connect do: a resumed TLS
-            // session presents no certificate and never reaches the trust manager, so a key
-            // revoked since its first call would otherwise get back in.
             String caller = callerOf(channel);
-            if (!admits(caller)) {
-                Log.i(TAG, "Member endpoint refused key " + FleetTls.shortForm(caller));
-                return;
-            }
             InputStream input = channel.getInputStream();
             OutputStream output = channel.getOutputStream();
             String requestLine = readLine(input);
             if (requestLine == null) {
                 return;
             }
+            int contentLength = 0;
+            String lengthSeen = null;
             for (int lines = 0; ; lines++) {
                 String header = readLine(input);
                 if (header == null || header.isEmpty()) {
@@ -279,20 +383,62 @@ final class FleetServer {
                     respond(output, 431, error("too many header lines"));
                     return;
                 }
+                int colon = header.indexOf(':');
+                if (colon > 0 && header.substring(0, colon).trim()
+                        .equalsIgnoreCase("Content-Length")) {
+                    // As the web admin reads it: digits only, and one value however often sent.
+                    String value = header.substring(colon + 1).trim();
+                    if (!value.matches("[0-9]{1,10}")
+                            || (lengthSeen != null && !lengthSeen.equals(value))) {
+                        respond(output, 400, error("Content-Length must be one whole number"));
+                        return;
+                    }
+                    lengthSeen = value;
+                    contentLength = (int) Math.min(Long.parseLong(value), Integer.MAX_VALUE);
+                }
             }
             String[] parts = requestLine.split(" ");
             if (parts.length != 3 || !parts[2].startsWith("HTTP/1.")) {
                 respond(output, 400, error("not an HTTP/1.1 request"));
                 return;
             }
+            boolean joinRoute = "/fleet/join".equals(parts[1]);
+            // Judged again after the handshake, as Syncthing and KDE Connect do: a resumed TLS
+            // session presents no certificate and never reaches the trust manager, so a key
+            // revoked since its first call would otherwise get back in. The join route is the
+            // one place an unknown key is served; the code authenticates it there.
+            if (!joinRoute && !admits(caller)) {
+                Log.i(TAG, "Member endpoint refused key " + FleetTls.shortForm(caller));
+                respond(output, 403, error("this key is not a member of this panel's fleet"));
+                return;
+            }
+            if (contentLength > MAX_BODY) {
+                respond(output, 413, error("the body must be at most " + MAX_BODY + " bytes"));
+                return;
+            }
+            byte[] body = readBody(input, contentLength);
             Log.i(TAG, "Fleet call " + parts[0] + " " + parts[1] + " from "
                     + FleetTls.shortForm(caller));
-            if (!"/fleet".equals(parts[1])) {
-                respond(output, 404, error("no such endpoint"));
-            } else if (!"GET".equals(parts[0])) {
-                respond(output, 405, error("only GET"));
+            if ("/fleet".equals(parts[1])) {
+                if ("GET".equals(parts[0])) {
+                    respond(output, 200, fleetState());
+                } else {
+                    respond(output, 405, error("only GET"));
+                }
+            } else if (joinRoute) {
+                if ("POST".equals(parts[0])) {
+                    join(caller, body, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
+            } else if ("/fleet/leave".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    leave(caller, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
             } else {
-                respond(output, 200, fleetState());
+                respond(output, 404, error("no such endpoint"));
             }
         } catch (IOException | RuntimeException failed) {
             Log.d(TAG, "Member endpoint connection ended: " + failed.getMessage());
@@ -305,18 +451,82 @@ final class FleetServer {
     }
 
     /**
-     * What {@code GET /fleet} answers: who this panel is and which fleet it is in. No fleet yet:
-     * the join is block 11. Called only after the caller's key was admitted.
+     * What {@code GET /fleet} and a join answer: who this panel is and which fleet it is in.
+     * Called only after the caller's key was admitted, or its code was.
      */
     private JSONObject fleetState() {
         try {
+            String fleetId = KioskConfig.fleetIdOf(context);
             return new JSONObject()
                     .put("id", KioskConfig.deviceIdOf(context))
                     .put("spki", identity.spki)
-                    .put("fleet", JSONObject.NULL);
+                    .put("fleet", fleetId.isEmpty() ? JSONObject.NULL : new JSONObject()
+                            .put("id", fleetId)
+                            .put("name", KioskConfig.fleetNameOf(context)));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /**
+     * {@code POST /fleet/join} with {@code {"code": "12345678", "fleet": {"id", "name"}}}: the
+     * caller, whose key this panel does not know yet, proves with the code on this panel's Join
+     * screen that a person here agreed, and becomes the first manager this panel trusts. A panel
+     * already in a fleet refuses, naming it. The code is checked last, so a malformed request
+     * never costs one of the five tries.
+     */
+    private void join(String caller, byte[] body, OutputStream output) throws IOException {
+        String joined = KioskConfig.fleetNameOf(context);
+        if (!KioskConfig.fleetIdOf(context).isEmpty()) {
+            respond(output, 409, error("this panel is already in the fleet " + joined
+                    + "; it must leave that fleet first"));
+            return;
+        }
+        JSONObject request;
+        try {
+            request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException notJson) {
+            respond(output, 400, error("the body must be a JSON object"));
+            return;
+        }
+        JSONObject fleet = request.optJSONObject("fleet");
+        String fleetId = fleet == null ? "" : fleet.optString("id", "");
+        String fleetName = fleet == null ? "" : fleet.optString("name", "");
+        String invalid = FleetJoin.validateFleet(fleetId, fleetName);
+        if (invalid != null) {
+            respond(output, 400, error(invalid));
+            return;
+        }
+        switch (FleetJoin.shared.attempt(request.optString("code", ""), joinClock())) {
+            case ADMITTED:
+                KioskConfig.edit(context).joinFleet(fleetId, fleetName, caller).apply();
+                Log.i(TAG, "Joined the fleet " + fleetName.trim() + ", manager key "
+                        + FleetTls.shortForm(caller));
+                respond(output, 200, fleetState());
+                return;
+            case WRONG:
+                Log.w(TAG, "Join refused: wrong code from key " + FleetTls.shortForm(caller));
+                respond(output, 403, error("wrong code; after five, this panel takes no code for"
+                        + " ten minutes"));
+                return;
+            case LOCKED:
+                Log.w(TAG, "Join refused: too many wrong codes");
+                respond(output, 429, error("too many wrong codes; this panel takes no code for"
+                        + " ten minutes"));
+                return;
+            default:
+                respond(output, 410, error("no join code is open on this panel; open one in its"
+                        + " Fleet section"));
+        }
+    }
+
+    /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */
+    private void leave(String caller, OutputStream output) throws IOException {
+        String name = KioskConfig.fleetNameOf(context);
+        KioskConfig.edit(context).leaveFleet().apply();
+        Log.i(TAG, "Left the fleet " + name + " at the request of key "
+                + FleetTls.shortForm(caller));
+        respond(output, 200, fleetState());
     }
 
     private static JSONObject error(String reason) {
@@ -349,11 +559,29 @@ final class FleetServer {
         switch (status) {
             case 200: return "OK";
             case 400: return "Bad Request";
+            case 403: return "Forbidden";
             case 404: return "Not Found";
             case 405: return "Method Not Allowed";
+            case 409: return "Conflict";
+            case 410: return "Gone";
+            case 413: return "Content Too Large";
+            case 429: return "Too Many Requests";
             case 431: return "Request Header Fields Too Large";
             default: return "Error";
         }
+    }
+
+    private static byte[] readBody(InputStream input, int length) throws IOException {
+        byte[] body = new byte[length];
+        int read = 0;
+        while (read < length) {
+            int got = input.read(body, read, length - read);
+            if (got == -1) {
+                throw new IOException("the body ended early");
+            }
+            read += got;
+        }
+        return body;
     }
 
     private static String readLine(InputStream input) throws IOException {

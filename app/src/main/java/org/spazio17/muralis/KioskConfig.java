@@ -332,6 +332,24 @@ final class KioskConfig {
             return this;
         }
 
+        /** Joined: the fleet, and its manager's key as the one key this panel trusts so far. */
+        Editor joinFleet(String id, String name, String managerSpki) {
+            plain.putString(FLEET_ID, id);
+            plain.putString(FLEET_NAME, name.trim());
+            plain.putString(FLEET_TRUSTED, managerSpki);
+            plain.putString(FLEET_REVOKED, "");
+            return this;
+        }
+
+        /** Left: no fleet, and no key trusted or revoked; the panel keeps its id and name. */
+        Editor leaveFleet() {
+            plain.remove(FLEET_ID);
+            plain.remove(FLEET_NAME);
+            plain.remove(FLEET_TRUSTED);
+            plain.remove(FLEET_REVOKED);
+            return this;
+        }
+
         Editor volumeButtonsDisabled(boolean value) {
             plain.putBoolean(VOLUME_BUTTONS_DISABLED, value);
             return this;
@@ -879,8 +897,21 @@ final class KioskConfig {
         return hashes;
     }
 
+    /** The fleet this panel joined, its id and name as its manager sent them; empty when none. */
+    static String fleetIdOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(FLEET_ID, "");
+    }
+
+    static String fleetNameOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(FLEET_NAME, "");
+    }
+
     private static final String FLEET_TRUSTED = "fleet_trusted";
     private static final String FLEET_REVOKED = "fleet_revoked";
+    private static final String FLEET_ID = "fleet_id";
+    private static final String FLEET_NAME = "fleet_name";
 
     /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */
     static final class OverlayPlace {

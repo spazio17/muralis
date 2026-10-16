@@ -230,6 +230,17 @@ final class KioskRuntimeState {
         return fleetDownReason;
     }
 
+    private static volatile String fleetKey = "";
+
+    /** This panel's key hash once the member endpoint has read it, for the Join screen. */
+    static void publishFleetKey(String spki) {
+        fleetKey = spki == null ? "" : spki;
+    }
+
+    static String fleetKey() {
+        return fleetKey;
+    }
+
     private static volatile boolean httpAdminSecure;
     private static volatile String httpAdminFingerprint = "";
     private static volatile String httpAdminCertificate = "";

@@ -1225,6 +1225,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("fleet_listening", KioskRuntimeState.fleetListening());
                 applied.put("fleet_state", FleetServer.stateLine());
                 applied.put("fleet_announce", config.fleetAnnounce);
+                // Membership and the Join code as the panel shows them; admin only, never on MQTT.
+                applied.put("fleet_join", FleetServer.joinState(this));
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());
