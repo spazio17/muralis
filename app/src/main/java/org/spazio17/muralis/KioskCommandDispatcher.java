@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -21,14 +21,19 @@ final class KioskCommandDispatcher {
     }
 
     /**
-     * The screensaver's settings as commands, so every one of them can be set over MQTT and HTTP
-     * and not only in the two user interfaces (Juri, 2026-09-09). One executor method rather
+     * Ambient's settings as commands, so every one of them can be set over MQTT and HTTP
+     * and not only in the two user interfaces (2026-09-09). One executor method rather
      * than a dozen: the validation is here, where the repo keeps it, and the executor's job is
      * one {@code KioskConfig.edit} call.
      */
     enum ScreensaverSetting {
         MODE, IDLE_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
         PICTURE_FIT, CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
+    }
+
+    /** The page's browser options a command sets, checked here against BrowserOptions. */
+    enum BrowserOption {
+        USER_AGENT, TEXT_SIZE, PAGE_ZOOM, DARK, BACK_AFTER, PAGE_CAMERA, PAGE_MICROPHONE
     }
 
     static final class Result {
@@ -67,12 +72,25 @@ final class KioskCommandDispatcher {
 
         CommandArgs(int brightnessPercent, String url, Boolean enabled, String value,
                 String beacon) {
+            this(brightnessPercent, url, enabled, value, beacon,
+                    java.util.Collections.<String, String>emptyMap());
+        }
+
+        CommandArgs(int brightnessPercent, String url, Boolean enabled, String value,
+                String beacon, java.util.Map<String, String> extra) {
             this.brightnessPercent = brightnessPercent;
             this.url = url;
             this.enabled = enabled;
             this.value = value;
             this.beacon = beacon;
+            this.extra = extra;
         }
+
+        /**
+         * Every argument by name as text, for the commands with more than the fields above
+         * (panel.notify's title, seconds, wake, chime); empty when the caller sent none.
+         */
+        final java.util.Map<String, String> extra;
     }
 
     interface Executor {
@@ -148,7 +166,31 @@ final class KioskCommandDispatcher {
         void setWebAdminEnabled(boolean enabled);
 
         /**
-         * Shows the screensaver now, whatever the idle time. Returns why it cannot, or null: the
+         * Stores the status light, already checked against {@link StatusLight}: on or off, its
+         * colour (null keeps the stored one) and its brightness (-1 keeps the stored one), and
+         * has the frame drawn or taken away.
+         */
+        void setStatusLight(boolean on, Integer color, int percent);
+
+        /** Draws a pop-up over the screen; the display was woken first if asked. */
+        void showPopup(Popup.Request request);
+
+        /**
+         * A camera's pop-up: shown on demand, or for a doorbell's trigger by the
+         * camera's mode and cooldown. Returns why it does not show, or null.
+         */
+        String cameraPopup(String name, boolean trigger);
+
+        /**
+         * Stores one browser option, already checked and canonical (a number as digits, the
+         * dark look as true or false), and has the page take it. Returns why it cannot, or
+         * null: the dark look needs Android 10, where the WebView reads it from its theme, and
+         * the page's camera and microphone need Android's permission first.
+         */
+        String setBrowserOption(BrowserOption option, String value);
+
+        /**
+         * Shows Ambient now, whatever the idle time. Returns why it cannot, or null: the
          * mode is off or has no address, the kiosk is stopped, Muralis is not on screen, the
          * display is off, or the wizard or the escape recorder is up; the shape of
          * {@link #setBrightness}. With the settings open it shows as a preview.
@@ -162,7 +204,7 @@ final class KioskCommandDispatcher {
         String setScreensaverPlaylist(String name);
 
         /**
-         * Stores one screensaver setting. The value arrives checked and canonical: this switch
+         * Stores one Ambient setting. The value arrives checked and canonical: this switch
          * validates every one of them against {@link ScreensaverPolicy} and
          * {@link PictureSources} before calling, so the executor only writes.
          */
@@ -206,9 +248,9 @@ final class KioskCommandDispatcher {
         String screenshot();
 
         /**
-         * Shows this panel's name over whatever is on its screen for a few seconds and says it,
-         * so a person can tell which wall is which; null when done, else why not: the panel is
-         * not showing its screen, or the name could not be said.
+         * Shows this panel's name over whatever is on its screen for a few seconds, so a person
+         * can tell which wall is which; null when done, else why not: the panel is not showing
+         * its screen.
          */
         String identify();
 
@@ -324,6 +366,100 @@ final class KioskCommandDispatcher {
                     return rejected("a real screen-off needs the device-owner install");
                 }
                 return accepted();
+            case "light.on": {
+                // The Home Assistant light's three values in one call: the colour in value as
+                // r,g,b and the brightness in percent, each optional and each kept when absent.
+                Integer color = null;
+                if (args.value != null && !args.value.trim().isEmpty()) {
+                    color = StatusLight.parseColor(args.value);
+                    if (color == null) {
+                        return rejected(StatusLight.COLOR_RULE);
+                    }
+                }
+                if (args.brightnessPercent != -1 && !StatusLight.isPercent(args.brightnessPercent)) {
+                    return rejected(StatusLight.PERCENT_RULE);
+                }
+                executor.setStatusLight(true, color, args.brightnessPercent);
+                return accepted();
+            }
+            case "light.off":
+                executor.setStatusLight(false, null, -1);
+                return accepted();
+            case "camera.show":
+            case "camera.trigger": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must name the camera");
+                }
+                String problem = executor.cameraPopup(args.value.trim(),
+                        "camera.trigger".equals(command));
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "panel.notify": {
+                java.util.Map<String, String> named = new java.util.HashMap<>(args.extra);
+                if (args.url != null) {
+                    named.put("url", args.url);
+                }
+                String[] problem = new String[1];
+                Popup.Request request = Popup.parse(args.value, named, problem);
+                if (request == null) {
+                    return rejected(problem[0]);
+                }
+                if (request.wake) {
+                    executor.displayWake();
+                }
+                executor.showPopup(request);
+                return accepted();
+            }
+            case "browser.user_agent": {
+                String agent = args.value == null ? "" : args.value;
+                String problem = BrowserOptions.checkUserAgent(agent);
+                if (problem != null) {
+                    return rejected(problem);
+                }
+                executor.setBrowserOption(BrowserOption.USER_AGENT, agent.trim());
+                return accepted();
+            }
+            case "browser.text_size": {
+                Integer percent = BrowserOptions.parseTextSize(args.value);
+                if (percent == null) {
+                    return rejected(BrowserOptions.TEXT_SIZE_RULE);
+                }
+                executor.setBrowserOption(BrowserOption.TEXT_SIZE, String.valueOf(percent));
+                return accepted();
+            }
+            case "browser.page_zoom": {
+                Integer percent = BrowserOptions.parsePageZoom(args.value);
+                if (percent == null) {
+                    return rejected(BrowserOptions.ZOOM_RULE);
+                }
+                executor.setBrowserOption(BrowserOption.PAGE_ZOOM, String.valueOf(percent));
+                return accepted();
+            }
+            case "browser.back_after": {
+                Integer seconds = BrowserOptions.parseBackAfter(args.value);
+                if (seconds == null) {
+                    return rejected(BrowserOptions.BACK_AFTER_RULE);
+                }
+                executor.setBrowserOption(BrowserOption.BACK_AFTER, String.valueOf(seconds));
+                return accepted();
+            }
+            case "browser.page_camera":
+            case "browser.page_microphone": {
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                String problem = executor.setBrowserOption("browser.page_camera".equals(command)
+                        ? BrowserOption.PAGE_CAMERA : BrowserOption.PAGE_MICROPHONE,
+                        String.valueOf(args.enabled));
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "browser.dark_look":
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                String darkProblem = executor.setBrowserOption(BrowserOption.DARK,
+                        String.valueOf(args.enabled));
+                return darkProblem == null ? accepted() : rejected(darkProblem);
             case "webadmin.enabled":
                 if (args.enabled == null) {
                     return rejected("enabled must be true or false");
@@ -631,7 +767,7 @@ final class KioskCommandDispatcher {
      * closed on a bind error, so the admin's own settings box was able to switch the admin off,
      * undoable only from the tablet. This floor applies exclusively to the port this app binds
      * itself, the web admin's and the member endpoint's alike; the broker port is a remote port
-     * and keeps the full 1-65535 range. The two own ports are never the same (Juri, 2026-10-08):
+     * and keeps the full 1-65535 range. The two own ports are never the same (2026-10-08):
      * a new choice equal to the other is refused, while a pair that already collides (a web
      * admin on 8081 before the member port existed) can still be saved unchanged, its member
      * endpoint staying off until one of them moves.

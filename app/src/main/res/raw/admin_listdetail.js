@@ -27,15 +27,18 @@ if(add){e.preventDefault();select('');return;}
 var li=e.target.closest('.nav li[data-id]');
 if(li){e.preventDefault();select(li.dataset.id);}
 });
-// A row without a link is chosen with the keyboard too: Enter or Space, as on a button.
+// A row without a link is chosen with the keyboard too: Enter or Space, as on a button. The
+// row's words are the button, not the row, which holds a switch of its own: a control inside a
+// control is one a screen reader cannot name (axe, 2026-10-15).
 function reachable(){var on=wide.matches;
 Array.prototype.forEach.call(ld.querySelectorAll('.nav li[data-id]'),function(li){
 if(li.querySelector('a')){return;}
-if(on){li.setAttribute('tabindex','0');li.setAttribute('role','button');}else{li.removeAttribute('tabindex');li.removeAttribute('role');}});}
+var words=li.querySelector('.text')||li;
+if(on){words.setAttribute('tabindex','0');words.setAttribute('role','button');}else{words.removeAttribute('tabindex');words.removeAttribute('role');}});}
 ld.addEventListener('keydown',function(e){
 if(!wide.matches||(e.key!=='Enter'&&e.key!==' ')){return;}
 var li=e.target.closest?e.target.closest('.nav li[data-id]'):null;
-if(li&&e.target===li){e.preventDefault();select(li.dataset.id);}});
+if(li&&e.target.getAttribute('role')==='button'){e.preventDefault();select(li.dataset.id);}});
 reachable();if(wide.addEventListener){wide.addEventListener('change',reachable);}
 if(wide.matches&&title&&ld.dataset.title&&ld.dataset.page==='detail'){title.textContent=ld.dataset.title;}
 })();

@@ -2,7 +2,7 @@
 //
 // Every folder tap, tick, name and delete used to be a form post that re-rendered the whole
 // settings page, so the browser threw the document away and came back at the top: pick a folder,
-// scroll down, tick one picture, and you are at the top again (Juri, 2026-09-10, C3 and C4). The
+// scroll down, tick one picture, and you are at the top again (2026-09-10, C3 and C4). The
 // server answers all of it twice over now, as a page for a browser with no scripting and as
 // fragments plus one sentence for this file, so with scripting nothing navigates at all. Three
 // fragments since 2026-09-19: the Folders panel, the Content panel and what the playlist holds.
@@ -35,7 +35,7 @@ var n=10;
 var startN=/[?&]n=(\d+)/.exec(window.location.search);
 if(startN){n=parseInt(startN[1],10);}
 
-// A success says nothing on this page (Juri, 2026-09-19: "Playlist updated." on every added
+// A success says nothing on this page (2026-09-19: "Playlist updated." on every added
 // picture was noise): the panels re-read after it are the whole answer. Only a refusal is said,
 // red, and "Uploading..." while a file is on its way, which is a state and not a verdict.
 function say(message,ok){
@@ -44,10 +44,10 @@ if(ok===true||!message){banner.classList.add('gone');if(hideTimer){clearTimeout(
 banner.firstChild.textContent=message;
 banner.classList.toggle('bad',ok===false);
 banner.classList.remove('gone');
-// Five seconds, and a cross for anyone who wants it gone sooner. A banner that stays until the
-// next action is a banner that is still claiming something after it stopped being true.
+// News goes after five seconds; a refusal stays until it is closed or the next action succeeds,
+// so it is read rather than missed (the UI round, 2026-10-15).
 if(hideTimer){clearTimeout(hideTimer);}
-hideTimer=setTimeout(function(){banner.classList.add('gone');},5000);
+if(ok!==false){hideTimer=setTimeout(function(){banner.classList.add('gone');},5000);}
 }
 if(banner){banner.querySelector('.dismiss').addEventListener('click',function(){
 banner.classList.add('gone');
@@ -78,7 +78,7 @@ catch(ignored){}})
 
 // Which branches of the folder tree are open, kept here and painted over every fragment the
 // server sends: the server opens the top of the volume and the way down to the open folder, this
-// starts from that once and then the reader's carets decide (Juri, 2026-09-23). A folder's parent
+// starts from that once and then the reader's carets decide (2026-09-23). A folder's parent
 // is the path with its last segment taken off, as the panel reads it.
 var branches=null;
 function parentOf(path){var t=path.replace(/\/$/,''),i=t.lastIndexOf('/');return i<0?'':t.slice(0,i+1);}
@@ -124,7 +124,7 @@ if(caret){event.preventDefault();caret.click();}
 
 // Opening a folder opens its branch and the way down to it, so a tap never hides what it reached;
 // a second tap on the folder that is already open closes its branch again, so the row does what
-// the caret does and nobody has to find the caret (Juri, 2026-09-23: "make it dumb-proof").
+// the caret does and nobody has to find the caret (2026-09-23: "make it dumb-proof").
 function openFolder(target){
 var row=null,rows=folders.querySelectorAll('li.row');
 for(var i=0;i<rows.length;i++){if(rows[i].dataset.at===target){row=rows[i];break;}}
@@ -191,7 +191,7 @@ var sent=posting.then(send,send);
 posting=sent.catch(function(){});
 return sent;}
 
-// A picture's name is stored when its box lets go of the focus, or on Enter (Juri, 2026-09-25:
+// A picture's name is stored when its box lets go of the focus, or on Enter (2026-09-25:
 // the save tick inside the box went). Only a change is sent, and the list is not re-read after
 // it: nothing in it changes, and re-reading would take the focus out of the next box somebody
 // has already moved to. A refusal is said and the box keeps what was typed.
@@ -237,8 +237,8 @@ function markSome(){var all=document.getElementById('select-all');
 if(all){all.indeterminate=!!all.dataset.some;}}
 markSome();paintTree();
 
-// The order of what the playlist holds, which is the order the screensaver shows it in (Juri,
-// 2026-09-25). A picture is dragged by its grip, the six dots drawn beside it, or by its
+// The order of what the playlist holds, which is the order the screensaver shows it in
+// (2026-09-25). A picture is dragged by its grip, the six dots drawn beside it, or by its
 // thumbnail: pointer events, so a mouse, a finger and a pen all do the same thing, and the
 // neighbours slide aside while it moves. Nothing is posted
 // until the drop, and then the whole order goes at once, which the panel refuses whole if it is

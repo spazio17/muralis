@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -16,6 +16,11 @@ public final class KioskCommandDispatcherTest {
                 .status.equals("accepted"), "kiosk.reload should be accepted");
         require(executor.calls.contains("kioskReload"), "kiosk.reload did not reach executor");
 
+        testStatusLightCommands();
+        testBrowserOptions();
+        testCertificatePins();
+        testPopups();
+        testPopupCameras();
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
@@ -210,7 +215,7 @@ public final class KioskCommandDispatcherTest {
                 "a port above 65535 must be refused");
         require(KioskCommandDispatcher.validateAdminPort(80, 8080, 8081).contains("1024"),
                 "the refusal must name the allowed range");
-        // The web admin and the member endpoint never share a port (Juri, 2026-10-08).
+        // The web admin and the member endpoint never share a port (2026-10-08).
         require(KioskCommandDispatcher.validateAdminPort(8081, 8080, 8081) != null,
                 "the member port must be refused as a new web admin port");
         require(KioskCommandDispatcher.validateAdminPort(8082, 8080, 8081) == null,
@@ -612,7 +617,7 @@ public final class KioskCommandDispatcherTest {
 
     /**
      * Every screensaver setting is a command, because MQTT and HTTP must be able to set what the
-     * two user interfaces can (Juri, 2026-09-09). The table below is the whole vocabulary: a
+     * two user interfaces can (2026-09-09). The table below is the whole vocabulary: a
      * good value forwarded canonically, a bad one refused with its rule.
      */
     private static void testScreensaverSettingCommands() {
@@ -715,7 +720,255 @@ public final class KioskCommandDispatcherTest {
                 "an unknown playlist must be refused with the names that exist: " + refused.detail);
     }
 
+    /**
+     * The status light: light.on with a colour and a brightness, each optional and each checked
+     * before the executor runs, and light.off.
+     */
+    private static void testStatusLightCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("light.on",
+                new KioskCommandDispatcher.CommandArgs(40, null, null, " 0, 200 ,0 "), executor)
+                .status.equals("accepted"), "light.on with a colour and a brightness");
+        require(Boolean.TRUE.equals(executor.lightOn) && executor.lightColor == 0x00C800
+                && executor.lightPercent == 40, "the light's three values reached the executor");
+        require(KioskCommandDispatcher.dispatch("light.on",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
+                && executor.lightColor == null && executor.lightPercent == -1,
+                "light.on alone keeps the stored colour and brightness");
+        for (String bad : new String[] {"red", "255,0", "256,0,0", "-1,0,0", "1,2,3,4", "#ff0000"}) {
+            executor.lightOn = null;
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch("light.on",
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, bad), executor);
+            require(result.status.equals("rejected") && result.detail.equals(StatusLight.COLOR_RULE)
+                    && executor.lightOn == null, "colour " + bad + " refused with its rule");
+        }
+        for (int bad : new int[] {0, 101, -2}) {
+            executor.lightOn = null;
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch("light.on",
+                    new KioskCommandDispatcher.CommandArgs(bad, null, null, null), executor);
+            require(result.status.equals("rejected") && executor.lightOn == null,
+                    "brightness " + bad + " refused");
+        }
+        require(KioskCommandDispatcher.dispatch("light.off",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
+                && Boolean.FALSE.equals(executor.lightOn), "light.off");
+        require(StatusLight.formatColor(StatusLight.parseColor("255,160,0")).equals("255,160,0")
+                && "Amber".equals(StatusLight.nameOf(0xFFA000)) && StatusLight.nameOf(0x123456) == null,
+                "colours round-trip and the named ones are found");
+        require((StatusLight.argb(new StatusLight.State(true, 0xFF0000, 100)) >>> 24) == 255
+                && (StatusLight.argb(new StatusLight.State(true, 0xFF0000, 50)) >>> 24) == 128,
+                "the brightness is the frame's opacity");
+    }
+
+    /**
+     * The browser options: each command checked against BrowserOptions and forwarded
+     * canonically, refused with its rule; and the pure helpers the page relies on.
+     */
+    private static void testBrowserOptions() {
+        RecordingExecutor executor = new RecordingExecutor();
+        String[][] good = {
+                {"browser.text_size", " 150 ", "TEXT_SIZE", "150"},
+                {"browser.page_zoom", "auto", "PAGE_ZOOM", "0"},
+                {"browser.page_zoom", "25", "PAGE_ZOOM", "25"},
+                {"browser.back_after", "0", "BACK_AFTER", "0"},
+                {"browser.back_after", "300", "BACK_AFTER", "300"},
+                {"browser.user_agent", "", "USER_AGENT", ""},
+                {"browser.user_agent", " WallPanel/2 ", "USER_AGENT", "WallPanel/2"},
+        };
+        for (String[] row : good) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("accepted"), row[0] + " " + row[1] + ": " + result.detail);
+            require(row[3].equals(executor.browserOptions.get(
+                    KioskCommandDispatcher.BrowserOption.valueOf(row[2]))),
+                    row[0] + " stored " + executor.browserOptions.get(
+                            KioskCommandDispatcher.BrowserOption.valueOf(row[2])));
+        }
+        String[][] bad = {
+                {"browser.text_size", "49"}, {"browser.text_size", "301"},
+                {"browser.text_size", "big"}, {"browser.page_zoom", "24"},
+                {"browser.page_zoom", "401"}, {"browser.page_zoom", "-5"},
+                {"browser.back_after", "86401"}, {"browser.back_after", "1.5"},
+                {"browser.user_agent", "two\nlines"},
+        };
+        for (String[] row : bad) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("rejected") && !result.detail.isEmpty(),
+                    row[0] + " accepted " + row[1]);
+        }
+        StringBuilder long513 = new StringBuilder();
+        for (int i = 0; i < 513; i++) {
+            long513.append('x');
+        }
+        require(KioskCommandDispatcher.dispatch("browser.user_agent",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, long513.toString()),
+                executor).status.equals("rejected"), "a user agent past 512 characters");
+        require(KioskCommandDispatcher.dispatch("browser.dark_look",
+                new KioskCommandDispatcher.CommandArgs(-1, null, true), executor)
+                .status.equals("accepted") && "true".equals(executor.browserOptions.get(
+                        KioskCommandDispatcher.BrowserOption.DARK)), "the dark look on");
+        require(KioskCommandDispatcher.dispatch("browser.dark_look",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "the dark look needs enabled");
+        require(BrowserOptions.userAgent("", "Mozilla/5.0 X", "0.7.0")
+                .equals("Mozilla/5.0 X Muralis/0.7.0")
+                && BrowserOptions.userAgent(" Own/1 ", "Mozilla/5.0 X", "0.7.0").equals("Own/1"),
+                "the user agent the page sees");
+        require(BrowserOptions.signInHost("https://ha.example.net:8123/lovelace", "ha.example.net")
+                && !BrowserOptions.signInHost("https://ha.example.net/", "evil.example")
+                && !BrowserOptions.signInHost("not a url", "ha.example.net"),
+                "the sign-in goes to the dashboard's own host only");
+        require(BrowserOptions.checkSignInUser("anna") == null
+                && BrowserOptions.checkSignInUser("a:b") != null
+                && BrowserOptions.checkSignInUser("") == null, "sign-in names");
+        require(!BrowserOptions.awayFrom("https://h/lovelace/0#x", "https://h/lovelace/0/")
+                && BrowserOptions.awayFrom("https://h/lovelace/1", "https://h/lovelace/0"),
+                "a fragment or a trailing slash is not away");
+        require(BrowserOptions.timeToGoBack(true, 60_000, 60)
+                && !BrowserOptions.timeToGoBack(true, 59_999, 60)
+                && !BrowserOptions.timeToGoBack(false, 600_000, 60)
+                && !BrowserOptions.timeToGoBack(true, 600_000, 0), "the way back");
+        require(!BrowserOptions.darkLookPossible(28) && BrowserOptions.darkLookPossible(29),
+                "the dark look from Android 10");
+        for (String command : new String[] {"browser.page_camera", "browser.page_microphone"}) {
+            require(KioskCommandDispatcher.dispatch(command,
+                    new KioskCommandDispatcher.CommandArgs(-1, null, true), executor)
+                    .status.equals("accepted"), command + " on");
+            require(KioskCommandDispatcher.dispatch(command,
+                    KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                    command + " needs enabled");
+        }
+        require("true".equals(executor.browserOptions.get(
+                KioskCommandDispatcher.BrowserOption.PAGE_CAMERA))
+                && "true".equals(executor.browserOptions.get(
+                        KioskCommandDispatcher.BrowserOption.PAGE_MICROPHONE)),
+                "the page's camera and microphone reach the executor");
+    }
+
+    /** The trusted certificates: the store, the fingerprint's form, never a wildcard. */
+    private static void testCertificatePins() {
+        String fp = CertificatePins.fingerprint("a certificate".getBytes(
+                java.nio.charset.StandardCharsets.UTF_8));
+        require(CertificatePins.isFingerprint(fp) && fp.length() == 95,
+                "SHA-256 in 32 colon-separated pairs: " + fp);
+        java.util.Map<String, String> pins = CertificatePins.with(new java.util.LinkedHashMap<>(),
+                "HA.local", fp);
+        require(CertificatePins.trusted(pins, "ha.local", fp)
+                && !CertificatePins.trusted(pins, "ha.local", fp.replace('A', 'B'))
+                && !CertificatePins.trusted(pins, "other.local", fp)
+                && !CertificatePins.trusted(pins, null, fp), "one fingerprint for one host");
+        java.util.Map<String, String> back = CertificatePins.parse(CertificatePins.format(pins)
+                + "*.local " + fp + "\nbroken line\nhost notafingerprint\n");
+        require(back.equals(pins), "the store reads back and drops what is not a pin: " + back);
+        java.util.Map<String, String> full = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < CertificatePins.MAX_PINS; i++) {
+            full.put("h" + i, fp);
+        }
+        require(CertificatePins.with(full, "new", fp) == null
+                && CertificatePins.with(full, "h3", fp) != null,
+                "a full list refuses a new host and still replaces a known one");
+    }
+
+    /** panel.notify: the defaults, each argument's limit, the wake. */
+    private static void testPopups() {
+        RecordingExecutor executor = new RecordingExecutor();
+        java.util.Map<String, String> extra = new java.util.HashMap<>();
+        extra.put("title", "Door");
+        KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch("panel.notify",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Someone at the door",
+                        null, extra), executor);
+        require(result.status.equals("accepted") && executor.popup != null
+                && executor.popup.seconds == Popup.DEFAULT_SECONDS && executor.popup.wake
+                && !executor.popup.chime && executor.calls.contains("displayWake"),
+                "a pop-up with the defaults wakes the display: " + result.detail);
+        extra.clear();
+        extra.put("seconds", "0");
+        extra.put("wake", "false");
+        executor.calls.clear();
+        require(KioskCommandDispatcher.dispatch("panel.notify",
+                new KioskCommandDispatcher.CommandArgs(-1, "https://cam.local/snap.jpg", null,
+                        null, null, extra), executor).status.equals("accepted")
+                && executor.popup.seconds == 0 && executor.popup.url.equals(
+                        "https://cam.local/snap.jpg")
+                && !executor.calls.contains("displayWake"), "an address alone, until touched");
+        String[][] bad = {{"", "", ""}, {"x", "seconds", "301"}, {"x", "seconds", "-1"},
+                {"x", "url", "file:///etc/passwd"}, {"x", "wake", "maybe"}};
+        for (String[] row : bad) {
+            java.util.Map<String, String> named = new java.util.HashMap<>();
+            if (!row[1].isEmpty()) {
+                named.put(row[1], row[2]);
+            }
+            require(KioskCommandDispatcher.dispatch("panel.notify",
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[0], null, named),
+                    executor).status.equals("rejected"), "refused: " + java.util.Arrays.toString(row));
+        }
+        StringBuilder long501 = new StringBuilder();
+        for (int i = 0; i < 501; i++) {
+            long501.append('m');
+        }
+        require(KioskCommandDispatcher.dispatch("panel.notify",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, long501.toString()),
+                executor).status.equals("rejected"), "a message past 500 characters");
+    }
+
+    /** The pop-up cameras: the list, the checks, the modes and the cooldown. */
+    private static void testPopupCameras() {
+        require(PopupCameras.check("Door", "http://cam.local/snap.jpg", "trigger", 30, 60) == null,
+                "a camera");
+        require(PopupCameras.check("", "http://x", "trigger", 30, 60) != null
+                && PopupCameras.check("Door", "rtsp://x", "trigger", 30, 60) != null
+                && PopupCameras.check("Door", "http://x", "always", 30, 60) != null
+                && PopupCameras.check("Door", "http://x", "trigger", 301, 60) != null
+                && PopupCameras.check("Door", "http://x", "trigger", 30, 3601) != null,
+                "each check refuses");
+        java.util.List<PopupCameras.Camera> list = new java.util.ArrayList<>();
+        list = PopupCameras.with(list, new PopupCameras.Camera("Door", "http://cam/door", "alert", 20, 60));
+        list = PopupCameras.with(list, new PopupCameras.Camera("Garden", "http://cam/g", "on_demand", 0, 0));
+        java.util.List<PopupCameras.Camera> back = PopupCameras.parse(PopupCameras.format(list));
+        require(back.size() == 2 && back.get(0).mode.equals("alert") && back.get(1).seconds == 0,
+                "the list round-trips");
+        require(PopupCameras.parse("not json").isEmpty() && PopupCameras.parse("").isEmpty(),
+                "an unreadable list is empty");
+        PopupCameras.Camera door = PopupCameras.find(back, "door");
+        require(door != null, "found by name, any case");
+        require(PopupCameras.refusal(door, true, 0, 100_000) == null, "a first trigger shows");
+        require(PopupCameras.refusal(door, true, 90_000, 100_000) != null, "inside the cooldown");
+        require(PopupCameras.refusal(door, true, 30_000, 100_000) == null, "after the cooldown");
+        PopupCameras.Camera garden = PopupCameras.find(back, "Garden");
+        require(PopupCameras.refusal(garden, true, 0, 1) != null
+                && PopupCameras.refusal(garden, false, 0, 1) == null, "on demand: shown, not triggered");
+        PopupCameras.Camera ignored = new PopupCameras.Camera("X", "http://x", "ignored", 5, 5);
+        require(PopupCameras.refusal(ignored, false, 0, 1) != null
+                && PopupCameras.refusal(null, false, 0, 1) != null, "ignored and unknown");
+        Popup.Request alert = PopupCameras.popup(door, true);
+        require(alert.wake && alert.chime && alert.url.equals("http://cam/door")
+                && alert.seconds == 20, "an alert wakes and chimes");
+        java.util.List<PopupCameras.Camera> full = new java.util.ArrayList<>();
+        for (int i = 0; i < PopupCameras.MAX_CAMERAS; i++) {
+            full = PopupCameras.with(full, new PopupCameras.Camera("c" + i, "http://x", "trigger", 1, 1));
+        }
+        require(PopupCameras.with(full, new PopupCameras.Camera("new", "http://x", "trigger", 1, 1))
+                == null, "an eleventh camera is refused");
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("camera.trigger",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, " Door "), executor)
+                .status.equals("accepted") && "Door".equals(executor.cameraName)
+                && executor.cameraTrigger, "camera.trigger reaches the executor trimmed");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "camera.show needs a name");
+    }
+
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
+        Popup.Request popup;
+        String cameraName;
+        boolean cameraTrigger;
+        final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
+                new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
+        Boolean lightOn;
+        Integer lightColor;
+        int lightPercent;
         final List<String> calls = new ArrayList<>();
         int lastBrightness = -1;
         String lastUrl;
@@ -853,6 +1106,31 @@ public final class KioskCommandDispatcherTest {
         public void setWebAdminEnabled(boolean enabled) {
             calls.add("setWebAdminEnabled");
             lastWebAdminEnabled = enabled;
+        }
+
+        @Override
+        public String setBrowserOption(KioskCommandDispatcher.BrowserOption option, String value) {
+            browserOptions.put(option, value);
+            return null;
+        }
+
+        @Override
+        public void showPopup(Popup.Request request) {
+            popup = request;
+        }
+
+        @Override
+        public String cameraPopup(String name, boolean trigger) {
+            cameraName = name;
+            cameraTrigger = trigger;
+            return null;
+        }
+
+        @Override
+        public void setStatusLight(boolean on, Integer color, int percent) {
+            lightOn = on;
+            lightColor = color;
+            lightPercent = percent;
         }
 
 
