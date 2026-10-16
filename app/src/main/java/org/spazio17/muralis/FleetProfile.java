@@ -32,7 +32,11 @@ final class FleetProfile {
 
     /** This panel's current values of {@code section}, as the profile carries them. */
     static Map<String, Object> read(Context context, String section) {
-        KioskConfig config = KioskConfig.load(context);
+        return read(context, section, KioskConfig.load(context));
+    }
+
+    /** The same from a config already loaded, for a page that reads every section. */
+    static Map<String, Object> read(Context context, String section, KioskConfig config) {
         Map<String, Object> values = new LinkedHashMap<>();
         switch (section) {
             case "dashboard":
@@ -366,7 +370,7 @@ final class FleetProfile {
     static final class Field {
         final String key;
         final String label;
-        /** text, url, number, password, switch, or select. */
+        /** text, host, url, number, password, switch, or select. */
         final String type;
         /** For a select: value, label, value, label, ... */
         final String[] options;
@@ -387,7 +391,7 @@ final class FleetProfile {
                 fields.add(new Field("dashboard_url", "Dashboard URL", "url"));
                 break;
             case "mqtt":
-                fields.add(new Field("mqtt_host", "Broker host", "text"));
+                fields.add(new Field("mqtt_host", "Broker host", "host"));
                 fields.add(new Field("mqtt_port", "Broker port", "number"));
                 fields.add(new Field("mqtt_username", "Username", "text"));
                 fields.add(new Field("mqtt_password", "Password", "password"));
@@ -503,5 +507,16 @@ final class FleetProfile {
             }
         }
         return values;
+    }
+
+    /** A value as a box shows it: a number whole (the list reads them back as decimals). */
+    static String shown(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof Number) {
+            return String.valueOf(((Number) value).longValue());
+        }
+        return String.valueOf(value);
     }
 }

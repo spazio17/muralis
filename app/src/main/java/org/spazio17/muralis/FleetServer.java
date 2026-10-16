@@ -1190,6 +1190,36 @@ final class FleetServer {
                 ? known : null;
     }
 
+    /** "just now", "3 min ago", "2 h 5 min ago": a contact's age on both surfaces. */
+    static String agoWords(long ago) {
+        long minutes = ago / 60_000;
+        return minutes < 1 ? "just now" : minutes < 60 ? minutes + " min ago"
+                : (minutes / 60) + " h " + (minutes % 60) + " min ago";
+    }
+
+    /**
+     * A member's last contact on the Fleet page of both surfaces: "this panel", "online, seen
+     * 2 min ago", "offline, last seen 1 h 3 min ago" or "not heard from yet".
+     */
+    static String contactLine(java.util.Map<String, Object> member, org.json.JSONArray peers,
+            String selfId) {
+        if (selfId.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+            return "this panel";
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        for (int i = 0; i < peers.length(); i++) {
+            JSONObject peer = peers.optJSONObject(i);
+            if (peer != null && spki.equals(peer.optString("spki"))) {
+                long ago = peer.optLong("seen_ago_ms", -1);
+                if (ago >= 0) {
+                    return (peer.optBoolean("online") ? "online, seen " : "offline, last seen ")
+                            + agoWords(ago);
+                }
+            }
+        }
+        return "not heard from yet";
+    }
+
     /** The other panels as last heard from, for the web API and the console to come. */
     static org.json.JSONArray peersJson(Context context) {
         org.json.JSONArray list = new org.json.JSONArray();
@@ -1221,32 +1251,9 @@ final class FleetServer {
     }
 
     /**
-     * Shares {@code section} with the fleet from this panel's values, or stops sharing it: a new
-     * version of the list, signed here and handed to every member. Off the main thread.
-     */
-    static String shareSection(Context context, String group, String section, boolean on) {
-        // From this panel's own values: only into a scope whose values it takes itself, or
-        // it would share what it does not follow.
-        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
-        if (held == null) {
-            return "this panel holds no fleet list yet";
-        }
-        java.util.Map<String, Object> me = FleetDocument.memberByKey(held,
-                KioskRuntimeState.fleetKey());
-        if (!FleetDocument.memberGroups(held, me).contains(group)) {
-            return "this panel is not in the group " + FleetDocument.groupName(held, group);
-        }
-        if (FleetDocument.EVERYONE.equals(group) && !FleetDocument.followsFleet(me)) {
-            return "this panel does not follow the fleet's shared settings, so it cannot share"
-                    + " into them";
-        }
-        return shareSection(context, group, section,
-                on ? FleetProfile.read(context, section) : null);
-    }
-
-    /**
-     * The same with the values given (the Fleet page's form), or null to stop sharing: from any
-     * panel into any scope, as every panel manages the fleet.
+     * Shares {@code section} in {@code group} with the values given (the Fleet page's form), or
+     * stops sharing it there with null: a new version of the list, signed here and handed to
+     * every member, from any panel into any scope, as every panel manages the fleet.
      */
     static String shareSection(Context context, String group, String section,
             java.util.Map<String, Object> values) {

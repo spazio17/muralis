@@ -936,8 +936,10 @@ final class HttpAdminServer {
         } else if (path.equals("/fleet") && method.equals("POST")) {
             Map<String, String> form = parseFormBody(headers, body);
             String refused = saveFleetPage(form);
+            // Drawn again for the scope the person was looking at, whichever form posted.
             writeResponse(output, 200, "text/html; charset=utf-8",
-                    bytes(buildFleetPage(refused, form.getOrDefault("scope", ""))));
+                    bytes(buildFleetPage(refused, form.getOrDefault("scope",
+                            queryValue(query, "scope")))));
         } else if (path.equals("/screensaver") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
@@ -1055,17 +1057,6 @@ final class HttpAdminServer {
                 writeResponse(output, 200, "image/svg+xml", bytes(svg),
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
-        } else if (path.equals("/api/fleet/group") && method.equals("POST")) {
-            // A group made with the name posted, or removed by id with remove=1.
-            Map<String, String> form = parseFormBody(headers, body);
-            String refused = isTrue(form.getOrDefault("remove", "0"))
-                    ? FleetServer.removeGroup(context, form.getOrDefault("id", ""))
-                    : FleetServer.createGroup(context, form.getOrDefault("name", ""),
-                            new String[1]);
-            writeResponse(output, refused == null ? 200 : 400, "application/json",
-                    bytes("{\"status\":\"" + (refused == null ? "accepted" : "rejected")
-                            + "\",\"detail\":" + JSONObject.quote(refused == null ? "" : refused)
-                            + "}"));
         } else if (path.equals("/api/fleet/leave") && method.equals("POST")) {
             FleetServer.leaveFleet(context, "from the web admin");
             writeResponse(output, 200, "application/json",
@@ -1456,15 +1447,7 @@ final class HttpAdminServer {
                     }
                 }
                 for (String key : form.keySet()) {
-                    // fleet_share_<group>_<section>: the group's id has no underscore.
-                    if (key.startsWith("fleet_share_") && key.indexOf('_', 12) > 12) {
-                        String group = key.substring(12, key.indexOf('_', 12));
-                        String refused = FleetServer.shareSection(context, group,
-                                key.substring(key.indexOf('_', 12) + 1), isTrue(form.get(key)));
-                        if (refused != null) {
-                            return "Not changed: " + refused + ".";
-                        }
-                    } else if (key.equals("fleet_follows")) {
+                    if (key.equals("fleet_follows")) {
                         String refused = FleetServer.setFollowsFleet(context, isTrue(form.get(key)));
                         if (refused != null) {
                             return "Not changed: " + refused + ".";
@@ -4901,21 +4884,11 @@ final class HttpAdminServer {
             String id = TinyJson.string(member, FleetDocument.ID, "");
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
             String name = TinyJson.string(member, FleetDocument.NAME, id);
-            String contact = "this panel";
-            if (!self.equals(id)) {
-                contact = "not heard from yet";
-                for (int i = 0; i < peers.length(); i++) {
-                    org.json.JSONObject peer = peers.optJSONObject(i);
-                    if (peer != null && spki.equals(peer.optString("spki"))) {
-                        long ago = peer.optLong("seen_ago_ms", -1);
-                        contact = ago < 0 ? "not heard from yet" : (peer.optBoolean("online")
-                                ? "online, seen " : "offline, last seen ") + agoWords(ago);
-                    }
-                }
-            }
+            String contact = FleetServer.contactLine(member, peers, self);
             java.util.List<String> in = FleetDocument.memberGroups(list, member);
-            html.append("<form method=\"post\" action=\"/fleet\"><input type=\"hidden\""
-                    + " name=\"what\" value=\"panel\"><input type=\"hidden\" name=\"spki\""
+            html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
+                    .append("\"><input type=\"hidden\" name=\"what\" value=\"panel\"><input"
+                    + " type=\"hidden\" name=\"spki\""
                     + " value=\"").append(escapeHtml(spki)).append("\"><p><b>")
                     .append(escapeHtml(name)).append("</b> <span class=\"hint\">")
                     .append(escapeHtml(contact)).append("</span></p>");
@@ -4943,7 +4916,8 @@ final class HttpAdminServer {
                     + " does.</p>");
         }
         for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
-            html.append("<form method=\"post\" action=\"/fleet\" class=\"actions tight\">"
+            html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
+                    .append("\" class=\"actions tight\">"
                     + "<input type=\"hidden\" name=\"what\" value=\"remove_group\"><input"
                     + " type=\"hidden\" name=\"id\" value=\"").append(escapeHtml(group.getKey()))
                     .append("\"><span>").append(escapeHtml(group.getValue()))
@@ -4955,8 +4929,8 @@ final class HttpAdminServer {
                 suggestions.append("<option value=\"").append(escapeHtml(suggestion)).append("\">");
             }
         }
-        html.append("<form method=\"post\" action=\"/fleet\"><input type=\"hidden\" name=\"what\""
-                + " value=\"add_group\">")
+        html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
+                .append("\"><input type=\"hidden\" name=\"what\" value=\"add_group\">")
                 .append(fieldWithId("fleet-page-group-name", "text", "name", "New group", "",
                         " list=\"fleet-page-suggestions\" autocomplete=\"off\"", null))
                 .append("<datalist id=\"fleet-page-suggestions\">").append(suggestions)
@@ -4973,21 +4947,22 @@ final class HttpAdminServer {
         html.append(selectField("fleet-page-scope", "scope", "Shared in", null,
                 options.toString(), null)).append("<div class=\"actions tight\"><button"
                 + " class=\"text\" type=\"submit\">Show</button></div></form>");
+        KioskConfig own = KioskConfig.load(context);
         for (String section : FleetDocument.SECTIONS) {
             java.util.Map<String, Object> shared = FleetDocument.sectionValues(list, scope, section);
             java.util.Map<String, Object> values = shared != null ? shared
-                    : FleetProfile.read(context, section);
+                    : FleetProfile.read(context, section, own);
             html.append("<form method=\"post\" action=\"/fleet\"><input type=\"hidden\""
                     + " name=\"what\" value=\"share\"><input type=\"hidden\" name=\"scope\""
                     + " value=\"").append(escapeHtml(scope)).append("\"><input type=\"hidden\""
                     + " name=\"section\" value=\"").append(section).append("\">")
-                    .append("<div class=\"switches\"><label class=\"switch\"><span><b>")
-                    .append(escapeHtml(FleetDocument.sectionLabel(section)))
-                    .append("</b></span><input type=\"checkbox\" name=\"shared\" value=\"1\"")
+                    .append("<h3>").append(escapeHtml(FleetDocument.sectionLabel(section)))
+                    .append("</h3><div class=\"switches\"><label class=\"switch\"><span>Shared"
+                            + "</span><input type=\"checkbox\" name=\"shared\" value=\"1\"")
                     .append(shared != null ? " checked" : "").append("></label>");
             for (FleetProfile.Field field : FleetProfile.fields(section)) {
                 Object value = values.get(field.key);
-                String text = value == null ? "" : String.valueOf(value);
+                String text = FleetProfile.shown(value);
                 switch (field.type) {
                     case "switch":
                         html.append(switchRow("fleet-page-" + section + "-" + field.key,
@@ -5028,12 +5003,6 @@ final class HttpAdminServer {
         return html.append(pageEnd()).toString();
     }
 
-    private static String agoWords(long ago) {
-        long minutes = ago / 60_000;
-        return minutes < 1 ? "just now" : minutes < 60 ? minutes + " min ago"
-                : (minutes / 60) + " h " + (minutes % 60) + " min ago";
-    }
-
     /** What the Fleet page's forms post: a panel's groups, a group, a scope's section. */
     private String saveFleetPage(Map<String, String> form) {
         String what = form.getOrDefault("what", "");
@@ -5060,6 +5029,10 @@ final class HttpAdminServer {
             case "share": {
                 String scope = form.getOrDefault("scope", FleetDocument.EVERYONE);
                 String section = form.getOrDefault("section", "");
+                if (!java.util.Arrays.asList(FleetDocument.SECTIONS).contains(section)) {
+                    refused = "no such section";
+                    break;
+                }
                 if (!isTrue(form.getOrDefault("shared", "0"))) {
                     refused = FleetServer.shareSection(context, scope, section,
                             (java.util.Map<String, Object>) null);
