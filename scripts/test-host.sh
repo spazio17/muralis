@@ -15,7 +15,7 @@
 # bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
 # retry, system stats, recycle policy, recovery policy, server probe policy,
 # escape sequence, relaunch policy, the self-signed certificate, the uploaded
-# certificate, the automations and the discovery withdrawals.
+# certificate, the automations, the discovery withdrawals and the fleet's mutual TLS.
 
 set -euo pipefail
 
@@ -130,7 +130,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
-            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals; do
+            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -302,6 +302,14 @@ javac -d "${test_dir}/certificate" \
     "${pure_java_dir}/SelfSignedCertificate.java" \
     "${host_test_dir}/SelfSignedCertificateTest.java"
 java -cp "${test_dir}/certificate" org.spazio17.muralis.SelfSignedCertificateTest
+
+# Mutual TLS between panels, judged by the key alone: real handshakes on the loopback.
+mkdir -p "${test_dir}/fleettls"
+javac -d "${test_dir}/fleettls" \
+    "${pure_java_dir}/SelfSignedCertificate.java" \
+    "${pure_java_dir}/FleetTls.java" \
+    "${host_test_dir}/FleetTlsTest.java"
+java -cp "${test_dir}/fleettls" org.spazio17.muralis.FleetTlsTest
 
 # What a panel withdraws from Home Assistant: only what it announced itself (2026-10-06).
 mkdir -p "${test_dir}/withdrawals"

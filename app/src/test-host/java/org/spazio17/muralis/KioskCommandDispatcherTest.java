@@ -194,22 +194,29 @@ public final class KioskCommandDispatcherTest {
      * broker port deliberately has no such floor; it is a remote port.
      */
     private static void testAdminPortValidation() {
-        require(KioskCommandDispatcher.validateAdminPort(8080) == null,
+        require(KioskCommandDispatcher.validateAdminPort(8080, 8080) == null,
                 "the default port must be accepted");
-        require(KioskCommandDispatcher.validateAdminPort(1024) == null,
+        require(KioskCommandDispatcher.validateAdminPort(1024, 8080) == null,
                 "the first unprivileged port must be accepted");
-        require(KioskCommandDispatcher.validateAdminPort(65535) == null,
+        require(KioskCommandDispatcher.validateAdminPort(65535, 8080) == null,
                 "the last port must be accepted");
-        require(KioskCommandDispatcher.validateAdminPort(1023) != null,
+        require(KioskCommandDispatcher.validateAdminPort(1023, 8080) != null,
                 "the last privileged port must be refused");
-        require(KioskCommandDispatcher.validateAdminPort(80) != null,
+        require(KioskCommandDispatcher.validateAdminPort(80, 8080) != null,
                 "a privileged port passes a range check and fails at bind; it must be refused here");
-        require(KioskCommandDispatcher.validateAdminPort(0) != null,
+        require(KioskCommandDispatcher.validateAdminPort(0, 8080) != null,
                 "port 0 must be refused");
-        require(KioskCommandDispatcher.validateAdminPort(65536) != null,
+        require(KioskCommandDispatcher.validateAdminPort(65536, 8080) != null,
                 "a port above 65535 must be refused");
-        require(KioskCommandDispatcher.validateAdminPort(80).contains("1024"),
+        require(KioskCommandDispatcher.validateAdminPort(80, 8080).contains("1024"),
                 "the refusal must name the allowed range");
+        // The member endpoint listens on 8081 on every panel; the web admin may not take it.
+        require(KioskCommandDispatcher.validateAdminPort(8081, 8080) != null,
+                "the fleet's port must be refused as a new web admin port");
+        require(KioskCommandDispatcher.validateAdminPort(8081, 8081) == null,
+                "a panel already serving the web admin on the fleet's port keeps it");
+        require(KioskCommandDispatcher.validateAdminPort(8082, 8080) == null,
+                "the port after the fleet's must be accepted");
     }
 
     /**

@@ -3173,13 +3173,14 @@ public final class KioskActivity extends Activity {
                 return;
             }
             int adminPort = typedAdminPort;
-            String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
+            KioskConfig storedNow = KioskConfig.load(this);
+            String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort,
+                    storedNow.httpPort);
             if (portProblem != null) {
                 Toast.makeText(this, "Not saved: " + portProblem + ".",
                         Toast.LENGTH_LONG).show();
                 return;
             }
-            KioskConfig storedNow = KioskConfig.load(this);
             if (adminPort != storedNow.httpPort && !SettingProbe.portFree(adminPort)) {
                 // Same gate as the web save: the advisory border is a warning, this is the
                 // refusal, so a save cannot put the admin into a bind failure.

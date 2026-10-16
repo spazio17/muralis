@@ -1321,7 +1321,8 @@ final class HttpAdminServer {
                 // before anyone gets here, but a submit that ignored the colour must not be able
                 // to save the admin into a bind failure. Saving the port it already serves on is
                 // not a conflict, the holder is us.
-                String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort);
+                String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort,
+                        fresh.httpPort);
                 if (portProblem != null) {
                     return "Not saved: " + portProblem + ".";
                 }

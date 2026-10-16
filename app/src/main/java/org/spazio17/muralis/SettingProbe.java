@@ -60,7 +60,7 @@ final class SettingProbe {
         } catch (NumberFormatException invalid) {
             return new Verdict(false, "not a port number");
         }
-        String problem = KioskCommandDispatcher.validateAdminPort(port);
+        String problem = KioskCommandDispatcher.validateAdminPort(port, boundPort);
         if (problem != null) {
             return new Verdict(false, problem);
         }

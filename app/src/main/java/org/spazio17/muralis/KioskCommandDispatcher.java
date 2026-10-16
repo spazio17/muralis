@@ -615,14 +615,25 @@ final class KioskCommandDispatcher {
      * time, since an unprivileged app can never bind below 1024 on Android. The server fails
      * closed on a bind error, so the admin's own settings box was able to switch the admin off,
      * undoable only from the tablet. This floor applies exclusively to the port this app binds
-     * itself; the broker port is a remote port and keeps the full 1-65535 range.
+     * itself; the broker port is a remote port and keeps the full 1-65535 range. {@link
+     * #FLEET_PORT} is refused as a new choice, since the member endpoint listens there on every
+     * panel; a panel already serving its web admin there keeps it, so its Saves are not refused,
+     * and its member endpoint stays off until the web admin moves.
+     *
+     * @param currentPort the port stored now, or the one the server holds
      */
-    static String validateAdminPort(int port) {
+    static String validateAdminPort(int port, int currentPort) {
         if (port < 1024 || port > 65535) {
             return "web admin port must be between 1024 and 65535";
         }
+        if (port == FLEET_PORT && port != currentPort) {
+            return "port " + FLEET_PORT + " is the fleet's own; choose another web admin port";
+        }
         return null;
     }
+
+    /** The member endpoint's port on every panel (fleet design, decided 2026-09-24). */
+    static final int FLEET_PORT = 8081;
 
     /**
      * Returns null when {@code id} is usable as this panel's identity, an error message otherwise.

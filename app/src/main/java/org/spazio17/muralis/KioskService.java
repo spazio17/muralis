@@ -111,6 +111,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private volatile MqttController mqttController;
     private volatile HttpAdminServer httpAdminServer;
+    /** The member endpoint (fleet design, section 7); null until the fleet key can be read. */
+    private volatile FleetServer fleetServer;
     private SystemStats systemStats;
     private NetworkGate startupGate;
     /**
@@ -740,6 +742,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
         mqttController.start();
         httpAdminServer = new HttpAdminServer(this, this);
         httpAdminServer.start();
+        startFleetServer();
+    }
+
+    /**
+     * The member endpoint, on every panel, whatever the web admin does. It needs nothing from the
+     * settings, so it starts once; a fleet key that could not be read yet (before the first unlock
+     * on a device whose Keystore waits for it) is tried again at the unlock.
+     */
+    private void startFleetServer() {
+        if (fleetServer == null) {
+            fleetServer = FleetServer.start(this);
+        }
     }
 
     /**
@@ -835,6 +849,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         if (httpAdminServer != null) {
             httpAdminServer.stop();
+        }
+        if (fleetServer != null) {
+            fleetServer.stop();
+            fleetServer = null;
         }
     }
 
@@ -1577,6 +1595,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             } else if (!KioskRuntimeState.httpAdminCertificateProblem().isEmpty()) {
                 // The uploaded certificate could not be read before the unlock; it can now.
                 reloadAdminCertificate();
+            }
+            // Only once the controllers have started: before that, startControllersNow does it.
+            if (startupGate == null || !startupGate.isPending()) {
+                startFleetServer();
             }
         }
     };

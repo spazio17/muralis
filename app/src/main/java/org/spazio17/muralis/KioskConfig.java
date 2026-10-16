@@ -833,6 +833,35 @@ final class KioskConfig {
                 .getString(AUTOMATIONS, null));
     }
 
+    /**
+     * The fleet keys this panel admits on its member endpoint, and the ones it never admits again,
+     * each a SHA-256 of a public key in lowercase hex (FleetTls.spkiOf). Written by the join and
+     * the fleet document (blocks 11 and 12 of the 0.7 plan); read at every handshake, so a change
+     * applies to the next call. Anything that is not such a hash is ignored.
+     */
+    static java.util.Set<String> fleetTrusted(Context context) {
+        return keyHashes(context, FLEET_TRUSTED);
+    }
+
+    static java.util.Set<String> fleetRevoked(Context context) {
+        return keyHashes(context, FLEET_REVOKED);
+    }
+
+    private static java.util.Set<String> keyHashes(Context context, String name) {
+        java.util.Set<String> hashes = new java.util.HashSet<>();
+        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(name, "");
+        for (String hash : stored.split(",")) {
+            if (hash.matches("[0-9a-f]{64}")) {
+                hashes.add(hash);
+            }
+        }
+        return hashes;
+    }
+
+    private static final String FLEET_TRUSTED = "fleet_trusted";
+    private static final String FLEET_REVOKED = "fleet_revoked";
+
     /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */
     static final class OverlayPlace {
         /** Which edges the block is measured from: the ones it was dropped nearest to. */

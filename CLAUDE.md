@@ -5,7 +5,9 @@ does, and why its trickier parts are shaped the way they are. It is not a status
 changelog, or a getting-started guide, it does not track what's tested, what's pending, or how to
 build or run the project (the scripts and their own comments are self-explanatory for that). It
 describes the app as it stands, and should need no further edits except when a feature is added or
-removed that changes what the app actually does.
+removed that changes what the app actually does. Plans, open work and decisions not yet built live
+outside the repo, on the project's local board (Tasks.md, one Markdown file per card under
+`../tasks.md/`); a pointer below to a board card names it by its title.
 
 ## What this is
 
@@ -121,7 +123,9 @@ the playlist page was the case that set the rule.
   it back on must not require retyping one. An earlier tablet button that "switched off" by
   erasing the stored password did exactly that damage during QA. The switch reflects the flag, not
   the socket; a panel that is "on" with no stored password stays unbound and says so on the
-  tablet's status line. Any new remote-control surface should be off until deliberately configured.
+  tablet's status line. Any new remote-control surface should be off until deliberately configured;
+  the fleet's member endpoint is the one decided exception (2026-09-24): it listens on every panel
+  and admits only trusted keys.
   Command payloads are capped at 16 KB on both transports (`HttpAdminServer.MAX_BODY_BYTES`,
   `MqttController.MAX_COMMAND_BYTES`, deliberately equal; a certificate upload has 64 KB of its
   own), and the caller-supplied command id is
@@ -222,7 +226,7 @@ the playlist page was the case that set the rule.
   day and both surfaces come up on every panel. Pro now gates only the fleet console and
   what makes sense across panels (alerts, log shipping, remote-only lock, picture sync, screenshots
   on the fleet page, manager-fed updates), 39.99 EUR once per Google account, no device limit; the
-  design is `../muralis-fleet-design.md`. The entitlement is still Play's signed purchase document,
+  design is the board card "Fleet design (block 1)". The entitlement is still Play's signed purchase document,
   verified on-device by `PurchaseSignature` (pure, host-tested; see its javadoc for why there is
   deliberately no verification server) and cached in `SecretStore` as a bridge, not as a right:
   Google Play's answer is the truth. `ProBilling` calls `ProEntitlement.drop` on a full-account
@@ -248,6 +252,29 @@ the playlist page was the case that set the rule.
   nagged. Debug builds accept `MURALIS_PRO_OVERRIDE=on|off` to force either
   answer (R8-stripped from release); a signed release refuses to build without
   `MURALIS_LICENSE_KEY`, or with one that does not parse.
+- **Every panel has a fleet key and a member endpoint (0.7).** `FleetIdentity` makes an EC P-256
+  key in software at the first start that needs it and keeps it, with a self-signed certificate,
+  in `SecretStore` (`fleet_key`, `fleet_certificate`, device-protected storage), separate from the
+  web admin's key so an uploaded browser certificate never changes who the panel is. The identity
+  is the SHA-256 of the public key (`FleetTls.spkiOf`), the pin OkHttp and Android's network
+  security config use, so a certificate made again over the same key changes nothing; a key that
+  cannot be read yet is never replaced. `FleetServer` listens on 8081
+  (`KioskCommandDispatcher.FLEET_PORT`, which the web admin may not take as a new port; a panel
+  already serving its web admin there keeps it, and its member endpoint stays off until the web
+  admin moves) on every panel, free,
+  whatever the web admin does, started with the controllers and again at the first unlock when
+  the key could not be read before. Mutual TLS with the client's certificate required:
+  `FleetTls` admits a peer by its key hash alone, in `fleet_trusted` and not in `fleet_revoked`
+  (read at every handshake), exactly one certificate, no chain, dates or names checked, the way
+  KDE Connect and Syncthing pin devices; the hash is judged again after the handshake, because a
+  resumed session never reaches the trust manager. TLS versions are the platform's (1.3 only
+  from API 29, and naming it on 8 or 9 throws). One request per connection: `GET /fleet` answers
+  the id, the key hash and the fleet, which is none until a panel has joined one; plain HTTP and
+  every caller not admitted are dropped at the handshake. Two connections per address at most,
+  as the web admin caps its own, so one device cannot hold every worker; before the first unlock
+  no key is made, the endpoint waits for the unlock, as the web admin's key does. Measured on both Huaweis 2026-10-06
+  with a laptop key trusted by hand: 200 with the right key hash; a stranger, no certificate,
+  plain HTTP and a revoked key refused; the key the same after a reboot.
 - **A broker that is down when the client is built is retried, not abandoned.** Paho's automatic
   reconnect covers a connection that was established and then lost, nothing else: a first connect
   that fails left the client silent for good (Lenovo, 2026-09-09: broker reachable, three minutes,
@@ -1060,7 +1087,7 @@ the playlist page was the case that set the rule.
   says so in the source's sentence, measured on the Lenovo 2026-09-10 with the radio off and the
   manifest artificially aged: the cache survived the failed refresh untouched.
 - **Named playlists, one browser, and no folder grants (reworked 2026-09-10).** Juri's rules, from
-  the specification in `../spec-screensaver-picture-mode.md` and his sketch
+  the specification (now the board card "Picture playlists spec") and his sketch
   `../folders-pictures-selection.jpg`: several named playlists exist, exactly one plays, a playlist
   holds individually chosen pictures from any number of folders, a deleted picture leaves the
   playlist, and a picture removed from a playlist is **not** deleted from disk. His words on the
@@ -1589,14 +1616,14 @@ the playlist page was the case that set the rule.
   deadline, then close, which is what Apache's `ap_lingering_close` and nginx's `lingering_close`
   do and what any early refusal needs anyway: a 401 answered before a 24 MiB upload is read leaves
   unread bytes by design. Measured afterwards: 186 bytes, the full declared body, a clean FIN.
-- **Fleet is not implemented by a local playlist.** Section 10b of the fleet design still owns
-  content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
+- **Fleet is not implemented by a local playlist.** The fleet design's picture sync (section 11,
+  planned for 0.8) owns content hashes, copied fleet-store bytes and member sync. Document URIs are local references,
   never cross-panel IDs. Keep uploads alongside the panel's own pictures so removed or cloud storage is not required
   for a self-contained panel. No claim of fleet compatibility, and none of unattended readiness:
-  the open items are in `../review-screensaver-keyguard-2026-09-10.md`. The three that were defects
-  rather than gaps, the plain-HTTP redirect, the legacy caption keys and the uncleared decode
-  failure, were all fixed and measured on 2026-09-10; what remains there are gaps, and a soak is
-  still the largest of them.
+  the open items are the board cards "Screensaver telemetry names the wrong picture" and "Long-run
+  soak and large picture library test". The three that were defects rather than gaps, the
+  plain-HTTP redirect, the legacy caption keys and the uncleared decode failure, were all fixed and
+  measured on 2026-09-10; what remains are gaps, and a soak is still the largest of them.
 
 ## Platform constraints that shape the code
 
