@@ -1507,6 +1507,20 @@ final class HttpAdminServer {
                             .volumeButtonsDisabled(isTrue(form.get("volume_buttons_disabled")))
                             .apply();
                 }
+                // The status light, by the commands' own check and the same way to the frame; a
+                // colour chosen while the light is off is kept for when it comes on.
+                if (form.containsKey("status_light") || form.containsKey("status_light_color")) {
+                    Integer color = null;
+                    if (form.containsKey("status_light_color")) {
+                        color = StatusLight.parseColor(form.get("status_light_color"));
+                        if (color == null) {
+                            return "Not saved: the " + StatusLight.COLOR_RULE + ".";
+                        }
+                    }
+                    kioskService.setStatusLight(form.containsKey("status_light")
+                            ? isTrue(form.get("status_light"))
+                            : KioskConfig.statusLightOf(context).on, color, -1);
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
@@ -3819,7 +3833,31 @@ final class HttpAdminServer {
                 + autoBrightnessControl()
                 + writeSettingsHint()
                 + orientationControl()
-                + displayOffControl();
+                + displayOffControl()
+                + statusLightControl();
+    }
+
+    /**
+     * The status light: the switch and the colour by name, applied as they are touched, the same
+     * two controls as on the panel. The brightness and any other colour are set over HTTP, MQTT
+     * and Home Assistant; a stored colour that has no name is offered as it is.
+     */
+    private String statusLightControl() {
+        StatusLight.State light = KioskConfig.statusLightOf(context);
+        String current = StatusLight.formatColor(light.color);
+        StringBuilder colours = new StringBuilder();
+        if (StatusLight.nameOf(light.color) == null) {
+            colours.append(selectOption(current, current, current));
+        }
+        for (String[] named : StatusLight.NAMED) {
+            colours.append(selectOption(named[1], named[0], current));
+        }
+        return "<div class=\"switches\">"
+                + switchRow("status-light", "Status light, a coloured frame around the screen",
+                        " data-setting=\"status_light\"", light.on)
+                + "</div>"
+                + selectField("status-light-color", null, "Status light colour",
+                        "status_light_color", colours.toString(), null);
     }
 
     private String screensaverBody() {

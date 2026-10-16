@@ -22,6 +22,10 @@ final class KioskConfig {
     /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
     private static final String ESCAPE_PIN_HASH = "escape_pin_hash";
     private static final String STATS_OVERLAY = "stats_overlay";
+    /** The status light (StatusLight): on or off, its colour as 0xRRGGBB, its brightness. */
+    private static final String STATUS_LIGHT_ON = "status_light_on";
+    private static final String STATUS_LIGHT_COLOR = "status_light_color";
+    private static final String STATUS_LIGHT_PERCENT = "status_light_percent";
     /** Whether the device's volume buttons do nothing while Muralis is on screen. */
     private static final String VOLUME_BUTTONS_DISABLED = "volume_buttons_disabled";
     /** Where the stats overlay was dragged to; see statsOverlayPlace and KioskActivity. */
@@ -371,6 +375,18 @@ final class KioskConfig {
 
         Editor statsOverlay(boolean value) {
             plain.putBoolean(STATS_OVERLAY, value);
+            return this;
+        }
+
+        /** The light on or off; a null colour or a percent of -1 keeps what is stored. */
+        Editor statusLight(boolean on, Integer color, int percent) {
+            plain.putBoolean(STATUS_LIGHT_ON, on);
+            if (color != null) {
+                plain.putInt(STATUS_LIGHT_COLOR, color & 0xFFFFFF);
+            }
+            if (percent != -1) {
+                plain.putInt(STATUS_LIGHT_PERCENT, percent);
+            }
             return this;
         }
 
@@ -1314,6 +1330,16 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(STATS_OVERLAY, true);
+    }
+
+    /** The status light as stored, for the frame, the status document and both surfaces. */
+    static StatusLight.State statusLightOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        int percent = prefs.getInt(STATUS_LIGHT_PERCENT, StatusLight.DEFAULT_PERCENT);
+        return new StatusLight.State(prefs.getBoolean(STATUS_LIGHT_ON, false),
+                prefs.getInt(STATUS_LIGHT_COLOR, StatusLight.DEFAULT_COLOR),
+                StatusLight.isPercent(percent) ? percent : StatusLight.DEFAULT_PERCENT);
     }
 
     /**

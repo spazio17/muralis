@@ -1399,6 +1399,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("web_admin_enabled", config.webAdminEnabled);
             stats.put("display", displaySnapshot());
             stats.put("ambient", screensaverSnapshot(includeAdminDetail));
+            StatusLight.State light = KioskConfig.statusLightOf(this);
+            stats.put("light", new org.json.JSONObject()
+                    .put("on", light.on)
+                    .put("color", StatusLight.formatColor(light.color))
+                    .put("brightness", light.percent));
             // The sensors the person switched on, with their readings; see Sensors. The block
             // is kept where the panel's rows and discovery can read it without the service.
             publishSensorBlock();
@@ -2080,6 +2085,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return true;
     }
 
+    @Override
+    public void setStatusLight(boolean on, Integer color, int percent) {
+        KioskConfig.edit(this).statusLight(on, color, percent).apply();
+        sendUiCommand("light.changed", -1, null);
+    }
+
     /**
      * Hands brightness to the ambient-light sensor, or takes it back.
      *
@@ -2477,6 +2488,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
             case "play_sound": problem = playAudio(rule.argument); break;
             case "say": problem = say(rule.argument); break;
             case "reload": kioskReload(); break;
+            case "light_on": {
+                KioskCommandDispatcher.Result lit = dispatch("light.on",
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument));
+                problem = "accepted".equals(lit.status) ? null : lit.detail;
+                break;
+            }
+            case "light_off":
+                dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);
+                break;
             default: problem = "no action is called " + rule.action;
         }
         if (problem != null) {

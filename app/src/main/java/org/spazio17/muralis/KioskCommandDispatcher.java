@@ -148,6 +148,13 @@ final class KioskCommandDispatcher {
         void setWebAdminEnabled(boolean enabled);
 
         /**
+         * Stores the status light, already checked against {@link StatusLight}: on or off, its
+         * colour (null keeps the stored one) and its brightness (-1 keeps the stored one), and
+         * has the frame drawn or taken away.
+         */
+        void setStatusLight(boolean on, Integer color, int percent);
+
+        /**
          * Shows the screensaver now, whatever the idle time. Returns why it cannot, or null: the
          * mode is off or has no address, the kiosk is stopped, Muralis is not on screen, the
          * display is off, or the wizard or the escape recorder is up; the shape of
@@ -323,6 +330,25 @@ final class KioskCommandDispatcher {
                 if (!executor.setDisplayOffMethod(args.value)) {
                     return rejected("a real screen-off needs the device-owner install");
                 }
+                return accepted();
+            case "light.on": {
+                // The Home Assistant light's three values in one call: the colour in value as
+                // r,g,b and the brightness in percent, each optional and each kept when absent.
+                Integer color = null;
+                if (args.value != null && !args.value.trim().isEmpty()) {
+                    color = StatusLight.parseColor(args.value);
+                    if (color == null) {
+                        return rejected(StatusLight.COLOR_RULE);
+                    }
+                }
+                if (args.brightnessPercent != -1 && !StatusLight.isPercent(args.brightnessPercent)) {
+                    return rejected(StatusLight.PERCENT_RULE);
+                }
+                executor.setStatusLight(true, color, args.brightnessPercent);
+                return accepted();
+            }
+            case "light.off":
+                executor.setStatusLight(false, null, -1);
                 return accepted();
             case "webadmin.enabled":
                 if (args.enabled == null) {

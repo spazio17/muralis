@@ -16,7 +16,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -261,6 +263,11 @@ public final class KioskActivity extends Activity {
      * the content it was drawn over.
      */
     private TextView identifyOverlay;
+    /**
+     * The status light's frame (StatusLight), a child of the window's content like Identify so
+     * every screen gets it; touches fall through. See {@link #syncStatusLight}.
+     */
+    private StatusLightFrame statusLightFrame;
     private static final long IDENTIFY_MS = 10_000L;
     private final Runnable identifyEnd = this::endIdentify;
     /**
@@ -682,6 +689,11 @@ public final class KioskActivity extends Activity {
         // when no instance exists, and must not do so over one that is halfway through onCreate.
         KioskRuntimeState.publishDashboardAlive(true);
         mainHandler.postDelayed(screensaverClock, SCREENSAVER_TICK_MS);
+        // Every layout pass, so a new screen, the film coming or going and a stopped kiosk all
+        // reach the frame without each of them having to remember it; the check reads memory
+        // only and changes nothing when nothing changed.
+        getWindow().getDecorView().getViewTreeObserver()
+                .addOnGlobalLayoutListener(this::syncStatusLight);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // A wall kiosk has nothing to protect behind a swipe-to-unlock screen, and after a reboot
         // the dashboard would otherwise sit invisible behind the keyguard until somebody walked up
@@ -2885,6 +2897,42 @@ public final class KioskActivity extends Activity {
             paintDisplayOffNote(displayOffNote, theme);
         });
 
+        // The status light: the switch and the colour by name, the web admin's two controls.
+        // The brightness and any other colour come over HTTP, MQTT and Home Assistant; a stored
+        // colour with no name is offered as it is.
+        StatusLight.State light = KioskConfig.statusLightOf(this);
+        CompoundButton lightInput = themedSwitch(theme,
+                "Status light, a coloured frame around the screen", light.on);
+        displayCard.addView(lightInput, matchWrapClose());
+        TextView lightColourLabel = fieldCaption(theme, "Status light colour");
+        LinearLayout.LayoutParams lightColourParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lightColourParams.topMargin = dp(14);
+        displayCard.addView(lightColourLabel, lightColourParams);
+        RadioGroup lightColourInput = new RadioGroup(this);
+        if (StatusLight.nameOf(light.color) == null) {
+            radioChoice(theme, lightColourInput, StatusLight.formatColor(light.color),
+                    StatusLight.formatColor(light.color));
+        }
+        for (String[] named : StatusLight.NAMED) {
+            radioChoice(theme, lightColourInput, named[0], named[1]);
+        }
+        checkRadioIfChanged(lightColourInput, StatusLight.formatColor(light.color));
+        displayCard.addView(lightColourInput, matchWrapClose());
+        lightInput.setOnCheckedChangeListener((button, on) -> {
+            if (!syncingLiveControls) {
+                setStatusLightHere(on, null);
+            }
+        });
+        lightColourInput.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked == null || syncingLiveControls) {
+                return;
+            }
+            setStatusLightHere(KioskConfig.statusLightOf(this).on,
+                    StatusLight.parseColor((String) checked.getTag()));
+        });
+
         // The web admin's System stats box, on the tablet: the same eight rows from the same
         // formatter, with the switch that puts them on the dashboard directly under them. A switch
         // labelled "show system stats" sitting three cards away from the stats it shows was a
@@ -3030,6 +3078,9 @@ public final class KioskActivity extends Activity {
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
                             KioskConfig.displayOffMethodOf(KioskActivity.this));
+                    StatusLight.State lit = KioskConfig.statusLightOf(KioskActivity.this);
+                    setCheckedIfChanged(lightInput, lit.on);
+                    checkRadioIfChanged(lightColourInput, StatusLight.formatColor(lit.color));
                     // The sentence changes on its own when a sleep ends badly, so it follows too,
                     // and the method radio with it, since a bad sleep switches the stored method.
                     paintDisplayOffNote(displayOffNote, theme);
@@ -13269,6 +13320,75 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * Draws the status light's frame on top of whatever is on the window, or takes it away: off,
+     * the black film and a stopped kiosk (the film's own view) show no frame, since they stand
+     * for a dark panel. Cheap enough for every layout pass; it touches the views only when the
+     * frame has to come, go, rise to the top or change colour.
+     */
+    private void syncStatusLight() {
+        FrameLayout content = findViewById(android.R.id.content);
+        StatusLight.State light = KioskConfig.statusLightOf(this);
+        boolean dark = blackout != null && blackout.isShown();
+        boolean show = content != null && light.on && !dark;
+        StatusLightFrame frame = statusLightFrame;
+        if (!show) {
+            if (frame != null && frame.getParent() instanceof ViewGroup) {
+                ((ViewGroup) frame.getParent()).removeView(frame);
+            }
+            return;
+        }
+        if (frame == null) {
+            frame = new StatusLightFrame(this, dp(16));
+            statusLightFrame = frame;
+        }
+        if (frame.getParent() != content) {
+            if (frame.getParent() instanceof ViewGroup) {
+                ((ViewGroup) frame.getParent()).removeView(frame);
+            }
+            content.addView(frame, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else if (content.getChildAt(content.getChildCount() - 1) != frame
+                && content.getChildAt(content.getChildCount() - 1) != identifyOverlay) {
+            frame.bringToFront();
+        }
+        frame.setColor(StatusLight.argb(light));
+    }
+
+    /** The panel's own two controls: stored, drawn here, and told to the other surfaces. */
+    private void setStatusLightHere(boolean on, Integer color) {
+        KioskConfig.edit(this).statusLight(on, color, -1).apply();
+        syncStatusLight();
+        KioskService.publishTelemetrySoon(this);
+    }
+
+    /** A coloured frame around the edge of the screen that never takes a touch. */
+    private static final class StatusLightFrame extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        StatusLightFrame(Context context, int width) {
+            super(context);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(width);
+            setClickable(false);
+            setFocusable(false);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        void setColor(int argb) {
+            if (paint.getColor() != argb) {
+                paint.setColor(argb);
+                invalidate();
+            }
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float half = paint.getStrokeWidth() / 2f;
+            canvas.drawRect(half, half, getWidth() - half, getHeight() - half, paint);
+        }
+    }
+
     private void handleUiCommand(String command, int brightnessPercent, String url,
             String displayOffMethod) {
         if (command == null) {
@@ -13300,6 +13420,9 @@ public final class KioskActivity extends Activity {
                 break;
             case "kiosk.identify":
                 showIdentify();
+                break;
+            case "light.changed":
+                syncStatusLight();
                 break;
             case "kiosk.start":
                 kioskStopped = false;

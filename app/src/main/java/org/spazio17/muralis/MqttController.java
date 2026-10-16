@@ -944,6 +944,10 @@ final class MqttController implements MqttCallbackExtended {
             // state and its control, start on ON and stop on OFF. No separate start/stop buttons:
             // they would be the switch twice over, and every entity is a row in somebody's device
             // page. The idle times are settings, set from the web admin or the tablet.
+            // The status light as a Home Assistant light: on or off, a colour and a brightness,
+            // through the template schema so its commands are the panel's own light.on and
+            // light.off. Home Assistant's brightness is 0 to 255, the panel's 1 to 100.
+            components.put("status_light", statusLight());
             org.json.JSONArray screensaverModes = new org.json.JSONArray();
             screensaverModes.put(ScreensaverPolicy.OFF);
             screensaverModes.put(ScreensaverPolicy.DIM);
@@ -1419,6 +1423,30 @@ final class MqttController implements MqttCallbackExtended {
         number.put("unit_of_measurement", unit);
         number.put("mode", "slider");
         return number;
+    }
+
+    /** The status light entity; see the components list for why the template schema. */
+    private JSONObject statusLight() throws JSONException {
+        JSONObject light = new JSONObject();
+        light.put("p", "light");
+        light.put("name", "Status light");
+        light.put("unique_id", uniqueId("Status light"));
+        light.put("schema", "template");
+        light.put("command_topic", topicPrefix + "command");
+        light.put("command_on_template", "{\"command\":\"light.on\",\"args\":{\"value\":\""
+                + "{% if red is defined %}{{ red }},{{ green }},{{ blue }}{% endif %}\","
+                + "\"percent\":{% if brightness is defined %}"
+                + "{{ [(brightness * 100 / 255) | round(0, 'ceil') | int, 1] | max }}"
+                + "{% else %}-1{% endif %}}}");
+        light.put("command_off_template", "{\"command\":\"light.off\"}");
+        light.put("state_template",
+                "{{ 'on' if value_json.light is defined and value_json.light.on else 'off' }}");
+        light.put("brightness_template",
+                "{{ (value_json.light.brightness * 2.55) | round | int }}");
+        light.put("red_template", "{{ value_json.light.color.split(',')[0] | int }}");
+        light.put("green_template", "{{ value_json.light.color.split(',')[1] | int }}");
+        light.put("blue_template", "{{ value_json.light.color.split(',')[2] | int }}");
+        return light;
     }
 
     /**

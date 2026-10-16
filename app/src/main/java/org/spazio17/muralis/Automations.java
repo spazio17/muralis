@@ -120,7 +120,9 @@ final class Automations {
             new Action("ambient", "Start Ambient", null),
             new Action("play_sound", "Play a sound", "Sound address"),
             new Action("say", "Say a sentence", "Sentence"),
-            new Action("reload", "Reload the page", null)));
+            new Action("reload", "Reload the page", null),
+            new Action("light_on", "Status light on", "Colour (r,g,b)"),
+            new Action("light_off", "Status light off", null)));
 
     static Event event(String sensor, String id) {
         List<Event> list = EVENTS.get(sensor);
@@ -354,7 +356,8 @@ final class Automations {
             // Control characters out, as from the name: they say nothing in a sentence or an
             // address, and each one costs six bytes in the JSON document (review, 2026-10-01).
             rule.argument = rule.argument.replaceAll("\\p{Cntrl}", " ").trim();
-            if (rule.argument.isEmpty()) {
+            // Status light on with no colour switches it on in the colour it has.
+            if (rule.argument.isEmpty() && !action.id.equals("light_on")) {
                 return "the " + action.argumentLabel.toLowerCase(java.util.Locale.ROOT)
                         + " is missing";
             }
@@ -365,6 +368,13 @@ final class Automations {
             if (action.id.equals("play_sound") && !rule.argument.startsWith("http://")
                     && !rule.argument.startsWith("https://")) {
                 return "the sound address must start with http:// or https://";
+            }
+            if (action.id.equals("light_on") && !rule.argument.isEmpty()) {
+                Integer color = StatusLight.parseColor(rule.argument);
+                if (color == null) {
+                    return "the " + StatusLight.COLOR_RULE;
+                }
+                rule.argument = StatusLight.formatColor(color);
             }
         }
         if (rule.windowed() && (rule.onlyFrom > 24 * 60 || rule.onlyTo > 24 * 60)) {

@@ -177,6 +177,9 @@ if(sa){var aon=autos.filter(function(rule){return rule.enabled;}).length;
 sa.textContent=autos.length?aon+' of '+autos.length+' on':'None yet';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
+var light=data.light||{};
+follow('status-light',light.on);
+follow('status-light-color',light.color);
 // The look chosen on the panel: its radios and the page's own colours and rows follow.
 followLook('appearance_colour',cfg.appearance_colour,'data-palette');followLook('separators',cfg.separators,'data-separators');
 // The Fleet box's line: whether the member endpoint listens, in the panel's words.

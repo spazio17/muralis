@@ -135,6 +135,14 @@ public final class AutomationsTest {
         require(Automations.validate(minutes, names()) == null, "zero minutes is at once");
         Automations.Rule noLevel = rule("light", "darker", "display_on");
         require(Automations.validate(noLevel, names()) != null, "an event with a level needs one");
+        Automations.Rule light = rule("proximity", "near", "light_on");
+        require(Automations.validate(light, names()) == null && light.argument.isEmpty(),
+                "status light on with no colour keeps the stored one");
+        light.argument = " 0, 0 ,255 ";
+        require(Automations.validate(light, names()) == null && light.argument.equals("0,0,255"),
+                "a colour is stored as r,g,b");
+        light.argument = "0,0,256";
+        require(Automations.validate(light, names()) != null, "a channel over 255 is refused");
         Automations.Rule say = rule("proximity", "near", "say");
         require(Automations.validate(say, names()) != null, "say needs a sentence");
         say.argument = "Hello";

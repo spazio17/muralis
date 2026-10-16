@@ -16,6 +16,7 @@ public final class KioskCommandDispatcherTest {
                 .status.equals("accepted"), "kiosk.reload should be accepted");
         require(executor.calls.contains("kioskReload"), "kiosk.reload did not reach executor");
 
+        testStatusLightCommands();
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
@@ -715,7 +716,50 @@ public final class KioskCommandDispatcherTest {
                 "an unknown playlist must be refused with the names that exist: " + refused.detail);
     }
 
+    /**
+     * The status light: light.on with a colour and a brightness, each optional and each checked
+     * before the executor runs, and light.off.
+     */
+    private static void testStatusLightCommands() {
+        RecordingExecutor executor = new RecordingExecutor();
+        require(KioskCommandDispatcher.dispatch("light.on",
+                new KioskCommandDispatcher.CommandArgs(40, null, null, " 0, 200 ,0 "), executor)
+                .status.equals("accepted"), "light.on with a colour and a brightness");
+        require(Boolean.TRUE.equals(executor.lightOn) && executor.lightColor == 0x00C800
+                && executor.lightPercent == 40, "the light's three values reached the executor");
+        require(KioskCommandDispatcher.dispatch("light.on",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
+                && executor.lightColor == null && executor.lightPercent == -1,
+                "light.on alone keeps the stored colour and brightness");
+        for (String bad : new String[] {"red", "255,0", "256,0,0", "-1,0,0", "1,2,3,4", "#ff0000"}) {
+            executor.lightOn = null;
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch("light.on",
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, bad), executor);
+            require(result.status.equals("rejected") && result.detail.equals(StatusLight.COLOR_RULE)
+                    && executor.lightOn == null, "colour " + bad + " refused with its rule");
+        }
+        for (int bad : new int[] {0, 101, -2}) {
+            executor.lightOn = null;
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch("light.on",
+                    new KioskCommandDispatcher.CommandArgs(bad, null, null, null), executor);
+            require(result.status.equals("rejected") && executor.lightOn == null,
+                    "brightness " + bad + " refused");
+        }
+        require(KioskCommandDispatcher.dispatch("light.off",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
+                && Boolean.FALSE.equals(executor.lightOn), "light.off");
+        require(StatusLight.formatColor(StatusLight.parseColor("255,160,0")).equals("255,160,0")
+                && "Amber".equals(StatusLight.nameOf(0xFFA000)) && StatusLight.nameOf(0x123456) == null,
+                "colours round-trip and the named ones are found");
+        require((StatusLight.argb(new StatusLight.State(true, 0xFF0000, 100)) >>> 24) == 255
+                && (StatusLight.argb(new StatusLight.State(true, 0xFF0000, 50)) >>> 24) == 128,
+                "the brightness is the frame's opacity");
+    }
+
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
+        Boolean lightOn;
+        Integer lightColor;
+        int lightPercent;
         final List<String> calls = new ArrayList<>();
         int lastBrightness = -1;
         String lastUrl;
@@ -853,6 +897,13 @@ public final class KioskCommandDispatcherTest {
         public void setWebAdminEnabled(boolean enabled) {
             calls.add("setWebAdminEnabled");
             lastWebAdminEnabled = enabled;
+        }
+
+        @Override
+        public void setStatusLight(boolean on, Integer color, int percent) {
+            lightOn = on;
+            lightColor = color;
+            lightPercent = percent;
         }
 
 
