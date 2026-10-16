@@ -6,16 +6,10 @@
 # on the runner as it is: the image does not exist there, and the workflow sets
 # up the same Java 21 itself.
 #
-# Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
-# pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
-# EscapeSequence) stays free of Android imports and testable in seconds.
-#
-# Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run these suites: dispatcher, provisioning, request origin, system
-# bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
-# retry, system stats, recycle policy, recovery policy, server probe policy,
-# escape sequence, relaunch policy, the self-signed certificate, the uploaded
-# certificate, the automations, the discovery withdrawals and the fleet's mutual TLS.
+# The point is that the pure-Java logic (the dispatcher, the policies, the fleet's
+# list and its TLS, the settings file and the rest) stays free of Android imports
+# and testable in seconds. Every suite in app/src/test-host runs; grow the javac
+# blocks below as more logic becomes host-testable.
 
 set -euo pipefail
 
@@ -131,7 +125,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
-            FleetAlerts StatusLight BrowserOptions CertificatePins; do
+            FleetAlerts StatusLight BrowserOptions CertificatePins Popup PopupCameras SettingsTransfer; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -154,15 +148,26 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/StatusLight.java" \
     "${pure_java_dir}/BrowserOptions.java" \
     "${pure_java_dir}/CertificatePins.java" \
+    "${pure_java_dir}/Popup.java" \
+    "${pure_java_dir}/PopupCameras.java" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
+
+# The settings file: its keys, its form and its encrypted passwords.
+mkdir -p "${test_dir}/settings"
+javac -d "${test_dir}/settings" \
+    "${pure_java_dir}/SettingsTransfer.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/SettingsTransferTest.java"
+java -cp "${test_dir}/settings" org.spazio17.muralis.SettingsTransferTest
 
 # The automations: vocabulary, storage and engine, over a small org.json stand-in in the test
 # tree, since the class speaks Android's org.json and the host has none.
 javac -d "${test_dir}/automations" \
     "${pure_java_dir}/Automations.java" \
     "${pure_java_dir}/StatusLight.java" \
+    "${pure_java_dir}/ScreensaverPolicy.java" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/HostJson.java" \
     "${host_test_dir}/../../json/JSONException.java" \
@@ -315,10 +320,11 @@ javac -d "${test_dir}/fleettls" \
     "${host_test_dir}/FleetTlsTest.java"
 java -cp "${test_dir}/fleettls" org.spazio17.muralis.FleetTlsTest
 
-# The join code: eight digits, single use, ten minutes, five wrong codes, a lockout.
+# The join code: eight digits, single use, ten minutes, proven by SPAKE2, five tries, a lockout.
 mkdir -p "${test_dir}/fleetjoin"
 javac -d "${test_dir}/fleetjoin" \
     "${pure_java_dir}/FleetJoin.java" \
+    "${pure_java_dir}/Spake2.java" \
     "${host_test_dir}/FleetJoinTest.java"
 java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
 
@@ -326,10 +332,14 @@ java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
 mkdir -p "${test_dir}/fleetdocument"
 javac -d "${test_dir}/fleetdocument" \
     "${pure_java_dir}/FleetDocument.java" \
+    "${pure_java_dir}/FleetTier.java" \
     "${pure_java_dir}/FleetTls.java" \
     "${pure_java_dir}/TinyJson.java" \
-    "${host_test_dir}/FleetDocumentTest.java"
+    "${host_test_dir}/FleetDocumentTest.java" \
+    "${host_test_dir}/FleetTierTest.java"
 java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetDocumentTest
+# Pro's lease through the fleet.
+java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetTierTest
 
 # The fleet's alerts: each said once, offline by one panel, the settings' checks.
 mkdir -p "${test_dir}/fleetalerts"
@@ -339,7 +349,7 @@ javac -d "${test_dir}/fleetalerts" \
     "${host_test_dir}/FleetAlertsTest.java"
 java -cp "${test_dir}/fleetalerts" org.spazio17.muralis.FleetAlertsTest
 
-# What a panel withdraws from Home Assistant: only what it announced itself (2026-10-06).
+# What a panel withdraws from Home Assistant: only what it announced itself.
 mkdir -p "${test_dir}/withdrawals"
 javac -d "${test_dir}/withdrawals" \
     "${pure_java_dir}/DiscoveryWithdrawals.java" \

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -21,7 +21,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * The fleet document (fleet design, section 6; block 12a): one JSON every member holds, naming the
+ * The fleet document: one JSON every member holds, naming the
  * fleet, its members and the keys revoked, at a version, signed by the manager who wrote it.
  *
  * <p>Signed with ECDSA P-256 over the document's canonical form (keys sorted at every level, no
@@ -31,8 +31,9 @@ import java.util.TreeMap;
  * already knows, at a higher version; two managers' edits of the same version are settled without
  * the clock: one that revokes a key wins, otherwise the lower author id.
  *
- * <p>Pure, with no Android imports, so the rules are covered by host tests. The profile, the
- * overrides and the tier block are carried but not yet applied (blocks 12d and 14).
+ * <p>Pure, with no Android imports, so the rules are covered by host tests. The profile holds
+ * what the fleet and its groups share; the tier block is how Pro reaches the members
+ * ({@link FleetTier}).
  */
 final class FleetDocument {
     /** A member entry's fields, as the design names them. */
@@ -172,7 +173,7 @@ final class FleetDocument {
     static final String SINCE = "since";
     static final String AT = "at";
     /**
-     * The profile's sections (block 12d): the groups of settings a fleet can share, each either
+     * The profile's sections: the groups of settings a fleet can share, each either
      * shared, with the values every member applies, or not. Never shared: a panel's name, member
      * port, escape combinations and PIN, calibrations and what belongs to its hardware.
      */
@@ -183,7 +184,7 @@ final class FleetDocument {
         switch (section) {
             case "dashboard": return "Dashboard";
             case "mqtt": return "MQTT";
-            case "web_admin": return "Local web admin";
+            case "web_admin": return "Web admin";
             case "display": return "Display";
             case "alerts": return "Alerts";
             default: return "Ambient";
@@ -365,6 +366,27 @@ final class FleetDocument {
         return next;
     }
 
+    /**
+     * The next document without the member of key hash {@code spki}, its key revoked by this
+     * version: a panel that left, or one removed from the Fleet page. A key revoked so can join
+     * again later; its new entry's {@code since} is past the revocation.
+     */
+    static Map<String, Object> withoutMember(Map<String, Object> held, String author, String spki,
+            String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (!spki.equals(TinyJson.string(member, SPKI, ""))) {
+                members.add(member);
+            }
+        }
+        next.put("members", members);
+        Map<String, Long> revoked = revokedAt(held);
+        revoked.put(spki, version(next));
+        next.put("revoked", revokedList(revoked));
+        return next;
+    }
+
     private static Map<String, Object> bumped(Map<String, Object> held, String author,
             String updated) {
         Map<String, Object> next = new LinkedHashMap<>(held);
@@ -504,6 +526,20 @@ final class FleetDocument {
                 : new ArrayList<>();
     }
 
+    /** The fleet's Pro block (FleetTier), or null when there is none. */
+    static Map<String, Object> tierOf(Map<String, Object> document) {
+        Object tier = document == null ? null : document.get("tier");
+        return tier instanceof Map && !((Map<?, ?>) tier).isEmpty() ? TinyJson.object(tier) : null;
+    }
+
+    /** The next document with {@code tier} as the fleet's Pro block. */
+    static Map<String, Object> withTier(Map<String, Object> held, String author,
+            Map<String, Object> tier, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        next.put("tier", new LinkedHashMap<>(tier));
+        return next;
+    }
+
     /** The revoked key hashes. */
     static Set<String> revoked(Map<String, Object> document) {
         return revokedAt(document).keySet();
@@ -597,7 +633,6 @@ final class FleetDocument {
             fleet.put("created", updated);
             next.put("fleet", fleet);
             next.put("profile", new LinkedHashMap<String, Object>());
-            next.put("overrides", new LinkedHashMap<String, Object>());
             next.put("tier", new LinkedHashMap<String, Object>());
         }
         long version = version(held);
@@ -709,7 +744,8 @@ final class FleetDocument {
      * lists, under the entry of the newer document where both have it; every key either revokes,
      * at the later of the two versions, unless a member entry joined after that (a fresh join
      * after the removal); each shared section of the profile from the document that changed it
-     * last; the fleet, the overrides and the tier of the newer document. Version, author and
+     * last; the fleet of the newer document, the tier confirmed later (whoever
+     * wrote the document). Version, author and
      * signature are the newer document's and must be set anew when the result differs from both
      * inputs. {@code held} may be null.
      */
@@ -763,6 +799,12 @@ final class FleetDocument {
         }
         merged.put("members", members);
         merged.put("revoked", revokedList(revoked));
+        // Pro's lease: the later confirmation, so an anchor's renewal is never lost to a document
+        // that changed something else meanwhile.
+        Map<String, Object> tier = FleetTier.newer(tierOf(newer), tierOf(older));
+        if (tier != null) {
+            merged.put("tier", tier);
+        }
         // Each group on its own: the entry changed last wins, the newer document on a tie; a
         // removed group stays removed.
         Map<String, Object> groups = new LinkedHashMap<>();
@@ -979,10 +1021,8 @@ final class FleetDocument {
             }
         }
         next.put("profile", profile);
-        for (String key : new String[] {"overrides", "tier"}) {
-            if (old.containsKey(key)) {
-                next.put(key, old.get(key));
-            }
+        if (old.containsKey("tier")) {
+            next.put("tier", old.get("tier"));
         }
         return next;
     }
