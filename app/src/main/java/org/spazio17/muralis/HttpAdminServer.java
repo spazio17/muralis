@@ -102,6 +102,12 @@ final class HttpAdminServer {
     private static final int MAX_CERTIFICATE_BYTES = 64 * 1024;
     private static final int MAX_PICTURE_BYTES = 12 * 1024 * 1024;
     private static final int UPLOAD_DEADLINE_MS = 120_000;
+    /**
+     * The two routes that wait on another panel (its picture, Identify) get the member call's
+     * own deadline plus the capture's on top of the request's, so a panel that does not answer
+     * is reported as such in the reply, rather than this connection being closed first.
+     */
+    private static final int FLEET_PROXY_DEADLINE_MS = 20_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
     private static final int WORKER_THREADS = 16;
     private static final int PER_HOST_CONNECTIONS = 12;
@@ -179,6 +185,7 @@ final class HttpAdminServer {
     private final String pictureScript;
     private final String playlistScript;
     private final String menuScript;
+    private final String fleetScript;
     private final String pageCss;
 
 
@@ -262,6 +269,7 @@ final class HttpAdminServer {
         pictureScript = script(R.raw.admin_pictures);
         playlistScript = script(R.raw.admin_playlists);
         menuScript = script(R.raw.admin_menu);
+        fleetScript = script(R.raw.admin_fleet);
         // The chosen scheme's colours ride along: html[data-palette] picks them (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
@@ -724,6 +732,13 @@ final class HttpAdminServer {
                     deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
                             UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
                 }
+                if (requestPath.equals("/api/fleet/screenshot")
+                        || requestPath.equals("/api/fleet/identify")) {
+                    input.extend(FLEET_PROXY_DEADLINE_MS);
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            FLEET_PROXY_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                }
                 byte[] body;
                 try {
                     boolean order = method.equals("POST")
@@ -1061,6 +1076,12 @@ final class HttpAdminServer {
             FleetServer.leaveFleet(context, "from the web admin");
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
+        } else if (path.equals("/api/fleet/screenshot") && method.equals("GET")) {
+            serveFleetScreenshot(queryValue(query, "panel"), output);
+        } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
+            Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
+            form.putAll(parseFormBody(headers, body));
+            serveFleetIdentify(form.getOrDefault("panel", ""), output);
         } else if (path.equals("/api/stats") && method.equals("GET")) {
             writeResponse(output, 200, "application/json",
                     bytes(kioskService.statsJson().toString()));
@@ -3294,6 +3315,92 @@ final class HttpAdminServer {
                 Collections.singletonMap("Cache-Control", "no-store"));
     }
 
+    /**
+     * {@code GET /api/fleet/screenshot?panel=<id>}: one member's screen as the Fleet page's
+     * thumbnail (block 16), this panel's through its own capture and another's fetched from
+     * its member endpoint, a JPEG with the long side at most 1280 px, or the refusal in the
+     * usual JSON: 404 for an id not in the fleet, 409 when the panel did not answer or
+     * refused. Never a stale picture: nothing is kept between requests.
+     */
+    private void serveFleetScreenshot(String panel, OutputStream output) throws IOException {
+        java.util.Map<String, Object> member = FleetServer.memberById(context, panel);
+        if (member == null) {
+            writeResponse(output, 404, "application/json", bytes(rejectedJson(
+                    "no panel with the id " + panel + " is in this fleet")));
+            return;
+        }
+        FleetServer.Picture picture = FleetServer.screenshotOf(context, member);
+        if (picture.jpeg == null) {
+            writeResponse(output, 409, "application/json", bytes(rejectedJson(picture.problem)));
+            return;
+        }
+        writeResponse(output, 200, "image/jpeg", picture.jpeg,
+                Collections.singletonMap("Cache-Control", "no-store"));
+    }
+
+    /**
+     * {@code POST /api/fleet/identify} with {@code panel=<id>} or {@code panel=all}: Identify
+     * on that panel, or on every panel of the fleet at once, each asked in parallel within the
+     * fleet call's deadline. The reply is the command's usual JSON; for {@code all} the detail
+     * holds one line per panel, and the status is accepted only when every panel accepted.
+     */
+    private void serveFleetIdentify(String panel, OutputStream output) throws IOException {
+        java.util.List<java.util.Map<String, Object>> asked = new java.util.ArrayList<>();
+        if ("all".equals(panel)) {
+            asked.addAll(FleetDocument.members(KioskConfig.fleetDocumentOf(context)));
+        } else {
+            java.util.Map<String, Object> member = FleetServer.memberById(context, panel);
+            if (member != null) {
+                asked.add(member);
+            }
+        }
+        if (asked.isEmpty()) {
+            writeResponse(output, 404, "application/json", bytes(rejectedJson("all".equals(panel)
+                    ? "this panel is not in a fleet"
+                    : "no panel with the id " + panel + " is in this fleet")));
+            return;
+        }
+        String[] lines = new String[asked.size()];
+        boolean[] refused = {false};
+        java.util.List<Thread> calls = new java.util.ArrayList<>();
+        for (int i = 0; i < asked.size(); i++) {
+            java.util.Map<String, Object> member = asked.get(i);
+            int at = i;
+            Thread call = new Thread(() -> {
+                String problem = FleetServer.identifyOn(context, member);
+                String name = TinyJson.string(member, FleetDocument.NAME,
+                        TinyJson.string(member, FleetDocument.ID, ""));
+                synchronized (refused) {
+                    refused[0] |= problem != null;
+                    lines[at] = asked.size() == 1 ? (problem == null ? "" : problem)
+                            : name + ": " + (problem == null ? "accepted" : problem);
+                }
+            }, "MuralisFleetIdentify");
+            call.start();
+            calls.add(call);
+        }
+        for (Thread call : calls) {
+            try {
+                call.join();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        JSONObject response = new JSONObject();
+        try {
+            response.put("status", refused[0] ? "rejected" : "accepted");
+            response.put("detail", String.join("\n", lines));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        writeResponse(output, 200, "application/json", bytes(response.toString()));
+    }
+
+    private static String rejectedJson(String detail) {
+        return "{\"status\":\"rejected\",\"detail\":" + JSONObject.quote(detail) + "}";
+    }
+
     private void serveSnapshot(OutputStream output) throws IOException {
         PanelCamera camera = kioskService.camera();
         byte[] jpeg = camera == null ? null : camera.snapshot();
@@ -4917,8 +5024,14 @@ final class HttpAdminServer {
         String scope = scopeAsked == null || scopeAsked.isEmpty()
                 || !(FleetDocument.EVERYONE.equals(scopeAsked) || groups.containsKey(scopeAsked))
                 ? FleetDocument.EVERYONE : scopeAsked;
-        // Panels: each with its groups to tick and its last contact.
-        html.append("<div class=\"card\"><h2>Panels</h2>");
+        // Panels: each with its picture on request, its groups to tick, its last contact and
+        // Identify (block 16). Screenshots fetches every panel's picture at once; the images
+        // load only then, never with the page, since each is a capture on that panel.
+        html.append("<div class=\"card\"><h2>Panels</h2><div class=\"actions tight\">"
+                + "<button type=\"button\" class=\"tonal\" id=\"fleet-shots\">Screenshots"
+                + "</button><button type=\"button\" class=\"text\" data-identify=\"all\">"
+                + "Identify all</button></div><p class=\"hint\" id=\"fleet-identify-all\""
+                + " hidden></p>");
         org.json.JSONArray peers = FleetServer.peersJson(context);
         String self = KioskConfig.deviceIdOf(context);
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
@@ -4932,7 +5045,10 @@ final class HttpAdminServer {
                     + " type=\"hidden\" name=\"spki\""
                     + " value=\"").append(escapeHtml(spki)).append("\"><p><b>")
                     .append(escapeHtml(name)).append("</b> <span class=\"hint\">")
-                    .append(escapeHtml(contact)).append("</span></p>");
+                    .append(escapeHtml(contact)).append("</span></p>")
+                    .append("<div class=\"fleet-shot\" data-panel=\"").append(escapeHtml(id))
+                    .append("\"><img alt=\"The screen of ").append(escapeHtml(name))
+                    .append("\" hidden><p class=\"hint\" hidden></p></div>");
             if (!groups.isEmpty()) {
                 html.append("<div class=\"switches\">");
                 for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
@@ -4943,9 +5059,12 @@ final class HttpAdminServer {
                             .append("></label>");
                 }
                 html.append("</div><div class=\"actions tight\"><button class=\"tonal\""
-                        + " type=\"submit\">Save groups</button></div>");
+                        + " type=\"submit\">Save groups</button>");
+            } else {
+                html.append("<div class=\"actions tight\">");
             }
-            html.append("</form>");
+            html.append("<button type=\"button\" class=\"text\" data-identify=\"")
+                    .append(escapeHtml(id)).append("\">Identify</button></div></form>");
         }
         html.append("<p class=\"hint\">A panel is added from another panel's camera, in its Fleet"
                 + " section.</p></div>");
@@ -5070,6 +5189,7 @@ final class HttpAdminServer {
                 .append(" versions this panel held. Restore as new writes a version's fleet name,"
                 + " groups and shared settings as a new, higher version; the panels of the fleet"
                 + " stay as they are now.</p></div>");
+        html.append(fleetScript);
         return html.append(pageEnd()).toString();
     }
 

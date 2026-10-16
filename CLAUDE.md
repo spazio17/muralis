@@ -64,7 +64,9 @@ on purpose.
   a PIN lockout): each panel judges itself and one panel judges the fleet's offline, each alert
   is said once, on and off, as a notification on the panel, on a plain MQTT topic and to a web
   address; every member keeps the last versions of the fleet's list, with what each changed,
-  and can restore one as a new version, membership kept as it is now.
+  and can restore one as a new version, membership kept as it is now. The Fleet page shows a
+  picture of every panel's screen on request, fetched from each panel over the fleet's own
+  link and never stored, and Identify shows a panel's name on its screen and says it.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

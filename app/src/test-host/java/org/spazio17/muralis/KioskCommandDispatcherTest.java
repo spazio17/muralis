@@ -448,6 +448,16 @@ public final class KioskCommandDispatcherTest {
         require(r.status.equals("rejected") && r.detail.equals(executor.screenshotProblem),
                 "kiosk.screenshot did not carry the executor's refusal");
         executor.screenshotProblem = null;
+        r = KioskCommandDispatcher.dispatch("kiosk.identify",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("identify"),
+                "kiosk.identify did not reach the executor");
+        executor.identifyProblem = "The panel is not showing its screen";
+        r = KioskCommandDispatcher.dispatch("kiosk.identify",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("rejected") && r.detail.equals(executor.identifyProblem),
+                "kiosk.identify did not carry the executor's refusal");
+        executor.identifyProblem = null;
         r = KioskCommandDispatcher.dispatch("proximity.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
@@ -881,6 +891,14 @@ public final class KioskCommandDispatcherTest {
         public String screenshot() {
             calls.add("screenshot");
             return screenshotProblem;
+        }
+
+        String identifyProblem;
+
+        @Override
+        public String identify() {
+            calls.add("identify");
+            return identifyProblem;
         }
 
         @Override

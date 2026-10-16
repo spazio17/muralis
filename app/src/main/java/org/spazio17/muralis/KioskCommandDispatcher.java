@@ -205,6 +205,13 @@ final class KioskCommandDispatcher {
          */
         String screenshot();
 
+        /**
+         * Shows this panel's name over whatever is on its screen for a few seconds and says it,
+         * so a person can tell which wall is which; null when done, else why not: the panel is
+         * not showing its screen, or the name could not be said.
+         */
+        String identify();
+
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
 
@@ -473,6 +480,10 @@ final class KioskCommandDispatcher {
             }
             case "kiosk.screenshot": {
                 String problem = executor.screenshot();
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "kiosk.identify": {
+                String problem = executor.identify();
                 return problem == null ? accepted() : rejected(problem);
             }
             case "proximity.calibrate": {

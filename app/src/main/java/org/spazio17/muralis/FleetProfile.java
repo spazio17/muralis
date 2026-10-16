@@ -391,6 +391,19 @@ final class FleetProfile {
         return FleetDocument.fillPlaceholders(url, now[0].isEmpty() ? own : now[0], now[1], now[2]);
     }
 
+    /**
+     * This panel's name as the fleet knows it: the name in the fleet's list, or the device id
+     * outside a fleet. What Identify shows and says, and what {@code {panel.name}} fills in.
+     */
+    static String panelName(Context context) {
+        String own = KioskConfig.deviceIdOf(context);
+        String stored = KioskConfig.fleetDocumentText(context);
+        Map<String, Object> me = stored.isEmpty() ? null : FleetDocument.memberByKey(
+                FleetDocument.parse(stored), KioskConfig.fleetSelfKeyOf(context));
+        String name = me == null ? own : TinyJson.string(me, FleetDocument.NAME, own);
+        return name.isEmpty() ? own : name;
+    }
+
     /** One value of a section as the Fleet page draws and reads it. */
     static final class Field {
         final String key;

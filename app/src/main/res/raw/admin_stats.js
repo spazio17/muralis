@@ -64,12 +64,6 @@ document.getElementById('fleet-join-close').addEventListener('click',function(){
 document.getElementById('fleet-leave').addEventListener('click',function(){
 if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps its own settings. It can join again with a new code.')){return;}
 fleetJoinPost('/api/fleet/leave');});}
-// The fleet's groups this panel is in, and whether it follows the whole fleet, follow the poll;
-// the groups themselves and what each scope shares are the Fleet page.
-function fleetGroupsPaint(prof){
-if(!prof||!prof.groups){return;}
-prof.groups.forEach(function(g){follow('fleet-group-'+g.id,g['in']);});
-follow('fleet-follows',prof.follows_fleet);}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};
 // The same eight rows, in the same order, as the tablet's own overlay; see
@@ -131,6 +125,16 @@ if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.
 el.classList.remove('check-bad');el.title='';
 var refused=el.closest&&el.closest('.field')?el.closest('.field').querySelector('.support.refused'):null;
 if(refused){refused.parentNode.removeChild(refused);}}
+// The fleet's groups this panel is in, and whether it follows the whole fleet, follow the poll;
+// the groups themselves and what each scope shares are the Fleet page. A group made or removed
+// there changes the rows, so the page is loaded again on the Fleet section.
+function fleetGroupsPaint(prof){
+if(!prof||!prof.groups||!document.getElementById('fleet-follows')){return;}
+var rows=Array.prototype.map.call(document.querySelectorAll('input[id^="fleet-group-"]'),function(el){return el.id;}).sort().join();
+var groups=prof.groups.map(function(g){return 'fleet-group-'+g.id;}).sort().join();
+if(rows!==groups&&!document.querySelector('[data-pending]')){window.location.replace('/?open=fleet');return;}
+prof.groups.forEach(function(g){follow('fleet-group-'+g.id,g['in']);});
+follow('fleet-follows',prof.follows_fleet);}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('volume-buttons-disabled',cfg.volume_buttons_disabled);

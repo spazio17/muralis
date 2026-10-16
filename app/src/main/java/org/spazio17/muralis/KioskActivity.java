@@ -256,6 +256,16 @@ public final class KioskActivity extends Activity {
     };
     private TextView statsOverlay;
     /**
+     * Identify (block 16): the panel's name drawn over whatever is on the glass for
+     * {@link #IDENTIFY_MS}, the last child of the window's content, so it sits over the page,
+     * the screensaver, the parking screen and the black film alike, with no window of its own.
+     * A second Identify while one shows restarts the time; a screen change takes it away with
+     * the content it was drawn over.
+     */
+    private TextView identifyOverlay;
+    private static final long IDENTIFY_MS = 10_000L;
+    private final Runnable identifyEnd = this::endIdentify;
+    /**
      * The System stats card's readout on the configuration screen. Distinct from
      * {@link #statsOverlay}, which is the block drawn over the dashboard; the two are never on
      * screen at the same time but are fed the same text by the same tick.
@@ -3506,10 +3516,16 @@ public final class KioskActivity extends Activity {
             return;
         }
         java.util.Map<String, String> groups = FleetDocument.groups(list);
-        // Panels: each with its groups to tick and its last contact.
+        // Panels: each with its picture on request, its groups to tick, its last contact and
+        // Identify (block 16). Screenshots fetches every panel's picture at once, off the main
+        // thread, each drawn into its row as it arrives; a panel that does not answer says so.
         LinearLayout panels = card(theme, "Panels");
         org.json.JSONArray peers = FleetServer.peersJson(this);
         String self = KioskConfig.deviceIdOf(this);
+        java.util.List<Runnable> fetches = new java.util.ArrayList<>();
+        Button shots = tonalButton(theme, "Screenshots");
+        Button identifyAll = textButton(theme, "Identify all");
+        panels.addView(fittingButtonRow(shots, identifyAll), matchWrapClose());
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
             String id = TinyJson.string(member, FleetDocument.ID, "");
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
@@ -3526,6 +3542,47 @@ public final class KioskActivity extends Activity {
             seen.setTextColor(theme.subtext);
             seen.setText(contact);
             panels.addView(seen, matchWrapClose());
+            // The picture area: the thumbnail at most 160 dp high, or the line that says why
+            // there is none; both hidden until Screenshots is tapped.
+            android.widget.ImageView thumb = new android.widget.ImageView(this);
+            thumb.setAdjustViewBounds(true);
+            thumb.setMaxHeight(dp(160));
+            thumb.setContentDescription("The screen of "
+                    + TinyJson.string(member, FleetDocument.NAME, id));
+            thumb.setVisibility(View.GONE);
+            LinearLayout.LayoutParams thumbParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            thumbParams.topMargin = dp(8);
+            panels.addView(thumb, thumbParams);
+            TextView shotHint = new FlushText(this);
+            shotHint.setTextSize(13);
+            shotHint.setTextColor(theme.subtext);
+            shotHint.setVisibility(View.GONE);
+            panels.addView(shotHint, matchWrapClose());
+            fetches.add(() -> {
+                thumb.setVisibility(View.GONE);
+                shotHint.setText("Asking the panel...");
+                shotHint.setVisibility(View.VISIBLE);
+                new Thread(() -> {
+                    FleetServer.Picture picture = FleetServer.screenshotOf(app, member);
+                    android.graphics.Bitmap bitmap = picture.jpeg == null ? null
+                            : thumbnailOf(picture.jpeg, dp(160));
+                    mainHandler.post(() -> {
+                        if (!page.isAttachedToWindow()) {
+                            return;
+                        }
+                        if (bitmap != null) {
+                            thumb.setImageBitmap(bitmap);
+                            thumb.setVisibility(View.VISIBLE);
+                            shotHint.setVisibility(View.GONE);
+                        } else {
+                            thumb.setImageDrawable(null);
+                            shotHint.setText(picture.problem == null
+                                    ? FleetServer.NO_PICTURE : picture.problem);
+                        }
+                    });
+                }, "MuralisFleetShot").start();
+            });
             java.util.List<String> in = FleetDocument.memberGroups(list, member);
             for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
                 String groupId = group.getKey();
@@ -3542,7 +3599,25 @@ public final class KioskActivity extends Activity {
                 }));
                 panels.addView(box, matchWrapClose());
             }
+            Button identify = textButton(theme, "Identify");
+            identify.setOnClickListener(view -> fleetWork(app,
+                    () -> FleetServer.identifyOn(app, member)));
+            panels.addView(fittingButtonRow(identify), matchWrapClose());
         }
+        shots.setOnClickListener(view -> {
+            for (Runnable fetch : fetches) {
+                fetch.run();
+            }
+        });
+        identifyAll.setOnClickListener(view -> {
+            for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
+                fleetWork(app, () -> {
+                    String refused = FleetServer.identifyOn(app, member);
+                    return refused == null ? null : TinyJson.string(member, FleetDocument.NAME,
+                            TinyJson.string(member, FleetDocument.ID, "")) + ": " + refused;
+                });
+            }
+        });
         TextView addHint = new FlushText(this);
         addHint.setTextSize(13);
         addHint.setTextColor(theme.subtext);
@@ -3836,6 +3911,29 @@ public final class KioskActivity extends Activity {
                 });
             }
         }, "MuralisFleetChange").start();
+    }
+
+    /**
+     * A JPEG of a screen decoded no larger than the Fleet page needs: sampled down to about
+     * twice {@code heightPx} so three panels' pictures do not hold three screens' worth of
+     * pixels. Null when it cannot be decoded.
+     */
+    private static android.graphics.Bitmap thumbnailOf(byte[] jpeg, int heightPx) {
+        try {
+            android.graphics.BitmapFactory.Options bounds =
+                    new android.graphics.BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, bounds);
+            android.graphics.BitmapFactory.Options options =
+                    new android.graphics.BitmapFactory.Options();
+            options.inSampleSize = 1;
+            while (bounds.outHeight / (options.inSampleSize * 2) >= heightPx * 2) {
+                options.inSampleSize *= 2;
+            }
+            return android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, options);
+        } catch (RuntimeException | OutOfMemoryError failed) {
+            return null;
+        }
     }
 
     /** The groups there are, as one string to tell a change by. */
@@ -13212,6 +13310,55 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /**
+     * The service asked for Identify (KioskService.identify): this panel's name, large and
+     * centred, over whatever is on screen, for ten seconds, drawn the way the stats overlay is
+     * (a child of this activity's own view tree, no overlay permission, no second window) but
+     * on the window's content so every screen gets it. Touches fall through, so the corner
+     * taps keep working under it. Nothing while this activity is not in front.
+     */
+    private void showIdentify() {
+        if (!inFront) {
+            return;
+        }
+        FrameLayout content = findViewById(android.R.id.content);
+        if (content == null) {
+            return;
+        }
+        if (identifyOverlay != null && identifyOverlay.getParent() != content) {
+            endIdentify();
+        }
+        if (identifyOverlay == null) {
+            TextView label = new FlushText(this);
+            label.setGravity(Gravity.CENTER);
+            label.setTextSize(64);
+            label.setTypeface(Typeface.DEFAULT_BOLD);
+            label.setTextColor(Color.WHITE);
+            label.setBackgroundColor(Color.argb(170, 0, 0, 0));
+            label.setShadowLayer(dp(3), 0, 0, Color.BLACK);
+            int pad = dp(32);
+            label.setPadding(pad, pad, pad, pad);
+            label.setClickable(false);
+            label.setFocusable(false);
+            content.addView(label, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            identifyOverlay = label;
+        }
+        identifyOverlay.setText(FleetProfile.panelName(this));
+        identifyOverlay.bringToFront();
+        mainHandler.removeCallbacks(identifyEnd);
+        mainHandler.postDelayed(identifyEnd, IDENTIFY_MS);
+    }
+
+    private void endIdentify() {
+        mainHandler.removeCallbacks(identifyEnd);
+        TextView label = identifyOverlay;
+        identifyOverlay = null;
+        if (label != null && label.getParent() instanceof ViewGroup) {
+            ((ViewGroup) label.getParent()).removeView(label);
+        }
+    }
+
     private void handleUiCommand(String command, int brightnessPercent, String url,
             String displayOffMethod) {
         if (command == null) {
@@ -13240,6 +13387,9 @@ public final class KioskActivity extends Activity {
                 break;
             case "kiosk.screenshot":
                 answerScreenshot();
+                break;
+            case "kiosk.identify":
+                showIdentify();
                 break;
             case "kiosk.start":
                 kioskStopped = false;

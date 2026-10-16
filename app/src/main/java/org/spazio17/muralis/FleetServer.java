@@ -40,9 +40,11 @@ import javax.net.ssl.SSLSocketFactory;
  *
  * <p>It answers {@code GET /fleet} (this panel's id, its fleet key and the fleet it is in),
  * {@code POST /fleet/join} (the one route an unknown key reaches, while a join code is open:
- * {@link FleetJoin}) and {@code POST /fleet/leave}. The document and the commands are the next
- * blocks. One request per connection, small and bounded: a fleet call is a few hundred bytes
- * between panels, never a browser's burst.
+ * {@link FleetJoin}), {@code POST /fleet/leave}, {@code GET /fleet/screenshot} (this panel's
+ * screen as a JPEG, for the Fleet page's thumbnails) and {@code POST /fleet/identify} (the
+ * panel's name shown and said on it). One request per connection, small and bounded: a fleet
+ * call is a few hundred bytes between panels, never a browser's burst, the picture being the
+ * one answer that is not.
  */
 final class FleetServer {
     private static final String TAG = "MuralisFleet";
@@ -223,10 +225,19 @@ final class FleetServer {
     static final class Reply {
         final int status;
         final JSONObject body;
+        /** The body as sent, for the one route that answers a picture, not JSON. */
+        final byte[] content;
+        final String contentType;
 
         Reply(int status, JSONObject body) {
+            this(status, body, new byte[0], "application/json");
+        }
+
+        Reply(int status, JSONObject body, byte[] content, String contentType) {
             this.status = status;
             this.body = body;
+            this.content = content;
+            this.contentType = contentType;
         }
 
         /** The refusal as the other panel worded it. */
@@ -242,6 +253,12 @@ final class FleetServer {
      */
     static Reply call(Context context, String address, int port, String spki, String method,
             String path, JSONObject body) throws IOException {
+        return call(context, address, port, spki, method, path, body, MAX_DOCUMENT);
+    }
+
+    /** As above, taking a reply body of up to {@code replyLimit} bytes; longer is discarded. */
+    static Reply call(Context context, String address, int port, String spki, String method,
+            String path, JSONObject body, int replyLimit) throws IOException {
         FleetIdentity identity = FleetIdentity.load(context);
         if (identity == null) {
             throw new IOException("this panel's fleet key cannot be read");
@@ -270,28 +287,33 @@ final class FleetServer {
                 throw new IOException("the other panel did not answer as a member endpoint");
             }
             int length = -1;
+            String type = "application/json";
             for (int lines = 0; lines < MAX_HEADER_LINES; lines++) {
                 String header = readLine(input);
                 if (header == null || header.isEmpty()) {
                     break;
                 }
                 int colon = header.indexOf(':');
-                if (colon > 0 && header.substring(0, colon).trim()
-                        .equalsIgnoreCase("Content-Length")
-                        && header.substring(colon + 1).trim().matches("[0-9]{1,5}")) {
-                    length = Integer.parseInt(header.substring(colon + 1).trim());
+                String name = colon > 0 ? header.substring(0, colon).trim() : "";
+                String value = colon > 0 ? header.substring(colon + 1).trim() : "";
+                if (name.equalsIgnoreCase("Content-Length") && value.matches("[0-9]{1,8}")) {
+                    length = Integer.parseInt(value);
+                } else if (name.equalsIgnoreCase("Content-Type")) {
+                    type = value;
                 }
             }
-            // As much as a fleet document may be: the list is fetched and handed back this way.
-            byte[] reply = length < 0 || length > MAX_DOCUMENT ? new byte[0]
+            // As much as the caller allows: a fleet document, or a picture of a screen.
+            byte[] reply = length < 0 || length > replyLimit ? new byte[0]
                     : readBody(input, length);
-            JSONObject json;
-            try {
-                json = new JSONObject(new String(reply, StandardCharsets.UTF_8));
-            } catch (JSONException notJson) {
-                json = new JSONObject();
+            JSONObject json = new JSONObject();
+            if (type.startsWith("application/json")) {
+                try {
+                    json = new JSONObject(new String(reply, StandardCharsets.UTF_8));
+                } catch (JSONException notJson) {
+                    json = new JSONObject();
+                }
             }
-            return new Reply(Integer.parseInt(parts[1]), json);
+            return new Reply(Integer.parseInt(parts[1]), json, reply, type);
         } finally {
             closeQuietly(raw);
         }
@@ -594,6 +616,18 @@ final class FleetServer {
             } else if ("/fleet/leave".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     leave(caller, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
+            } else if ("/fleet/screenshot".equals(parts[1])) {
+                if ("GET".equals(parts[0])) {
+                    screenshot(output);
+                } else {
+                    respond(output, 405, error("only GET"));
+                }
+            } else if ("/fleet/identify".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    identify(output);
                 } else {
                     respond(output, 405, error("only POST"));
                 }
@@ -1685,6 +1719,142 @@ final class FleetServer {
         respond(output, 200, fleetState());
     }
 
+    /**
+     * {@code GET /fleet/screenshot} from a member: this panel's screen as the wall shows it,
+     * the broker-size JPEG (KioskService.forBroker, the long side at most 1280 px: the Fleet
+     * page shows thumbnails), or the capture's refusal with 409. The member key is the gate,
+     * as for every route here; no switch, as the web admin's picture has none.
+     */
+    private void screenshot(OutputStream output) throws IOException {
+        Picture picture = ownPicture();
+        if (picture.jpeg == null) {
+            respond(output, 409, error(picture.problem));
+        } else {
+            respond(output, 200, "image/jpeg", picture.jpeg);
+        }
+    }
+
+    /** {@code POST /fleet/identify} from a member: Identify on this panel, or its refusal. */
+    private void identify(OutputStream output) throws IOException {
+        String problem = ownIdentify();
+        if (problem != null) {
+            respond(output, 409, error(problem));
+        } else {
+            try {
+                respond(output, 200, new JSONObject().put("status", "accepted"));
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        }
+    }
+
+    /** A panel's picture for the Fleet page: the JPEG, or the reason there is none. */
+    static final class Picture {
+        final byte[] jpeg;
+        final String problem;
+
+        Picture(byte[] jpeg, String problem) {
+            this.jpeg = jpeg;
+            this.problem = problem;
+        }
+    }
+
+    /** What a panel's area on the Fleet page says when it was asked and nothing came back. */
+    static final String NO_PICTURE = "No picture: the panel did not answer";
+    /** A panel whose service is not up cannot capture or identify; said instead of guessing. */
+    private static final String SERVICE_DOWN = "The panel's service is not running";
+    /** A screen's JPEG at 1280 px is a few hundred kilobytes; this is the ceiling, not a size. */
+    private static final int MAX_PICTURE = 4 * 1024 * 1024;
+
+    private static Picture ownPicture() {
+        KioskService service = KioskService.liveService();
+        if (service == null) {
+            return new Picture(null, SERVICE_DOWN);
+        }
+        KioskService.Screenshot shot = service.captureScreen();
+        if (shot.png == null) {
+            return new Picture(null, shot.problem);
+        }
+        byte[] jpeg = KioskService.forBroker(shot.png);
+        return jpeg == null ? new Picture(null, "The panel could not encode its screen")
+                : new Picture(jpeg, null);
+    }
+
+    private static String ownIdentify() {
+        KioskService service = KioskService.liveService();
+        return service == null ? SERVICE_DOWN : service.identify();
+    }
+
+    /** The member entry with device id {@code id}, or null. */
+    static java.util.Map<String, Object> memberById(Context context, String id) {
+        for (java.util.Map<String, Object> member
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            if (id != null && !id.isEmpty()
+                    && id.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+                return member;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isSelf(Context context, java.util.Map<String, Object> member) {
+        return KioskConfig.deviceIdOf(context).equals(TinyJson.string(member, FleetDocument.ID, ""));
+    }
+
+    /**
+     * One panel's picture of its screen for the Fleet page of both surfaces: this panel's
+     * through its own capture, another's through {@code GET /fleet/screenshot} at its member
+     * endpoint, within the call's deadline. A panel that does not answer gets
+     * {@link #NO_PICTURE}, never a picture from before. Not on the main thread.
+     */
+    static Picture screenshotOf(Context context, java.util.Map<String, Object> member) {
+        if (isSelf(context, member)) {
+            return ownPicture();
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return new Picture(null, NO_PICTURE);
+        }
+        try {
+            Reply reply = call(context, address, portOf(member, spki), spki, "GET",
+                    "/fleet/screenshot", null, MAX_PICTURE);
+            if (reply.status == 200 && reply.contentType.startsWith("image/jpeg")
+                    && reply.content.length > 0) {
+                return new Picture(reply.content, null);
+            }
+            return new Picture(null, reply.status == 200 ? NO_PICTURE : reply.reason());
+        } catch (IOException | RuntimeException failed) {
+            Log.d(TAG, "No picture from key " + FleetTls.shortForm(spki) + ": "
+                    + failed.getMessage());
+            return new Picture(null, NO_PICTURE);
+        }
+    }
+
+    /**
+     * Identify on one panel, this one or another through {@code POST /fleet/identify}; null
+     * when accepted, else the refusal. Not on the main thread.
+     */
+    static String identifyOn(Context context, java.util.Map<String, Object> member) {
+        if (isSelf(context, member)) {
+            return ownIdentify();
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return "the panel did not answer";
+        }
+        try {
+            Reply reply = call(context, address, portOf(member, spki), spki, "POST",
+                    "/fleet/identify", new JSONObject());
+            return reply.status == 200 ? null : reply.reason();
+        } catch (IOException | RuntimeException failed) {
+            Log.d(TAG, "Identify not answered by key " + FleetTls.shortForm(spki) + ": "
+                    + failed.getMessage());
+            return "the panel did not answer";
+        }
+    }
+
     private static JSONObject error(String reason) {
         try {
             return new JSONObject().put("error", reason);
@@ -1699,9 +1869,14 @@ final class FleetServer {
     }
 
     private static void respond(OutputStream output, int status, JSONObject body) throws IOException {
-        byte[] content = (body.toString() + "\n").getBytes(StandardCharsets.UTF_8);
+        respond(output, status, "application/json; charset=utf-8",
+                (body.toString() + "\n").getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void respond(OutputStream output, int status, String contentType,
+            byte[] content) throws IOException {
         String head = "HTTP/1.1 " + status + " " + reason(status) + "\r\n"
-                + "Content-Type: application/json; charset=utf-8\r\n"
+                + "Content-Type: " + contentType + "\r\n"
                 + "Content-Length: " + content.length + "\r\n"
                 + "Connection: close\r\n\r\n";
         ByteArrayOutputStream whole = new ByteArrayOutputStream(head.length() + content.length);

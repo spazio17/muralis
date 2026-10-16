@@ -2797,6 +2797,24 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return null;
     }
 
+    /**
+     * Identify: the panel's name drawn over its screen by the activity (the same broadcast
+     * every other order takes) and said once through {@link #say}, so a person standing in
+     * front of several walls can tell which is which. Refused like a capture when no window of
+     * this app is in front. The name is shown whatever the speech engine answers; its refusal
+     * is reported rather than swallowed, since the command would otherwise claim a success it
+     * did not have.
+     */
+    @Override
+    public String identify() {
+        if (!KioskRuntimeState.activityInFront()) {
+            return SCREEN_NOT_SHOWING;
+        }
+        sendUiCommand("kiosk.identify", -1, null);
+        String problem = say(FleetProfile.panelName(this));
+        return problem == null ? null : "the name is shown but not said: " + problem;
+    }
+
     /** The long side of the broker's copy of the screen, in pixels; see {@link #forBroker}. */
     private static final int BROKER_PICTURE_SIDE = 1280;
 

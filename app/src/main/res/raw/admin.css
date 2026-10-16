@@ -176,6 +176,9 @@ ul.list li form.use{display:inline-flex;align-items:center;margin:0}
 .fleet-join img{display:block;margin:0 auto;width:240px;height:240px;image-rendering:pixelated;border-radius:8px}
 .join-code{font-size:34px;line-height:44px;font-variant-numeric:tabular-nums;margin:12px 0 0}
 .fleet-join .actions{justify-content:center;margin-top:16px}
+/* The Fleet page's picture of a panel's screen (block 16): at most 160 px high, its own shape. */
+.fleet-shot{margin-top:8px}.fleet-shot img{display:block;max-height:160px;max-width:100%;width:auto;border-radius:8px;background:var(--surface-alt)}
+.fleet-shot img[hidden],.fleet-shot p[hidden],#fleet-identify-all[hidden]{display:none}.fleet-shot p.hint{white-space:pre-line}#fleet-identify-all{white-space:pre-line}
 ul.list li:last-child{border-bottom:0}
 ul.list li.two{min-height:72px}
 .lead{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;color:var(--subtext)}
