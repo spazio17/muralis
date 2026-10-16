@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -10,7 +10,7 @@ import java.security.SecureRandom;
 import java.util.Locale;
 
 /**
- * The join code a panel shows on its Join screen (the fleet design, section 5): eight digits,
+ * The join code a panel shows on its Join screen: eight digits,
  * single use, ten minutes, opened from the Fleet section of either surface. While a code is open
  * the member endpoint lets an unknown key through the handshake, for the join routes only. The
  * code never travels: the caller proves it with a {@link Spake2} exchange, as Matter's setup code
@@ -180,7 +180,7 @@ final class FleetJoin {
         return code.length() == 8 ? code.substring(0, 4) + " " + code.substring(4) : code;
     }
 
-    /** What the Join screen's QR carries (fleet design, section 5). */
+    /** What the Join screen's QR carries. */
     static String qrContent(String id, String address, int port, String spki, String code) {
         return "muralis-join:2;id=" + id + ";addr=" + address + ";port=" + port + ";spki=" + spki
                 + ";code=" + code;
@@ -207,7 +207,7 @@ final class FleetJoin {
     private static final String OCTET = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
 
     /**
-     * The QR of a Join screen read back (fleet design, section 5), or null when the text is not
+     * The QR of a Join screen read back, or null when the text is not
      * one: another QR, another version, or a field missing or malformed. Of a list of addresses
      * the first is taken.
      */

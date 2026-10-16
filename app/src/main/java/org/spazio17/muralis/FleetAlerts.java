@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The fleet's alerts (fleet design, section 10): what each panel judges about itself and, for
+ * The fleet's alerts: what each panel judges about itself and, for
  * one panel of the fleet, about the others, and when an alert is said. A condition (a page
  * error, a battery below the threshold, a temperature above it, a panel offline) raises "on"
  * once when it starts and "off" once when it ends, never repeated while unchanged; an event (a

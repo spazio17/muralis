@@ -6,16 +6,10 @@
 # on the runner as it is: the image does not exist there, and the workflow sets
 # up the same Java 21 itself.
 #
-# Mirrors ../wall-kiosk-rom/scripts/test-host.sh: the point is that the
-# pure-Java logic (KioskCommandDispatcher, SystemStats, RecyclePolicy,
-# EscapeSequence) stays free of Android imports and testable in seconds.
-#
-# Grow the javac blocks below as more logic becomes host-testable. They currently
-# compile and run these suites: dispatcher, provisioning, request origin, system
-# bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
-# retry, system stats, recycle policy, recovery policy, server probe policy,
-# escape sequence, relaunch policy, the self-signed certificate, the uploaded
-# certificate, the automations, the discovery withdrawals and the fleet's mutual TLS.
+# The point is that the pure-Java logic (the dispatcher, the policies, the fleet's
+# list and its TLS, the settings file and the rest) stays free of Android imports
+# and testable in seconds. Every suite in app/src/test-host runs; grow the javac
+# blocks below as more logic becomes host-testable.
 
 set -euo pipefail
 
@@ -160,7 +154,7 @@ javac -d "${test_dir}/dispatcher" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
 
-# The settings file (block 8): its keys, its form and its encrypted passwords.
+# The settings file: its keys, its form and its encrypted passwords.
 mkdir -p "${test_dir}/settings"
 javac -d "${test_dir}/settings" \
     "${pure_java_dir}/SettingsTransfer.java" \
@@ -338,10 +332,14 @@ java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
 mkdir -p "${test_dir}/fleetdocument"
 javac -d "${test_dir}/fleetdocument" \
     "${pure_java_dir}/FleetDocument.java" \
+    "${pure_java_dir}/FleetTier.java" \
     "${pure_java_dir}/FleetTls.java" \
     "${pure_java_dir}/TinyJson.java" \
-    "${host_test_dir}/FleetDocumentTest.java"
+    "${host_test_dir}/FleetDocumentTest.java" \
+    "${host_test_dir}/FleetTierTest.java"
 java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetDocumentTest
+# Pro's lease through the fleet.
+java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetTierTest
 
 # The fleet's alerts: each said once, offline by one panel, the settings' checks.
 mkdir -p "${test_dir}/fleetalerts"
@@ -351,7 +349,7 @@ javac -d "${test_dir}/fleetalerts" \
     "${host_test_dir}/FleetAlertsTest.java"
 java -cp "${test_dir}/fleetalerts" org.spazio17.muralis.FleetAlertsTest
 
-# What a panel withdraws from Home Assistant: only what it announced itself (2026-10-06).
+# What a panel withdraws from Home Assistant: only what it announced itself.
 mkdir -p "${test_dir}/withdrawals"
 javac -d "${test_dir}/withdrawals" \
     "${pure_java_dir}/DiscoveryWithdrawals.java" \

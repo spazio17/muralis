@@ -3,7 +3,7 @@
 // Use and Create playlist used to post for real and come back as the whole screensaver
 // page with a sentence on top ("Playlist in use.") and /api/playlists/activate in the address bar.
 // For Use the sentence said nothing that the "In use" mark moving to the row did not already say
-// (Juri, 2026-09-19: tap the playlist you want and simply switch). So the table is re-read in place
+// (2026-09-19: tap the playlist you want and simply switch). So the table is re-read in place
 // and a success is silent; only a refusal is said, in the banner under the table.
 //
 // One delegated listener on the box rather than one per row: the box's contents are replaced on
@@ -11,17 +11,16 @@
 (function(){
 var box=document.getElementById('playlist-table');
 if(!box){return;}
-var banner=document.getElementById('playlist-banner'),hideTimer=0;
+var banner=document.getElementById('playlist-banner');
 
 function say(message){
 if(!banner){return;}
-if(hideTimer){clearTimeout(hideTimer);}
 // An empty sentence is "nothing to say": the table re-read below is the whole answer.
 if(!message){banner.classList.add('gone');return;}
 banner.firstChild.textContent=message;
 banner.classList.remove('gone');
-// Five seconds, and a cross for anyone who wants it gone sooner.
-hideTimer=setTimeout(function(){banner.classList.add('gone');},5000);
+// Every sentence here is a refusal: it stays until it is closed or the next change succeeds,
+// so it is read rather than missed (the UI round, 2026-10-15).
 }
 if(banner){banner.querySelector('.dismiss').addEventListener('click',function(){say('');});}
 
