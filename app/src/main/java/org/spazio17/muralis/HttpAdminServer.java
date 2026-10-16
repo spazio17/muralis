@@ -43,7 +43,7 @@ import javax.net.ssl.SSLSocketFactory;
  */
 final class HttpAdminServer {
     private static final String TAG = "MuralisHttp";
-    private static final int MIN_ADMIN_PASSWORD_LENGTH = 8;
+    static final int MIN_ADMIN_PASSWORD_LENGTH = 8;
     /**
      * The sections that have a box of their own on the settings page, and can therefore show
      * their own message. Anything else falls back to the banner above the grid.
@@ -757,6 +757,7 @@ final class HttpAdminServer {
                             && requestPath.equals("/api/playlists/order");
                     boolean document = method.equals("POST")
                             && (requestPath.equals("/api/automations")
+                                    || requestPath.equals("/settings-file")
                                     || requestPath.equals("/api/sensors/settings")
                                     || requestPath.equals("/api/beacons/names"));
                     boolean certificateUpload = method.equals("POST")
@@ -957,6 +958,20 @@ final class HttpAdminServer {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
             serveStream(output, socket);
+        } else if (path.equals("/settings-file") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSettingsFilePage(null, null)));
+        } else if (path.equals("/settings-file") && method.equals("POST")) {
+            handleSettingsFile(headers, body, output);
+        } else if (path.equals("/api/setup-qr.svg") && method.equals("GET")) {
+            String content = setupQrContent();
+            String svg = content == null ? null : QrCodes.svg(content);
+            if (svg == null) {
+                writeResponse(output, 413, "text/plain", bytes("The settings do not fit in a QR"));
+            } else {
+                writeResponse(output, 200, "image/svg+xml", bytes(svg),
+                        java.util.Collections.singletonMap("Cache-Control", "no-store"));
+            }
         } else if (path.equals("/cameras") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
         } else if (path.equals("/adopt") && method.equals("POST")) {
@@ -1088,7 +1103,7 @@ final class HttpAdminServer {
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
         } else if (path.equals("/api/fleet/leave") && method.equals("POST")) {
-            FleetServer.leaveFleet(context, "from the web admin");
+            FleetServer.leaveFleet(context, "from the web admin", true);
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.equals("/api/fleet/screenshot") && method.equals("GET")) {
@@ -2398,6 +2413,10 @@ final class HttpAdminServer {
                 + linkRow("/api/screenshot", "open", "Screenshot",
                         KioskRuntimeState.httpAdminAddress() + "/api/screenshot", null, "")
                         .replace("<span class=\"s\"", "<span class=\"s wrap\"")
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/settings-file\"><span class=\"lead\">"
+                + glyph("download") + "</span><span class=\"text\"><span class=\"h\">Settings file"
+                + "</span><span class=\"s\">Export, import, a setup QR for a new tablet</span></span>"
+                + "</a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + linkRow("/api/diagnostics", "download", "Download diagnostics",
                         KioskRuntimeState.httpAdminAddress() + "/api/diagnostics", null, "")
                         .replace("<span class=\"s\"", "<span class=\"s wrap\"")
@@ -3702,6 +3721,196 @@ final class HttpAdminServer {
                 + (fresh ? "" : "<button type=\"submit\" class=\"danger\" name=\"what\""
                         + " value=\"remove\">Remove</button>")
                 + "</div></form>";
+    }
+
+    /** The file read for Import, waiting for Apply, with its token; one at a time. */
+    private volatile SettingsTransfer.Contents pendingImport;
+    private volatile String pendingImportToken;
+
+    /** The release's own provisioning values, as the site's generate-download.py writes them. */
+    private static final String SETUP_APK =
+            "https://muralis.spazio17.org/download/muralis-latest.apk";
+    private static final String SETUP_CHECKSUM = "fnYZamPm8amKEk-zBylW0cke1QP2FIC9fEIh0w6d_ZE";
+    /** What a QR at error correction M holds with room to spare; more is refused. */
+    private static final int SETUP_QR_MAX_BYTES = 2_300;
+
+    /**
+     * The setup QR for a new tablet (block 8): the site's provisioning values and, in the admin
+     * extras, this panel's settings file without passwords; null when it does not fit.
+     */
+    private String setupQrContent() {
+        try {
+            JSONObject extras = new JSONObject().put("muralis_settings_z",
+                    SettingsTransfer.packed(SettingsTransfer.export(
+                            KioskConfig.transferableSettings(context), null, null, appVersionName())));
+            String content = new JSONObject()
+                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME",
+                            "org.spazio17.muralis/.KioskDeviceAdminReceiver")
+                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION",
+                            SETUP_APK)
+                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM",
+                            SETUP_CHECKSUM)
+                    .put("android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED", true)
+                    .put("android.app.extra.PROVISIONING_SKIP_ENCRYPTION", true)
+                    .put("android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE", extras)
+                    .toString();
+            return content.getBytes(StandardCharsets.UTF_8).length > SETUP_QR_MAX_BYTES
+                    ? null : content;
+        } catch (JSONException impossible) {
+            return null;
+        }
+    }
+
+    /**
+     * The settings file page (block 8): Export (passwords only when asked, then encrypted with
+     * a passphrase typed twice), Import (the file, then the list of what changes and Apply),
+     * and the setup QR for a new tablet.
+     */
+    private String buildSettingsFilePage(String notice, String preview) {
+        StringBuilder html = new StringBuilder(pageStart("Settings file", null,
+                settingsAt("panel")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        if (preview != null) {
+            html.append(preview);
+        }
+        html.append("<form method=\"post\" action=\"/settings-file\" class=\"card\">"
+                + "<h2>Export</h2><input type=\"hidden\" name=\"what\" value=\"export\">"
+                + "<p class=\"hint\">Every setting you set, never this panel's name, keys,"
+                + " fleet, certificates or pictures.</p>"
+                + "<div class=\"switches\">" + switchRow("include-passwords", "Include passwords",
+                        " name=\"include_passwords\" value=\"1\"", false) + "</div>"
+                + field("password", "passphrase", "Passphrase for the passwords", "", "",
+                        "At least " + SettingsTransfer.MIN_PASSPHRASE + " characters.")
+                + field("password", "passphrase_again", "The passphrase again", "", "", null)
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\">Export"
+                + "</button></div></form>");
+        html.append("<form method=\"post\" action=\"/settings-file\" enctype=\"multipart/form-data\""
+                + " class=\"card\"><h2>Import</h2>"
+                + "<input type=\"hidden\" name=\"what\" value=\"read\">"
+                + "<p class=\"hint\">The file is read first; nothing changes until Apply.</p>"
+                + "<div class=\"field\"><input type=\"file\" name=\"file\" accept=\".json,application/json\""
+                + " id=\"settings-file-input\"></div>"
+                + field("password", "passphrase", "Passphrase, when the file carries passwords",
+                        "", "", null)
+                + "<div class=\"actions\"><button type=\"submit\" class=\"tonal\">Read the file"
+                + "</button></div></form>");
+        boolean fits = setupQrContent() != null;
+        html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
+                + "<p class=\"hint\">Scanned during a new tablet's first setup, it installs Muralis"
+                + " as the device owner and starts it with these settings, never the passwords.</p>"
+                + (fits ? "<img src=\"/api/setup-qr.svg\" alt=\"Setup QR with these settings\""
+                        + " width=\"320\" height=\"320\">"
+                        : "<p class=\"hint bad\">These settings do not fit in a QR (it holds about"
+                        + " 2 KB packed, the rules take the most). Set the tablet up with the plain QR on"
+                        + " the website, then import the file here.</p>")
+                + "</div>");
+        return html.append(pageEnd()).toString();
+    }
+
+    /** Export, read and apply, the settings file page's three posts. */
+    private void handleSettingsFile(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        Map<String, String> form;
+        String fileText = null;
+        if (isMultipart(headers)) {
+            form = new HashMap<>();
+            String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
+            for (MultipartForm.Part part : boundary == null
+                    ? java.util.Collections.<MultipartForm.Part>emptyList()
+                    : MultipartForm.parse(body, boundary)) {
+                if ("file".equals(part.name)) {
+                    fileText = new String(part.data, StandardCharsets.UTF_8);
+                } else {
+                    form.put(part.name, new String(part.data, StandardCharsets.UTF_8));
+                }
+            }
+        } else {
+            form = parseFormBody(headers, body);
+        }
+        String what = form.getOrDefault("what", "");
+        if ("export".equals(what)) {
+            boolean withPasswords = isTrue(form.getOrDefault("include_passwords", "0"));
+            String passphrase = form.getOrDefault("passphrase", "");
+            if (withPasswords && passphrase.length() < SettingsTransfer.MIN_PASSPHRASE) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not exported: the passphrase needs at least "
+                                + SettingsTransfer.MIN_PASSPHRASE + " characters.", null)));
+                return;
+            }
+            if (withPasswords && !passphrase.equals(form.getOrDefault("passphrase_again", ""))) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not exported: the two passphrases differ.", null)));
+                return;
+            }
+            String file = SettingsTransfer.export(KioskConfig.transferableSettings(context),
+                    withPasswords ? KioskConfig.transferableSecrets(context) : null,
+                    withPasswords ? passphrase : null, appVersionName());
+            Map<String, String> extra = new HashMap<>();
+            extra.put("Content-Disposition", "attachment; filename=\"muralis-settings-"
+                    + KioskConfig.deviceIdOf(context) + ".json\"");
+            extra.put("Cache-Control", "no-store");
+            writeResponse(output, 200, "application/json; charset=utf-8", bytes(file), extra);
+            return;
+        }
+        if ("read".equals(what)) {
+            if (fileText == null || fileText.isEmpty()) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not read: no file was chosen.", null)));
+                return;
+            }
+            SettingsTransfer.Contents contents = SettingsTransfer.read(fileText,
+                    form.getOrDefault("passphrase", ""));
+            if (contents.problem != null) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not read: " + contents.problem + ".", null)));
+                return;
+            }
+            Map<String, String> changes = SettingsImport.changes(context, contents);
+            String token = Long.toHexString(new java.security.SecureRandom().nextLong());
+            pendingImport = contents;
+            pendingImportToken = token;
+            StringBuilder list = new StringBuilder("<div class=\"card\"><h2>What would change</h2>");
+            if (changes.isEmpty()) {
+                list.append("<p class=\"hint\">Nothing: this panel has these settings already.</p>");
+            } else {
+                list.append("<ul class=\"plain\">");
+                for (Map.Entry<String, String> change : changes.entrySet()) {
+                    list.append("<li><code>").append(escapeHtml(change.getKey())).append("</code>: ")
+                            .append(escapeHtml(change.getValue())).append("</li>");
+                }
+                list.append("</ul><form method=\"post\" action=\"/settings-file\">"
+                        + "<input type=\"hidden\" name=\"what\" value=\"apply\">"
+                        + "<input type=\"hidden\" name=\"token\" value=\"" + token + "\">"
+                        + "<div class=\"actions\"><button type=\"submit\" class=\"primary\">Apply"
+                        + "</button><a class=\"btn text\" href=\"/settings-file\">Cancel</a></div>"
+                        + "</form>");
+            }
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSettingsFilePage(null, list.append("</div>").toString())));
+            return;
+        }
+        if ("apply".equals(what)) {
+            SettingsTransfer.Contents contents = pendingImport;
+            String token = pendingImportToken;
+            if (contents == null || token == null
+                    || !token.equals(form.getOrDefault("token", ""))) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not applied: read the file again; another import came in between.",
+                        null)));
+                return;
+            }
+            pendingImport = null;
+            pendingImportToken = null;
+            java.util.List<String> refused = SettingsImport.apply(context, contents);
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                    refused.isEmpty() ? "Applied." : "Applied, except: " + String.join("; ",
+                            refused) + ".", null)));
+            return;
+        }
+        writeResponse(output, 400, "text/html; charset=utf-8",
+                bytes(buildSettingsFilePage("Not done: nothing to do.", null)));
     }
 
     /** One camera form's post: saved by the checks both surfaces share, or removed. */
@@ -5447,10 +5656,19 @@ final class HttpAdminServer {
                 html.append("<div class=\"actions tight\">");
             }
             html.append("<button type=\"button\" class=\"text\" data-identify=\"")
-                    .append(escapeHtml(id)).append("\">Identify</button></div></form>");
+                    .append(escapeHtml(id)).append("\">Identify</button>");
+            if (!id.equals(self)) {
+                // For a panel that cannot leave by itself; one that is reachable is told.
+                html.append("<button type=\"submit\" class=\"text\" name=\"remove\" value=\"1\""
+                        + " data-confirm=\"").append(escapeHtml("Remove " + name + "?\n\nIt is"
+                        + " taken off the fleet's list on every panel and its key is no longer"
+                        + " trusted. It can join again with a new code."))
+                        .append("\">Remove</button>");
+            }
+            html.append("</div></form>");
         }
-        html.append("<p class=\"hint\">A panel is added from another panel's camera, in its Fleet"
-                + " section.</p></div>");
+        html.append("<p class=\"hint\">A panel is added with Add a panel in the Fleet section: by"
+                + " a panel's camera, or by typing the code under its Join QR.</p></div>");
         // Groups: make one, remove one.
         html.append("<div class=\"card\"><h2>Groups</h2>");
         if (groups.isEmpty()) {
@@ -5588,8 +5806,11 @@ final class HttpAdminServer {
                         groups.add(key.substring("group_".length()));
                     }
                 }
-                refused = FleetServer.setMemberGroups(context, form.getOrDefault("spki", ""),
-                        groups);
+                // Remove submits the same form, its own button naming it.
+                refused = isTrue(form.get("remove"))
+                        ? FleetServer.removeMember(context, form.getOrDefault("spki", ""), true)
+                        : FleetServer.setMemberGroups(context, form.getOrDefault("spki", ""),
+                                groups);
                 break;
             }
             case "add_group":

@@ -3966,7 +3966,23 @@ public final class KioskActivity extends Activity {
             Button identify = textButton(theme, "Identify");
             identify.setOnClickListener(view -> fleetWork(app,
                     () -> FleetServer.identifyOn(app, member)));
-            panels.addView(fittingButtonRow(identify), matchWrapClose());
+            if (id.equals(self)) {
+                panels.addView(fittingButtonRow(identify), matchWrapClose());
+            } else {
+                // For a panel that cannot leave by itself (broken, wiped, gone); one that is
+                // reachable is told and leaves.
+                String name = TinyJson.string(member, FleetDocument.NAME, id);
+                Button remove = textButton(theme, "Remove");
+                remove.setOnClickListener(view -> showConfirm("Remove " + name + "?",
+                        "It is taken off the fleet's list on every panel and its key is no"
+                                + " longer trusted. It can join again with a new code.",
+                        "Remove", true, () -> fleetWork(app, () -> {
+                            String refused = FleetServer.removeMember(app, spki, true);
+                            mainHandler.post(() -> showFleetPage(scope));
+                            return refused;
+                        }), () -> showFleetPage(scope)));
+                panels.addView(fittingButtonRow(identify, remove), matchWrapClose());
+            }
         }
         shots.setOnClickListener(view -> {
             for (Runnable fetch : fetches) {
@@ -3985,7 +4001,8 @@ public final class KioskActivity extends Activity {
         TextView addHint = new FlushText(this);
         addHint.setTextSize(13);
         addHint.setTextColor(theme.subtext);
-        addHint.setText("A panel is added from another panel's camera, in its Fleet section.");
+        addHint.setText("A panel is added with Add a panel in the Fleet section: by the camera,"
+                + " or by typing the code under its Join QR.");
         LinearLayout.LayoutParams hintParams = matchWrap();
         hintParams.topMargin = dp(10);
         panels.addView(addHint, hintParams);
@@ -7003,7 +7020,7 @@ public final class KioskActivity extends Activity {
                 "This panel stops trusting the fleet's panels and keeps its own settings. It can"
                         + " join again with a new code.",
                 "Leave", true, () -> {
-                    FleetServer.leaveFleet(this, "from the panel");
+                    FleetServer.leaveFleet(this, "from the panel", true);
                     showSettings();
                 }, this::showSettings);
     }

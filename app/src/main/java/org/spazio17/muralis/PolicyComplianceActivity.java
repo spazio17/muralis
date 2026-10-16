@@ -27,6 +27,8 @@ public final class PolicyComplianceActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // The settings a setup QR carried (block 8), handed to the service to apply.
+        KioskConfig.keepProvisionedSettings(this, getIntent());
         setResult(RESULT_OK);
         finish();
         Log.i(TAG, "Setup asked for policy compliance: nothing to set until the first start");

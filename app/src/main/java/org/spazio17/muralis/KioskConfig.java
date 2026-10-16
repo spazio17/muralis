@@ -417,6 +417,33 @@ final class KioskConfig {
             return this;
         }
 
+        /**
+         * One value from a settings file (block 8), already checked by SettingsImport: only a
+         * key the file may carry, stored with its own type.
+         */
+        Editor imported(String key, Object value) {
+            Character type = SettingsTransfer.typeOf(key);
+            if (type == null) {
+                return this;
+            }
+            switch (type) {
+                case 'b': plain.putBoolean(key, (Boolean) value); break;
+                case 'i': plain.putInt(key, (Integer) value); break;
+                case 'l': plain.putLong(key, ((Number) value).longValue()); break;
+                default: plain.putString(key, (String) value); break;
+            }
+            return this;
+        }
+
+        /** One password from a settings file, a key the file may carry only. */
+        Editor importedSecret(String key, String value) {
+            if (java.util.Arrays.asList(SettingsTransfer.SECRETS).contains(key)
+                    && !value.isEmpty()) {
+                secrets.put(key, value);
+            }
+            return this;
+        }
+
         Editor popupCameras(java.util.List<PopupCameras.Camera> cameras) {
             plain.putString(POPUP_CAMERAS, PopupCameras.format(cameras));
             return this;
@@ -1426,6 +1453,90 @@ final class KioskConfig {
                 user == null ? "" : user,
                 prefs.getBoolean(BROWSER_PAGE_CAMERA, false),
                 prefs.getBoolean(BROWSER_PAGE_MICROPHONE, false));
+    }
+
+    /** The settings a setup QR carried, kept until the service applies them once. */
+    private static final String PROVISIONED_SETTINGS = "provisioned_settings";
+    private static final String PROVISIONED_SETTINGS_KEPT = "provisioned_settings_kept";
+
+    /**
+     * Keeps the settings file a setup QR carried in its admin extras (block 8) for the service
+     * to apply at its start, and asks a service already running to apply them now; nothing when
+     * the QR carried none.
+     */
+    static void keepProvisionedSettings(Context context, android.content.Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        android.os.PersistableBundle extras = intent.getParcelableExtra(
+                android.app.admin.DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE);
+        String packed = extras == null ? null : extras.getString("muralis_settings_z");
+        String text = packed == null ? null : SettingsTransfer.unpacked(packed);
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // Kept once: the setup may hand the extras both to the compliance screen and to the
+        // receiver, and a second copy taken after the service applied the first would put the
+        // QR's settings back over the person's changes at the next start.
+        if (text != null && !text.isEmpty() && !prefs.getBoolean(PROVISIONED_SETTINGS_KEPT, false)) {
+            prefs.edit().putString(PROVISIONED_SETTINGS, text)
+                    .putBoolean(PROVISIONED_SETTINGS_KEPT, true).commit();
+            KioskService.reloadConfiguration(context);
+        }
+    }
+
+    /** The kept settings file, removed as it is read, or null. */
+    static String takeProvisionedSettings(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String text = prefs.getString(PROVISIONED_SETTINGS, null);
+        if (text != null) {
+            prefs.edit().remove(PROVISIONED_SETTINGS).commit();
+        }
+        return text;
+    }
+
+    /** Every stored setting as Android gives it back, for the settings file to pick from. */
+    static java.util.Map<String, ?> storedSettings(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getAll();
+    }
+
+    /**
+     * The stored settings as a settings file carries them: a value stored under a name from
+     * before 0.7 in today's form, and without the calibrations a sensor keeps for its own
+     * hardware (they need a hand at the panel), which another panel's import would refuse.
+     */
+    static java.util.Map<String, Object> transferableSettings(Context context) {
+        java.util.Map<String, Object> settings = new java.util.HashMap<>(storedSettings(context));
+        Object wake = settings.get(SCREENSAVER_ON_WAKE);
+        if (wake != null && !ScreensaverPolicy.isOnWake(String.valueOf(wake))) {
+            settings.put(SCREENSAVER_ON_WAKE, ScreensaverPolicy.WAKE_SCREENSAVER);
+        }
+        Object oldSensor = settings.remove("sensor_screensaver");
+        if (oldSensor != null && !settings.containsKey("sensor_" + Sensors.SCREENSAVER.id)) {
+            settings.put("sensor_" + Sensors.SCREENSAVER.id, oldSensor);
+        }
+        for (String key : new java.util.ArrayList<>(settings.keySet())) {
+            if (key.startsWith("sensor_option_") && !key.startsWith("sensor_option_beacon_")
+                    && String.valueOf(Sensors.checkOption(key.substring("sensor_option_".length()),
+                            String.valueOf(settings.get(key)))).startsWith("no sensor setting")) {
+                settings.remove(key);
+            }
+        }
+        return settings;
+    }
+
+    /** The passwords a settings file may carry, read only when the person asks for them. */
+    static java.util.Map<String, String> transferableSecrets(Context context) {
+        SecretStore store = new SecretStore(storageContext(context));
+        java.util.Map<String, String> secrets = new java.util.LinkedHashMap<>();
+        for (String key : SettingsTransfer.SECRETS) {
+            String value = store.getOrNull(key);
+            if (value != null && !value.isEmpty()) {
+                secrets.put(key, value);
+            }
+        }
+        return secrets;
     }
 
     static java.util.List<PopupCameras.Camera> popupCamerasOf(Context context) {

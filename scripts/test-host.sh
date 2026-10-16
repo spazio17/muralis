@@ -131,7 +131,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
-            FleetAlerts StatusLight BrowserOptions CertificatePins Popup PopupCameras; do
+            FleetAlerts StatusLight BrowserOptions CertificatePins Popup PopupCameras SettingsTransfer; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -159,6 +159,14 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
+
+# The settings file (block 8): its keys, its form and its encrypted passwords.
+mkdir -p "${test_dir}/settings"
+javac -d "${test_dir}/settings" \
+    "${pure_java_dir}/SettingsTransfer.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/SettingsTransferTest.java"
+java -cp "${test_dir}/settings" org.spazio17.muralis.SettingsTransferTest
 
 # The automations: vocabulary, storage and engine, over a small org.json stand-in in the test
 # tree, since the class speaks Android's org.json and the host has none.

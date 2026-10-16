@@ -248,9 +248,9 @@ final class KioskCommandDispatcher {
         String screenshot();
 
         /**
-         * Shows this panel's name over whatever is on its screen for a few seconds and says it,
-         * so a person can tell which wall is which; null when done, else why not: the panel is
-         * not showing its screen, or the name could not be said.
+         * Shows this panel's name over whatever is on its screen for a few seconds, so a person
+         * can tell which wall is which; null when done, else why not: the panel is not showing
+         * its screen.
          */
         String identify();
 

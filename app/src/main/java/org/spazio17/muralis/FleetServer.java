@@ -360,6 +360,16 @@ final class FleetServer {
                         found.add(info);
                     }
                 };
+        // A panel whose display sleeps hears no announcement unless it holds this lock; the
+        // person adds from a computer's browser while this panel's screen may well be off.
+        android.net.wifi.WifiManager wifi = context.getApplicationContext()
+                .getSystemService(android.net.wifi.WifiManager.class);
+        android.net.wifi.WifiManager.MulticastLock listening = wifi == null ? null
+                : wifi.createMulticastLock("muralis-add-by-code");
+        if (listening != null) {
+            listening.setReferenceCounted(false);
+            listening.acquire();
+        }
         String self = KioskConfig.deviceIdOf(context);
         java.util.Set<String> tried = new java.util.HashSet<>();
         String lastProblem = null;
@@ -410,6 +420,9 @@ final class FleetServer {
         } catch (RuntimeException refused) {
             Log.w(TAG, "Looking for panels on the network failed", refused);
         } finally {
+            if (listening != null) {
+                listening.release();
+            }
             try {
                 nsd.stopServiceDiscovery(listener);
             } catch (RuntimeException alreadyStopped) {
@@ -882,6 +895,12 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only POST"));
                 }
+            } else if ("/fleet/left".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    left(caller, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
             } else if ("/fleet/leave".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     leave(caller, output);
@@ -1148,7 +1167,22 @@ final class FleetServer {
      * is never undone by a list being merged at the same moment. {@code how} says who asked.
      */
     static void leaveFleet(Context context, String how) {
+        leaveFleet(context, how, false);
+    }
+
+    /**
+     * Leaves the fleet; with {@code tellFleet}, as a person's Leave on this panel or its web
+     * admin, one member that answers is told first (off the caller's thread), so it takes this
+     * panel off the list for everyone. This panel leaves whether or not one answers; the others
+     * then see it offline until someone removes it on their Fleet page.
+     */
+    static void leaveFleet(Context context, String how, boolean tellFleet) {
         String name = KioskConfig.fleetNameOf(context);
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        FleetIdentity identity = tellFleet ? FleetIdentity.load(context) : null;
+        if (held != null && identity != null && !KioskConfig.fleetIdOf(context).isEmpty()) {
+            new Thread(() -> tellLeaving(context, identity, held), "MuralisFleetLeave").start();
+        }
         synchronized (DOCUMENT_LOCK) {
             if (KioskConfig.fleetIdOf(context).isEmpty()) {
                 return;
@@ -1168,6 +1202,61 @@ final class FleetServer {
         }
         KioskService.publishTelemetrySoon(context);
         Log.i(TAG, "Left the fleet " + name + " " + how);
+    }
+
+    /** Tells the first member that answers that this panel left; see {@link #leaveFleet}. */
+    private static void tellLeaving(Context context, FleetIdentity identity,
+            java.util.Map<String, Object> held) {
+        for (java.util.Map<String, Object> one : FleetDocument.members(held)) {
+            String spki = TinyJson.string(one, FleetDocument.SPKI, "");
+            String address = addressOf(one, spki);
+            if (spki.equals(identity.spki) || address.isEmpty()) {
+                continue;
+            }
+            try {
+                Reply reply = call(context, address, portOf(one, spki), spki, "POST",
+                        "/fleet/left", new JSONObject());
+                if (reply.status == 200) {
+                    Log.i(TAG, "Told " + TinyJson.string(one, FleetDocument.NAME, "")
+                            + " that this panel left");
+                    return;
+                }
+                Log.w(TAG, "Leaving: " + TinyJson.string(one, FleetDocument.NAME, "")
+                        + " refused: " + reply.reason());
+            } catch (IOException failed) {
+                Log.d(TAG, "Leaving: a member did not answer", failed);
+            }
+        }
+        Log.w(TAG, "Left without telling the fleet: no member answered");
+    }
+
+    /**
+     * Takes the member of key hash {@code spki} off the fleet's list and revokes its key, as Remove
+     * on the Fleet page ({@code removed}: also handed the list, so a reachable panel sees it was
+     * removed and leaves by itself) or for a panel that said it left. Null when done.
+     */
+    static String removeMember(Context context, String spki, boolean removed) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        java.util.Map<String, Object> member = FleetDocument.memberByKey(held, spki);
+        if (member == null) {
+            return "no such panel";
+        }
+        if (spki.equals(KioskRuntimeState.fleetKey())) {
+            return "this panel leaves with Leave the fleet, not Remove";
+        }
+        String name = TinyJson.string(member, FleetDocument.NAME, "");
+        String refused = writeList(context, null, null, (identity, list) ->
+                FleetDocument.withoutMember(list, KioskConfig.deviceIdOf(context), spki,
+                        java.time.Instant.now().toString()),
+                (removed ? "Removed " : "Took off the list ") + name);
+        if (refused == null && removed) {
+            String text = KioskConfig.fleetDocumentText(context);
+            new Thread(() -> deliver(context, member, text), "MuralisFleetRemoved").start();
+        }
+        return refused;
     }
 
     /**
@@ -2021,6 +2110,24 @@ final class FleetServer {
                 + " at setup, from key " + FleetTls.shortForm(caller));
         KioskService.publishTelemetrySoon(context);
         respond(output, 200, fleetState());
+    }
+
+    /**
+     * {@code POST /fleet/left} from a member that is leaving the fleet from its own panel or
+     * web admin: taken off the fleet's list here and the list handed to the others, so it
+     * disappears from every Fleet page at once (fleet design: Leave tells one manager).
+     */
+    private void left(String caller, OutputStream output) throws IOException {
+        String refused = removeMember(context, caller, false);
+        if (refused != null) {
+            respond(output, 409, error(refused));
+        } else {
+            try {
+                respond(output, 200, new JSONObject().put("status", "removed"));
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        }
     }
 
     /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */

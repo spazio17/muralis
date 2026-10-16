@@ -472,6 +472,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
         context.startForegroundService(new Intent(context, KioskService.class));
     }
 
+    /** Applies the settings a setup QR carried, if any are kept; they are kept only once. */
+    private void applyProvisionedSettings() {
+        String provisioned = KioskConfig.takeProvisionedSettings(this);
+        if (provisioned == null) {
+            return;
+        }
+        SettingsTransfer.Contents contents = SettingsTransfer.read(provisioned, null);
+        if (contents.problem != null) {
+            Log.w(TAG, "The setup QR's settings were not applied: " + contents.problem);
+        } else {
+            java.util.List<String> refused = SettingsImport.apply(this, contents);
+            Log.i(TAG, "Applied the setup QR's settings" + (refused.isEmpty() ? ""
+                    : "; refused: " + refused));
+        }
+    }
+
     public static void reloadConfiguration(Context context) {
         context.startForegroundService(new Intent(context, KioskService.class)
                 .setAction(ACTION_RELOAD_CONFIGURATION));
@@ -507,6 +523,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         super.onCreate();
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
+        // The settings a setup QR carried (block 8), once, before anything reads them.
+        applyProvisionedSettings();
         // The base type alone, named: the two-argument call asks for every type the manifest
         // lists, and from Android 14 the camera and microphone types throw a SecurityException
         // here unless both permissions are already granted, which a fresh install never has
@@ -598,6 +616,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_RELOAD_CONFIGURATION.equals(intent.getAction())) {
+            // Setup may keep a QR's settings after this service already started.
+            applyProvisionedSettings();
             restartControllers();
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
@@ -3071,11 +3091,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * Identify: the panel's name drawn over its screen by the activity (the same broadcast
-     * every other order takes) and said once through {@link #say}, so a person standing in
-     * front of several walls can tell which is which. Refused like a capture when no window of
-     * this app is in front. The name is shown whatever the speech engine answers; its refusal
-     * is reported rather than swallowed, since the command would otherwise claim a success it
-     * did not have.
+     * every other order takes), so a person standing in front of several walls can tell which
+     * is which; shown only, never said (Juri, 2026-10-14). Refused like a capture when no
+     * window of this app is in front.
      */
     @Override
     public String identify() {
@@ -3083,8 +3101,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return SCREEN_NOT_SHOWING;
         }
         sendUiCommand("kiosk.identify", -1, null);
-        String problem = say(FleetProfile.panelName(this));
-        return problem == null ? null : "the name is shown but not said: " + problem;
+        return null;
     }
 
     /** The long side of the broker's copy of the screen, in pixels; see {@link #forBroker}. */

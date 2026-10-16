@@ -296,6 +296,18 @@ public final class FleetDocumentTest {
                 && "Offices".equals(FleetDocument.groups(edits).get("group-2")),
                 "the later edit of a member's groups lost, or a group made apart was lost");
 
+        // A member that left, or was removed: off the list, its key revoked, and an older list
+        // merged in does not bring it back.
+        Map<String, Object> gone = FleetDocument.withoutMember(inLobby, "kiosk-a", memberSpki,
+                "2026-10-12T21:11:00Z");
+        require(FleetDocument.memberByKey(gone, memberSpki) == null
+                && FleetDocument.revoked(gone).contains(memberSpki)
+                && !FleetDocument.trustedKeys(gone).contains(memberSpki)
+                && FleetDocument.memberByKey(gone, managerSpki) != null
+                && FleetDocument.memberByKey(FleetDocument.merge(gone, inLobby), memberSpki) == null
+                && FleetDocument.memberByKey(FleetDocument.merge(inLobby, gone), memberSpki) == null,
+                "a member taken off the list stayed, or came back in a merge");
+
         // Placeholders in a page address: plain or percent-encoded, values encoded, none left.
         require("https://x/rooms/Meeting%20room%202?g=Lobby&f=New%20Home".equals(
                 FleetDocument.fillPlaceholders("https://x/rooms/{panel.name}?g={panel.group}&f={fleet.name}",

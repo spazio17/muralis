@@ -392,7 +392,7 @@ final class FleetProfile {
 
     /**
      * This panel's name as the fleet knows it: the name in the fleet's list, or the device id
-     * outside a fleet. What Identify shows and says, and what {@code {panel.name}} fills in.
+     * outside a fleet. What Identify shows, and what {@code {panel.name}} fills in.
      */
     static String panelName(Context context) {
         String own = KioskConfig.deviceIdOf(context);

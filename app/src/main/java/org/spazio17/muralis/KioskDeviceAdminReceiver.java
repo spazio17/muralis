@@ -46,6 +46,12 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
         return policy != null && policy.isDeviceOwnerApp(context.getPackageName());
     }
 
+    /** Android 11 and older hand the setup QR's extras here (block 8); 12 and newer as well. */
+    @Override
+    public void onProfileProvisioningComplete(Context context, android.content.Intent intent) {
+        KioskConfig.keepProvisionedSettings(context, intent);
+    }
+
     @Override
     public void onEnabled(Context context, android.content.Intent intent) {
         Log.i(TAG, "Muralis device admin enabled");

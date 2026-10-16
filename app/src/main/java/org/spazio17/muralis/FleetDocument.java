@@ -365,6 +365,27 @@ final class FleetDocument {
         return next;
     }
 
+    /**
+     * The next document without the member of key hash {@code spki}, its key revoked by this
+     * version: a panel that left, or one removed from the Fleet page. A key revoked so can join
+     * again later; its new entry's {@code since} is past the revocation.
+     */
+    static Map<String, Object> withoutMember(Map<String, Object> held, String author, String spki,
+            String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (!spki.equals(TinyJson.string(member, SPKI, ""))) {
+                members.add(member);
+            }
+        }
+        next.put("members", members);
+        Map<String, Long> revoked = revokedAt(held);
+        revoked.put(spki, version(next));
+        next.put("revoked", revokedList(revoked));
+        return next;
+    }
+
     private static Map<String, Object> bumped(Map<String, Object> held, String author,
             String updated) {
         Map<String, Object> next = new LinkedHashMap<>(held);

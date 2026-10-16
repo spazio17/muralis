@@ -47,7 +47,9 @@ on purpose.
   hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
   as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
   image and button), the password being the gate; and a diagnostics file (device, permissions,
-  status, counters, log) downloaded from the web admin, never uploaded.
+  status, counters, log) downloaded from the web admin, never uploaded. A settings file exported
+  and imported in the web admin (passwords only when asked, then encrypted with a passphrase),
+  and a setup QR for a new tablet that carries the settings without passwords.
 - **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
   network and others), the camera as a network camera with motion detection, a sound level from
   the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
@@ -58,7 +60,8 @@ on purpose.
   key and a member endpoint, announces itself on the local network (mDNS) while it is in a fleet
   or shows its Join code, joins a fleet with a single-use code shown on its Join screen (proven
   by both sides with SPAKE2, never sent), or
-  leaves it, and creates a fleet or adds another
+  leaves it (telling one member, which takes it off the list for all), removes another panel
+  that cannot leave by itself, and creates a fleet or adds another
   panel by reading that code with its camera, or by typing it on a device with none (the panels
   announce whether they are ready to be joined); every member holds the fleet's signed list of
   panels, the members tell each other every few minutes that they are there and which
@@ -79,7 +82,7 @@ on purpose.
   address; every member keeps the last versions of the fleet's list, with what each changed,
   and can restore one as a new version, membership kept as it is now. The Fleet page shows a
   picture of every panel's screen on request, fetched from each panel over the fleet's own
-  link and never stored, and Identify shows a panel's name on its screen and says it.
+  link and never stored, and Identify shows a panel's name on its screen.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

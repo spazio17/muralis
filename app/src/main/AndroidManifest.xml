@@ -28,6 +28,9 @@
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Add a panel by its code listens for the panels' announcements for up to 30 seconds;
+         while the adopting panel's display sleeps, Wi-Fi drops them unless this lock is held. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Required from API 34 in addition to FOREGROUND_SERVICE, matched to the
          android:foregroundServiceType on KioskService below. -->
