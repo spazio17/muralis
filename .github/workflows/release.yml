@@ -1,7 +1,7 @@
 # Release: run by hand, from main only. Tags the current commit with the semantic version you
-# type, builds the debug APK (for the panels) and the release AAB (signed with the upload key,
-# for Play Console), and attaches both to a GitHub Release, which unlike a CI artifact never
-# expires. The Play upload itself stays manual: Play requires the AAB, and the very first upload
+# type, builds the release AAB (signed with the upload key, for Play Console) and attaches it to
+# a GitHub Release, which unlike a CI artifact never expires. Panels get Google's signed APK, from
+# Play or by the setup QR on the website. The Play upload itself stays manual: Play requires the AAB, and the very first upload
 # of a new app must go through the Console UI anyway because it is what creates the app and
 # enrols Play App Signing.
 #
@@ -105,7 +105,6 @@ jobs:
 
       - name: Restore the signing keys
         env:
-          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
           UPLOAD_KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
           # Checked here as well as used in the build step below. The release signingConfig
           # needs the keystore file AND this password; with the password missing it quietly
@@ -120,23 +119,20 @@ jobs:
           # fails earlier and names the missing secret.
           MURALIS_LICENSE_KEY: ${{ secrets.MURALIS_LICENSE_KEY }}
         run: |
-          for name in DEBUG_KEYSTORE_B64 UPLOAD_KEYSTORE_B64 MURALIS_KEYSTORE_PASSWORD \
-                      MURALIS_LICENSE_KEY; do
+          for name in UPLOAD_KEYSTORE_B64 MURALIS_KEYSTORE_PASSWORD MURALIS_LICENSE_KEY; do
             if [ -z "$(eval "printf '%s' \"\$$name\"")" ]; then
               echo "$name secret is missing." >&2; exit 1
             fi
           done
-          mkdir -p .gradle
-          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 -d > .gradle/kiosk-debug.keystore
           printf '%s' "$UPLOAD_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/muralis-upload.p12"
 
-      - name: Build the APK and the AAB
+      - name: Build the AAB
         env:
           MURALIS_KEYSTORE: ${{ runner.temp }}/muralis-upload.p12
           MURALIS_KEYSTORE_PASSWORD: ${{ secrets.MURALIS_KEYSTORE_PASSWORD }}
           MURALIS_KEY_ALIAS: muralis-upload
           MURALIS_LICENSE_KEY: ${{ secrets.MURALIS_LICENSE_KEY }}
-        run: ./gradlew --no-daemon assembleDebug bundleRelease
+        run: ./gradlew --no-daemon bundleRelease
 
       # Checks the artifact rather than the inputs: a keystore at the wrong path or an alias
       # that is not in it lands here too, and every one of those still produces a plausible
@@ -153,7 +149,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk "muralis-$VERSION-debug.apk"
           cp app/build/outputs/bundle/release/app-release.aab "muralis-$VERSION.aab"
           # The description is what landed since the previous release: one line per pull
           # request, in the order they were merged. main is merge-only and GitHub writes each
@@ -171,7 +166,7 @@ jobs:
           gh release create "v$VERSION" \
             --title "Muralis $VERSION" \
             --notes-file release-notes.md \
-            "muralis-$VERSION-debug.apk" "muralis-$VERSION.aab"
+            "muralis-$VERSION.aab"
 
       # The description is pasted into Play Console's What's new box by hand, and that box
       # takes 500 characters. One line in the run summary says whether it fits.

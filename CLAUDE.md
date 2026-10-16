@@ -187,5 +187,5 @@ on purpose.
 The build runs in a container with pinned tools (`scripts/build-app.sh`), and the host tests too
 (`scripts/test-host.sh`). The version comes from git (`git describe` against the latest `v*` tag,
 the commit count as version code); nothing in the project is edited to set it. CI builds every push;
-a manual workflow tags a release and attaches the debug APK and the signed bundle. A pull request's
+a manual workflow tags a release and attaches the signed bundle, never a debug APK. A pull request's
 title is its line in the release notes.
