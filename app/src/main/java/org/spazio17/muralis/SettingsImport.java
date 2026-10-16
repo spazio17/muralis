@@ -121,6 +121,9 @@ final class SettingsImport {
                 return text.length() > 253 || text.contains(" ") ? "not a host name" : null;
             case "mqtt_port":
                 return number >= 1 && number <= 65535 ? null : "not between 1 and 65535";
+            case "mqtt_tls_pin":
+                return text.isEmpty() || CertificatePins.isFingerprint(text) ? null
+                        : "not a certificate's SHA-256";
             case "http_port": {
                 String problem = KioskCommandDispatcher.validateAdminPort(number,
                         current.httpPort, memberPort);

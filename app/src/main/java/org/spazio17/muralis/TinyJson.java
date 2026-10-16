@@ -90,11 +90,27 @@ final class TinyJson {
      */
     static String write(Object value) {
         StringBuilder out = new StringBuilder();
-        writeValue(out, value, 0);
+        writeValue(out, value, 0, false);
         return out.toString();
     }
 
-    private static void writeValue(StringBuilder out, Object value, int depth) {
+    /** The same, indented two spaces a level, one key a line, for a file a person reads. */
+    static String writeIndented(Object value) {
+        StringBuilder out = new StringBuilder();
+        writeValue(out, value, 0, true);
+        return out.append('\n').toString();
+    }
+
+    private static void newline(StringBuilder out, int depth, boolean pretty) {
+        if (pretty) {
+            out.append('\n');
+            for (int i = 0; i < depth; i++) {
+                out.append("  ");
+            }
+        }
+    }
+
+    private static void writeValue(StringBuilder out, Object value, int depth, boolean pretty) {
         if (depth > MAX_DEPTH) {
             throw new IllegalArgumentException("JSON: too deep to write");
         }
@@ -108,9 +124,13 @@ final class TinyJson {
                     out.append(',');
                 }
                 first = false;
+                newline(out, depth + 1, pretty);
                 writeString(out, String.valueOf(entry.getKey()));
-                out.append(':');
-                writeValue(out, entry.getValue(), depth + 1);
+                out.append(pretty ? ": " : ":");
+                writeValue(out, entry.getValue(), depth + 1, pretty);
+            }
+            if (!first) {
+                newline(out, depth, pretty);
             }
             out.append('}');
         } else if (value instanceof List) {
@@ -121,7 +141,11 @@ final class TinyJson {
                     out.append(',');
                 }
                 first = false;
-                writeValue(out, item, depth + 1);
+                newline(out, depth + 1, pretty);
+                writeValue(out, item, depth + 1, pretty);
+            }
+            if (!first) {
+                newline(out, depth, pretty);
             }
             out.append(']');
         } else if (value instanceof Boolean) {

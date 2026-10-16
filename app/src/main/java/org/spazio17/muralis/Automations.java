@@ -783,9 +783,15 @@ final class Automations {
             return due;
         }
 
+        /** How late a tick may see a time rule's minute and still run it; the tick is 2 s. */
+        static final int LATE_MINUTES = 2;
+
         /**
          * The clock's day tick (block 5): a "Time of day" rule fires once on a day when the
-         * minute of the day has reached its time, however late the tick that sees it. The first
+         * minute of the day has reached its time, a tick up to {@link #LATE_MINUTES} late
+         * included; a later one means the panel slept or was stopped through the time, and that
+         * day's run is dropped rather than replayed at wake, so a panel never fires a pile of
+         * missed rules at once (Juri, 2026-10-15). The first
          * tick after a start seeds it as already run today when its time has passed, so a
          * restart never repeats a morning's run and a rule made at noon for 07:00 waits for
          * tomorrow; a day number that went back (the clock set right) seeds it again, so the
@@ -814,7 +820,8 @@ final class Automations {
                 }
                 if (epochDay > state.lastDay && minuteOfDay >= at) {
                     state.lastDay = epochDay;
-                    if (rule.enabled && inWindow(rule, minuteOfDay)) {
+                    if (minuteOfDay - at <= LATE_MINUTES && rule.enabled
+                            && inWindow(rule, minuteOfDay)) {
                         due.add(rule);
                     }
                 }

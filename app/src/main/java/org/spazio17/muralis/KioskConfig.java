@@ -17,6 +17,14 @@ final class KioskConfig {
     private static final String MQTT_PORT = "mqtt_port";
     private static final String MQTT_USERNAME = "mqtt_username";
     private static final String MQTT_PASSWORD = "mqtt_password";
+    private static final String MQTT_TLS = "mqtt_tls";
+    /** The broker certificate a person trusted, its SHA-256 (MqttTls); empty when none. */
+    private static final String MQTT_TLS_PIN = "mqtt_tls_pin";
+    /** The client certificate's chain and key, in the SecretStore; its name and end in plain. */
+    static final String MQTT_CLIENT_CHAIN = "mqtt_client_chain";
+    static final String MQTT_CLIENT_KEY = "mqtt_client_key";
+    private static final String MQTT_CLIENT_NAME = "mqtt_client_name";
+    private static final String MQTT_CLIENT_UNTIL = "mqtt_client_until";
     private static final String HTTP_PORT = "http_port";
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
@@ -135,6 +143,11 @@ final class KioskConfig {
     int mqttPort = 1883;
     String mqttUsername = "";
     String mqttPassword = "";
+    boolean mqttTls;
+    String mqttTlsPin = "";
+    /** The client certificate's names and when it ends; empty and 0 when none is uploaded. */
+    String mqttClientName = "";
+    long mqttClientUntil;
     int httpPort = DEFAULT_HTTP_PORT;
     /** The member endpoint's port, a setting like the web admin's (Juri, 2026-10-08). */
     int fleetPort = DEFAULT_FLEET_PORT;
@@ -232,6 +245,10 @@ final class KioskConfig {
         config.mqttUsername = storedUsername == null ? "" : storedUsername;
         String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
+        config.mqttTls = preferences.getBoolean(MQTT_TLS, false);
+        config.mqttTlsPin = preferences.getString(MQTT_TLS_PIN, "");
+        config.mqttClientName = preferences.getString(MQTT_CLIENT_NAME, "");
+        config.mqttClientUntil = preferences.getLong(MQTT_CLIENT_UNTIL, 0);
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
         config.fleetPort = preferences.getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
         config.alerts = alertsOf(preferences);
@@ -334,6 +351,23 @@ final class KioskConfig {
 
         Editor mqttPort(int value) {
             plain.putInt(MQTT_PORT, value);
+            return this;
+        }
+
+        Editor mqttTls(boolean value) {
+            plain.putBoolean(MQTT_TLS, value);
+            return this;
+        }
+
+        /** A fingerprint as CertificatePins prints it, or empty to trust none. */
+        Editor mqttTlsPin(String value) {
+            plain.putString(MQTT_TLS_PIN, value == null ? "" : value);
+            return this;
+        }
+
+        /** The uploaded client certificate's names and end, shown on both surfaces; "" and 0 clear. */
+        Editor mqttClientShown(String names, long untilMs) {
+            plain.putString(MQTT_CLIENT_NAME, names).putLong(MQTT_CLIENT_UNTIL, untilMs);
             return this;
         }
 

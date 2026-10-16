@@ -47,6 +47,8 @@ final class FleetProfile {
                 values.put("mqtt_port", (long) config.mqttPort);
                 values.put("mqtt_username", config.mqttUsername);
                 values.put("mqtt_password", config.mqttPassword);
+                values.put("mqtt_tls", config.mqttTls);
+                values.put("mqtt_tls_pin", config.mqttTlsPin);
                 break;
             case "web_admin":
                 values.put("web_admin_enabled", config.webAdminEnabled);
@@ -123,10 +125,18 @@ final class FleetProfile {
                     refused.add("mqtt_port: the broker port must be between 1 and 65535");
                     break;
                 }
+                String pin = text(values, "mqtt_tls_pin");
+                if (!pin.isEmpty() && !CertificatePins.isFingerprint(pin)) {
+                    refused.add("mqtt_tls_pin: a trusted certificate is its SHA-256, 32 pairs of"
+                            + " hex digits with colons");
+                    break;
+                }
                 KioskConfig.Editor editor = KioskConfig.edit(context)
                         .mqttHost(text(values, "mqtt_host"))
                         .mqttPort((int) port)
-                        .mqttUsername(text(values, "mqtt_username"));
+                        .mqttUsername(text(values, "mqtt_username"))
+                        .mqttTls(flag(values, "mqtt_tls", false))
+                        .mqttTlsPin(pin);
                 String password = text(values, "mqtt_password");
                 if (!password.isEmpty() && !password.equals(text(now, "mqtt_password"))) {
                     editor.mqttPassword(password);
@@ -432,6 +442,9 @@ final class FleetProfile {
                 fields.add(new Field("mqtt_port", "Broker port", "number"));
                 fields.add(new Field("mqtt_username", "Username", "text"));
                 fields.add(new Field("mqtt_password", "Password", "password"));
+                fields.add(new Field("mqtt_tls", "Encrypted (TLS)", "switch"));
+                fields.add(new Field("mqtt_tls_pin", "Trusted broker certificate (SHA-256)",
+                        "text"));
                 break;
             case "web_admin":
                 fields.add(new Field("web_admin_enabled", "Local web admin on", "switch"));

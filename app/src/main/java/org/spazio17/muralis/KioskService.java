@@ -277,6 +277,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 && !FleetServer.profileSource("alerts").isEmpty();
     }
 
+    /** When the alerts were last judged, and since when this panel has listened without a gap. */
+    private long lastAlertJudgeMs;
+    private long alertsListeningSinceMs;
+
     /** This panel's own conditions and, when it is the one to say so, the peers offline. */
     private void judgeFleetAlerts() {
         if (!alertsEnabled()) {
@@ -295,17 +299,27 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (sample != null) {
             facts.temperatureC = sample.cpuTemperatureC;
         }
+        // A gap of several rounds means this panel slept or stalled: it listens afresh from now,
+        // and no peer counts as unheard for longer than that, so a panel back from sleep or
+        // maintenance never says the whole fleet is offline in one go (Juri, 2026-10-15).
+        long now = SystemClock.elapsedRealtime();
+        if (lastAlertJudgeMs > 0 && now - lastAlertJudgeMs > 3 * TELEMETRY_INTERVAL_MS) {
+            alertsListeningSinceMs = now;
+        }
+        lastAlertJudgeMs = now;
+        long listening = now - Math.max(createdAtMs, alertsListeningSinceMs);
         java.util.List<FleetAlerts.Peer> peers = new java.util.ArrayList<>();
         org.json.JSONArray known = FleetServer.peersJson(this);
         for (int i = 0; i < known.length(); i++) {
             org.json.JSONObject peer = known.optJSONObject(i);
             if (peer != null) {
                 peers.add(new FleetAlerts.Peer(peer.optString("id"), peer.optString("name"),
-                        peer.optLong("seen_ago_ms", -1)));
+                        peer.optLong("seen_ago_ms", -1) < 0 ? -1
+                                : Math.min(peer.optLong("seen_ago_ms", -1), listening)));
             }
         }
         deliverAlerts(fleetAlerts.judge(settings, facts, KioskConfig.deviceIdOf(this),
-                fleetPanelName(), peers, SystemClock.elapsedRealtime() - createdAtMs));
+                fleetPanelName(), peers, listening));
     }
 
     /**
@@ -1183,7 +1197,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private static String mqttInputsOf(KioskConfig config) {
         return config.mqttHost + FIELD_SEPARATOR + config.mqttPort + FIELD_SEPARATOR
                 + config.mqttUsername + FIELD_SEPARATOR + config.mqttPassword + FIELD_SEPARATOR
-                + config.deviceId;
+                + config.deviceId + FIELD_SEPARATOR + config.mqttTls + FIELD_SEPARATOR
+                + config.mqttTlsPin + FIELD_SEPARATOR + config.mqttClientName + FIELD_SEPARATOR
+                + config.mqttClientUntil;
     }
 
     private static String httpInputsOf(KioskConfig config) {

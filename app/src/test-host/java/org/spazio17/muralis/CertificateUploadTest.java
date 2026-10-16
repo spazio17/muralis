@@ -43,6 +43,10 @@ public final class CertificateUploadTest {
         check("EC, SEC1 (acme.sh, openssl ec): accepted",
                 CertificateUpload.parse(EC_LEAF, EC_SEC1).problem == null);
         check("RSA, PKCS#8: accepted", CertificateUpload.parse(RSA_LEAF, RSA_PKCS8).problem == null);
+        CertificateUpload.Result asClient = CertificateUpload.parseClient(RSA_LEAF, RSA_PKCS8);
+        check("a server certificate as MQTT's client certificate: refused, or taken when its"
+                + " usage allows any", asClient.problem == null
+                        || asClient.problem.contains("clientAuth"));
         check("RSA, PKCS#1 (BEGIN RSA PRIVATE KEY): accepted",
                 CertificateUpload.parse(RSA_LEAF + "\n" + INTERMEDIATE, RSA_PKCS1).problem == null);
         check("the RSA name is its DNS name",

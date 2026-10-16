@@ -2803,6 +2803,10 @@ public final class KioskActivity extends Activity {
         // the same rule the web admin's form follows; the Save path skips an empty box.
         EditText passwordInput = themedInput(theme, "", true);
         addField(mqttCard, theme, "Password", passwordInput, "Blank keeps the current one.");
+        // Encryption is optional (Juri, 2026-10-14): saved with the boxes, by Save.
+        CompoundButton tlsSwitch = themedSwitch(theme, "Encrypted (TLS)", config.mqttTls);
+        mqttCard.addView(tlsSwitch, matchWrapClose());
+        addMqttTrust(mqttCard, theme, config);
         // The broker verdict lives here, on the page where the address is typed, not as a toast
         // over the dashboard: the toast was unreadable in the second before the dashboard took
         // the screen, which is exactly where a misconfiguration must NOT be reported (decided
@@ -3774,6 +3778,7 @@ public final class KioskActivity extends Activity {
                     .mqttHost(brokerInput.getText().toString())
                     .mqttPort(typedBrokerPort)
                     .mqttUsername(usernameInput.getText().toString())
+                    .mqttTls(tlsSwitch.isChecked())
                     .httpPort(adminPort)
                     .fleetPort(memberPort);
             String mqttPassword = passwordInput.getText().toString();
@@ -3824,6 +3829,7 @@ public final class KioskActivity extends Activity {
             pending.mqttHost = brokerInput.getText().toString();
             pending.mqttPort = parsePort(portInput.getText().toString(), pending.mqttPort);
             pending.mqttUsername = usernameInput.getText().toString();
+            pending.mqttTls = tlsSwitch.isChecked();
             // The password deliberately does not ride across a rotation: the box renders blank by
             // design, and carrying a half-typed secret in the display model would re-render it.
             pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
@@ -7011,6 +7017,41 @@ public final class KioskActivity extends Activity {
     /** The same on the Fleet section's button, where the section already says fleet. */
     private String addPanelLabel() {
         return KioskConfig.fleetIdOf(this).isEmpty() ? "Create" : "Add a panel";
+    }
+
+    /**
+     * The broker's certificate under the TLS switch: one refused and waiting, with Trust; or the
+     * one trusted, with Remove; and the client certificate, which is uploaded in the web admin
+     * (files go through the web admin). The same lines the web admin's MQTT box shows.
+     */
+    private void addMqttTrust(LinearLayout card, KioskTheme theme, KioskConfig config) {
+        CertificatePins.Waiting refused = MqttTls.waiting;
+        boolean asking = refused != null && refused.host.equalsIgnoreCase(config.mqttHost)
+                && !refused.fingerprint.equals(config.mqttTlsPin);
+        if (asking || !config.mqttTlsPin.isEmpty()) {
+            TextView line = new FlushText(this);
+            line.setTextSize(13);
+            line.setTextColor(asking ? theme.bad : theme.subtext);
+            line.setText(asking ? MqttTls.waitingLine(refused)
+                    : "Trusted broker certificate, SHA-256 " + config.mqttTlsPin);
+            card.addView(line, matchWrapClose());
+            Button act = textButton(theme, asking ? "Trust" : "Remove");
+            act.setOnClickListener(view -> {
+                KioskConfig.edit(this).mqttTlsPin(asking ? refused.fingerprint : "").apply();
+                MqttTls.waiting = null;
+                KioskService.reloadConfiguration(this);
+                KioskService.publishTelemetrySoon(this);
+                if (currentScreen != null) {
+                    currentScreen.run();
+                }
+            });
+            card.addView(fittingButtonRow(act), matchWrapClose());
+        }
+        TextView client = new FlushText(this);
+        client.setTextSize(13);
+        client.setTextColor(theme.subtext);
+        client.setText(MqttTls.clientLine(config.mqttClientName, config.mqttClientUntil));
+        card.addView(client, matchWrapClose());
     }
 
     /** Asks before this panel leaves its fleet; it keeps its own settings, id and name. */
@@ -13992,7 +14033,8 @@ public final class KioskActivity extends Activity {
     /**
      * Draws the pop-up waiting (block 6) over whatever is on the window: a card with the title,
      * the message and the address in a small web view, closed by a touch on it or after its
-     * seconds. A new one replaces the one showing; while the settings are open it waits.
+     * seconds. A new one replaces the one showing; while the settings are open, or another app
+     * is in front, it waits, for a minute at most.
      */
     private void showPendingPopup() {
         Popup.Request request = Popup.pending;
@@ -14001,6 +14043,10 @@ public final class KioskActivity extends Activity {
             return;
         }
         Popup.pending = null;
+        if (Popup.stale(request)) {
+            Log.i(TAG, "A pop-up waited more than a minute for the screen and was dropped");
+            return;
+        }
         closePopup();
         KioskTheme theme = currentTheme();
         FrameLayout shade = new FrameLayout(this);

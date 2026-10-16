@@ -2014,6 +2014,14 @@ final class FleetServer {
                     own.put(key, shared.get(key));
                 }
             }
+            // A key this build does not know (a newer panel's) is kept as the group shares it:
+            // without this, an older panel would write the section back without it and undo
+            // the newer panels' setting (seen with mqtt_tls across two builds).
+            for (java.util.Map.Entry<String, Object> entry : shared.entrySet()) {
+                if (!own.containsKey(entry.getKey())) {
+                    own.put(entry.getKey(), entry.getValue());
+                }
+            }
             if (!FleetProfile.same(own, shared)) {
                 String name = FleetDocument.groupName(held, group);
                 Log.i(TAG, "This panel changed the shared " + section + "; told the group " + name);

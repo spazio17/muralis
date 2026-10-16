@@ -141,6 +141,54 @@ final class MqttController implements MqttCallbackExtended {
         hasBattery = KioskService.hasBattery(context);
     }
 
+    /** One client certificate change at a time, as the web admin's own certificate. */
+    private static final Object CLIENT_STORE = new Object();
+
+    /** The uploaded client certificate, or null when none is kept or it cannot be read. */
+    static CertificateUpload clientCertificate(Context context) {
+        SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+        return CertificateUpload.restore(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN),
+                secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY));
+    }
+
+    /**
+     * Keeps a client certificate and its key for the broker, once {@link CertificateUpload} has
+     * read them; null when kept, else why not, a fragment to follow "Not uploaded: ".
+     */
+    static String keepClientCertificate(Context context, String certificateText, String keyText) {
+        CertificateUpload.Result read = CertificateUpload.parseClient(certificateText, keyText);
+        if (read.problem != null) {
+            return read.problem;
+        }
+        String chain = read.upload.chainText();
+        String key = read.upload.keyText();
+        java.security.cert.X509Certificate first = read.upload.chain[0];
+        synchronized (CLIENT_STORE) {
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            secrets.put(KioskConfig.MQTT_CLIENT_CHAIN, chain);
+            secrets.put(KioskConfig.MQTT_CLIENT_KEY, key);
+            // Read back: SecretStore leaves the old value when it cannot encrypt.
+            if (!chain.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN))
+                    || !key.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY))) {
+                forgetClientCertificate(context);
+                return "this panel could not keep it; upload it again";
+            }
+            KioskConfig.edit(context).mqttClientShown(CertificateUpload.names(first),
+                    first.getNotAfter().getTime()).apply();
+        }
+        return null;
+    }
+
+    /** Forgets the client certificate; the broker is then reached without one. */
+    static void forgetClientCertificate(Context context) {
+        synchronized (CLIENT_STORE) {
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            secrets.clear(KioskConfig.MQTT_CLIENT_CHAIN);
+            secrets.clear(KioskConfig.MQTT_CLIENT_KEY);
+            KioskConfig.edit(context).mqttClientShown("", 0).apply();
+        }
+    }
+
     void start() {
         if (config.mqttHost.isEmpty()) {
             Log.i(TAG, "MQTT is not configured");
@@ -156,25 +204,21 @@ final class MqttController implements MqttCallbackExtended {
             return;
         }
 
-        // Plain TCP only. TLS was offered as a checkbox and removed on 2026-08-19, because it was
-        // never actually implemented: the whole of it was "ssl" instead of "tcp" here, with no trust
-        // store, no SSLSocketFactory and no way anywhere in the app to supply a certificate. Paho
-        // therefore fell back to Android's system trust store with hostname verification on, so it
-        // could only ever work against a publicly-trusted CA certificate on a matching public
-        // hostname. Every ordinary home broker uses a self-signed or private-CA certificate, so for
-        // the actual audience the option could not work at all, and it was ON by default, which made
-        // a fresh install fail its first connection.
-        //
-        // That is the same mistake this project already corrected once, when the per-command HMAC was
-        // removed for advertising protection nobody could hold the key to.
-        //
-        // The reference implementations agree with dropping it: WLED supports no MQTT TLS at all and
-        // tells users to stay on a local broker, and Tasmota's TLS is a compile-time option, off in
-        // default builds, which needs CA-certificate or public-key-fingerprint pinning to work with a
-        // self-signed broker. Adding TLS properly here means adding that same machinery: a
-        // certificate or fingerprint field, storage for it, and an SSLSocketFactory built from it.
-        // Until that exists, this stays plain TCP and the documentation says so plainly.
-        String uri = "tcp://" + config.mqttHost + ":" + config.mqttPort;
+        // TLS when the person switched it on (optional: a broker on the home network is often
+        // plain). The broker is trusted when Android trusts its certificate for its name, or when
+        // its certificate is the one a person trusted here (MqttTls); a client certificate is
+        // presented when one was uploaded, as zigbee2mqtt's ca, cert and key.
+        MqttTls.Connection tls = null;
+        if (config.mqttTls) {
+            try {
+                tls = MqttTls.connection(config.mqttHost, config.mqttTlsPin,
+                        clientCertificate(appContext));
+            } catch (java.security.GeneralSecurityException failed) {
+                Log.e(TAG, "MQTT over TLS could not be set up", failed);
+                return;
+            }
+        }
+        String uri = (tls == null ? "tcp://" : "ssl://") + config.mqttHost + ":" + config.mqttPort;
         try {
             client = new MqttAsyncClient(uri, config.deviceId, new MemoryPersistence());
             client.setCallback(this);
@@ -185,7 +229,13 @@ final class MqttController implements MqttCallbackExtended {
             options.setCleanSession(true);
             options.setConnectionTimeout(15);
             options.setKeepAliveInterval(30);
-            options.setHttpsHostnameVerificationEnabled(true);
+            if (tls != null) {
+                // The name is checked by MqttTls's verifier, which also accepts the trusted
+                // certificate; Paho calls it only with its own check off.
+                options.setSocketFactory(tls.socketFactory);
+                options.setHttpsHostnameVerificationEnabled(false);
+                options.setSSLHostnameVerifier(tls.hostnameVerifier);
+            }
             options.setWill(topicPrefix + "availability",
                     "offline".getBytes(StandardCharsets.UTF_8), 1, true);
             if (!config.mqttUsername.isEmpty()) {

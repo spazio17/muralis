@@ -62,6 +62,8 @@ final class CertificateUpload {
     /** The extended key usages a server certificate may carry: serverAuth, and any. */
     private static final String SERVER_AUTH = "1.3.6.1.5.5.7.3.1";
     private static final String ANY_USAGE = "2.5.29.37.0";
+    /** The extended key usage a client certificate carries. */
+    private static final String CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
     /** The AlgorithmIdentifier of an RSA key, rsaEncryption with NULL parameters. */
     private static final byte[] RSA_ALGORITHM = {
         0x30, 0x0d, 0x06, 0x09, 0x2a, (byte) 0x86, 0x48, (byte) 0x86, (byte) 0xf7, 0x0d, 0x01,
@@ -99,6 +101,18 @@ final class CertificateUpload {
      * Reads a certificate file and a key file; either may hold both, and blank means not given.
      */
     static Result parse(String certificateText, String keyText) {
+        return parse(certificateText, keyText, true);
+    }
+
+    /**
+     * The same for a client certificate, the one MQTT may present to its broker: its extended
+     * key usage must allow clientAuth instead of serverAuth, and its names are not checked.
+     */
+    static Result parseClient(String certificateText, String keyText) {
+        return parse(certificateText, keyText, false);
+    }
+
+    private static Result parse(String certificateText, String keyText, boolean server) {
         String all = (certificateText == null ? "" : certificateText) + "\n"
                 + (keyText == null ? "" : keyText);
         List<byte[]> certificateDers = new ArrayList<>();
@@ -208,11 +222,11 @@ final class CertificateUpload {
         if (owner < 0) {
             return refused("the private key does not belong to the certificate");
         }
-        String usage = serverUsageProblem(first);
+        String usage = server ? serverUsageProblem(first) : clientUsageProblem(first);
         if (usage != null) {
             return refused(usage);
         }
-        for (String name : nameList(first)) {
+        for (String name : server ? nameList(first) : java.util.Collections.<String>emptyList()) {
             if (name.length() > MAX_NAME_LENGTH) {
                 return refused("a name in the certificate is longer than " + MAX_NAME_LENGTH
                         + " characters, which no browser matches to an address");
@@ -415,6 +429,21 @@ final class CertificateUpload {
         if (usage != null && !usage[0]) {
             return "the certificate's key usage has no digitalSignature, and no browser accepts "
                     + "it for a server";
+        }
+        return null;
+    }
+
+    /** Why a broker cannot accept the certificate from a client, or null. */
+    private static String clientUsageProblem(X509Certificate certificate) {
+        try {
+            List<String> extended = certificate.getExtendedKeyUsage();
+            if (extended != null && !extended.contains(CLIENT_AUTH)
+                    && !extended.contains(ANY_USAGE)) {
+                return "the certificate is not one for a client (its extended key usage has no "
+                        + "clientAuth), and a broker does not accept it from one";
+            }
+        } catch (CertificateParsingException unreadable) {
+            return "a certificate in the file cannot be read";
         }
         return null;
     }

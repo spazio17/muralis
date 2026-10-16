@@ -44,7 +44,7 @@ final class SettingsTransfer {
                 "separators", "orientation", "display_off_method", "screensaver_mode",
                 "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
                 "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "popup_cameras", "certificate_pins"}) {
+                "automations", "beacon_names", "popup_cameras", "certificate_pins", "mqtt_tls_pin"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",
@@ -61,7 +61,7 @@ final class SettingsTransfer {
                 "browser_page_microphone", "status_light_on", "volume_buttons_disabled",
                 "screensaver_shuffle", "screensaver_one_per_cycle", "screensaver_credit",
                 "web_admin_enabled", "alert_page_error", "alert_combination_used",
-                "alert_pin_lockout"}) {
+                "alert_pin_lockout", "mqtt_tls"}) {
             keys.put(key, 'b');
         }
         return java.util.Collections.unmodifiableMap(keys);

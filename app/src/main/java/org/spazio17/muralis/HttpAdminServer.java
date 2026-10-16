@@ -762,6 +762,7 @@ final class HttpAdminServer {
                                     || requestPath.equals("/api/beacons/names"));
                     boolean certificateUpload = method.equals("POST")
                             && (requestPath.equals("/api/certificate")
+                                    || requestPath.equals("/mqtt-certificate")
                                     || (requestPath.equals("/") && isMultipart(headers)));
                     body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
                             : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES
@@ -911,6 +912,8 @@ final class HttpAdminServer {
             handleSetting(parseFormBody(headers, body), output);
         } else if (path.equals("/api/certificate") && method.equals("POST")) {
             handleCertificateUpload(headers, body, output, overTls, false);
+        } else if (path.equals("/mqtt-certificate") && method.equals("POST")) {
+            handleMqttClientUpload(headers, body, output, overTls);
         } else if (path.equals("/api/certificate/delete") && method.equals("POST")) {
             handleCertificateDelete(parseFormBody(headers, body), output, false);
         } else if (path.equals("/sensors") && method.equals("GET")) {
@@ -1457,8 +1460,11 @@ final class HttpAdminServer {
                 return null;
             }
             case "mqtt": {
-                String stale = staleFormRefusal(form,
-                        fresh.mqttHost + "|" + fresh.mqttPort + "|" + fresh.mqttUsername);
+                String action = form.get("mqtt_action");
+                if (action != null) {
+                    return saveMqttTrust(action, form, fresh);
+                }
+                String stale = staleFormRefusal(form, mqttBaseline(fresh));
                 if (stale != null) {
                     return stale;
                 }
@@ -1469,7 +1475,9 @@ final class HttpAdminServer {
                 KioskConfig.Editor editor = KioskConfig.edit(context)
                         .mqttHost(form.getOrDefault("mqtt_host", fresh.mqttHost))
                         .mqttPort(brokerPort)
-                        .mqttUsername(form.getOrDefault("mqtt_username", fresh.mqttUsername));
+                        .mqttUsername(form.getOrDefault("mqtt_username", fresh.mqttUsername))
+                        // The whole box posts at once: an unticked switch sends nothing.
+                        .mqttTls(isTrue(form.getOrDefault("mqtt_tls", "0")));
                 String mqttPassword = form.get("mqtt_password");
                 if (mqttPassword != null && !mqttPassword.isEmpty()) {
                     editor.mqttPassword(mqttPassword);
@@ -3851,7 +3859,10 @@ final class HttpAdminServer {
             extra.put("Content-Disposition", "attachment; filename=\"muralis-settings-"
                     + KioskConfig.deviceIdOf(context) + ".json\"");
             extra.put("Cache-Control", "no-store");
-            writeResponse(output, 200, "application/json; charset=utf-8", bytes(file), extra);
+            // Indented, one setting a line, so the file reads and edits in any text editor; the
+            // setup QR packs the compact form.
+            writeResponse(output, 200, "application/json; charset=utf-8",
+                    bytes(TinyJson.writeIndented(TinyJson.parse(file))), extra);
             return;
         }
         if ("read".equals(what)) {
@@ -4048,14 +4059,95 @@ final class HttpAdminServer {
                 + browser.dark + "|" + browser.backAfterSeconds + "|" + browser.signInUser;
     }
 
+    private static String mqttBaseline(KioskConfig config) {
+        return config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername + "|"
+                + config.mqttTls;
+    }
+
     private String mqttBody(KioskConfig config, String notice, String noticeSection) {
+        CertificatePins.Waiting refused = MqttTls.waiting;
+        boolean asking = refused != null && refused.host.equalsIgnoreCase(config.mqttHost)
+                && !refused.fingerprint.equals(config.mqttTlsPin);
+        StringBuilder trust = new StringBuilder();
+        // The broker's certificate: one refused, with Trust; or the one trusted, with Remove.
+        // The same lines the panel's MQTT section shows (KioskActivity.addMqttTrust).
+        if (asking || !config.mqttTlsPin.isEmpty()) {
+            trust.append("<form method=\"post\" action=\"").append(settingsAt("mqtt"))
+                    .append("\"><input type=\"hidden\" name=\"section\" value=\"mqtt\">"
+                            + "<input type=\"hidden\" name=\"mqtt_action\" value=\"")
+                    .append(asking ? "trust" : "forget").append("\"><input type=\"hidden\""
+                            + " name=\"sha256\" value=\"")
+                    .append(escapeHtml(asking ? refused.fingerprint : config.mqttTlsPin))
+                    .append("\"><p class=\"hint").append(asking ? " bad" : "").append("\">")
+                    .append(escapeHtml(asking ? MqttTls.waitingLine(refused)
+                            : "Trusted broker certificate, SHA-256 " + config.mqttTlsPin))
+                    .append("</p><div class=\"actions tight\"><button type=\"submit\""
+                            + " class=\"text\">").append(asking ? "Trust" : "Remove")
+                    .append("</button></div></form>");
+        }
+        // The client certificate: uploaded here only, since files go through the web admin.
+        trust.append("<p class=\"hint\">")
+                .append(escapeHtml(MqttTls.clientLine(config.mqttClientName,
+                        config.mqttClientUntil))).append("</p>")
+                .append("<form method=\"post\" action=\"/mqtt-certificate\""
+                        + " enctype=\"multipart/form-data\">")
+                .append(fileRow("mqtt-client-file", "certificate", "Client certificate", ""))
+                .append(fileRow("mqtt-client-key", "key", "Its private key", ""))
+                .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\">Upload"
+                        + "</button></div></form>");
+        if (!config.mqttClientName.isEmpty()) {
+            trust.append("<form method=\"post\" action=\"").append(settingsAt("mqtt"))
+                    .append("\" class=\"actions\"><input type=\"hidden\" name=\"section\""
+                            + " value=\"mqtt\"><input type=\"hidden\" name=\"mqtt_action\""
+                            + " value=\"client_delete\"><button type=\"submit\" class=\"danger\""
+                            + " data-confirm=\"")
+                    .append(escapeHtml(deleteQuestion("the client certificate")
+                            + " The broker is then reached without one."))
+                    .append("\">Delete</button></form>");
+        }
         return sharedLine("mqtt") + sectionFormStart("mqtt", notice, noticeSection)
-                + baselineField(config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername)
+                + baselineField(mqttBaseline(config))
                 + urlField("mqtt_host", "Broker host", config.mqttHost)
                 + field("number", "mqtt_port", "Broker port", Integer.toString(config.mqttPort))
                 + field("text", "mqtt_username", "Username", config.mqttUsername)
                 + field("password", "mqtt_password", "Password", "", "", BLANK_KEEPS)
-                + sectionFormEnd("Save");
+                + "<div class=\"switches\">" + switchRow("mqtt-tls", "Encrypted (TLS)",
+                        " name=\"mqtt_tls\" value=\"1\"", config.mqttTls) + "</div>"
+                + sectionFormEnd("Save") + trust;
+    }
+
+    /**
+     * Trust or Remove for the broker's certificate, and Delete for the client certificate. Trust
+     * takes only the certificate the page showed, and only while it is still the one refused.
+     */
+    private String saveMqttTrust(String action, Map<String, String> form, KioskConfig fresh) {
+        String sha256 = form.getOrDefault("sha256", "");
+        switch (action) {
+            case "trust": {
+                CertificatePins.Waiting refused = MqttTls.waiting;
+                if (refused == null || !refused.fingerprint.equals(sha256)) {
+                    return "Not trusted: the broker now shows another certificate, or none;"
+                            + " look at the one shown now.";
+                }
+                KioskConfig.edit(context).mqttTlsPin(sha256).apply();
+                MqttTls.waiting = null;
+                break;
+            }
+            case "forget":
+                if (!sha256.equals(fresh.mqttTlsPin)) {
+                    return "Not removed: the trusted certificate changed meanwhile.";
+                }
+                KioskConfig.edit(context).mqttTlsPin("").apply();
+                break;
+            case "client_delete":
+                MqttController.forgetClientCertificate(context);
+                break;
+            default:
+                return "Not changed: no such action.";
+        }
+        KioskService.reloadConfiguration(context);
+        KioskService.publishTelemetrySoon(context);
+        return null;
     }
 
     /**
@@ -4329,6 +4421,46 @@ final class HttpAdminServer {
         }
         answerCertificateChange(fromPage, problem == null ? null : "Not uploaded: " + problem + ".",
                 output);
+    }
+
+    /**
+     * The MQTT client certificate and its key, posted as files by the MQTT box's form; refused
+     * over plain HTTP like the web admin's own key. Answered with the settings page.
+     */
+    private void handleMqttClientUpload(Map<String, String> headers, byte[] body,
+            OutputStream output, boolean overTls) throws IOException {
+        String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
+        java.util.List<MultipartForm.Part> parts = boundary == null
+                ? java.util.Collections.emptyList() : MultipartForm.parse(body, boundary);
+        String certificateText = "";
+        String keyText = "";
+        for (MultipartForm.Part part : parts) {
+            if (part.name.equals("certificate")) {
+                certificateText = new String(part.data, StandardCharsets.UTF_8);
+            } else if (part.name.equals("key")) {
+                keyText = new String(part.data, StandardCharsets.UTF_8);
+            }
+        }
+        String problem;
+        if (!overTls) {
+            problem = "this page is served over plain HTTP right now, and a private key must not "
+                    + "cross the network unencrypted";
+        } else if (boundary == null) {
+            problem = "the request was not a file upload";
+        } else if (parts.isEmpty() && body.length > 0) {
+            problem = "the upload did not arrive complete; please try again";
+        } else {
+            problem = MqttController.keepClientCertificate(context, certificateText, keyText);
+        }
+        if (problem == null) {
+            KioskService.reloadConfiguration(context);
+            KioskService.publishTelemetrySoon(context);
+            writeResponse(output, 303, "text/plain", bytes("done"),
+                    Collections.singletonMap("Location", settingsAt("mqtt")));
+        } else {
+            writeResponse(output, 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage("Not uploaded: " + problem + ".", "mqtt")));
+        }
     }
 
     /**

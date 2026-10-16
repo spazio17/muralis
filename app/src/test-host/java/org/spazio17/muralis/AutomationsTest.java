@@ -71,8 +71,8 @@ public final class AutomationsTest {
         engine.clock(day, 21 * 60);          // the seed, before the time
         engine.clock(day, 21 * 60 + 59);
         require(fired.isEmpty(), "not before the time");
-        engine.clock(day, 22 * 60 + 7);      // a tick that comes late still fires
-        require(fired.size() == 1, "fires once at the time, however late the tick");
+        engine.clock(day, 22 * 60 + 1);      // a tick a minute late still fires
+        require(fired.size() == 1, "fires once at the time, a tick a minute late included");
         engine.clock(day, 23 * 60);
         require(fired.size() == 1, "once a day");
         engine.clock(day + 1, 5);            // across midnight, not yet
@@ -89,6 +89,15 @@ public final class AutomationsTest {
         require(!fired.contains("after"), "a restart after the time does not repeat it");
         after.clock(day + 6, 22 * 60);
         require(fired.contains("after"), "and runs the next day");
+        // A panel that slept through the time: that run is dropped, never replayed at wake.
+        List<String> slept = new java.util.ArrayList<>();
+        Automations.Engine sleeper = new Automations.Engine(rule -> slept.add(rule.id));
+        sleeper.rules(java.util.Collections.singletonList(night));
+        sleeper.clock(day, 21 * 60);
+        sleeper.clock(day, 22 * 60 + 7);
+        require(slept.isEmpty(), "a run seen seven minutes late is dropped, not replayed");
+        sleeper.clock(day + 1, 22 * 60);
+        require(slept.size() == 1, "the next day it runs at its time again");
     }
 
     private static void testBatteryAboveAndNewActions() {

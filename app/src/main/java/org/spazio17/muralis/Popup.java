@@ -26,6 +26,8 @@ final class Popup {
         final int seconds;
         final boolean wake;
         final boolean chime;
+        /** When it was asked for, on a clock a change of the date cannot move. */
+        final long madeAtMs = clock.getAsLong();
 
         Request(String title, String message, String url, int seconds, boolean wake,
                 boolean chime) {
@@ -40,6 +42,31 @@ final class Popup {
 
     /** The pop-up waiting to be drawn, handed from the service to the activity. */
     static volatile Request pending;
+
+    /**
+     * How long a pop-up waits for the panel's screen: the settings open, or another app in front
+     * on an ordinary install. Past it, it is dropped rather than shown out of date whenever
+     * someone next opens the app.
+     */
+    static final long WAIT_MS = 60_000L;
+
+    /** Whether {@code request} waited too long to be shown now. */
+    static boolean stale(Request request) {
+        return clock.getAsLong() - request.madeAtMs > WAIT_MS;
+    }
+
+    /**
+     * The clock the wait is measured on. The app installs {@code SystemClock.elapsedRealtime},
+     * which keeps counting while the device sleeps; {@code System.nanoTime} (the host tests')
+     * stops in deep sleep, so a pop-up left waiting overnight on a dozing phone would still
+     * count as a few seconds old in the morning.
+     */
+    private static volatile java.util.function.LongSupplier clock =
+            () -> System.nanoTime() / 1_000_000L;
+
+    static void useClock(java.util.function.LongSupplier realClock) {
+        clock = realClock;
+    }
 
     private Popup() {
     }

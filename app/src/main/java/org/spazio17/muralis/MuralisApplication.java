@@ -30,6 +30,7 @@ public final class MuralisApplication extends Application {
     public void onCreate() {
         super.onCreate();
         KioskRuntimeState.useClock(SystemClock::elapsedRealtime);
+        Popup.useClock(SystemClock::elapsedRealtime);
         // On a device-owner panel the service runs whenever this process does, whatever started
         // the process. The case that needs this is a force-stop, which cancels every alarm, job
         // and sticky service the app owns, but the system still starts this process on its own

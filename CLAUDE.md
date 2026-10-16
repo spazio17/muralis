@@ -42,7 +42,9 @@ on purpose.
   or until touched), from HTTP, MQTT, Home Assistant's notify and the automations, and cameras
   that pop up on demand or on a doorbell's trigger, each with a mode on each panel and a cooldown.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
-  uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery. The
+  uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery, plain
+  or over TLS (the broker trusted by Android or by the certificate a person trusted on the panel,
+  a client certificate optional). The
   panel and the web admin offer the same settings and show the same thing, except what needs a
   hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
   as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
@@ -139,6 +141,9 @@ on purpose.
   up on the others within seconds; a change applied outside the dispatcher asks for a telemetry
   publish itself. Values whose validity depends on the device (a port, an address)
   are checked against the device when the field is left, with a coloured border.
+- **No backlog.** A panel acts at the moment something arrives, or drops it once it is stale;
+  it never replays in one go what it missed while it was asleep, stopped or behind another app
+  (a pop-up waits a minute at most, a time rule slept through is skipped).
 - **Self-healing has no user switch** and no memory threshold: the app cannot measure the browser
   engine's memory, so it reacts to the system's own signals and restarts nightly.
 - **Home Assistant discovery.** An entity's key, id and name say the same thing. A panel removes from
