@@ -17,6 +17,7 @@ public final class KioskCommandDispatcherTest {
         require(executor.calls.contains("kioskReload"), "kiosk.reload did not reach executor");
 
         testStatusLightCommands();
+        testBrowserOptions();
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
@@ -756,7 +757,82 @@ public final class KioskCommandDispatcherTest {
                 "the brightness is the frame's opacity");
     }
 
+    /**
+     * The browser options (block 3a): each command checked against BrowserOptions and forwarded
+     * canonically, refused with its rule; and the pure helpers the page relies on.
+     */
+    private static void testBrowserOptions() {
+        RecordingExecutor executor = new RecordingExecutor();
+        String[][] good = {
+                {"browser.text_size", " 150 ", "TEXT_SIZE", "150"},
+                {"browser.page_zoom", "auto", "PAGE_ZOOM", "0"},
+                {"browser.page_zoom", "25", "PAGE_ZOOM", "25"},
+                {"browser.back_after", "0", "BACK_AFTER", "0"},
+                {"browser.back_after", "300", "BACK_AFTER", "300"},
+                {"browser.user_agent", "", "USER_AGENT", ""},
+                {"browser.user_agent", " WallPanel/2 ", "USER_AGENT", "WallPanel/2"},
+        };
+        for (String[] row : good) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("accepted"), row[0] + " " + row[1] + ": " + result.detail);
+            require(row[3].equals(executor.browserOptions.get(
+                    KioskCommandDispatcher.BrowserOption.valueOf(row[2]))),
+                    row[0] + " stored " + executor.browserOptions.get(
+                            KioskCommandDispatcher.BrowserOption.valueOf(row[2])));
+        }
+        String[][] bad = {
+                {"browser.text_size", "49"}, {"browser.text_size", "301"},
+                {"browser.text_size", "big"}, {"browser.page_zoom", "24"},
+                {"browser.page_zoom", "401"}, {"browser.page_zoom", "-5"},
+                {"browser.back_after", "86401"}, {"browser.back_after", "1.5"},
+                {"browser.user_agent", "two\nlines"},
+        };
+        for (String[] row : bad) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(row[0],
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, row[1]), executor);
+            require(result.status.equals("rejected") && !result.detail.isEmpty(),
+                    row[0] + " accepted " + row[1]);
+        }
+        StringBuilder long513 = new StringBuilder();
+        for (int i = 0; i < 513; i++) {
+            long513.append('x');
+        }
+        require(KioskCommandDispatcher.dispatch("browser.user_agent",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, long513.toString()),
+                executor).status.equals("rejected"), "a user agent past 512 characters");
+        require(KioskCommandDispatcher.dispatch("browser.dark_look",
+                new KioskCommandDispatcher.CommandArgs(-1, null, true), executor)
+                .status.equals("accepted") && "true".equals(executor.browserOptions.get(
+                        KioskCommandDispatcher.BrowserOption.DARK)), "the dark look on");
+        require(KioskCommandDispatcher.dispatch("browser.dark_look",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
+                "the dark look needs enabled");
+        require(BrowserOptions.userAgent("", "Mozilla/5.0 X", "0.7.0")
+                .equals("Mozilla/5.0 X Muralis/0.7.0")
+                && BrowserOptions.userAgent(" Own/1 ", "Mozilla/5.0 X", "0.7.0").equals("Own/1"),
+                "the user agent the page sees");
+        require(BrowserOptions.signInHost("https://ha.example.net:8123/lovelace", "ha.example.net")
+                && !BrowserOptions.signInHost("https://ha.example.net/", "evil.example")
+                && !BrowserOptions.signInHost("not a url", "ha.example.net"),
+                "the sign-in goes to the dashboard's own host only");
+        require(BrowserOptions.checkSignInUser("anna") == null
+                && BrowserOptions.checkSignInUser("a:b") != null
+                && BrowserOptions.checkSignInUser("") == null, "sign-in names");
+        require(!BrowserOptions.awayFrom("https://h/lovelace/0#x", "https://h/lovelace/0/")
+                && BrowserOptions.awayFrom("https://h/lovelace/1", "https://h/lovelace/0"),
+                "a fragment or a trailing slash is not away");
+        require(BrowserOptions.timeToGoBack(true, 60_000, 60)
+                && !BrowserOptions.timeToGoBack(true, 59_999, 60)
+                && !BrowserOptions.timeToGoBack(false, 600_000, 60)
+                && !BrowserOptions.timeToGoBack(true, 600_000, 0), "the way back");
+        require(!BrowserOptions.darkLookPossible(28) && BrowserOptions.darkLookPossible(29),
+                "the dark look from Android 10");
+    }
+
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
+        final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
+                new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
         Boolean lightOn;
         Integer lightColor;
         int lightPercent;
@@ -897,6 +973,12 @@ public final class KioskCommandDispatcherTest {
         public void setWebAdminEnabled(boolean enabled) {
             calls.add("setWebAdminEnabled");
             lastWebAdminEnabled = enabled;
+        }
+
+        @Override
+        public String setBrowserOption(KioskCommandDispatcher.BrowserOption option, String value) {
+            browserOptions.put(option, value);
+            return null;
         }
 
         @Override

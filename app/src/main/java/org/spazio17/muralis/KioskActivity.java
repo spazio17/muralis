@@ -268,6 +268,18 @@ public final class KioskActivity extends Activity {
      * every screen gets it; touches fall through. See {@link #syncStatusLight}.
      */
     private StatusLightFrame statusLightFrame;
+    /**
+     * Where the page is against the dashboard (block 3a): the address it settled on before
+     * anybody touched it, whether a touch has come since, and whether the page has moved away
+     * (or an open-once address took its place). See {@link #pageMoved} and the clock's tick.
+     */
+    private String pageHome;
+    private boolean touchedSinceHome;
+    private boolean pageAway;
+    /** The dark look the current WebView was built with; a change needs a new one. */
+    private boolean webViewDark;
+    /** The page zoom the current WebView was given, which takes effect on a load. */
+    private int webViewZoom;
     private static final long IDENTIFY_MS = 10_000L;
     private final Runnable identifyEnd = this::endIdentify;
     /**
@@ -1447,6 +1459,9 @@ public final class KioskActivity extends Activity {
             if (screensaverStage == ScreensaverPolicy.Stage.DASHBOARD) {
                 screensaverSinceMs = event.getEventTime();
             }
+            if (!configurationVisible) {
+                touchedSinceHome = true;
+            }
             // The screensaver: the first touch brings the page back and never reaches it, and a
             // corner tap still counts for the escape combinations, which work from every screen.
             // A preview waits for the lift, above.
@@ -2266,6 +2281,116 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
+    /**
+     * The page's browser options (block 3a), a page of their own under Dashboard: the user
+     * agent, text size, page zoom, the dark look, the way back to the dashboard and the page's
+     * sign-in, saved together by one button with the commands' own checks; the web admin's
+     * Dashboard box has the same form.
+     */
+    private void showBrowserOptionsPage() {
+        currentScreen = this::showBrowserOptionsPage;
+        LinearLayout page = subPage("Browser options", this::showSettings);
+        KioskTheme theme = currentTheme();
+        BrowserOptions.Settings browser = KioskConfig.browserOf(this);
+        LinearLayout pageCard = card(theme, "The page");
+        EditText agentInput = themedInput(theme, browser.userAgent, false);
+        agentInput.setHint("Empty: the browser's own, with Muralis");
+        agentInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        addField(pageCard, theme, "User agent", agentInput);
+        EditText textInput = themedInput(theme, String.valueOf(browser.textSize), false);
+        textInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(pageCard, theme, "Text size (percent)", textInput);
+        EditText zoomInput = themedInput(theme, String.valueOf(browser.pageZoom), false);
+        zoomInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(pageCard, theme, "Page zoom (percent, 0 = automatic)", zoomInput);
+        EditText backInput = themedInput(theme, String.valueOf(browser.backAfterSeconds), false);
+        backInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(pageCard, theme, "Back to the dashboard after (seconds, 0 = never)", backInput);
+        CompoundButton darkInput = themedSwitch(theme, "Dark look for the page", browser.dark);
+        pageCard.addView(darkInput, matchWrapClose());
+        if (!BrowserOptions.darkLookPossible(Build.VERSION.SDK_INT)) {
+            // Greyed with the reason under it, as the rules want for what this Android cannot do.
+            darkInput.setEnabled(false);
+            TextView darkNote = new FlushText(this);
+            darkNote.setTextColor(theme.subtext);
+            darkNote.setTextSize(13);
+            darkNote.setText("Needs Android 10 or newer.");
+            pageCard.addView(darkNote, matchWrapClose());
+        }
+
+        LinearLayout signInCard = card(theme, "Page sign-in");
+        EditText userInput = themedInput(theme, browser.signInUser, false);
+        userInput.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        addField(signInCard, theme, "Name", userInput, "Empty: no sign-in.");
+        // Rendered blank, never prefilled, the rule every password box keeps.
+        EditText passwordInput = themedInput(theme, "", true);
+        addField(signInCard, theme, "Password", passwordInput, "Blank keeps the current one.");
+
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            BrowserOptions.Settings now = KioskConfig.browserOf(this);
+            if (!browserBaseline(now).equals(browserBaseline(browser))) {
+                Toast.makeText(this, "Not saved: these settings were changed from another "
+                        + "surface while this screen was open. Showing the current values.",
+                        Toast.LENGTH_LONG).show();
+                redrawInPlace(this::showBrowserOptionsPage);
+                return;
+            }
+            String problem = BrowserOptions.checkUserAgent(agentInput.getText().toString());
+            Integer text = BrowserOptions.parseTextSize(textInput.getText().toString());
+            Integer zoom = BrowserOptions.parsePageZoom(zoomInput.getText().toString());
+            Integer back = BrowserOptions.parseBackAfter(backInput.getText().toString());
+            String user = userInput.getText().toString().trim();
+            if (problem == null && text == null) {
+                problem = BrowserOptions.TEXT_SIZE_RULE;
+            }
+            if (problem == null && zoom == null) {
+                problem = BrowserOptions.ZOOM_RULE;
+            }
+            if (problem == null && back == null) {
+                problem = BrowserOptions.BACK_AFTER_RULE;
+            }
+            if (problem == null) {
+                problem = BrowserOptions.checkSignInUser(user);
+            }
+            if (problem == null && darkInput.isChecked()
+                    && !BrowserOptions.darkLookPossible(Build.VERSION.SDK_INT)) {
+                problem = BrowserOptions.DARK_RULE;
+            }
+            if (problem != null) {
+                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            KioskConfig.Editor editor = KioskConfig.edit(this)
+                    .browserUserAgent(agentInput.getText().toString())
+                    .browserTextSize(text)
+                    .browserPageZoom(zoom)
+                    .browserBackAfter(back)
+                    .browserDark(darkInput.isChecked())
+                    .browserUser(user);
+            String password = passwordInput.getText().toString();
+            if (!password.isEmpty() && !user.isEmpty()) {
+                editor.browserPassword(password);
+            }
+            editor.apply();
+            KioskService.publishTelemetrySoon(this);
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+            redrawInPlace(this::showBrowserOptionsPage);
+        });
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(pageCard, signInCard)),
+                matchWrap());
+        page.addView(buttonRow(save), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** What the browser options' Save compares, the password apart. */
+    private static String browserBaseline(BrowserOptions.Settings browser) {
+        return browser.userAgent + "|" + browser.textSize + "|" + browser.pageZoom + "|"
+                + browser.dark + "|" + browser.backAfterSeconds + "|" + browser.signInUser;
+    }
+
     /** One radio option, carrying its stored spelling as the tag the listener reads back. */
     private RadioButton radioChoice(
             KioskTheme theme, RadioGroup group, String label, String value) {
@@ -2462,8 +2587,14 @@ public final class KioskActivity extends Activity {
             Toast.makeText(this, "Opened once, not saved as the dashboard",
                     Toast.LENGTH_SHORT).show();
             showDashboard(once);
+            // Away from the dashboard from the start; see pageMoved.
+            pageAway = true;
+            touchedSinceHome = true;
         });
         dashboardCard.addView(buttonRow(openOnce), matchWrap());
+        Button browserMore = textButtonOnward(theme, "Browser options");
+        browserMore.setOnClickListener(view -> showBrowserOptionsPage());
+        dashboardCard.addView(buttonRow(browserMore), matchWrap());
         String webViewProvider = webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -12845,7 +12976,14 @@ public final class KioskActivity extends Activity {
         // policy, which applyKioskPolicy keeps tied to whether the lock-task pin is actually held.
         disableStatusBarIfPinned();
         enterImmersiveMode();
-        webView = new WebView(this);
+        BrowserOptions.Settings browser = KioskConfig.browserOf(this);
+        // The dark look reaches the page as prefers-color-scheme through the WebView's theme:
+        // the WebView reads isLightTheme from the context it is built with, and Muralis's own
+        // theme is a light one. Algorithmic darkening stays off, so a page without a dark look
+        // is left as it is.
+        webViewDark = browser.dark;
+        webView = new WebView(browser.dark ? new android.view.ContextThemeWrapper(this,
+                android.R.style.Theme_Material_NoActionBar) : this);
         webView.setBackgroundColor(Color.BLACK);
         webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
 
@@ -12860,7 +12998,7 @@ public final class KioskActivity extends Activity {
         // WebView rastered and is documented to increase memory use. The kiosk WebView is always
         // the visible surface, so it bought nothing and cost RAM on a device where the renderer is
         // already the largest process and gets killed for memory.
-        settings.setUserAgentString(settings.getUserAgentString() + " Muralis/0.1");
+        applyBrowserOptions(webView, browser);
 
         // On a userdebug/eng ROM, expose the renderer to chrome://inspect over adb. A blank or
         // half-rendered Home Assistant dashboard is otherwise almost unfalsifiable from outside the
@@ -12957,6 +13095,7 @@ public final class KioskActivity extends Activity {
      */
     private void loadWhenOnline(String url) {
         cancelDashboardGate();
+        homeLoad();
         if (NetworkGate.isOnline(this)) {
             beginLoad();
             webView.loadUrl(pageUrl(url));
@@ -13355,6 +13494,84 @@ public final class KioskActivity extends Activity {
         frame.setColor(StatusLight.argb(light));
     }
 
+    /**
+     * Back to the dashboard after the time set (block 3a), once the page has moved away from
+     * it and nobody has touched the glass since; the idle time is the one Ambient counts.
+     */
+    private void goBackIfIdle() {
+        if (webView == null || configurationVisible || kioskStopped || !pageAway) {
+            return;
+        }
+        long idle = android.os.SystemClock.uptimeMillis() - screensaverSinceMs;
+        if (!BrowserOptions.timeToGoBack(pageAway, idle, KioskConfig.browserBackAfterOf(this))) {
+            return;
+        }
+        String home = KioskConfig.load(this).dashboardUrl;
+        if (home.isEmpty()) {
+            return;
+        }
+        Log.i(TAG, "Back to the dashboard after " + (idle / 1000) + " s without a touch");
+        beginLoad();
+        homeLoad();
+        webView.loadUrl(pageUrl(home));
+    }
+
+    /** A load of the dashboard (or what stands for it): the page is home again. */
+    private void homeLoad() {
+        pageHome = null;
+        touchedSinceHome = false;
+        pageAway = false;
+    }
+
+    /**
+     * The page's address changed (a load or a single-page app's own step). Before anybody has
+     * touched it, that is where the dashboard settles: a redirect, a login, Home Assistant's own
+     * step from / to its first view. After a touch, an address other than that one is away.
+     */
+    private void pageMoved(String url) {
+        if (url == null || url.isEmpty() || url.startsWith("about:")) {
+            return;
+        }
+        if (!touchedSinceHome) {
+            pageHome = url;
+        } else if (pageHome == null || BrowserOptions.awayFrom(url, pageHome)) {
+            pageAway = true;
+        }
+    }
+
+    /** The options a WebView takes as it is: user agent, text size and page zoom. */
+    private void applyBrowserOptions(WebView view, BrowserOptions.Settings browser) {
+        WebSettings settings = view.getSettings();
+        settings.setUserAgentString(BrowserOptions.userAgent(browser.userAgent,
+                WebSettings.getDefaultUserAgent(this), appVersionName()));
+        settings.setTextZoom(browser.textSize);
+        view.setInitialScale(browser.pageZoom);
+        webViewZoom = browser.pageZoom;
+    }
+
+    /**
+     * A browser option changed on another surface or here: the dark look needs a WebView built
+     * with the other theme, so the dashboard is shown again; the rest apply to this one, the
+     * zoom and the user agent on the next load, so the page is loaded again when they changed.
+     */
+    private void browserOptionsChanged() {
+        if (webView == null || configurationVisible) {
+            return;
+        }
+        BrowserOptions.Settings browser = KioskConfig.browserOf(this);
+        if (browser.dark != webViewDark) {
+            showDashboard(KioskConfig.load(this).dashboardUrl);
+            return;
+        }
+        WebSettings settings = webView.getSettings();
+        String before = settings.getUserAgentString();
+        int zoomBefore = webViewZoom;
+        applyBrowserOptions(webView, browser);
+        if (!before.equals(settings.getUserAgentString()) || zoomBefore != webViewZoom) {
+            webView.reload();
+        }
+    }
+
     /** The panel's own two controls: stored, drawn here, and told to the other surfaces. */
     private void setStatusLightHere(boolean on, Integer color) {
         KioskConfig.edit(this).statusLight(on, color, -1).apply();
@@ -13424,6 +13641,9 @@ public final class KioskActivity extends Activity {
             case "light.changed":
                 syncStatusLight();
                 break;
+            case "browser.changed":
+                browserOptionsChanged();
+                break;
             case "kiosk.start":
                 kioskStopped = false;
                 // Persisted (here and in kiosk.stop/set_url) because the flag used to be process
@@ -13437,6 +13657,7 @@ public final class KioskActivity extends Activity {
                 }
                 if (webView != null) {
                     beginLoad();
+                    homeLoad();
                     webView.loadUrl(pageUrl(KioskConfig.load(this).dashboardUrl));
                 }
                 break;
@@ -13452,6 +13673,7 @@ public final class KioskActivity extends Activity {
                     showDashboard(url);
                 } else {
                     beginLoad();
+                    homeLoad();
                     webView.loadUrl(pageUrl(url));
                 }
                 break;
@@ -13485,7 +13707,14 @@ public final class KioskActivity extends Activity {
                     showDashboard(target);
                 } else {
                     beginLoad();
+                    homeLoad();
                     webView.loadUrl(pageUrl(target));
+                }
+                // An address shown once is away from the dashboard from the start, so the way
+                // back after a while brings the stored one again.
+                if ("kiosk.open_url".equals(command)) {
+                    pageAway = true;
+                    touchedSinceHome = true;
                 }
                 break;
             }
@@ -13661,6 +13890,7 @@ public final class KioskActivity extends Activity {
      * ends it: the next one comes after the idle time, in the new mode.
      */
     private void tickScreensaver() {
+        goBackIfIdle();
         ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
         if (screensaverShowing != null && !screensaverShowing.equals(settings.mode)) {
             if (screensaverStage == ScreensaverPolicy.Stage.DARK) {
@@ -14449,6 +14679,7 @@ public final class KioskActivity extends Activity {
         Log.i(TAG, "Dashboard retry " + dashboardRetries + ": " + AppLog.withoutSecrets(url));
         recovery.issueLoad(now);
         resetServerProbeTracking();
+        homeLoad();
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
         // request that produced the cached error page. loadUrl always asks for the configured
         // dashboard, which is what kiosk.restart does and is known to work.
@@ -14478,6 +14709,37 @@ public final class KioskActivity extends Activity {
     }
 
     private final class KioskWebViewClient extends WebViewClient {
+        /** Hosts given the sign-in during this load; a second ask is a refusal, not a loop. */
+        private final java.util.Set<String> signedIn = new java.util.HashSet<>();
+
+        /**
+         * A page behind HTTP basic auth (block 3a): the stored sign-in, for the dashboard
+         * address's own host only and once per load, so another site's frame never receives it
+         * and a wrong password ends on the server's refusal.
+         */
+        @Override
+        public void onReceivedHttpAuthRequest(WebView view, android.webkit.HttpAuthHandler handler,
+                String host, String realm) {
+            String user = KioskConfig.browserOf(KioskActivity.this).signInUser;
+            if (!user.isEmpty()
+                    && BrowserOptions.signInHost(KioskConfig.load(KioskActivity.this).dashboardUrl,
+                            host)
+                    && signedIn.add(host)) {
+                handler.proceed(user, KioskConfig.browserPasswordOf(KioskActivity.this));
+                return;
+            }
+            Log.w(TAG, "Page sign-in not given for " + host
+                    + (user.isEmpty() ? ": none is stored" : ""));
+            handler.cancel();
+        }
+
+        @Override
+        public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            if (view == webView) {
+                pageMoved(url);
+            }
+        }
+
         /**
          * Refuses navigation to anything that is not a web page.
          *
@@ -14523,6 +14785,7 @@ public final class KioskActivity extends Activity {
             if (recovery.pageFinished(android.os.SystemClock.uptimeMillis())) {
                 KioskRuntimeState.recordPageFinished(url);
             }
+            signedIn.clear();
             // Asked whatever the policy decided: the icons sit over what is actually on the
             // glass, success or not.
             probePageLuminance(view);

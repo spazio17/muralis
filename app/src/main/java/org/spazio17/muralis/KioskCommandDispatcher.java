@@ -31,6 +31,11 @@ final class KioskCommandDispatcher {
         PICTURE_FIT, CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
     }
 
+    /** The page's browser options a command sets, checked here against BrowserOptions. */
+    enum BrowserOption {
+        USER_AGENT, TEXT_SIZE, PAGE_ZOOM, DARK, BACK_AFTER
+    }
+
     static final class Result {
         final String status;
         final String detail;
@@ -153,6 +158,13 @@ final class KioskCommandDispatcher {
          * has the frame drawn or taken away.
          */
         void setStatusLight(boolean on, Integer color, int percent);
+
+        /**
+         * Stores one browser option, already checked and canonical (a number as digits, the
+         * dark look as true or false), and has the page take it. Returns why it cannot, or
+         * null: the dark look needs Android 10, where the WebView reads it from its theme.
+         */
+        String setBrowserOption(BrowserOption option, String value);
 
         /**
          * Shows the screensaver now, whatever the idle time. Returns why it cannot, or null: the
@@ -350,6 +362,46 @@ final class KioskCommandDispatcher {
             case "light.off":
                 executor.setStatusLight(false, null, -1);
                 return accepted();
+            case "browser.user_agent": {
+                String agent = args.value == null ? "" : args.value;
+                String problem = BrowserOptions.checkUserAgent(agent);
+                if (problem != null) {
+                    return rejected(problem);
+                }
+                executor.setBrowserOption(BrowserOption.USER_AGENT, agent.trim());
+                return accepted();
+            }
+            case "browser.text_size": {
+                Integer percent = BrowserOptions.parseTextSize(args.value);
+                if (percent == null) {
+                    return rejected(BrowserOptions.TEXT_SIZE_RULE);
+                }
+                executor.setBrowserOption(BrowserOption.TEXT_SIZE, String.valueOf(percent));
+                return accepted();
+            }
+            case "browser.page_zoom": {
+                Integer percent = BrowserOptions.parsePageZoom(args.value);
+                if (percent == null) {
+                    return rejected(BrowserOptions.ZOOM_RULE);
+                }
+                executor.setBrowserOption(BrowserOption.PAGE_ZOOM, String.valueOf(percent));
+                return accepted();
+            }
+            case "browser.back_after": {
+                Integer seconds = BrowserOptions.parseBackAfter(args.value);
+                if (seconds == null) {
+                    return rejected(BrowserOptions.BACK_AFTER_RULE);
+                }
+                executor.setBrowserOption(BrowserOption.BACK_AFTER, String.valueOf(seconds));
+                return accepted();
+            }
+            case "browser.dark_look":
+                if (args.enabled == null) {
+                    return rejected("enabled must be true or false");
+                }
+                String darkProblem = executor.setBrowserOption(BrowserOption.DARK,
+                        String.valueOf(args.enabled));
+                return darkProblem == null ? accepted() : rejected(darkProblem);
             case "webadmin.enabled":
                 if (args.enabled == null) {
                     return rejected("enabled must be true or false");

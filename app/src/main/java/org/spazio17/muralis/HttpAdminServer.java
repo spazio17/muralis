@@ -1322,6 +1322,51 @@ final class HttpAdminServer {
                 }
                 return null;
             }
+            case "browser": {
+                String stale = staleFormRefusal(form, browserBaseline(KioskConfig.browserOf(context)));
+                if (stale != null) {
+                    return stale;
+                }
+                String agent = form.getOrDefault("browser_user_agent", "");
+                String problem = BrowserOptions.checkUserAgent(agent);
+                Integer text = BrowserOptions.parseTextSize(form.get("browser_text_size"));
+                Integer zoom = BrowserOptions.parsePageZoom(form.get("browser_page_zoom"));
+                Integer back = BrowserOptions.parseBackAfter(form.get("browser_back_after"));
+                String user = form.getOrDefault("browser_user", "").trim();
+                if (problem == null && text == null) {
+                    problem = BrowserOptions.TEXT_SIZE_RULE;
+                }
+                if (problem == null && zoom == null) {
+                    problem = BrowserOptions.ZOOM_RULE;
+                }
+                if (problem == null && back == null) {
+                    problem = BrowserOptions.BACK_AFTER_RULE;
+                }
+                if (problem == null) {
+                    problem = BrowserOptions.checkSignInUser(user);
+                }
+                if (problem == null && isTrue(form.getOrDefault("browser_dark", "0"))
+                        && !BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)) {
+                    problem = BrowserOptions.DARK_RULE;
+                }
+                if (problem != null) {
+                    return "Not saved: " + problem + ".";
+                }
+                KioskConfig.Editor editor = KioskConfig.edit(context)
+                        .browserUserAgent(agent)
+                        .browserTextSize(text)
+                        .browserPageZoom(zoom)
+                        .browserBackAfter(back)
+                        .browserDark(isTrue(form.getOrDefault("browser_dark", "0")))
+                        .browserUser(user);
+                String password = form.getOrDefault("browser_password", "");
+                if (!password.isEmpty() && !user.isEmpty()) {
+                    editor.browserPassword(password);
+                }
+                editor.apply();
+                kioskService.browserOptionsSaved();
+                return null;
+            }
             case "panel": {
                 // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
                 // box since 2026-09-27 (Juri: the id is the panel's identity, not the page's).
@@ -3520,7 +3565,48 @@ final class HttpAdminServer {
                 + sectionFormEnd("Save",
                         "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
                                 + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
-                                + "formmethod=\"post\">Open once</button>");
+                                + "formmethod=\"post\">Open once</button>")
+                + browserForm(notice, noticeSection);
+    }
+
+    /**
+     * The page's browser options (block 3a), a box of their own under the dashboard address,
+     * saved together like the panel's Browser options page and checked by the commands' rules.
+     */
+    private String browserForm(String notice, String noticeSection) {
+        BrowserOptions.Settings browser = KioskConfig.browserOf(context);
+        return "<p class=\"hint\">Browser options</p>"
+                // Its own section name, posted back to the Dashboard box it sits in.
+                + sectionFormStart("browser", notice, noticeSection)
+                        .replace(settingsAt("browser"), settingsAt("dashboard"))
+                + baselineField(browserBaseline(browser))
+                + field("text", "browser_user_agent", "User agent", browser.userAgent, "",
+                        "Empty: the browser's own, with Muralis.")
+                + field("number", "browser_text_size", "Text size (percent)",
+                        String.valueOf(browser.textSize))
+                + field("number", "browser_page_zoom", "Page zoom (percent, 0 = automatic)",
+                        String.valueOf(browser.pageZoom))
+                + field("number", "browser_back_after", "Back to the dashboard after (seconds, 0 = never)",
+                        String.valueOf(browser.backAfterSeconds))
+                + "<div class=\"switches\">"
+                + switchRow("browser-dark", "Dark look for the page",
+                        " name=\"browser_dark\" value=\"1\""
+                                + (BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)
+                                        ? "" : " disabled"), browser.dark)
+                + "</div>"
+                + (BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT) ? ""
+                        : "<p class=\"hint\">The dark look needs Android 10 or newer.</p>")
+                + field("text", "browser_user", "Page sign-in name", browser.signInUser, "",
+                        "Empty: no sign-in.")
+                + field("password", "browser_password", "Page sign-in password", "", "",
+                        BLANK_KEEPS)
+                + sectionFormEnd("Save");
+    }
+
+    /** What the browser box's Save compares, the password apart; the panel's page does the same. */
+    private static String browserBaseline(BrowserOptions.Settings browser) {
+        return browser.userAgent + "|" + browser.textSize + "|" + browser.pageZoom + "|"
+                + browser.dark + "|" + browser.backAfterSeconds + "|" + browser.signInUser;
     }
 
     private String mqttBody(KioskConfig config, String notice, String noticeSection) {

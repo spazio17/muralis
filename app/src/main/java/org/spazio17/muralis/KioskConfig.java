@@ -22,6 +22,14 @@ final class KioskConfig {
     /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
     private static final String ESCAPE_PIN_HASH = "escape_pin_hash";
     private static final String STATS_OVERLAY = "stats_overlay";
+    /** The page's browser options (BrowserOptions); the sign-in password is a secret. */
+    private static final String BROWSER_USER_AGENT = "browser_user_agent";
+    private static final String BROWSER_TEXT_SIZE = "browser_text_size";
+    private static final String BROWSER_PAGE_ZOOM = "browser_page_zoom";
+    private static final String BROWSER_DARK = "browser_dark";
+    private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
+    private static final String BROWSER_USER = "browser_user";
+    private static final String BROWSER_PASSWORD = "browser_password";
     /** The status light (StatusLight): on or off, its colour as 0xRRGGBB, its brightness. */
     private static final String STATUS_LIGHT_ON = "status_light_on";
     private static final String STATUS_LIGHT_COLOR = "status_light_color";
@@ -375,6 +383,45 @@ final class KioskConfig {
 
         Editor statsOverlay(boolean value) {
             plain.putBoolean(STATS_OVERLAY, value);
+            return this;
+        }
+
+        Editor browserUserAgent(String value) {
+            plain.putString(BROWSER_USER_AGENT, value.trim());
+            return this;
+        }
+
+        Editor browserTextSize(int percent) {
+            plain.putInt(BROWSER_TEXT_SIZE, percent);
+            return this;
+        }
+
+        Editor browserPageZoom(int percent) {
+            plain.putInt(BROWSER_PAGE_ZOOM, percent);
+            return this;
+        }
+
+        Editor browserDark(boolean value) {
+            plain.putBoolean(BROWSER_DARK, value);
+            return this;
+        }
+
+        Editor browserBackAfter(int seconds) {
+            plain.putInt(BROWSER_BACK_AFTER, seconds);
+            return this;
+        }
+
+        /** The sign-in name; an empty one clears the password with it. */
+        Editor browserUser(String value) {
+            secrets.put(BROWSER_USER, value);
+            if (value.isEmpty()) {
+                secrets.put(BROWSER_PASSWORD, "");
+            }
+            return this;
+        }
+
+        Editor browserPassword(String value) {
+            secrets.put(BROWSER_PASSWORD, value);
             return this;
         }
 
@@ -1330,6 +1377,40 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(STATS_OVERLAY, true);
+    }
+
+    /**
+     * The browser options as stored; a value this build would refuse reads as its default. The
+     * sign-in name is decrypted here, the password only by {@link #browserPasswordOf}.
+     */
+    static BrowserOptions.Settings browserOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        int text = prefs.getInt(BROWSER_TEXT_SIZE, BrowserOptions.DEFAULT_TEXT_SIZE);
+        int zoom = prefs.getInt(BROWSER_PAGE_ZOOM, BrowserOptions.AUTO_ZOOM);
+        int back = prefs.getInt(BROWSER_BACK_AFTER, 0);
+        String user = new SecretStore(storageContext(context)).getOrNull(BROWSER_USER);
+        return new BrowserOptions.Settings(prefs.getString(BROWSER_USER_AGENT, ""),
+                BrowserOptions.parseTextSize(String.valueOf(text)) != null
+                        ? text : BrowserOptions.DEFAULT_TEXT_SIZE,
+                BrowserOptions.parsePageZoom(String.valueOf(zoom)) != null
+                        ? zoom : BrowserOptions.AUTO_ZOOM,
+                prefs.getBoolean(BROWSER_DARK, false),
+                BrowserOptions.parseBackAfter(String.valueOf(back)) != null ? back : 0,
+                user == null ? "" : user);
+    }
+
+    /** Just the time before going back, read every second while the page is away. */
+    static int browserBackAfterOf(Context context) {
+        int back = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(BROWSER_BACK_AFTER, 0);
+        return BrowserOptions.parseBackAfter(String.valueOf(back)) != null ? back : 0;
+    }
+
+    /** The page's sign-in password, read only when a page asks for it; empty when none. */
+    static String browserPasswordOf(Context context) {
+        String stored = new SecretStore(storageContext(context)).getOrNull(BROWSER_PASSWORD);
+        return stored == null ? "" : stored;
     }
 
     /** The status light as stored, for the frame, the status document and both surfaces. */

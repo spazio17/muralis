@@ -1397,6 +1397,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // snapped back on every toggle (reported from HA 2026-08-24). The flag says only
             // whether the surface is allowed to exist; the port and addresses stay admin-only.
             applied.put("web_admin_enabled", config.webAdminEnabled);
+            // The page's browser options; of the sign-in only whether one is stored, since the
+            // name and the password are secrets.
+            BrowserOptions.Settings browser = KioskConfig.browserOf(this);
+            applied.put("browser", new org.json.JSONObject()
+                    .put("user_agent", browser.userAgent)
+                    .put("text_size", browser.textSize)
+                    .put("page_zoom", browser.pageZoom)
+                    .put("dark_look", browser.dark)
+                    .put("back_after_s", browser.backAfterSeconds)
+                    .put("sign_in", !browser.signInUser.isEmpty()));
             stats.put("display", displaySnapshot());
             stats.put("ambient", screensaverSnapshot(includeAdminDetail));
             StatusLight.State light = KioskConfig.statusLightOf(this);
@@ -2089,6 +2099,31 @@ public final class KioskService extends Service implements KioskCommandDispatche
     public void setStatusLight(boolean on, Integer color, int percent) {
         KioskConfig.edit(this).statusLight(on, color, percent).apply();
         sendUiCommand("light.changed", -1, null);
+    }
+
+    /** The web admin saved the browser box: the page takes it, as after a command. */
+    void browserOptionsSaved() {
+        sendUiCommand("browser.changed", -1, null);
+    }
+
+    @Override
+    public String setBrowserOption(KioskCommandDispatcher.BrowserOption option, String value) {
+        if (option == KioskCommandDispatcher.BrowserOption.DARK && Boolean.parseBoolean(value)
+                && !BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)) {
+            return BrowserOptions.DARK_RULE;
+        }
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        switch (option) {
+            case USER_AGENT: editor.browserUserAgent(value); break;
+            case TEXT_SIZE: editor.browserTextSize(Integer.parseInt(value)); break;
+            case PAGE_ZOOM: editor.browserPageZoom(Integer.parseInt(value)); break;
+            case DARK: editor.browserDark(Boolean.parseBoolean(value)); break;
+            case BACK_AFTER: editor.browserBackAfter(Integer.parseInt(value)); break;
+            default: return null;
+        }
+        editor.apply();
+        sendUiCommand("browser.changed", -1, null);
+        return null;
     }
 
     /**
