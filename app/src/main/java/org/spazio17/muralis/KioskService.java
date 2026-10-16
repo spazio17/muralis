@@ -197,6 +197,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /** When {@link MqttController#heartbeat} last ran; see the sampler above. */
     private long lastHeartbeatMs;
+    /** When the fleet's heartbeat last went out, and from which address; see telemetryTask. */
+    private long lastFleetHeartbeatMs;
+    private String lastFleetHeartbeatAddress = "";
 
     private final Runnable stateEchoTask = new Runnable() {
         @Override
@@ -228,6 +231,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // first tick runs the instant the service is up; the policy's settling rule is what
             // stops it judging before the activity queued behind the service has been created.
             ensureDashboardOnScreen("periodic check");
+            // The fleet's heartbeat (block 12b): every few minutes, and at once when this panel's
+            // address changed, which is also how a network that came back is noticed.
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            String address = facts == null ? "" : facts.ipAddress;
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (!address.isEmpty() && (!address.equals(lastFleetHeartbeatAddress)
+                    || now - lastFleetHeartbeatMs >= FleetServer.HEARTBEAT_INTERVAL_MS)) {
+                String why = address.equals(lastFleetHeartbeatAddress) ? "periodic"
+                        : "address changed";
+                lastFleetHeartbeatMs = now;
+                lastFleetHeartbeatAddress = address;
+                FleetServer.heartbeatSoon(KioskService.this, why);
+            }
             telemetryHandler.postDelayed(this, TELEMETRY_INTERVAL_MS);
         }
     };
@@ -748,6 +764,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         httpAdminServer.start();
         startFleetServer();
         refreshAnnouncement();
+        FleetServer.heartbeatSoon(this, "start");
     }
 
     /**
@@ -1226,6 +1243,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("fleet_state", FleetServer.stateLine());
                 // Membership and the Join code as the panel shows them; admin only, never on MQTT.
                 applied.put("fleet_join", FleetServer.joinState(this));
+                applied.put("fleet_peers", FleetServer.peersJson(this));
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());

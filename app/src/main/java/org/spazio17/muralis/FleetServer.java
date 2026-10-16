@@ -81,9 +81,12 @@ final class FleetServer {
         this.serverSocket = serverSocket;
         this.port = serverSocket.getLocalPort();
         // While a join code is open, an unknown key gets through the handshake too; past it, only
-        // the join route serves such a key, and only for the right code (handle).
+        // the join route serves such a key, and only for the right code (handle). A revoked key
+        // gets through as well, to be told on the check-in route that it was removed, and
+        // nothing else.
         this.tls = FleetTls.context(identity.key, identity.certificate,
-                spki -> admits(spki) || FleetJoin.shared.isOpen(joinClock()))
+                spki -> admits(spki) || FleetJoin.shared.isOpen(joinClock())
+                        || KioskConfig.fleetRevoked(context).contains(spki))
                 .getSocketFactory();
     }
 
@@ -193,14 +196,23 @@ final class FleetServer {
         if (KioskConfig.fleetIdOf(context).isEmpty()) {
             return "Not in a fleet";
         }
+        if (!removedFrom.isEmpty()) {
+            return "Removed from the fleet " + removedFrom + ". Tap Leave, then this panel can"
+                    + " create or join a fleet.";
+        }
         StringBuilder others = new StringBuilder();
         String self = KioskConfig.deviceIdOf(context);
+        long now = android.os.SystemClock.elapsedRealtime();
         for (java.util.Map<String, Object> one
                 : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
-            if (!self.equals(TinyJson.string(one, FleetDocument.ID, ""))) {
-                others.append(others.length() == 0 ? "" : ", ")
-                        .append(TinyJson.string(one, FleetDocument.NAME, ""));
+            if (self.equals(TinyJson.string(one, FleetDocument.ID, ""))) {
+                continue;
             }
+            Peer known = peers.get(TinyJson.string(one, FleetDocument.SPKI, ""));
+            others.append(others.length() == 0 ? "" : ", ")
+                    .append(TinyJson.string(one, FleetDocument.NAME, ""))
+                    .append(known == null ? " (not heard from yet)"
+                            : now - known.seenAt >= OFFLINE_AFTER_MS ? " (offline)" : "");
         }
         return "Member of the fleet " + KioskConfig.fleetNameOf(context)
                 + (others.length() == 0 ? "" : ", with " + others);
@@ -269,7 +281,8 @@ final class FleetServer {
                     length = Integer.parseInt(header.substring(colon + 1).trim());
                 }
             }
-            byte[] reply = length < 0 || length > MAX_BODY * 4 ? new byte[0]
+            // As much as a fleet document may be: the list is fetched and handed back this way.
+            byte[] reply = length < 0 || length > MAX_DOCUMENT ? new byte[0]
                     : readBody(input, length);
             JSONObject json;
             try {
@@ -496,10 +509,30 @@ final class FleetServer {
                 return;
             }
             boolean joinRoute = "/fleet/join".equals(parts[1]);
+            // A removed panel's heartbeat is answered with the fact, so it can say so on its
+            // screen and the person taps Leave there; it gets nothing else.
+            if ("/fleet/checkin".equals(parts[1])
+                    && KioskConfig.fleetRevoked(context).contains(caller)) {
+                readBody(input, Math.min(contentLength, MAX_BODY));
+                Log.i(TAG, "A removed panel checked in: key " + FleetTls.shortForm(caller));
+                JSONObject removed = error("this panel was removed from the fleet "
+                        + KioskConfig.fleetNameOf(context));
+                try {
+                    removed.put("removed", true);
+                } catch (JSONException impossible) {
+                    throw new IllegalStateException(impossible);
+                }
+                respond(output, 403, removed);
+                return;
+            }
             // Judged again after the handshake, as Syncthing and KDE Connect do: a resumed TLS
             // session presents no certificate and never reaches the trust manager, so a key
             // revoked since its first call would otherwise get back in. The join route is the
             // one place an unknown key is served; the code authenticates it there.
+            if (joinRoute && KioskConfig.fleetRevoked(context).contains(caller)) {
+                respond(output, 403, error("this key was removed from this panel's fleet"));
+                return;
+            }
             if (!joinRoute && !admits(caller)) {
                 Log.i(TAG, "Member endpoint refused key " + FleetTls.shortForm(caller));
                 respond(output, 403, error("this key is not a member of this panel's fleet"));
@@ -528,8 +561,26 @@ final class FleetServer {
             } else if ("/fleet/document".equals(parts[1])) {
                 if ("PUT".equals(parts[0])) {
                     takeDocument(caller, body, output);
+                } else if ("GET".equals(parts[0])) {
+                    // The list held, for a member that heard of a newer version (heartbeat).
+                    String held = KioskConfig.fleetDocumentText(context);
+                    if (held.isEmpty()) {
+                        respond(output, 404, error("this panel holds no fleet list yet"));
+                    } else {
+                        try {
+                            respond(output, 200, new JSONObject(held));
+                        } catch (JSONException impossible) {
+                            throw new IllegalStateException(impossible);
+                        }
+                    }
                 } else {
-                    respond(output, 405, error("only PUT"));
+                    respond(output, 405, error("only PUT or GET"));
+                }
+            } else if ("/fleet/checkin".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    checkin(caller, socket.getInetAddress().getHostAddress(), body, output);
+                } else {
+                    respond(output, 405, error("only POST"));
                 }
             } else if ("/fleet/leave".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
@@ -729,6 +780,8 @@ final class FleetServer {
         KioskService.publishTelemetrySoon(context);
         Log.i(TAG, "Fleet document version " + FleetDocument.version(incoming) + " taken from key "
                 + FleetTls.shortForm(from));
+        // A list just taken may name panels never heard from: greeted now, not in three minutes.
+        heartbeatSoon(context, "list taken");
         return new Taken(null, rewritten);
     }
 
@@ -744,6 +797,8 @@ final class FleetServer {
             }
             KioskConfig.edit(context).leaveFleet().apply();
         }
+        removedFrom = "";
+        peers.clear();
         KioskService.publishTelemetrySoon(context);
         Log.i(TAG, "Left the fleet " + name + " " + how);
     }
@@ -840,21 +895,23 @@ final class FleetServer {
     /** Hands {@code text} to one member at its first address; null when it took it. */
     private static String deliver(Context context, java.util.Map<String, Object> member,
             String text) {
-        Object addresses = member.get("addresses");
-        String address = addresses instanceof java.util.List
-                && !((java.util.List<?>) addresses).isEmpty()
-                ? String.valueOf(((java.util.List<?>) addresses).get(0)) : "";
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
         if (address.isEmpty()) {
             return "no address is known for it";
         }
         try {
-            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
-            Reply reply = call(context, address,
-                    (int) TinyJson.number(member, "port", KioskConfig.DEFAULT_FLEET_PORT),
-                    spki, "PUT", "/fleet/document", new JSONObject(text));
+            Reply reply = call(context, address, portOf(member, spki), spki, "PUT",
+                    "/fleet/document", new JSONObject(text));
             if (reply.status != 200) {
                 return reply.reason();
             }
+            // Heard from: the Fleet section need not wait for its first heartbeat.
+            Peer known = peers.get(spki);
+            peers.put(spki, new Peer(address, portOf(member, spki),
+                    reply.body.optLong("version", 0), android.os.SystemClock.elapsedRealtime(),
+                    known == null ? new JSONObject() : known.health,
+                    known == null ? 0 : known.clockSkewMs));
             // The member held more than this panel and handed the merge back: taken here too.
             String handedBack = reply.body.optString("document", "");
             FleetIdentity identity = FleetIdentity.load(context);
@@ -867,6 +924,277 @@ final class FleetServer {
             Log.d(TAG, "Fleet document delivery failed", failed);
             return "it did not answer";
         }
+    }
+
+    /**
+     * What this panel knows of another from its heartbeats (block 12b): where it was last reached,
+     * which version of the list it held, when, its health summary and its clock against this
+     * panel's. In memory only: a restart starts with nothing seen.
+     */
+    static final class Peer {
+        final String address;
+        final int port;
+        final long version;
+        /** On the clock that only moves forward (SystemClock.elapsedRealtime), not the date. */
+        final long seenAt;
+        final JSONObject health;
+        final long clockSkewMs;
+
+        Peer(String address, int port, long version, long seenAt, JSONObject health,
+                long clockSkewMs) {
+            this.address = address;
+            this.port = port;
+            this.version = version;
+            this.seenAt = seenAt;
+            this.health = health;
+            this.clockSkewMs = clockSkewMs;
+        }
+    }
+
+    /** By key hash; see Peer. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Peer> peers =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Every few minutes each panel tells every other it is here and which version it holds. */
+    static final long HEARTBEAT_INTERVAL_MS = 3 * 60_000L;
+    /** A panel not heard from for this long is said to be offline. */
+    static final long OFFLINE_AFTER_MS = 10 * 60_000L;
+    /** The fleet a heartbeat was answered with "removed" from; said on the Fleet section. */
+    private static volatile String removedFrom = "";
+    private static final java.util.concurrent.atomic.AtomicBoolean heartbeating =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * {@code POST /fleet/checkin} from a member: it is here, at the address it called from, holds
+     * the version it says, with its health and clock. Answered with this panel's own state, whose
+     * version the caller compares with its own; when the caller holds a newer list, this panel
+     * fetches it from the caller.
+     */
+    private void checkin(String caller, String address, byte[] body, OutputStream output)
+            throws IOException {
+        JSONObject request;
+        try {
+            request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException notJson) {
+            respond(output, 400, error("the body must be a JSON object"));
+            return;
+        }
+        long clock = request.optLong("clock", System.currentTimeMillis());
+        int port = request.optInt("port", KioskConfig.DEFAULT_FLEET_PORT);
+        peers.put(caller, new Peer(address,
+                port < 1 || port > 65535 ? KioskConfig.DEFAULT_FLEET_PORT : port,
+                request.optLong("version", 0), android.os.SystemClock.elapsedRealtime(),
+                request.optJSONObject("health") == null ? new JSONObject()
+                        : request.optJSONObject("health"), clock - System.currentTimeMillis()));
+        respond(output, 200, fleetState());
+        long held = FleetDocument.version(KioskConfig.fleetDocumentOf(context));
+        if (request.optLong("version", 0) > held) {
+            new Thread(() -> fetchFrom(context, identity, peers.get(caller), caller),
+                    "MuralisFleetFetch").start();
+        }
+        KioskService.publishTelemetrySoon(context);
+    }
+
+    /** Asks {@code peer} for the list it holds and takes it (merge). */
+    private static void fetchFrom(Context context, FleetIdentity identity, Peer peer,
+            String spki) {
+        if (peer == null) {
+            return;
+        }
+        try {
+            Reply reply = call(context, peer.address, peer.port, spki, "GET", "/fleet/document",
+                    null);
+            if (reply.status == 200 && FleetDocument.parse(reply.body.toString()) != null) {
+                take(context, identity, reply.body.toString(), spki);
+            } else {
+                Log.w(TAG, "The newer fleet list could not be fetched from key "
+                        + FleetTls.shortForm(spki) + ": " + reply.reason());
+            }
+        } catch (IOException failed) {
+            Log.w(TAG, "The newer fleet list could not be fetched from key "
+                    + FleetTls.shortForm(spki) + ": " + failed.getMessage());
+        }
+    }
+
+    /**
+     * One round of heartbeats, off the main thread and one round at a time: a check-in to every
+     * other member of the held list, in parallel, each with the call's own deadline. A member
+     * that holds a newer list is asked for it; one that answers "removed" is noted for the
+     * Fleet section. A member that does not answer costs nothing but its deadline.
+     */
+    static void heartbeatSoon(Context context, String why) {
+        if (KioskConfig.fleetIdOf(context).isEmpty() || !heartbeating.compareAndSet(false, true)) {
+            return;
+        }
+        new Thread(() -> {
+            try {
+                heartbeat(context.getApplicationContext(), why);
+            } finally {
+                heartbeating.set(false);
+            }
+        }, "MuralisFleetHeartbeat").start();
+    }
+
+    private static void heartbeat(Context context, String why) {
+        FleetIdentity identity = FleetIdentity.load(context);
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (identity == null || held == null) {
+            return;
+        }
+        JSONObject mine = checkinBody(context, FleetDocument.version(held));
+        java.util.List<Thread> calls = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger answered = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger removed = new java.util.concurrent.atomic.AtomicInteger();
+        for (java.util.Map<String, Object> member : FleetDocument.members(held)) {
+            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+            if (spki.equals(identity.spki)) {
+                continue;
+            }
+            Thread call = new Thread(() -> heartbeatOne(context, identity, member, spki, mine,
+                    answered, removed),
+                    "MuralisFleetHeartbeat-" + FleetTls.shortForm(spki));
+            calls.add(call);
+            call.start();
+        }
+        for (Thread call : calls) {
+            try {
+                call.join();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        // Removed only when every member that answered says so: one member that fell behind
+        // still holds an old removal of a panel that joined again, and catches up by itself.
+        if (removed.get() > 0 && answered.get() == 0) {
+            removedFrom = KioskConfig.fleetNameOf(context);
+            Log.i(TAG, "Removed from the fleet " + removedFrom + ", say " + removed.get()
+                    + " panels");
+        } else if (answered.get() > 0) {
+            removedFrom = "";
+        }
+        Log.i(TAG, "Heartbeat (" + why + ") to " + calls.size() + " panels done, "
+                + answered.get() + " answered");
+        KioskService.publishTelemetrySoon(context);
+    }
+
+    private static void heartbeatOne(Context context, FleetIdentity identity,
+            java.util.Map<String, Object> member, String spki, JSONObject mine,
+            java.util.concurrent.atomic.AtomicInteger answered,
+            java.util.concurrent.atomic.AtomicInteger removed) {
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return;
+        }
+        int port = portOf(member, spki);
+        try {
+            Reply reply = call(context, address, port, spki, "POST", "/fleet/checkin", mine);
+            if (reply.status == 200) {
+                answered.incrementAndGet();
+                Peer known = peers.get(spki);
+                peers.put(spki, new Peer(address, port, reply.body.optLong("version", 0),
+                        android.os.SystemClock.elapsedRealtime(),
+                        known == null ? new JSONObject() : known.health,
+                        known == null ? 0 : known.clockSkewMs));
+                if (reply.body.optLong("version", 0)
+                        > FleetDocument.version(KioskConfig.fleetDocumentOf(context))) {
+                    fetchFrom(context, identity, peers.get(spki), spki);
+                }
+            } else if (reply.status == 403 && reply.body.optBoolean("removed", false)) {
+                removed.incrementAndGet();
+                Log.i(TAG, "Removed from the fleet, says key " + FleetTls.shortForm(spki));
+            } else {
+                Log.d(TAG, "Heartbeat to key " + FleetTls.shortForm(spki) + " answered "
+                        + reply.status + ": " + reply.reason());
+            }
+        } catch (IOException failed) {
+            Log.d(TAG, "Heartbeat to key " + FleetTls.shortForm(spki) + " failed: "
+                    + failed.getMessage());
+        }
+    }
+
+    /** This panel's check-in: who it is, what it holds, its health and its clock. */
+    private static JSONObject checkinBody(Context context, long version) {
+        try {
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            JSONObject health = new JSONObject()
+                    .put("app_version", BuildConfig.VERSION_NAME)
+                    .put("android", android.os.Build.VERSION.RELEASE)
+                    .put("device_owner", KioskService.isDeviceOwner(context));
+            if (facts != null) {
+                health.put("battery_percent", facts.batteryPercent)
+                        .put("charging", facts.charging)
+                        .put("wifi_rssi_dbm", facts.wifiRssiDbm)
+                        .put("app_uptime_ms", facts.appUptimeMs)
+                        .put("page_error", SystemStats.pageErrorIsCurrent(facts)
+                                ? facts.lastPageError : "");
+            }
+            return new JSONObject()
+                    .put("id", KioskConfig.deviceIdOf(context))
+                    .put("version", version)
+                    .put("port", KioskConfig.fleetPortOf(context))
+                    .put("clock", System.currentTimeMillis())
+                    .put("health", health);
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /**
+     * Where a member was reached lately, else the first address its entry lists: a stale
+     * contact must not shadow an entry a fresh join wrote.
+     */
+    private static String addressOf(java.util.Map<String, Object> member, String spki) {
+        Peer known = recent(spki);
+        if (known != null && !known.address.isEmpty()) {
+            return known.address;
+        }
+        Object addresses = member.get("addresses");
+        return addresses instanceof java.util.List && !((java.util.List<?>) addresses).isEmpty()
+                ? String.valueOf(((java.util.List<?>) addresses).get(0)) : "";
+    }
+
+    private static int portOf(java.util.Map<String, Object> member, String spki) {
+        Peer known = recent(spki);
+        return known != null ? known.port
+                : (int) TinyJson.number(member, "port", KioskConfig.DEFAULT_FLEET_PORT);
+    }
+
+    /** A member's contact when heard from within the offline limit, else null. */
+    private static Peer recent(String spki) {
+        Peer known = peers.get(spki);
+        return known != null
+                && android.os.SystemClock.elapsedRealtime() - known.seenAt < OFFLINE_AFTER_MS
+                ? known : null;
+    }
+
+    /** The other panels as last heard from, for the web API and the console to come. */
+    static org.json.JSONArray peersJson(Context context) {
+        org.json.JSONArray list = new org.json.JSONArray();
+        long now = android.os.SystemClock.elapsedRealtime();
+        String self = KioskConfig.deviceIdOf(context);
+        for (java.util.Map<String, Object> member
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+            if (self.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+                continue;
+            }
+            Peer known = peers.get(spki);
+            try {
+                list.put(new JSONObject()
+                        .put("id", TinyJson.string(member, FleetDocument.ID, ""))
+                        .put("name", TinyJson.string(member, FleetDocument.NAME, ""))
+                        .put("spki", spki)
+                        .put("seen_ago_ms", known == null ? -1 : now - known.seenAt)
+                        .put("online", known != null && now - known.seenAt < OFFLINE_AFTER_MS)
+                        .put("address", known == null ? addressOf(member, spki) : known.address)
+                        .put("version", known == null ? JSONObject.NULL : known.version)
+                        .put("clock_skew_ms", known == null ? JSONObject.NULL : known.clockSkewMs)
+                        .put("health", known == null ? new JSONObject() : known.health));
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        }
+        return list;
     }
 
     /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */

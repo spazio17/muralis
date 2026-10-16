@@ -45,7 +45,8 @@ on purpose.
   key and a member endpoint, announces itself on the local network (mDNS), joins a fleet with a
   single-use code shown on its Join screen, or leaves it, and creates a fleet or adds another
   panel by reading that code with its camera; every member holds the fleet's signed list of
-  panels.
+  panels, and the members tell each other every few minutes that they are there and which
+  version they hold, so one that fell behind fetches the list.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 
@@ -87,7 +88,8 @@ on purpose.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
   password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
   endpoint is the one exception: it listens on every panel and admits only keys the panel trusts,
-  plus, while a person keeps a join code open, an unknown key on the join route alone.
+  plus, while a person keeps a join code open, an unknown key on the join route alone, and a
+  removed key on the check-in route alone, to be told it was removed.
   Request sizes are bounded. A refusal is always answered with a reason (the one silence is an
   empty MQTT payload, which is how a retained command is cleared), and a command never claims a
   success it did not have (there is no "shutdown" command, because Android offers no way to do it).

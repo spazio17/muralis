@@ -926,6 +926,12 @@ final class KioskConfig {
     private static final String FLEET_ID = "fleet_id";
     private static final String FLEET_DOCUMENT = "fleet_document";
 
+    /** The fleet document held, as it was signed; empty before the first. */
+    static String fleetDocumentText(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(FLEET_DOCUMENT, "");
+    }
+
     /** The fleet document held, as maps and lists; null before the first (see fleetDocument). */
     static java.util.Map<String, Object> fleetDocumentOf(Context context) {
         String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
