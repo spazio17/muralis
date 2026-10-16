@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -22,7 +22,7 @@ final class KioskCommandDispatcher {
 
     /**
      * The screensaver's settings as commands, so every one of them can be set over MQTT and HTTP
-     * and not only in the two user interfaces (Juri, 2026-09-09). One executor method rather
+     * and not only in the two user interfaces (2026-09-09). One executor method rather
      * than a dozen: the validation is here, where the repo keeps it, and the executor's job is
      * one {@code KioskConfig.edit} call.
      */
@@ -767,7 +767,7 @@ final class KioskCommandDispatcher {
      * closed on a bind error, so the admin's own settings box was able to switch the admin off,
      * undoable only from the tablet. This floor applies exclusively to the port this app binds
      * itself, the web admin's and the member endpoint's alike; the broker port is a remote port
-     * and keeps the full 1-65535 range. The two own ports are never the same (Juri, 2026-10-08):
+     * and keeps the full 1-65535 range. The two own ports are never the same (2026-10-08):
      * a new choice equal to the other is refused, while a pair that already collides (a web
      * admin on 8081 before the member port existed) can still be saved unchanged, its member
      * endpoint staying off until one of them moves.

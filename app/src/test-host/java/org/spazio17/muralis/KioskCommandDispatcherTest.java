@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -215,7 +215,7 @@ public final class KioskCommandDispatcherTest {
                 "a port above 65535 must be refused");
         require(KioskCommandDispatcher.validateAdminPort(80, 8080, 8081).contains("1024"),
                 "the refusal must name the allowed range");
-        // The web admin and the member endpoint never share a port (Juri, 2026-10-08).
+        // The web admin and the member endpoint never share a port (2026-10-08).
         require(KioskCommandDispatcher.validateAdminPort(8081, 8080, 8081) != null,
                 "the member port must be refused as a new web admin port");
         require(KioskCommandDispatcher.validateAdminPort(8082, 8080, 8081) == null,
@@ -617,7 +617,7 @@ public final class KioskCommandDispatcherTest {
 
     /**
      * Every screensaver setting is a command, because MQTT and HTTP must be able to set what the
-     * two user interfaces can (Juri, 2026-09-09). The table below is the whole vocabulary: a
+     * two user interfaces can (2026-09-09). The table below is the whole vocabulary: a
      * good value forwarded canonically, a bad one refused with its rule.
      */
     private static void testScreensaverSettingCommands() {

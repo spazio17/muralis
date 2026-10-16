@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -30,7 +30,7 @@ import java.util.List;
  * of its own over the app ("Display over other apps"): four transparent squares in the
  * corners, as large as the dashboard's ({@link #CORNER_DP}), which take the taps landing in
  * them for the escape combinations (Android gives a tap to one app only, so the app loses
- * those corners; Juri, 2026-10-15), one of them also told of
+ * those corners; the owner, 2026-10-15), one of them also told of
  * every other touch, without where, so Ambient knows the panel is in use; and the status light's
  * frame, which takes no touch. Pop-ups and Identify are drawn in windows of their own straight
  * over the app; Ambient and the black display-off, which cover the whole screen anyway, bring
@@ -40,7 +40,7 @@ final class AppLock {
     private static final String TAG = "MuralisAppLock";
     /**
      * The corners as large as the ones the dashboard listens on, so a combination recorded
-     * anywhere in them works over the app too (Juri, 2026-10-15, after testing with Spotify;
+     * anywhere in them works over the app too (2026-10-15, after testing with Spotify;
      * it replaces the 48 dp of the first version).
      */
     static final int CORNER_DP = KioskActivity.ADMIN_ESCAPE_ZONE_DP;
@@ -76,7 +76,7 @@ final class AppLock {
      * Every app with a launcher icon but Muralis, by name, and never Android's own doors out:
      * Settings, a home screen or the Play Store, which would hand the person the whole device.
      * The apps that came with the device (Chrome, the maker's tools) only when {@code withSystem}:
-     * left out unless the person asks, since the choice is theirs to make (Juri, 2026-10-15).
+     * left out unless the person asks, since the choice is theirs to make (2026-10-15).
      */
     static List<App> launchable(Context context, boolean withSystem) {
         PackageManager packages = context.getPackageManager();
@@ -347,7 +347,7 @@ final class AppLock {
     }
 
     /**
-     * A pop-up or Identify drawn straight over the app (Juri, 2026-10-15: over the locked app,
+     * A pop-up or Identify drawn straight over the app (2026-10-15: over the locked app,
      * not over Muralis's page): {@code view} in a window of its own over the whole screen,
      * taking touches when {@code touchable} (the pop-up closes on a touch). False when refused.
      */
@@ -388,7 +388,7 @@ final class AppLock {
     }
 
     /**
-     * The stats readout over the app (Juri, 2026-10-15): a window the size of the readout at
+     * The stats readout over the app (2026-10-15): a window the size of the readout at
      * {@code x}, {@code y} from the screen's top left, taking the touches on it alone, so it can
      * be picked up and moved while the app keeps every other tap. False when refused.
      */

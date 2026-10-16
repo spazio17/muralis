@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -40,7 +40,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * The panel's camera as an IP camera (Juri, 2026-09-27): a live MJPEG stream and a snapshot on
+ * The panel's camera as an IP camera (2026-09-27): a live MJPEG stream and a snapshot on
  * the web admin, behind its password; the picture's name and the time drawn into it as a
  * watermark; and motion detection, the one thing the automations and Home Assistant see of it.
  * The settings follow a camera firmware's: which lens, the size, the frame rate, mirror,
@@ -60,7 +60,7 @@ final class PanelCamera implements Sensors.Reading {
             "320x240", "640x480", "1280x720", "1920x1080"));
     static final List<Integer> RATES = Collections.unmodifiableList(Arrays.asList(1, 2, 5, 10, 15));
     /**
-     * The picture's orientation (Juri, 2026-09-28): upright as the panel is turned, or always
+     * The picture's orientation (2026-09-28): upright as the panel is turned, or always
      * tall, or always wide. A camera's sensor is fixed in the panel, so a tall picture from a
      * panel lying wide is the middle of its wide one, and the other way round.
      */

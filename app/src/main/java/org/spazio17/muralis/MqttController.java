@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -1056,7 +1056,7 @@ final class MqttController implements MqttCallbackExtended {
                     "{\"command\":\"ambient.stop\"}",
                     screensaverBooleanTemplate("active")));
             // Every screensaver setting, not a chosen few: "everything must be controllable
-            // remotely" (Juri, 2026-09-09). They are all commands as well, so a caller that
+            // remotely" (2026-09-09). They are all commands as well, so a caller that
             // would rather publish a command than use an entity can.
             components.put("ambient_idle", number(
                     "Ambient idle time",
@@ -1309,8 +1309,8 @@ final class MqttController implements MqttCallbackExtended {
             // entity a new build renamed or dropped), the way zigbee2mqtt does: what it announced
             // is what this process published and, after a restart or an update, the payload the
             // broker kept (readRetainedDiscovery). A new panel finds nothing and sends no removal
-            // at all, so Muralis starts on MQTT as if it were used for the first time (Juri,
-            // 2026-10-06). A removal that Home Assistant misses because it is offline at that
+            // at all, so Muralis starts on MQTT as if it were used for the first time
+            // (2026-10-06). A removal that Home Assistant misses because it is offline at that
             // moment leaves the entity unavailable until a person deletes it, which Tasmota,
             // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: Home
             // Assistant acts on an empty config only for a component it has discovered since it

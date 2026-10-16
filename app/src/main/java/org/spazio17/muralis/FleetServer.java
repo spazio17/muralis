@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -322,7 +322,7 @@ final class FleetServer {
     /** A panel that proved a different code than the one typed or read. */
     private static final String OTHER_CODE = "that panel shows another code";
 
-    /** How long a typed code looks for its panel on the network (Juri, 2026-10-14: 30 s). */
+    /** How long a typed code looks for its panel on the network (2026-10-14: 30 s). */
     static final long CODE_SEARCH_MS = 30_000L;
 
     /**
@@ -405,9 +405,12 @@ final class FleetServer {
                 }
                 if (!"joining".equals(text(txt, "state"))
                         || !digits.substring(0, 2).equals(text(txt, "tag"))) {
-                    // Not showing this code yet: when it opens one it announces itself again,
-                    // and is asked then.
+                    // Not showing this code yet: asked again after a pause, while the time
+                    // lasts. Android 13 and older report no change of a found service's TXT, so
+                    // a panel that opens its code after the search began is caught only so.
                     tried.remove(seen.getServiceName());
+                    Thread.sleep(1_000);
+                    found.add(seen);
                     continue;
                 }
                 String address = resolved.getHost().getHostAddress();

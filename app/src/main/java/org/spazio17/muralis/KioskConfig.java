@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -145,7 +145,7 @@ final class KioskConfig {
     String mqttClientName = "";
     long mqttClientUntil;
     int httpPort = DEFAULT_HTTP_PORT;
-    /** The member endpoint's port, a setting like the web admin's (Juri, 2026-10-08). */
+    /** The member endpoint's port, a setting like the web admin's (2026-10-08). */
     int fleetPort = DEFAULT_FLEET_PORT;
     /** The fleet's alerts: thresholds and destinations; see FleetAlerts. */
     FleetAlerts.Settings alerts = new FleetAlerts.Settings();
@@ -1342,7 +1342,7 @@ final class KioskConfig {
      * its default place. Measured from the edges it was dropped nearest to, as shares of the
      * screen, not of the room left over: the block's own size changes with every line it
      * draws, and a place that depended on it moved a few pixels every second (the flicker
-     * Juri saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
+     * The owner saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
      */
     static OverlayPlace statsOverlayPlace(Context context) {
         android.content.SharedPreferences prefs = storageContext(context)

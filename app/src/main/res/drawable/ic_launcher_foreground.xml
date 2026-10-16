@@ -26,7 +26,7 @@
      Redrawn on 2026-09-23, with the app's Material 3 redesign, in three ways and no more:
 
        * **The camera sits in the bezel, not on the glass.** It was a mauve dot just inside the
-         frame, which is where no tablet has ever put a camera (Juri). It is now a dark dot centred
+         frame, which is where no tablet has ever put a camera. It is now a dark dot centred
          on the bezel stroke itself, drawn in the background colour so it reads as a hole in the
          frame, which is what a camera is.
        * **The corners are rounded**, the panel a little more and the tiles from square to 2 units,
@@ -35,7 +35,7 @@
        * **The colours are the app's own**, read out of KioskTheme's dark palette rather than
          approximated. The ground is the palette's base, in res/values/ic_launcher_background.xml.
 
-     Recoloured on 2026-10-15, when the brand became ultramarine (Juri chose icon A of
+     Recoloured on 2026-10-15, when the brand became ultramarine (chose icon A of
      media/drafts/colour): #b9c3ff is the dark scheme's accent, #6f86ff a deeper ultramarine for
      the second pair of tiles, the ground the dark scheme's base #12131d. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

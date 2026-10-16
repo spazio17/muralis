@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -515,7 +515,7 @@ final class PictureLibrary {
     /**
      * Takes pictures that no longer exist out of the playlist that holds them.
      *
-     * <p>Juri's rule of 2026-09-10, both halves of it: "Deleted image are removed from the
+     * <p>The owner's rule of 2026-09-10, both halves of it: "Deleted image are removed from the
      * playlist. Images removed from the playlist are not physically deleted." This is the first
      * half, and the caution it needs is in {@link #localName}: a picture is only called gone when
      * this panel can read its own pictures and the store has no row for it, so an unmounted card or

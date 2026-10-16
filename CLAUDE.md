@@ -62,33 +62,31 @@ on purpose.
   the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
   them on the panel itself, also at a time of day, with actions on the panel, an MQTT message or
   a call to an address (a charger's smart plug at 20 and 80 percent needs nothing else).
-- **Fleet (being built).** Panels on one network will trust each other by their own keys, and any
-  panel's web admin will manage all of them. No server, no cloud. So far each panel has its fleet
-  key and a member endpoint, announces itself on the local network (mDNS) while it is in a fleet
-  or shows its Join code, joins a fleet with a single-use code shown on its Join screen (proven
-  by both sides with SPAKE2, never sent), or
-  leaves it (telling one member, which takes it off the list for all), removes another panel
-  that cannot leave by itself, and creates a fleet or adds another
-  panel by reading that code with its camera, or by typing it on a device with none (the panels
-  announce whether they are ready to be joined); every member holds the fleet's signed list of
-  panels, the members tell each other every few minutes that they are there and which
-  version they hold, so one that fell behind fetches the list, and sections of settings (the
-  dashboard, MQTT, the web admin, the display, Ambient) can be shared in a group of
-  panels or with the whole fleet: groups are sets of panels with the same job, made with a name
-  the person gives; a panel ticks the groups it belongs to and may stop following what the whole
-  fleet shares; a shared section is applied on every panel of its scope, a group winning over
-  the whole fleet, and a change to it on any of them reaches all of them. A panel at its welcome
-  screen can be joined before anything locks: it takes the adding panel's escape combinations
-  and PIN as its own, once, at that moment, and goes to the dashboard; a panel that has
-  combinations keeps them, they are never shared afterwards. A page address may carry
-  `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by each panel when it loads the
-  page, so one shared address shows each panel its own page. Alerts are a shared section too
-  (a panel offline, a page error, battery or temperature past a threshold, a combination used,
-  a PIN lockout): each panel judges itself and one panel judges the fleet's offline, each alert
-  is said once, on and off, as a notification on the panel, on a plain MQTT topic and to a web
-  address; every member keeps the last versions of the fleet's list, with what each changed,
-  and can restore one as a new version, membership kept as it is now. The Fleet page shows a
-  picture of every panel's screen on request, fetched from each panel over the fleet's own
+- **Fleet.** Panels on one network trust each other by their own keys, and any panel's web admin
+  manages all of them. No server, no cloud. Each panel has its fleet key and a member endpoint,
+  announces itself on the local network (mDNS) while it is in a fleet or shows its Join code, joins
+  a fleet with a single-use code shown on its Join screen (proven by both sides with SPAKE2, never
+  sent), or leaves it (telling one member, which takes it off the list for all), removes another
+  panel that cannot leave by itself, and creates a fleet or adds another panel by reading that code
+  with its camera, or by typing it on a device with none (the panels announce whether they are ready
+  to be joined); every member holds the fleet's signed list of panels, the members tell each other
+  every few minutes that they are there and which version they hold, so one that fell behind fetches
+  the list, and sections of settings (the dashboard, MQTT, the web admin, the display, Ambient, the
+  alerts) can be shared, each by a switch on the Fleet page, in a group of panels or with the whole
+  fleet: groups are sets of panels with the same job, made with a name the person gives; a panel
+  ticks the groups it belongs to and may stop following what the whole fleet shares; a shared
+  section is applied on every panel of its scope, a group winning over the whole fleet, and a change
+  to it on any of them reaches all of them. A panel at its welcome screen can be joined before
+  anything locks: it takes the adding panel's escape combinations and PIN as its own, once, at that
+  moment, and goes to the dashboard; a panel that has combinations keeps them, they are never shared
+  afterwards. A page address may carry `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by
+  each panel when it loads the page, so one shared address shows each panel its own page. Alerts are
+  a shared section too (a panel offline, a page error, battery or temperature past a threshold, a
+  combination used, a PIN lockout): each panel judges itself and one panel judges the fleet's
+  offline, each alert is said once, on and off, as a notification on the panel, on a plain MQTT
+  topic and to a web address; every member keeps the last versions of the fleet's list, with what
+  each changed, and can restore one as a new version, membership kept as it is now. The Fleet page
+  shows a picture of every panel's screen on request, fetched from each panel over the fleet's own
   link and never stored, and Identify shows a panel's name on its screen.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels:

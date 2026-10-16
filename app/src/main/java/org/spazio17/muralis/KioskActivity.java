@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -225,7 +225,7 @@ public final class KioskActivity extends Activity {
     /**
      * The showing screensaver is a preview (the settings page's Preview, or a start that arrived
      * with the settings open): the touch that ends it goes
-     * back to that page, not to the dashboard (Juri, 2026-09-09: a test must not leave the test
+     * back to that page, not to the dashboard (2026-09-09: a test must not leave the test
      * page). Ends with the screensaver; a remote stop or the display going dark drops it.
      */
     private boolean screensaverPreview;
@@ -392,7 +392,7 @@ public final class KioskActivity extends Activity {
     /**
      * The dashboard screen is App lock's plain plate: the app is what the panel shows, so the
      * web page is never loaded behind it (it flashed up as Muralis came forward for a
-     * combination, Juri 2026-10-15, and cost a renderer for nothing).
+     * combination, the owner 2026-10-15, and cost a renderer for nothing).
      */
     private boolean appLockPlate;
     /** App lock's page lists the device's own apps too; asked for on the page, not stored. */
@@ -1280,7 +1280,7 @@ public final class KioskActivity extends Activity {
      * listening; grey "disabled" while the operator has the surface off; a warning when it
      * should be up and is not, and when it is up but nothing can reach it: a panel with Wi-Fi
      * off keeps its server listening and has no address to print, and the line used to fill
-     * the gap with a made-up host name (Juri, 2026-09-24).
+     * the gap with a made-up host name (2026-09-24).
      */
     private void refreshWebAdminControls(Button toggle, TextView httpState,
             TextView fingerprintView, KioskTheme theme) {
@@ -1288,7 +1288,7 @@ public final class KioskActivity extends Activity {
         toggle.setText(enabled ? "Turn web admin off" : "Turn web admin on");
         // The fingerprint in a block of its own, monospaced on the darker plate, as the web page
         // and the drawings show it: 95 characters with no space to break at ran off the end of
-        // the green status line (Juri, 2026-09-23).
+        // the green status line (2026-09-23).
         String fingerprint = KioskRuntimeState.httpAdminFingerprint();
         boolean showFingerprint = KioskRuntimeState.httpAdminListening() && !fingerprint.isEmpty();
         fingerprintView.setVisibility(showFingerprint ? View.VISIBLE : View.GONE);
@@ -1609,7 +1609,7 @@ public final class KioskActivity extends Activity {
     /**
      * Moves the stats overlay with a finger: pressed and held for four fifths of the long-press
      * time, it is picked up and follows the finger anywhere on the screen, and where it is dropped is kept
-     * for this panel (Juri, 2026-10-04). A tap or a scroll on it still reaches the dashboard
+     * for this panel (2026-10-04). A tap or a scroll on it still reaches the dashboard
      * underneath, as it always has: the touch down is passed on and the hold only arms a timer,
      * which a move cancels; once the block is picked up the dashboard is sent a cancel, so a
      * hold that became a drag is not also a long press on the page. The escape corners are
@@ -1960,7 +1960,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The robot over the page with "Can't reach <address>, trying again" (Juri, 2026-10-15):
+     * The robot over the page with "Can't reach <address>, trying again" (2026-10-15):
      * laid over the dashboard when its load fails, under Ambient and the dark, and taken away
      * when a load succeeds; the retries go on underneath as before.
      */
@@ -2415,7 +2415,7 @@ public final class KioskActivity extends Activity {
     /**
      * The Display off sentence, shown only while a sleep that Android ended is on record, in red,
      * because then it says the stored method was switched under the operator and why, and that
-     * has to be seen; the plain sentence went (Juri, 2026-09-27).
+     * has to be seen; the plain sentence went (2026-09-27).
      */
     private void paintDisplayOffNote(TextView note, KioskTheme theme) {
         boolean warning = KioskService.displayOffWarning(this);
@@ -2888,7 +2888,7 @@ public final class KioskActivity extends Activity {
     /**
      * The chosen mode. Following the device is the default from Android 10, which has a dark
      * theme of its own; below it there is none to follow, so the choice is Light or Dark and
-     * Light is the default (Juri, 2026-10-15). A choice made with the old switch stays.
+     * Light is the default (2026-10-15). A choice made with the old switch stays.
      */
     private String themeMode() {
         android.content.SharedPreferences prefs = KioskConfig.storageContext(this)
@@ -2960,7 +2960,7 @@ public final class KioskActivity extends Activity {
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
         // The panel's id under the name, as the web page has it, and at the right the readings
-        // and the day and night toggle (Juri, 2026-10-15).
+        // and the day and night toggle (2026-10-15).
         page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null, null,
                 themeToggle(theme), true), matchWrap());
         View provisioningNotice = provisioningNotice(theme);
@@ -3090,7 +3090,7 @@ public final class KioskActivity extends Activity {
         // the same rule the web admin's form follows; the Save path skips an empty box.
         EditText passwordInput = themedInput(theme, "", true);
         addField(mqttCard, theme, "Password", passwordInput, "Blank keeps the current one.");
-        // Encryption is optional (Juri, 2026-10-14): saved with the boxes, by Save.
+        // Encryption is optional (2026-10-14): saved with the boxes, by Save.
         CompoundButton tlsSwitch = themedSwitch(theme, "Encrypted (TLS)", config.mqttTls);
         mqttCard.addView(tlsSwitch, matchWrapClose());
         addMqttTrust(mqttCard, theme, config);
@@ -3458,7 +3458,7 @@ public final class KioskActivity extends Activity {
         // as auto-rotate behind the accelerometer: an option that cannot work is worse than an
         // absent one, and the line below says why the film is what an ordinary install gets.
         // An ordinary install gets no choice at all: Automatic resolved to the film there, so
-        // the two options were one thing under two names (Juri, 2026-09-24). It shows the film,
+        // the two options were one thing under two names (2026-09-24). It shows the film,
         // ticked and greyed, and the line under it says what would unlock the rest.
         TextView displayOffLabel = fieldCaption(theme, "Display off");
         LinearLayout.LayoutParams displayOffLabelParams = new LinearLayout.LayoutParams(
@@ -3540,7 +3540,7 @@ public final class KioskActivity extends Activity {
         // question the operator had to answer by toggling it and looking somewhere else.
         // The screensaver card: the mode and the one sentence that says what is set; every
         // field, the two times, the page address, the dim floor, the wake choice and "Show it
-        // now", is on its own page, reached by the button (Juri, 2026-09-09: the times were on
+        // now", is on its own page, reached by the button (2026-09-09: the times were on
         // the card too and were the same boxes twice).
         LinearLayout screensaverCard = sectionBody(theme);
         addSharedLine(screensaverCard, theme, "ambient");
@@ -3550,15 +3550,15 @@ public final class KioskActivity extends Activity {
         screensaverMore.setOnClickListener(view -> showScreensaverSettings());
         LinearLayout screensaverMoreRow = buttonRow(screensaverMore);
         screensaverCard.addView(screensaverMoreRow, matchWrap());
-        // Off has no page to lead to: the page holds a mode's options and Off has none (Juri,
-        // 2026-09-11), and since the page stopped carrying the chooser (2026-09-28) there would
+        // Off has no page to lead to: the page holds a mode's options and Off has none
+        // (2026-09-11), and since the page stopped carrying the chooser (2026-09-28) there would
         // be nothing on it.
         screensaverControls.moreRow = screensaverMoreRow;
         screensaverControls.applyMode(KioskConfig.screensaverOf(this).mode);
 
         // The Sensors section lists only what is on, one row per sensor with its reading, and the
-        // way to the rest: the page where every sensor is switched on and set up (Juri,
-        // 2026-09-27, the Screensaver section's shape). The readings follow the status document
+        // way to the rest: the page where every sensor is switched on and set up
+        // (2026-09-27, the Screensaver section's shape). The readings follow the status document
         // on the one-second tick (see overlayTask).
         LinearLayout sensorsCard = sectionBody(theme);
         sensorReadouts.clear();
@@ -3571,7 +3571,7 @@ public final class KioskActivity extends Activity {
             if (one == null || !one.optBoolean("active")) {
                 continue;
             }
-            // The switch on the row too (Juri, 2026-09-27): switched off, the row leaves this
+            // The switch on the row too (2026-09-27): switched off, the row leaves this
             // section on the redraw and the sensor is switched on again on the Sensors page.
             CompoundButton toggle = sensorSwitch(theme, def, one, this::redrawSettingsSoon);
             addListRow(sensorsCard, theme, sensorRow(theme, def, one, toggle, null),
@@ -3729,7 +3729,7 @@ public final class KioskActivity extends Activity {
         camerasMore.setOnClickListener(view -> showCamerasPage());
         popupsCard.addView(buttonRow(camerasMore), matchWrap());
 
-        // Integrations (Juri, 2026-10-15): in the menu already, empty until the first ones come.
+        // Integrations (2026-10-15): in the menu already, empty until the first ones come.
         LinearLayout integrationsCard = sectionBody(theme);
         integrationsCard.addView(emptyState(theme, "No integrations yet",
                 "Muralis will show and act on data from other services. The first integrations"
@@ -3738,7 +3738,7 @@ public final class KioskActivity extends Activity {
         // The Pro state lives in This panel (About until 2026-09-27; moved here 2026-08-29, by
         // decision of that day): it is a fact about this installation, like the version line
         // beside it, not a card-sized feature of its own.
-        // This panel (Juri, 2026-09-27): the panel's name first, what Home Assistant and MQTT
+        // This panel (2026-09-27): the panel's name first, what Home Assistant and MQTT
         // call it, then the stats and the log behind a chevron, the version and the Pro state,
         // and the two legal pages.
         LinearLayout aboutCard = sectionBody(theme);
@@ -3753,7 +3753,7 @@ public final class KioskActivity extends Activity {
         nameProblemParams.leftMargin = dp(16);
         aboutCard.addView(nameProblem, nameProblemParams);
         // Stored when the box lets go of the focus or on Done, like every other field of the
-        // sensor pages; the Save button under it went on 2026-09-27 (Juri). A refused name stays
+        // sensor pages; the Save button under it went on 2026-09-27 . A refused name stays
         // in the box with the reason, so it can be corrected rather than retyped.
         Runnable storeName = () -> {
             String deviceId = deviceIdInput.getText().toString().trim();
@@ -3858,7 +3858,7 @@ public final class KioskActivity extends Activity {
         proCardBuilt[0] = true;
 
         // Privacy policy, Terms and conditions and the details page as rows with a chevron, as
-        // the web's About lists them (Juri, 2026-09-23); the version line above is the same row
+        // the web's About lists them (2026-09-23); the version line above is the same row
         // there, linking to the repository, which a locked panel has no browser for.
         aboutCard.addView(listRow(theme, getString(R.string.privacy_policy_title),
                 () -> showLegalDocument(R.string.privacy_policy_title, R.raw.privacy)),
@@ -3868,7 +3868,7 @@ public final class KioskActivity extends Activity {
         aboutCard.addView(listRow(theme, "Version and device details", this::showAbout),
                 matchWrapClose());
 
-        // The fleet's own port on this panel (block 11a, Juri 2026-10-08: a setting like the web
+        // The fleet's own port on this panel (block 11a, the owner 2026-10-08: a setting like the web
         // admin's, never the same port), saved with the other connection fields by the foot
         // button, and whether the member endpoint listens on it, with the reason when it does not.
         // In the order a person needs it (the UI round, 2026-10-15): the fleet and its panels,
@@ -3974,7 +3974,7 @@ public final class KioskActivity extends Activity {
         });
 
         // One list of sections, each a glyph, its name and a line of what is stored, opening in
-        // place, one at a time (Juri's drawing of 2026-09-23); from 840 dp the list stands at the
+        // place, one at a time (the owner's drawing of 2026-09-23); from 840 dp the list stands at the
         // left and the open section at the right. In groups under a heading each, as Android's
         // settings are (the UI round, 2026-10-15), the same as the web page.
         final List<Section> sections = java.util.Arrays.asList(
@@ -4769,7 +4769,7 @@ public final class KioskActivity extends Activity {
     /**
      * The section of the settings menu open now, kept while the settings are on screen (a
      * rotation, a page below and back, a redraw) and cleared where a visit starts, the settings
-     * combination, so every visit starts with the menu closed (Juri, 2026-10-07); a new process
+     * combination, so every visit starts with the menu closed (2026-10-07); a new process
      * starts with it empty. It lived in the UI preferences until then and came back every time.
      */
     private String openSection = "";
@@ -4784,7 +4784,7 @@ public final class KioskActivity extends Activity {
      * The settings as one menu, in the shape the width allows.
      *
      * <p>Below 840 dp an accordion: every row is a glyph, the name and a summary, a tap opens
-     * that section in place and closes the other (Juri, 2026-09-23: one section open at a time),
+     * that section in place and closes the other (2026-09-23: one section open at a time),
      * and a visit starts with all of them closed (see {@link #openSection}). From 840 dp,
      * Material's list-detail: the same rows as a list at the left, 360 dp wide, and the open
      * section as a card at the right, no wider than 640 dp, so no panel ever spans a landscape
@@ -4801,7 +4801,7 @@ public final class KioskActivity extends Activity {
         // of surface the auto-recycle switches were deleted for. Deliberately NOT on the web admin
         // or MQTT either, for the reason system.shutdown was deleted: a remote close has no remote
         // undo, because the thing that would receive the reopen command is what was just closed.
-        // Under Open dashboard in the same shape, outlined (Juri, 2026-09-27); it sat at the foot
+        // Under Open dashboard in the same shape, outlined (2026-09-27); it sat at the foot
         // of About before.
         if (!isDeviceOwner()) {
             LinearLayout.LayoutParams closeParams = matchWrap();
@@ -4813,12 +4813,12 @@ public final class KioskActivity extends Activity {
 
     /**
      * Open dashboard, drawn as a menu of one entry under the menu itself: the same row, the same
-     * glyph column, in the main colour, a card's gap below the list (Juri, 2026-09-23). It is the
+     * glyph column, in the main colour, a card's gap below the list (2026-09-23). It is the
      * one button of this screen and it saves before it opens, which is why it is apart from the
      * sections rather than inside one.
      *
      * <p>It is the same card as the menu above it, corner for corner, and only the colour sets
-     * it apart (Juri, 2026-09-23). {@code inList} is the list-detail layout, where the card holds
+     * it apart (2026-09-23). {@code inList} is the list-detail layout, where the card holds
      * its rows 8 dp in: the row takes that on as padding rather than shrinking, so the card keeps
      * the menu's width and the two glyph columns still line up.
      */
@@ -5160,7 +5160,7 @@ public final class KioskActivity extends Activity {
         pair.setOrientation(LinearLayout.HORIZONTAL);
         pair.setBaselineAligned(false);
         // The list is half the open section, the two of them filling the column the gutters
-        // leave, with Material's 24 dp gutter between them (Juri's drawing of 2026-09-23: menu
+        // leave, with Material's 24 dp gutter between them (the owner's drawing of 2026-09-23: menu
         // 30, gap 5, content 60). Weights rather than a fixed 360 dp list, because the column
         // itself is a share of the screen now and a fixed pane would break the proportion.
         LinearLayout navColumn = new LinearLayout(this);
@@ -5290,8 +5290,8 @@ public final class KioskActivity extends Activity {
 
     /**
      * Day and night in the app bar: one icon button showing the mode in force, the sun, the moon
-     * or the half-lit sun for following the device, and each tap moves to the next (Juri,
-     * 2026-10-15: one icon at a time, no menu). Below Android 10 the device has no dark theme to
+     * or the half-lit sun for following the device, and each tap moves to the next
+     * (2026-10-15: one icon at a time, no menu). Below Android 10 the device has no dark theme to
      * follow, so it goes between the sun and the moon. Kept in UI preferences rather than
      * KioskConfig, and so outside applyLiveSetting: it is a preference of whoever stands at the
      * panel reading this screen, not a property of the device; the web admin's is the browser's
@@ -5401,7 +5401,7 @@ public final class KioskActivity extends Activity {
     /**
      * The buttons of each sensor that need it switched on (Test, Calibrate):
      * greyed while it is off, and brought back the moment its switch is flipped, on this page
-     * or another surface (Juri, 2026-09-28: the Light's test looked broken).
+     * or another surface (2026-09-28: the Light's test looked broken).
      */
     private final java.util.Map<String, java.util.List<View>> sensorActions =
             new java.util.HashMap<>();
@@ -5432,7 +5432,7 @@ public final class KioskActivity extends Activity {
      * Watches a page that lists sensors or rules: when another surface changes what it lists
      * (a rule added or renamed on the web, a sensor switched on over MQTT), the page is drawn
      * again on the next second's tick, never while a box has the focus. A rule added on the
-     * web stayed off the panel's Automations page until it was reopened (Juri, 2026-09-28).
+     * web stayed off the panel's Automations page until it was reopened (2026-09-28).
      */
     private void watchLists(String kind, View root, Runnable refresh) {
         listsKind = kind;
@@ -5638,7 +5638,7 @@ public final class KioskActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         // Material's list item heights, the web's ul.list li and li.two: 56 dp for a name
         // alone, 72 dp with a second line. A name alone in 72 dp left a wide band under it,
-        // the gap over the Test and Calibrate buttons (Juri, 2026-09-28).
+        // the gap over the Test and Calibrate buttons (2026-09-28).
         row.setMinimumHeight(dp(sub == null || sub.isEmpty() ? 56 : 72));
         ImageView icon = new ImageView(this);
         icon.setImageResource(glyph);
@@ -5665,7 +5665,7 @@ public final class KioskActivity extends Activity {
         reading.setSingleLine(true);
         reading.setEllipsize(android.text.TextUtils.TruncateAt.END);
         // A row with a name alone centres it on the glyph rather than leaving an empty second
-        // line under it (Juri, 2026-09-27).
+        // line under it (2026-09-27).
         reading.setVisibility(sub == null || sub.isEmpty() ? View.GONE : View.VISIBLE);
         words.addView(reading, matchWrapClose());
         words.setTag(reading);
@@ -5824,7 +5824,7 @@ public final class KioskActivity extends Activity {
 
     private LinearLayout automationRow(KioskTheme theme, Automations.Rule rule, View trailing,
             Runnable onOpen, boolean chevron) {
-        // The Automations section's own glyph on every rule, the paper scroll (Juri, 2026-09-30);
+        // The Automations section's own glyph on every rule, the paper scroll (2026-09-30);
         // the sentence says which sensor it waits for.
         LinearLayout row = glyphRow(theme, R.drawable.ic_automations,
                 rule.name, Automations.sentence(rule), trailing, onOpen, false, chevron);
@@ -5848,7 +5848,7 @@ public final class KioskActivity extends Activity {
      * Where the system Back of an ordinary install leads on the screen on show: where its arrow
      * leads, or on a question with no arrow, its Cancel or OK. People move around inside an app
      * with the Back gesture, and every page below the settings went straight to the dashboard
-     * (Juri, 2026-10-07, the Pixel). Taken up from {@link #pendingBack} by setContentView, so
+     * (2026-10-07, the Pixel). Taken up from {@link #pendingBack} by setContentView, so
      * every screen has the one its own build named and none a screen before it left behind:
      * null on the settings screen, where Back goes to the dashboard as it always did, and on the
      * dashboard, so a page's closures do not outlive it (review, 2026-10-07).
@@ -5866,7 +5866,7 @@ public final class KioskActivity extends Activity {
     /**
      * The prelude every page below the settings shares; see showScreensaverSettings. The arrow
      * leads one level up, not to the settings: a sensor's page to the Sensors list, the editor to
-     * the Automations list (Juri, 2026-09-27, found on the glass).
+     * the Automations list (2026-09-27, found on the glass).
      */
     private LinearLayout subPage(String title, Runnable back) {
         destroyWebView();
@@ -5895,7 +5895,7 @@ public final class KioskActivity extends Activity {
     /**
      * The Sensors page: one flat list, alphabetical, every row the same shape. From 840 dp the
      * list stands at the left and the chosen sensor's page at the right, the settings page's
-     * own shape; the text chooses, the switch stays on the row (Juri, 2026-09-27, the tablet in
+     * own shape; the text chooses, the switch stays on the row (2026-09-27, the tablet in
      * landscape).
      */
     private void showSensorsPage() {
@@ -6007,27 +6007,27 @@ public final class KioskActivity extends Activity {
     /**
      * Whether the sensor reports while the panel sleeps, as the test found, and the test: some
      * devices stop every sensor an app holds once the display is asleep, and a rule on such a
-     * sensor cannot wake the panel. Measured here, never assumed (Juri, 2026-09-27).
+     * sensor cannot wake the panel. Measured here, never assumed (2026-09-27).
      */
     private LinearLayout asleepCard(KioskTheme theme, Sensors.Def def, org.json.JSONObject one) {
         String asleep = one.optString("asleep", "");
         boolean silent = "silent".equals(asleep);
         boolean reports = "reports".equals(asleep);
         // Named after what a person wants to know, whether the sensor works with the display
-        // off; "sleeps" is how Android does it (Juri, 2026-10-01).
+        // off; "sleeps" is how Android does it (2026-10-01).
         LinearLayout card = card(theme, "While the display is off");
         if (KioskService.chooseDisplayOff(this).method != DisplayOffPolicy.Method.SLEEP) {
             // This panel darkens with the film and never sleeps, so its sensors keep running:
             // Running, and nothing to test (the Pixel, an ordinary install, 2026-09-27). No
             // sentence under it: "the film keeps the display awake" told a person nothing they
-            // could act on (Juri, 2026-10-01).
+            // could act on (2026-10-01).
             card.addView(glyphRow(theme, R.drawable.ic_asleep_active, "Running", "", null, null,
                     false), matchWrapClose());
             return card;
         }
-        // One word and the glyph, nothing more (Juri, 2026-09-27: it works or it does not).
+        // One word and the glyph, nothing more (2026-09-27: it works or it does not).
         // The words are Home Assistant's for a binary sensor of the running class, Running and
-        // Not running, so the panel and a dashboard say the same (Juri, 2026-09-28: "Disabled"
+        // Not running, so the panel and a dashboard say the same (2026-09-28: "Disabled"
         // read like a switch somebody set). The glyph says the same: the sensor sending, the
         // sensor with a slash, a question for a test not run yet.
         card.addView(glyphRow(theme, silent ? R.drawable.ic_asleep_disabled
@@ -6037,7 +6037,7 @@ public final class KioskActivity extends Activity {
         // "Test", as the Calibration card has "Calibrate": the card's title says what for.
         Button test = tonalButton(theme, "Test");
         // Greyed out while the sensor is off: the test needs it listening, and a button that
-        // can only answer "the light is off" is no button (Juri, 2026-09-28).
+        // can only answer "the light is off" is no button (2026-09-28).
         viewsOf(sensorActions, def.id).add(test);
         paintSensorActions(def.id, Sensors.enabled(this, def));
         test.setOnClickListener(view -> {
@@ -6070,9 +6070,9 @@ public final class KioskActivity extends Activity {
      * What to do to the sensor while the panel sleeps, so it has something to report: the test
      * counts only a reading that changed, since some drivers repeat the last value when asked
      * and watch nothing (the MediaPad, 2026-09-27). "Use the sensor" told nobody what to do
-     * with a light sensor (Juri, 2026-09-28). Never where the sensor is: Android does not say,
+     * with a light sensor (2026-09-28). Never where the sensor is: Android does not say,
      * every model puts it elsewhere, and the MediaPad's light sensor is nowhere near its camera
-     * (Juri, 2026-09-28: the person finds it on their own).
+     * (2026-09-28: the person finds it on their own).
      */
     private static String asleepAction(Sensors.Def def) {
         if (def == Sensors.PROXIMITY) {
@@ -6096,8 +6096,8 @@ public final class KioskActivity extends Activity {
 
     /**
      * A sensor's Calibration card: the tune glyph with Calibrated or Not calibrated, and
-     * Calibrate alone under it: a new calibration replaces the old, so nothing to reset (Juri,
-     * 2026-09-27); the reset step stays in the command for scripts.
+     * Calibrate alone under it: a new calibration replaces the old, so nothing to reset
+     * (2026-09-27); the reset step stays in the command for scripts.
      */
     private LinearLayout calibrationCard(KioskTheme theme, Sensors.Def def,
             org.json.JSONObject one, Runnable procedure) {
@@ -6123,7 +6123,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * A refusal on a screen of its own, with the reason and one button back: a toast was too
-     * quick to read and cut the reason short (Juri, 2026-09-27, the Pixel).
+     * quick to read and cut the reason short (2026-09-27, the Pixel).
      */
     private void showNotice(String title, String message, Runnable back) {
         showNotice(title, message, back, back);
@@ -6166,16 +6166,16 @@ public final class KioskActivity extends Activity {
 
     /**
      * The name lines of the Calibration card's rows by beacon id, so a beacon renamed in the
-     * Beacons card above shows its new name there the moment its box lets go (Juri,
-     * 2026-10-04), without leaving the page.
+     * Beacons card above shows its new name there the moment its box lets go
+     * (2026-10-04), without leaving the page.
      */
     private final java.util.Map<String, TextView> calibratedBeaconNames =
             new java.util.HashMap<>();
 
     /**
      * The beacons' Calibration card: each calibrated beacon, by name, with its steps, and a
-     * button per step, both optional (Juri, 2026-10-03: for some, a beacon heard is enough). A
-     * new step replaces the old, so nothing to reset (Juri, 2026-09-27, kept 2026-10-04); the
+     * button per step, both optional (2026-10-03: for some, a beacon heard is enough). A
+     * new step replaces the old, so nothing to reset (2026-09-27, kept 2026-10-04); the
      * reset stays in the command for scripts.
      */
     private LinearLayout beaconCalibrationCard(KioskTheme theme, Sensors.Def def,
@@ -6206,7 +6206,7 @@ public final class KioskActivity extends Activity {
         viewsOf(sensorActions, def.id).add(near);
         viewsOf(sensorActions, def.id).add(far);
         paintSensorActions(def.id, Sensors.enabled(this, def));
-        // Side by side on a phone too: two short labels that belong together (Juri, 2026-10-04).
+        // Side by side on a phone too: two short labels that belong together (2026-10-04).
         calibration.addView(pairedButtonRow(near, far), tightParams());
         return calibration;
     }
@@ -6240,7 +6240,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The countdown of a beacon's calibration step (Juri, 2026-10-04: sketch A, the ring): the
+     * The countdown of a beacon's calibration step (2026-10-04: sketch A, the ring): the
      * panel listens all the time for those 10 seconds and counts only what it hears from the
      * tap on (Beacons.calibrate), so the beacon's way to its place is left out, and keeps the
      * step when the ring empties. The ten seconds start once the scan really listens all the
@@ -6696,7 +6696,7 @@ public final class KioskActivity extends Activity {
     /**
      * The same; {@code beside} true where the cards stand at the right of the list, whose row
      * already carries the sensor's switch: the detail's own row then carries nothing at the
-     * right, one switch per sensor on a page (Juri, 2026-09-27).
+     * right, one switch per sensor on a page (2026-09-27).
      */
     private java.util.List<View> sensorCards(KioskTheme theme, Sensors.Def def,
             org.json.JSONObject one, boolean beside) {
@@ -6751,19 +6751,19 @@ public final class KioskActivity extends Activity {
             addOptionField(card, theme, "Still after (seconds)", "movement_still_s", "5", true);
         } else if (def == Sensors.PROXIMITY) {
             // Calibration: the person shows the panel the sensor covered and clear, and the
-            // panel learns how this device's driver reports the two (Juri, 2026-09-27: no
+            // panel learns how this device's driver reports the two (2026-09-27: no
             // guessing at a driver's values, a procedure the user runs). Until then Android's
             // distance rule reads it.
             cards.add(calibrationCard(theme, def, one, this::calibrateProximity));
         } else if (def == Sensors.MICROPHONE) {
             // The room's quiet and loud, shown by the person, the proximity's procedure: a
-            // quiet room read about 30 of 100 before (Juri, 2026-09-28), and what counts as
+            // quiet room read about 30 of 100 before (2026-09-28), and what counts as
             // loud is the room's, not Android's.
             cards.add(calibrationCard(theme, def, one, this::calibrateMicrophone));
         } else if (def == Sensors.NFC) {
             // The tags read lately, newest first, by their id and when: a tag is named and
             // used in Home Assistant, which gets each read as a tag scanned, the way its
-            // companion app hands one over (Juri, 2026-09-30: "copy what Home Assistant does").
+            // companion app hands one over (2026-09-30: "copy what Home Assistant does").
             // The automations here offer the same tags by id.
             LinearLayout tags = card(theme, "Tags");
             java.util.Map<String, Long> seen = KioskConfig.seenTags(this);
@@ -6786,11 +6786,11 @@ public final class KioskActivity extends Activity {
             addOptionField(card, theme, "Out of reach after (seconds)", "beacons_reach_s", "30",
                     true);
             // How the panel listens: Android's low-power scan in short bursts, or all the time
-            // (Juri, 2026-10-04: in words a person knows, low and high).
+            // (2026-10-04: in words a person knows, low and high).
             addOptionRadios(card, theme, "Listening", Beacons.LISTENING_KEY, "low",
                     "low", "Low, saves battery", "high", "High, listens all the time");
             // The beacons in a card of their own, as the NFC page's tags: a name box under the
-            // sensor's own settings read as one of them, and Juri could not find where a
+            // sensor's own settings read as one of them, and the owner could not find where a
             // beacon is renamed (2026-10-04).
             LinearLayout list = card(theme, "Beacons");
             Beacons beacons = KioskService.beaconsOf(this);
@@ -6852,7 +6852,7 @@ public final class KioskActivity extends Activity {
                 }
             }
             // A beacon held at one metre, then three, teaches this panel how strongly it hears
-            // that beacon and how fast its signal fades in the room (Juri, 2026-10-03): the
+            // that beacon and how fast its signal fades in the room (2026-10-03): the
             // distance is a guess until then.
             cards.add(list);
             cards.add(beaconCalibrationCard(theme, def, beacons));
@@ -7500,7 +7500,7 @@ public final class KioskActivity extends Activity {
         statsReadout.setTextColor(theme.text);
         statsReadout.setLineSpacing(dp(2), 1.1f);
         // A code block on the lowest surface, the web admin's <pre id="stats">: same rows from
-        // the same formatter (Juri, 2026-09-23).
+        // the same formatter (2026-09-23).
         statsReadout.setBackground(theme.panel(theme.lowest(), dp(10)));
         int statsPad = dp(10);
         statsReadout.setPadding(statsPad, statsPad, statsPad, statsPad);
@@ -7528,7 +7528,7 @@ public final class KioskActivity extends Activity {
         statsOverlayInput.setOnCheckedChangeListener(
                 (button, checked) -> applyLiveSetting(editor -> editor.statsOverlay(checked)));
         statsCard.addView(statsOverlayInput, matchWrap());
-        // The app's own log on a panel of its own (Juri, 2026-09-28), the same as the web page
+        // The app's own log on a panel of its own (2026-09-28), the same as the web page
         // has (see HttpAdminServer.logBody and admin_stats.js): the last lines logcat holds for this
         // process, read every few seconds off the main thread while the block is on screen, and
         // stopped by its own detach listener. Above it the row every log reader has: the level
@@ -8242,12 +8242,12 @@ public final class KioskActivity extends Activity {
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
         // The title alone, as the web page has it: the subtitle and the paragraph that explained
-        // the two timers went on 2026-09-19 at Juri's request, the panels say it themselves.
+        // the two timers went on 2026-09-19 at the owner's request, the panels say it themselves.
         page.addView(pageHeading(theme, "Ambient", null,
                 this::showSettings), matchWrap());
 
         // The mode is chosen on the settings page, whose Screensaver section leads here, so this
-        // page no longer repeats the chooser (Juri, 2026-09-28): it has the chosen mode's
+        // page no longer repeats the chooser (2026-09-28): it has the chosen mode's
         // options and, for pictures from this panel, the playlists, in the Sensors page's shape,
         // the playlists at the left and the options at the right from 840 dp, one under the
         // other below that.
@@ -8272,7 +8272,7 @@ public final class KioskActivity extends Activity {
             pair.setGravity(Gravity.CENTER_HORIZONTAL);
             // A mode without playlists leaves the options alone on the page, and a lone panel
             // sits in the middle at the legal pages' width rather than at the right of an empty
-            // column (Juri, 2026-09-28). Relaid whenever the Playlist panel comes or goes.
+            // column (2026-09-28). Relaid whenever the Playlist panel comes or goes.
             controls.afterPlaylist = () -> {
                 boolean alone = playlistCard.getVisibility() != View.VISIBLE;
                 LinearLayout.LayoutParams options =
@@ -8319,7 +8319,7 @@ public final class KioskActivity extends Activity {
             }
         });
         // Inside the options card, under the sentence that says what the settings add up to, where
-        // the web page keeps it (Juri, 2026-09-19); the way back is the arrow in the app bar.
+        // the web page keeps it (2026-09-19); the way back is the arrow in the app bar.
         optionsCard.addView(buttonRow(showNow), matchWrap());
 
         setContentView(scrollPage(theme, page));
@@ -8393,7 +8393,7 @@ public final class KioskActivity extends Activity {
         }
 
         /**
-         * Only the fields the chosen mode uses are on the page (Juri, 2026-09-09): the address
+         * Only the fields the chosen mode uses are on the page (2026-09-09): the address
          * for the web page, the floor for the dimmed page; the two times for every mode, and
          * the wake choice for every mode but the film, which has nothing to glance at.
          */
@@ -8410,7 +8410,7 @@ public final class KioskActivity extends Activity {
             int dim = ScreensaverPolicy.DIM.equals(mode) ? View.VISIBLE : View.GONE;
             fieldOf(dimCaption).setVisibility(dim);
             // Gone, not greyed out: the black film has nothing to glance at, so the choice does
-            // not apply, and a control that can never be enabled is clutter (Juri, 2026-09-11).
+            // not apply, and a control that can never be enabled is clutter (2026-09-11).
             int wake = ScreensaverPolicy.wakeChoiceApplies(mode) ? View.VISIBLE : View.GONE;
             onWakeInput.setVisibility(wake);
             if (onWakeLabel != null) {
@@ -8419,7 +8419,7 @@ public final class KioskActivity extends Activity {
 
             picturesGroup.setVisibility(
                     ScreensaverPolicy.PICTURES.equals(mode) ? View.VISIBLE : View.GONE);
-            // Off has no options panel at all (Juri, 2026-09-11): "it is Off so there is no
+            // Off has no options panel at all (2026-09-11): "it is Off so there is no
             // settings for it in any case". The times are still stored and still apply the moment
             // a mode is picked; they are simply not shown beside a screensaver that is not on.
             if (optionsCard != null) {
@@ -8705,7 +8705,7 @@ public final class KioskActivity extends Activity {
         group.addView(pictureState, stateParams);
         controls.pictureState = pictureState;
 
-        // The playlists, under the button that makes one, which is how Juri asked for it on
+        // The playlists, under the button that makes one, which is how the owner asked for it on
         // 2026-09-10: "The button 'Choose pictures' must be renamed to 'Create playlist' and if
         // playlists exist then list them under the same button with a 'Use' button on the right
         // side of it to mark it active. Other buttons are 'Edit' and 'Delete'."
@@ -8734,7 +8734,7 @@ public final class KioskActivity extends Activity {
         group.addView(transitionInput, matchWrapClose());
         controls.transitionInput = transitionInput;
 
-        // How a picture is laid on the glass, one setting for all of them (Juri, 2026-09-23).
+        // How a picture is laid on the glass, one setting for all of them (2026-09-23).
         // Fit is the default and what the panel always did: these are somebody's photographs and
         // somebody's licensed work, so nothing is cropped or pulled out of shape unless the
         // operator asks for it.
@@ -8845,7 +8845,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Playlist panel, the web page's copied line for line (Juri, 2026-09-19): one row per
+     * The Playlist panel, the web page's copied line for line (2026-09-19): one row per
      * playlist, its name, how many pictures it holds, Use or "In use", Edit and Delete, and under
      * the list the box that names a new playlist with Create beside it.
      *
@@ -8884,7 +8884,7 @@ public final class KioskActivity extends Activity {
         for (int index = 0; index < all.size(); index++) {
             PlaylistDocument.Playlist playlist = all.get(index);
             // The left menu's row where the page is wide, a list row where it is not, as the
-            // Sensors page has it (Juri, 2026-10-04): a tap opens the playlist's pictures,
+            // Sensors page has it (2026-10-04): a tap opens the playlist's pictures,
             // where Delete also lives now.
             LinearLayout row = playlistRow(theme, playlist);
             if (widthClass() == 2) {
@@ -8899,7 +8899,7 @@ public final class KioskActivity extends Activity {
         }
 
         // The box with its label on the border and Create beside it, the button on the box's
-        // centre line and not the label's (Juri, 2026-09-23). The word "playlist" is the panel's
+        // centre line and not the label's (2026-09-23). The word "playlist" is the panel's
         // title and is not repeated in the button.
         LinearLayout maker = new LinearLayout(this);
         maker.setOrientation(LinearLayout.HORIZONTAL);
@@ -8941,9 +8941,9 @@ public final class KioskActivity extends Activity {
 
     /**
      * One playlist as a row of the Screensaver page's left menu, the Sensors page's shape
-     * (Juri, 2026-10-04): the screensaver's glyph, the name over its count, "in use" in green,
+     * (2026-10-04): the screensaver's glyph, the name over its count, "in use" in green,
      * and the Use radio at the end where a sensor has its switch, the control that switches
-     * which playlist plays (Juri, 2026-09-23: Use is not a button, tap the circle). Edit and
+     * which playlist plays (2026-09-23: Use is not a button, tap the circle). Edit and
      * Delete left the row: a tap on it opens the playlist's own page, which has Delete as
      * every editor does.
      */
@@ -9031,7 +9031,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * Asks before deleting something a person made in Muralis, in the words every such question
-     * uses (Juri, 2026-10-01): the title {@code Delete "name"?}, the text {@code "name" will be
+     * uses (2026-10-01): the title {@code Delete "name"?}, the text {@code "name" will be
      * deleted.} with what else changes after it, and the button Delete. Settings are changed,
      * never deleted, so this is for playlists, uploaded pictures and automations.
      *
@@ -9258,7 +9258,7 @@ public final class KioskActivity extends Activity {
      * {@link #showPlaylistPage} again, which threw the whole page away and built it back. It was
      * correct and it was unusable: opening a folder, ticking a picture or removing one all jumped
      * the reader back to the top of the page, so picking twenty pictures meant scrolling down
-     * twenty times (Juri, 2026-09-10, A1, A2 and A4 of his report). Nothing about a tick changes
+     * twenty times (2026-09-10, A1, A2 and A4 of his report). Nothing about a tick changes
      * the folder list, and nothing about opening a folder changes what is already picked, so each
      * of those taps now repaints only the pane it actually changed and the page never moves.
      *
@@ -9292,7 +9292,7 @@ public final class KioskActivity extends Activity {
         /**
          * The folders whose children are shown. Seeded once, with the top of the volume and the
          * way down to whatever folder is open, so the tree opens on something useful and not on
-         * every folder this panel has ever held (Juri, 2026-09-23).
+         * every folder this panel has ever held (2026-09-23).
          */
         final java.util.Set<String> expanded = new java.util.HashSet<>();
         /** The folders that have a folder under them, so only those are drawn with a caret. */
@@ -9324,7 +9324,7 @@ public final class KioskActivity extends Activity {
      * The Picture playlist page: folders on the left, that folder's pictures on the right, and
      * everything picked so far underneath.
      *
-     * <p>Built from Juri's sketch of 2026-09-10 (`folders-pictures-selection.jpg`): tapping a
+     * <p>Built from the owner's sketch of 2026-09-10 (`folders-pictures-selection.jpg`): tapping a
      * folder row opens its contents beside it rather than replacing the screen, so moving between
      * folders never costs the sense of where you are, and the ticked pictures are listed below
      * both panes with the folder prepended so two files with one name read apart.
@@ -9354,12 +9354,12 @@ public final class KioskActivity extends Activity {
         page.addView(playlistHeading(screen), matchWrap());
         // The view button in the Content card's head: the view in force, and the next one on a
         // tap (list, details, small thumbnails, big thumbnails), one preference for the panel
-        // and the web page (Juri, 2026-09-23).
+        // and the web page (2026-09-23).
         paintViewButton(screen);
         // Two lanes where there is room, one under the other on a phone: the same rule and the
         // same 720 dp boundary as every other pair of cards in this app. The grid deals the cards
         // round-robin, so Folders and In this playlist share the left lane and Content has the
-        // right one to itself, the same placement as the web page (Juri, 2026-09-19).
+        // right one to itself, the same placement as the web page (2026-09-19).
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 screen.folders.card, screen.pictures.card, screen.selected.card)), matchWrap());
 
@@ -9369,7 +9369,7 @@ public final class KioskActivity extends Activity {
         save.setOnClickListener(view -> savePlaylist(draft));
         // Delete at the start for a stored playlist, outlined red as in every editor (the delete
         // rules, 2026-10-01); it left the list's row on 2026-10-04. Cancel then Save at the end,
-        // paired rather than stacked (Juri, 2026-09-10, B4).
+        // paired rather than stacked (2026-09-10, B4).
         Button delete = null;
         if (draft.id != null) {
             delete = dangerOutlinedButton(theme, "Delete");
@@ -9410,7 +9410,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * The page's title is the playlist's own name, with a pencil beside it that turns the title
-     * into a box, the way a pull request's title is edited (Juri, 2026-09-19). The Name card it
+     * into a box, the way a pull request's title is edited (2026-09-19). The Name card it
      * replaces was one more card for a thing nobody does daily.
      *
      * <p>A new playlist opens with the box already showing, since a name is the first thing it
@@ -9554,7 +9554,7 @@ public final class KioskActivity extends Activity {
      * every folder that has folders under it.
      *
      * <p>It used to show every folder the panel holds at once, which on a real library is a list
-     * nobody can read (Juri, 2026-09-23). A branch opens and closes on its caret, the head's
+     * nobody can read (2026-09-23). A branch opens and closes on its caret, the head's
      * button opens or closes the lot, and a tap on the folder itself opens it and its branch, then
      * closes the branch on the next tap, so the row and the caret agree. There is no depth limit: a cap was built on the
      * morning of 2026-09-10 and removed the same day, since a folder five levels down is ordinary
@@ -9706,7 +9706,7 @@ public final class KioskActivity extends Activity {
         row.addView(text, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         // The count as a badge, as the web page sets it: the pictures directly in the folder,
-        // not everything below it, which read as a miscount (Juri, 2026-09-19).
+        // not everything below it, which read as a miscount (2026-09-19).
         TextView number = new FlushText(this);
         number.setText(String.valueOf(count));
         number.setTextSize(11);
@@ -9727,7 +9727,7 @@ public final class KioskActivity extends Activity {
         // The rest of the row is the target, not a button inside it: the sketch says "user taps
         // this row". It opens the folder and its branch with it, and a second tap on the folder
         // that is already open closes the branch again, so the row does what the caret does and
-        // nobody has to find the caret (Juri, 2026-09-23: "make it dumb-proof").
+        // nobody has to find the caret (2026-09-23: "make it dumb-proof").
         row.setOnClickListener(view -> {
             if (hasChildren) {
                 if (path.equals(screen.draft.folder) && screen.expanded.contains(path)) {
@@ -10282,20 +10282,20 @@ public final class KioskActivity extends Activity {
     /**
      * Everything picked so far, in the order the screensaver shows it: the picture, the folder and
      * the name, then the box that names the picture for its credit, the eye that switches its
-     * credit off or on, and the remove button, all 40 dp on one line (Juri, 2026-09-23 and
+     * credit off or on, and the remove button, all 40 dp on one line (2026-09-23 and
      * 2026-09-25; the Save and Remove words that stood there read as noise repeated down the
      * list, and the save tick inside the box went too: the box stores itself when it lets go).
      *
      * <p>The path is prepended because this list is the one place two pictures with the same name
      * from two folders sit next to each other, and one folder cannot hold both, so the folder is
-     * what tells them apart (Juri, 2026-09-10: a bare "test.jpg" twice named neither).
+     * what tells them apart (2026-09-10: a bare "test.jpg" twice named neither).
      *
      * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
      * thumbnail ({@link HeldDrag}), the web page's gesture; the new order is part of the draft and
      * reaches disk with Save, like every other change on this page. The name, when its box lets
      * go of the focus, and the eye are stored at once instead, because they belong to the picture
      * and not to this playlist. No
-     * sentence explains any of it (Juri, 2026-09-25: a sentence is the last resort): an empty name
+     * sentence explains any of it (2026-09-25: a sentence is the last resort): an empty name
      * box shows, greyed, the file name the screensaver prints instead, a shuffling screensaver
      * puts its glyph in the pane's head, and with every credit switched off in the screensaver
      * settings each eye stands crossed out and inert.
@@ -10415,7 +10415,7 @@ public final class KioskActivity extends Activity {
             credit.setHint(PictureSources.creditFromLabel(screen.paths.get(uri)));
             credit.setHintTextColor(theme.subtext & 0x00FFFFFF | 0xB3000000);
             // Stored when the box lets go of the focus, or on the keyboard's Done, which is the
-            // same thing (Juri, 2026-09-25: the save tick inside the box went, it was one more
+            // same thing (2026-09-25: the save tick inside the box went, it was one more
             // thing to press for what leaving the box already says). Only a change is written.
             String[] stored = {captions.getOrDefault(uri, "")};
             onApply(credit, () -> {
@@ -10544,7 +10544,7 @@ public final class KioskActivity extends Activity {
     /**
      * The shuffle glyph for the held pane's head while the screensaver shuffles: a mark and not a
      * button, since shuffle is set with the other screensaver settings, and a mark rather than a
-     * sentence (Juri, 2026-09-25). The web page draws the same one.
+     * sentence (2026-09-25). The web page draws the same one.
      */
     private ImageView shuffleMark(KioskTheme theme) {
         ImageView mark = new ImageView(this);
@@ -10577,7 +10577,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * A held picture dragged by its thumbnail to a new place in the list (Juri, 2026-09-25), the
+     * A held picture dragged by its thumbnail to a new place in the list (2026-09-25), the
      * web page's gesture on the glass.
      *
      * <p>The thumbnail claims the touch the moment it lands, because the page scrolls and the
@@ -12156,7 +12156,7 @@ public final class KioskActivity extends Activity {
         int columns = getResources().getConfiguration().screenWidthDp >= 840 ? 2 : 1;
         // The grid is placed with its own 16 dp above it, so the first card of a lane carries
         // none: two margins stacked was the gap over the first panels of the Screensaver, Escape
-        // sequences and About pages (Juri, 2026-09-28).
+        // sequences and About pages (2026-09-28).
         if (columns == 1) {
             LinearLayout single = new LinearLayout(this);
             single.setOrientation(LinearLayout.VERTICAL);
@@ -12395,7 +12395,7 @@ public final class KioskActivity extends Activity {
 
         // No Legal card here. The privacy policy and the terms are rows of the About section on
         // the settings page, two taps from the panel, and this page is one tap further in: the
-        // same two documents in both places was one of them too many (Juri, 2026-09-23).
+        // same two documents in both places was one of them too many (2026-09-23).
 
         // Order chosen for cardGrid's round-robin: the two short cards share a lane, the taller
         // device card takes the other.
@@ -12408,7 +12408,7 @@ public final class KioskActivity extends Activity {
     /**
      * The width of a page's panel when it is the page's only one: 640 dp and centred wherever
      * the screen is 720 dp or more, the legal pages' column, which every one-panel page follows
-     * (Juri, 2026-09-28: a lone panel sits in the middle with the sides left empty, never at one
+     * (2026-09-28: a lone panel sits in the middle with the sides left empty, never at one
      * side of a grid). A paragraph at full width on a 1920 px panel ran near 180 characters;
      * 640 dp lands near 100.
      */
@@ -12649,9 +12649,9 @@ public final class KioskActivity extends Activity {
 
     /**
      * Every page's column: the content centred with a gutter each side, so nothing is ever laid
-     * out against the glass (Juri, 2026-09-23, with the drawing in media/drafts/material3/).
+     * out against the glass (2026-09-23, with the drawing in media/drafts/material3/).
      *
-     * <p>5% of the width, whatever the shape of the screen (Juri, 2026-09-23: the 10% that
+     * <p>5% of the width, whatever the shape of the screen (2026-09-23: the 10% that
      * landscape had was too much). Floored at Material's own margin for the size class, 16 dp
      * compact and 24 dp from medium, so a genuinely small screen still has a readable column, and
      * raised past the percentage once the column would pass {@link #MAX_CONTENT_DP}.
@@ -12679,7 +12679,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Material's width classes for the pages below the settings (Juri, 2026-09-27): 0 compact,
+     * Material's width classes for the pages below the settings (2026-09-27): 0 compact,
      * one column as the phone has it; 1 medium, the same column no wider than 640 dp and centred,
      * the fixed-width pane, for the tablet in portrait and the small tablets; 2 expanded, from
      * 840 dp, list-detail like the settings page, the list at the left and the chosen page at
@@ -12806,8 +12806,8 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Adds a row to an internal page's left menu, the list beside its detail (Juri,
-     * 2026-10-04: one style for Sensors, Automations and the Screensaver's playlists). Each row
+     * Adds a row to an internal page's left menu, the list beside its detail
+     * (2026-10-04: one style for Sensors, Automations and the Screensaver's playlists). Each row
      * is a segment; the chosen one is tinted, as Android marks a selected row (sketch B,
      * media/drafts/left-menus).
      */
@@ -12828,7 +12828,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * A menu row's size: the settings menu's own, 64 dp and 16 by 8 of padding (sectionRow), not
-     * the 72 dp list row, which read as a gap between the items (Juri, 2026-09-27, the tablet).
+     * the 72 dp list row, which read as a gap between the items (2026-09-27, the tablet).
      */
     private void sizeMenuRow(LinearLayout row) {
         row.setMinimumHeight(dp(64));
@@ -12913,9 +12913,9 @@ public final class KioskActivity extends Activity {
 
     /**
      * The same, with the readings at the right only where {@code readings} asks for it: the
-     * settings page alone (Juri, 2026-09-27). A page below it says its name and nothing else.
+     * settings page alone (2026-09-27). A page below it says its name and nothing else.
      * There the subtitle is the panel's id at 16 sp, Material's Title medium, and the readings
-     * stay at the right on every width, phones included (Juri, 2026-10-01: at 12 sp the id was
+     * stay at the right on every width, phones included (2026-10-01: at 12 sp the id was
      * "barely readable"), with the day and night toggle after them since 2026-10-15.
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
@@ -12941,7 +12941,7 @@ public final class KioskActivity extends Activity {
             titles.addView(main);
         } else {
             // Against the title's last letter, not out by the chip: the pencil belongs to the name
-            // it edits (Juri, 2026-09-19). The title's width is capped to what leaves the pencil
+            // it edits (2026-09-19). The title's width is capped to what leaves the pencil
             // room, since a horizontal LinearLayout measures in order and a long name would
             // otherwise push the pencil off the row.
             LinearLayout titleRow = new LinearLayout(this);
@@ -13243,8 +13243,8 @@ public final class KioskActivity extends Activity {
     private static final int FIELD_BOX_TOP_DP = 24;
 
     /**
-     * Buttons beside a field, on the centre line of the box and not of the label (Juri,
-     * 2026-09-23). They stand in a slot that begins where the box begins and is as tall as the
+     * Buttons beside a field, on the centre line of the box and not of the label
+     * (2026-09-23). They stand in a slot that begins where the box begins and is as tall as the
      * box, whatever height the box turns out to have, so nothing here depends on guessing that
      * height: the old version aligned the button's foot to the box's foot and a taller box lifted
      * it off centre.
@@ -13352,7 +13352,7 @@ public final class KioskActivity extends Activity {
      *
      * <p>Track and handle are drawn from the palette instead of being the platform's tinted: the
      * stock track is a translucent bar, so the accent reached the screen as a muddy purple beside
-     * check boxes in the bright one (Juri, 2026-09-23). Drawn as the Pixel draws them, measured
+     * check boxes in the bright one (2026-09-23). Drawn as the Pixel draws them, measured
      * on his on 2026-10-04 (Android 17): Material 3's switch with icons, outlined and dark when
      * off, a handle in both states with a check or cross in it, each part in Material's colour
      * role: a 52 by 32 dp track, a 24 dp handle, a 16 dp mark. The web admin's switch is the
@@ -13413,7 +13413,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The switch's handle: 24 dp, with a check when on and a cross when off (Juri, 2026-10-04,
+     * The switch's handle: 24 dp, with a check when on and a cross when off (2026-10-04,
      * as his Pixel draws it). On, the handle is the accent's ink and the check the primary
      * container's ink, Material's roles; off, the handle is the subtext grey and the cross the
      * track's colour.
@@ -13537,7 +13537,7 @@ public final class KioskActivity extends Activity {
     /**
      * Outlined red: the Delete in an editor's row, which only asks (the confirm screen comes
      * next), the web's {@code button.danger}. Outlined so it does not compete with Save as
-     * the row's main action (Juri, 2026-10-01).
+     * the row's main action (2026-10-01).
      */
     private Button dangerOutlinedButton(KioskTheme theme, String label) {
         Button button = pillShaped(new PillButton(this), label, 24);
@@ -13815,7 +13815,7 @@ public final class KioskActivity extends Activity {
         appGoneShowing = false;
         appLockPlate = false;
         if (appLockGone()) {
-            // App lock's app was uninstalled: the robot says so (Juri, 2026-10-15).
+            // App lock's app was uninstalled: the robot says so (2026-10-15).
             appGoneShowing = true;
             showParkingPage(KioskConfig.appLockLabelOf(this) + " is not installed",
                     "Choose another app, or A web page, in the Muralis settings: Dashboard.");
@@ -14092,7 +14092,7 @@ public final class KioskActivity extends Activity {
         readout.post(() -> placeStatsReadout(readout));
         // A dragged block keeps its place as shares of the screen, so it is laid out again
         // when the screen's room changes (a rotation). Not on its own size: that changes with
-        // every line it draws, and re-placing it then made it flicker (Juri, 2026-10-04).
+        // every line it draws, and re-placing it then made it flicker (2026-10-04).
         frame.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) {
                 view.post(() -> placeStatsReadout(readout));
@@ -14102,7 +14102,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * App lock: the stats block over the app while the overlay is on (Juri, 2026-10-15), in a
+     * App lock: the stats block over the app while the overlay is on (2026-10-15), in a
      * window of its own size, so the app keeps every tap outside it; held and moved like the
      * dashboard's, and the place is the same one. Gone when Muralis is back in front or the
      * overlay is switched off. Repainted by overlayTask.
@@ -14252,8 +14252,8 @@ public final class KioskActivity extends Activity {
         KioskConfig.OverlayPlace place = KioskConfig.statsOverlayPlace(this);
         if (place != null) {
             // Dragged somewhere once: that place, measured from the nearest edges as shares of
-            // the screen, so it stays on the screen whichever way the panel is turned (Juri,
-            // 2026-10-04) and does not depend on the block's own size, which changes with
+            // the screen, so it stays on the screen whichever way the panel is turned
+            // (2026-10-04) and does not depend on the block's own size, which changes with
             // every line it draws.
             View parent = (View) readout.getParent();
             int gapX = Math.round(place.x * parent.getWidth());
@@ -15267,7 +15267,7 @@ public final class KioskActivity extends Activity {
                     // Preview button does, the page under, the screensaver over it, the caption
                     // saying a tap goes back, and the tap returns to the screen that was open.
                     // Until 2026-09-24 the service refused this ("Muralis settings are open on
-                    // the panel") and a Preview pressed on the web looked broken (Juri: "Preview
+                    // the panel") and a Preview pressed on the web looked broken (the owner: "Preview
                     // should work anyway").
                     Runnable back = currentScreen;
                     showDashboard(KioskConfig.load(this).dashboardUrl);
@@ -15769,7 +15769,7 @@ public final class KioskActivity extends Activity {
     /**
      * The operator's "How a picture fills the screen" as the platform's own scaling: the whole
      * picture inside the screen, cropped to cover it, pulled out of shape to cover it, or left at
-     * the size it was taken (Juri, 2026-09-23).
+     * the size it was taken (2026-09-23).
      */
     private static ImageView.ScaleType scaleTypeOf(String fit) {
         if (ScreensaverPolicy.FIT_FILL.equals(fit)) {
@@ -16948,7 +16948,7 @@ public final class KioskActivity extends Activity {
      * <p>Only the tap recorder uses it. Its panel is a 460 dp card floating in the middle of the
      * screen and every other line in it, the step, the title, the hint and the readout, is
      * centred, so a button hugging the card's left edge reads as a misalignment rather than as
-     * the house style (Juri, 2026-09-10). On a full-width settings page the left edge is exactly
+     * the house style (2026-09-10). On a full-width settings page the left edge is exactly
      * right, which is why this is a second method and not a change to {@link #buttonRow}.
      *
      * <p>Horizontal only, deliberately: vertical centring is what pushed every button below its
@@ -16964,7 +16964,7 @@ public final class KioskActivity extends Activity {
      * An editor's buttons on one row, Material's placement for a form that can also destroy
      * what it edits: the destructive action at the start, apart from the pair it must not be
      * taken for, and the dismissive then the confirming action at the end, Save last. One row at
-     * every width, the three labels are short (Juri, 2026-09-28).
+     * every width, the three labels are short (2026-09-28).
      */
     private LinearLayout editorButtonRow(Button delete, Button cancel, Button save) {
         LinearLayout row = new LinearLayout(this);
@@ -16995,7 +16995,7 @@ public final class KioskActivity extends Activity {
      * <p>{@link #buttonRow} stacks below 600 dp, which is right for a pair of long labels on a
      * phone and wrong for a pair of short ones: "Select all" over "Select none" and "Cancel" over
      * "Save" read as separate decisions rather than as one either-or, and cost two rows of a card
-     * that has none to spare (Juri, 2026-09-10, B3 and B4). These labels fit across a phone's card
+     * that has none to spare (2026-09-10, B3 and B4). These labels fit across a phone's card
      * with room left, so they are laid out as a pair.
      *
      * <p>Weighted rather than sized to the label, so the pair is symmetrical: an either-or whose
@@ -17040,7 +17040,7 @@ public final class KioskActivity extends Activity {
      *
      * <p>Every other button in this app is sized for a wall panel touched from standing distance,
      * and at that size three of them fill a playlist row and crowd out the name they belong to
-     * (Juri, 2026-09-10, A3 and B2). A row's actions are read after its name and only once the eye
+     * (2026-09-10, A3 and B2). A row's actions are read after its name and only once the eye
      * has stopped there, so this is the one place where the smaller button is the honest one.
      *
      * <p>Every minimum is cleared, not only the width: a platform Button carries a 48 dp minimum

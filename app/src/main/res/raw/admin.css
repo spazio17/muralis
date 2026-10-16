@@ -10,7 +10,7 @@ one open at a time, no wider than 720 px); from 840 px, and only with scripting,
 sections stand in a list on the left and the open one on the right, Material's list-detail. No
 panel ever spans the screen: content lives in a centred column of at most 1016 px, which the app
 bar shares, so the title sits over the list's left edge and the readings over the panel's
-right edge (Juri, 2026-09-23).
+right edge (2026-09-23).
 */
 :root{color-scheme:light dark;
 --card:color-mix(in srgb,var(--surface) 40%,var(--base));--card-high:var(--surface);
@@ -34,7 +34,7 @@ html[data-theme=dark]{color-scheme:dark;
 *{box-sizing:border-box}
 body{margin:0;padding:12px 0 40px;background:var(--base);color:var(--text);font-family:Roboto,system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:20px}
 /* The column, centred, with a gutter each side: 5% of the window, whatever the shape of it
-   (Juri, 2026-09-23, with the drawing in media/drafts/material3/). The app bar spans exactly
+   (2026-09-23, with the drawing in media/drafts/material3/). The app bar spans exactly
    that column, which is what puts the readings over the panel's right edge rather than
    the window's. It stops growing at 1000 px: past that the gutters take the rest,
    because a field drawn across a very wide monitor is a bar. */
@@ -99,7 +99,7 @@ html.js .actions.nojs{display:none}
 /* ---- buttons: filled for a card's one main action, tonal for the second, outlined for a command
    that acts now and stores nothing, text for navigation, and a 40 px icon button for anything
    repeated in a row. Red only for Delete: outlined in an editor's row, filled on the confirm
-   screen alone (Juri, 2026-10-01). ---- */
+   screen alone (2026-10-01). ---- */
 button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 24px;margin:0;border-radius:999px;border:1px solid var(--outline);background:transparent;color:var(--accent);font-family:inherit;font-size:14px;font-weight:500;letter-spacing:.1px;line-height:20px;cursor:pointer;white-space:nowrap;text-decoration:none}
 button:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
 /* A row's 40 px buttons take a 48 px touch, Material's target, without growing. */
@@ -136,7 +136,7 @@ button.ib.primary:hover{background:color-mix(in srgb,var(--accent) 10%,transpare
 .notice{display:flex;align-items:center;gap:10px;background:var(--error-container);color:var(--on-error-container);border-radius:8px;padding:8px 12px;margin:0 0 16px;font-size:14px}
 .card .notice,.body .notice{margin:8px 0 0}
 /* ---- text fields: outlined, the label on the border, helper text 4 px under the box in the
-   field's own slot, keeping its wording (Juri, 2026-09-23). ---- */
+   field's own slot, keeping its wording (2026-09-23). ---- */
 .field{position:relative;margin-top:24px;min-width:0}
 .field input,.field select{display:block;width:100%;height:56px;margin:0;padding:0 16px;border:1px solid var(--outline);border-radius:4px;background:transparent;color:var(--text);font-family:inherit;font-size:16px;appearance:none;-webkit-appearance:none}
 .field input:focus,.field select:focus{outline:none;border:2px solid var(--accent);padding:0 15px}
@@ -165,7 +165,7 @@ input[type=checkbox]:indeterminate{background:var(--accent);border-color:var(--a
 input[type=checkbox]:indeterminate::after{content:"";width:10px;height:2px;background:var(--on-accent)}
 label.switch{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;color:var(--text);cursor:pointer;margin:0;border-bottom:1px solid var(--outline-variant)}
 label.switch:last-of-type{border-bottom:0}
-/* Switches as the Pixel draws them (Juri, 2026-10-04, measured on his, Android 17): Material 3's switch with icons, a 52 by 32 track outlined and dark when off, a 24 px handle in both states with a 16 px check or cross in it, each part in Material's colour role. */
+/* Switches as the Pixel draws them (2026-10-04, measured on his, Android 17): Material 3's switch with icons, a 52 by 32 track outlined and dark when off, a 24 px handle in both states with a 16 px check or cross in it, each part in Material's colour role. */
 label.switch input{appearance:none;-webkit-appearance:none;box-sizing:border-box;width:52px;height:32px;margin:0;flex:none;border-radius:16px;border:2px solid var(--outline);background:var(--surface);position:relative;cursor:pointer;display:inline-block}
 label.switch input::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:50%;background:var(--subtext);transition:left .12s}
 label.switch input:checked{background:var(--accent);border-color:var(--accent)}
@@ -306,7 +306,7 @@ ul.folders li:last-child{border-bottom:0}
 /* The folder tree: a caret in front of every folder that has folders under it, opening and closing
    its branch and leaving the pictures alone; a closed branch's rows are hidden. The carets and the
    head's button need the script, so without it they are not there and the tree simply follows the
-   open folder, which the server opens the way down to (Juri, 2026-09-23). */
+   open folder, which the server opens the way down to (2026-09-23). */
 ul.folders li.row{display:flex;align-items:center}
 ul.folders li.hidden{display:none}
 ul.folders .caret{flex:none;width:32px;height:44px;display:inline-flex;align-items:center;justify-content:center;color:var(--subtext);cursor:pointer;border-radius:999px}
@@ -420,7 +420,7 @@ input.sw::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:
 input.sw:checked{background:var(--accent);border-color:var(--accent)}
 input.sw:checked::after{left:22px;top:2px;width:24px;height:24px;border:0;transform:none;background:var(--on-accent)}
 /* The handle's mark, a cross when off and a check when on, as the Pixel's Settings draws it
-   (Juri, 2026-10-04): a mask over the handle, so its colour follows the palette. */
+   (2026-10-04): a mask over the handle, so its colour follows the palette. */
 label.switch input::before,input.sw::before{content:"";position:absolute;top:6px;left:6px;width:16px;height:16px;z-index:1;background:var(--surface);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 7l10 10M17 7L7 17' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") center/16px no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 7l10 10M17 7L7 17' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") center/16px no-repeat;transition:left .12s}
 label.switch input:checked::before,input.sw:checked::before{left:26px;background:var(--on-primary-container);-webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12l5 5L20 7' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12l5 5L20 7' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 input.sw:disabled{opacity:.38;cursor:default}
@@ -436,8 +436,7 @@ ul.list li.refusal{display:block;color:var(--bad);font-size:12px;line-height:16p
 .pagename{display:none}
 /* A choice of five or fewer as radios, with its label over them, the panel's shape. */
 .choice{margin-top:16px}.choice>.label{font-size:12px;line-height:16px;font-weight:500;color:var(--subtext);margin:0 0 4px}
-/* The look's radios (This panel, Juri 2026-10-04): a colour's dot before its name, in the colour's
-   own primary for the page's theme. */
+/* A choice this panel cannot take, greyed. */
 label.radio:has(input:disabled){opacity:.38;cursor:default}
 .certificate{margin-top:16px}.certificate .uploadrow{margin-top:8px}
 /* The upload's names and end date wrap, as on the panel, so the date is never cut off. */

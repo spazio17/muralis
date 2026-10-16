@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -21,8 +21,8 @@ import java.util.Locale;
  * needs no permission for that: {@code logcat --pid} is filtered by the log daemon, so what comes
  * back is exactly what a developer would see with {@code adb logcat} narrowed to Muralis,
  * including the WebView's page errors that {@code KioskActivity} sends there. Fully Kiosk Browser
- * offers the same through its {@code cmd=logcat}, which is what this was asked to match (Juri,
- * 2026-09-25), only it is a plain page there and a block with a level filter, a search and colours
+ * offers the same through its {@code cmd=logcat}, which is what this was asked to match
+ * (2026-09-25), only it is a plain page there and a block with a level filter, a search and colours
  * here, the way Home Assistant's own log page and every logcat reader do it.
  *
  * <p>What it is for: a panel on a wall that is doing something odd, read from the sofa. Nothing is

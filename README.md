@@ -26,10 +26,15 @@ inside the same container.
 
 ## Status
 
-Pre-release. Runs on real hardware; release signing is in place, and it is not published yet.
+On Google Play (`org.spazio17.muralis`, the test tracks until 0.7 reaches production) and as an APK
+with a setup QR on [muralis.spazio17.org](https://muralis.spazio17.org). Everything a single panel
+does is free; Muralis Pro, one purchase on Google Play, adds the fleet.
 
-## License
+## Licence
 
-All rights reserved for now, see [`LICENSE`](LICENSE); a placeholder pending a final licensing
-decision, not an open-source license. Built on [Eclipse Paho](https://www.eclipse.org/paho/) MQTT
-(`org.eclipse.paho.client.mqttv3`, EPL/EDL), credited on the app's own About screen.
+Muralis is **source available** under the Fair Core License, [`LICENSE.md`](LICENSE.md)
+(FCL-1.0-ALv2). In plain words: you may read the code, use Muralis, change it for yourself and
+contribute; you may not sell Muralis or a product made from it, offer it as a service, or remove or
+work around the Pro lock, not even for your own use. Each version becomes Apache 2.0 two years
+after its release. Contributions come under the agreement in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Third-party code and artwork keep their own licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

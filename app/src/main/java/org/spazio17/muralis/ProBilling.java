@@ -1,3 +1,7 @@
+/*
+ * Copyright 2026 Muralis contributors
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
+ */
 package org.spazio17.muralis;
 
 import android.app.Activity;
@@ -486,7 +490,7 @@ final class ProBilling implements PurchasesUpdatedListener {
                 // Play can answer "not owned" by mistake right after a boot. On this panel that
                 // costs a moment; written for the fleet it would end Pro on every panel until
                 // this one asks again, a night away on a wall. So the fleet hears it only when
-                // Play says it twice, at least a few minutes apart (Juri, 2026-10-15).
+                // Play says it twice, at least a few minutes apart (2026-10-15).
                 boolean first = notOwnedAtMs == 0 || now - notOwnedAtMs > 3 * RECHECK_MS;
                 if (first) {
                     notOwnedAtMs = now;

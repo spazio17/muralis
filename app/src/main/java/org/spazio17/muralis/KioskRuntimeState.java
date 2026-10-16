@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -328,7 +328,7 @@ final class KioskRuntimeState {
         return httpAdminSecure ? "https://" : "http://";
     }
 
-    /** "https://10.0.10.43:8080", from the address the panel last reported. */
+    /** "https://192.168.1.20:8080", from the address the panel last reported. */
     static String httpAdminAddress() {
         SystemStats.RuntimeFacts facts = lastFacts;
         String host = facts == null || facts.ipAddress.isEmpty() ? "<panel>" : facts.ipAddress;

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -301,7 +301,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         // A gap of several rounds means this panel slept or stalled: it listens afresh from now,
         // and no peer counts as unheard for longer than that, so a panel back from sleep or
-        // maintenance never says the whole fleet is offline in one go (Juri, 2026-10-15).
+        // maintenance never says the whole fleet is offline in one go (2026-10-15).
         long now = SystemClock.elapsedRealtime();
         if (lastAlertJudgeMs > 0 && now - lastAlertJudgeMs > 3 * TELEMETRY_INTERVAL_MS) {
             alertsListeningSinceMs = now;
@@ -888,7 +888,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>Scope: the permissions this app declares and needs, which since the sensors (2026-09-27,
      * a product decision) include the camera, the microphone and, for the Bluetooth beacons,
-     * location (Juri, 2026-10-01), granted so a sensor's row shows a switch on a panel nobody
+     * location (2026-10-01), granted so a sensor's row shows a switch on a panel nobody
      * stands at; every sensor stays off until switched on, and neither a position nor the Wi-Fi
      * SSID is ever read. The ROM repo's docs/play-store-viability.md records the earlier,
      * narrower set.
@@ -1051,7 +1051,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private void refreshAnnouncement() {
         FleetServer server = fleetServer;
         String state = joinState(this);
-        // Only for the fleet (Juri, 2026-10-14): a panel in none, its Join code closed, says
+        // Only for the fleet (2026-10-14): a panel in none, its Join code closed, says
         // nothing on the network.
         boolean on = server != null && !"alone".equals(state);
         String id = KioskConfig.deviceIdOf(this);
@@ -1717,7 +1717,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (!screenOn) {
                 // Judged before the override: a dark screen reads as zero, whatever override the
                 // screensaver's dim floor left behind on the way down. Zero rather than null
-                // (Juri, 2026-09-23): a Home Assistant number showing "unknown" for a panel that
+                // (2026-09-23): a Home Assistant number showing "unknown" for a panel that
                 // is simply off looked like a fault, and a slider at zero is what a dark screen is.
                 source = "display_off";
                 percent = 0;
@@ -2444,7 +2444,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Whether a rule on this sensor cannot run while the panel sleeps: its test found it not
      * running, and this panel sleeps rather than darkening with the film, which keeps sensors
      * running. Said on the rule's row and in its editor, where it matters: "Wake by hand" on
-     * such a panel fails without a word otherwise (Juri, 2026-09-28).
+     * such a panel fails without a word otherwise (2026-09-28).
      */
     static boolean stopsWhileAsleep(Context context, String sensorId) {
         Sensors.Def def = Sensors.byId(sensorId == null ? "" : sensorId);
@@ -2619,7 +2619,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return "the first-start wizard is on screen";
         }
         // The settings being open is no longer a refusal (it was "Muralis settings are open on
-        // the panel" until 2026-09-24, Juri: "Preview should work anyway"): the activity shows
+        // the panel" until 2026-09-24, the owner: "Preview should work anyway"): the activity shows
         // the screensaver over the page as a preview, exactly what the settings page's own
         // Preview button does, and a touch brings the settings back. The recorder is different:
         // it is capturing taps against a clock, and a screensaver would take them.
@@ -3115,7 +3115,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * Identify: the panel's name drawn over its screen by the activity (the same broadcast
      * every other order takes), so a person standing in front of several walls can tell which
-     * is which; shown only, never said (Juri, 2026-10-14). Refused like a capture when no
+     * is which; shown only, never said (2026-10-14). Refused like a capture when no
      * window of this app is in front.
      */
     @Override
@@ -3524,8 +3524,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         if (hub != null && hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH)) {
             // The Bluetooth scan counts as location use: with this type held, "while using the
-            // app" location is enough for the scan to run with the display off (Juri,
-            // 2026-10-01, in place of the background location permission).
+            // app" location is enough for the scan to run with the display off
+            // (2026-10-01, in place of the background location permission).
             wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         }
         if (wanted == foregroundTypesNow) {

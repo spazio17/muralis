@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates Muralis's colour scheme (Juri, 2026-10-15: ultramarine, the painters' blue of
+"""Generates Muralis's colour scheme (2026-10-15: ultramarine, the painters' blue of
 Italian frescoes, one scheme for everyone, dark and light), with Google's own
 material-color-utilities (HCT), so it is Material 3 as specified. Writes
 app/src/main/java/org/spazio17/muralis/Palettes.java and app/src/main/res/raw/admin_palettes.css;
@@ -15,7 +15,7 @@ SEED = '#1C39BB'  # ultramarine
 # One recipe for the colours, Material's Vibrant (the chroma pushed as far as the screen allows,
 # the neutrals tinted a little), at Material's standard tones. The second choice went twice on
 # 2026-10-04: Material's variants told apart too little on a dark panel, and its contrast levels
-# did not look good; other apps offer a colour and day or night, nothing more (Juri).
+# did not look good; other apps offer a colour and day or night, nothing more.
 CHROMA = dict(p=200, s=24, n=10, nv=12)
 TONES = dict(surface=(6, 98), lowest=(4, 100), high=(17, 92), highest=(22, 90), outline=(60, 50),
              onSurface=(90, 10), onSurfaceVariant=(80, 30), primary=(80, 40), onPrimary=(20, 100),
@@ -45,7 +45,7 @@ def scheme(seed, dark):
 
 CSS_NAMES = ['base', 'mantle', 'surface', 'surface-alt', 'border', 'text', 'subtext', 'accent',
              'accent-alt', 'ok', 'warn', 'bad', 'ink-alt', 'on-accent', 'lowest']
-java = ['/*', ' * Copyright 2026 Muralis contributors', ' * All rights reserved. See LICENSE at the repository root.', ' */',
+java = ['/*', ' * Copyright 2026 Muralis contributors', ' * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.', ' */',
         'package org.spazio17.muralis;', '',
         '/**', ' * Muralis\'s colour scheme, Material 3 from the ultramarine seed, dark and light, fifteen colours:',
         ' * the thirteen of KioskTheme\'s constructor, then on-primary and surface-container-lowest.',

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -16,7 +16,7 @@ import java.util.Map;
  * once more with only its platform ({@code "p"}), then an update without it. Until 2026-10-06 the
  * panel sent such an empty entry for every sensor that was off or missing, on every connect, the
  * fixed-list way Tasmota and FreeKiosk do it, so a panel that never had a humidity sensor told Home
- * Assistant to remove one. Juri's rule of that day: Muralis starts on MQTT as if it were used for
+ * Assistant to remove one. The owner's rule of that day: Muralis starts on MQTT as if it were used for
  * the first time, so a removal is only for something this panel announced. That is zigbee2mqtt's
  * way: it remembers what it published and, at its start, reads its own retained configs back from
  * the broker; {@code MqttController} does both and asks this class what to remove.

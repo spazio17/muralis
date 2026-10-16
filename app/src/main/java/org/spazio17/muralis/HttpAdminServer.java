@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -1474,7 +1474,7 @@ final class HttpAdminServer {
             }
             case "panel": {
                 // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
-                // box since 2026-09-27 (Juri: the id is the panel's identity, not the page's).
+                // box since 2026-09-27 (the owner: the id is the panel's identity, not the page's).
                 String stale = staleFormRefusal(form, fresh.deviceId);
                 if (stale != null) {
                     return stale;
@@ -1561,7 +1561,7 @@ final class HttpAdminServer {
             }
             case "fleet": {
                 // The member port, by the web admin port's rules: a number, 1024-65535, never
-                // the web admin's port, and free when it changes (Juri, 2026-10-08).
+                // the web admin's port, and free when it changes (2026-10-08).
                 String stale = staleFormRefusal(form, Integer.toString(fresh.fleetPort));
                 if (stale != null) {
                     return stale;
@@ -1930,7 +1930,7 @@ final class HttpAdminServer {
     private String pageStart(String title, String subtitle, String backTo) {
         // A page below the settings page says its name and nothing else: the panel's id, its
         // address and its load belong where somebody is configuring the panel, not on a page
-        // about one feature of it (Juri, 2026-09-11, C15).
+        // about one feature of it (2026-09-11, C15).
         String titles = "<div class=\"titles\"><h1>" + escapeHtml(title) + "</h1>"
                 + (subtitle == null ? "" : "<p class=\"sub\">" + escapeHtml(subtitle) + "</p>")
                 + "</div>";
@@ -2031,12 +2031,12 @@ final class HttpAdminServer {
         paths.put("storage", "<rect x=\"3\" y=\"6\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 10h18\"/>");
         // A dashboard: four tiles, two tall and two short, Material's own arrangement. The
-        // monitor on a stand it replaces drew hardware, which no wall panel has (Juri,
-        // 2026-09-24).
+        // monitor on a stand it replaces drew hardware, which no wall panel has
+        // (2026-09-24).
         paths.put("dash", "<path d=\"M4 4h6v7H4zM14 4h6v4h-6zM4 15h6v5H4zM14 12h6v8h-6z\"/>");
         // A hub: four things joined to one in the middle, which is what a broker is. The
-        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them (Juri,
-        // 2026-09-23).
+        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them
+        // (2026-09-23).
         paths.put("mqtt", "<circle cx=\"12\" cy=\"12\" r=\"3\"/><circle cx=\"5\" cy=\"5\" r=\"1.5\"/>"
                 + "<circle cx=\"19\" cy=\"5\" r=\"1.5\"/><circle cx=\"5\" cy=\"19\" r=\"1.5\"/>"
                 + "<circle cx=\"19\" cy=\"19\" r=\"1.5\"/>"
@@ -2113,7 +2113,7 @@ final class HttpAdminServer {
 
     /**
      * The settings page: one list of sections, each a glyph, its name and a one-line summary of
-     * what is stored, opening in place (Juri's drawing of 2026-09-23). Inside are the essentials;
+     * what is stored, opening in place (the owner's drawing of 2026-09-23). Inside are the essentials;
      * a section with more behind it ends with a text button that opens its own page.
      *
      * <p>The message about a refused save goes inside the section it is about, and that section
@@ -2349,7 +2349,7 @@ final class HttpAdminServer {
      * The list-detail shell the Sensors and Automations pages share, the settings page's own
      * shape from 840 px: the list at the left, the chosen item's page at the right. Below that
      * one of the two shows, which one {@code detailPage} says, and from 600 px the column is
-     * no wider than 640 px (Juri, 2026-09-27).
+     * no wider than 640 px (2026-09-27).
      */
     private String listDetail(String kind, boolean detailPage, String nav, String detail) {
         return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
@@ -2379,7 +2379,7 @@ final class HttpAdminServer {
             if (one == null || !one.optBoolean("active")) {
                 continue;
             }
-            // The switch on the row too (Juri, 2026-09-27): switched off, admin_stats.js takes
+            // The switch on the row too (2026-09-27): switched off, admin_stats.js takes
             // the row out at the next poll; the Sensors page switches it on again.
             rows.append(navRow(listRow(def.glyph, def.name, null, one.optString("reading", ""),
                     "sensor-" + def.id + "-value", sensorSwitch(def, true, "-home"), false),
@@ -2659,7 +2659,7 @@ final class HttpAdminServer {
                         .replaceFirst("<span class=\"h\">" + java.util.regex.Matcher.quoteReplacement(escapeHtml(label)),
                                 java.util.regex.Matcher.quoteReplacement("<span class=\"h\">" + words)) + "</ul>";
         // The calibration and the test while asleep are the panel's alone: both need a hand
-        // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
+        // at the glass, and a remote button for that is a strange thing (2026-09-27).
         if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
                 || (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted"))) {
             html.append(head).append("</section>");
@@ -3047,7 +3047,7 @@ final class HttpAdminServer {
                         typedTo != null ? typedTo
                                 : rule.windowed() ? Automations.clock(rule.onlyTo) : "22:00", "", null)
                 + "</div></section>"
-                // One row, as the panel lays it out (Juri, 2026-09-28): Delete at the start,
+                // One row, as the panel lays it out (2026-09-28): Delete at the start,
                 // Cancel then Save at the end, ordered by the stylesheet. Save is the form's
                 // first submit button in the DOM, so Enter in a box saves (review of
                 // 2026-09-27: Enter in the Name box used to post to Delete). Delete asks first.
@@ -3429,7 +3429,7 @@ final class HttpAdminServer {
     /** System stats and the log, on their own page under This panel. */
     private String buildStatsPage() {
         KioskConfig config = KioskConfig.load(context);
-        // Two panels, as the panel's page has them (Juri, 2026-09-28): side by side from 840 px,
+        // Two panels, as the panel's page has them (2026-09-28): side by side from 840 px,
         // one under the other below, the way every page of several panels without a menu is.
         return pageStart("System stats and log", null, settingsAt("panel"))
                 + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
@@ -4638,7 +4638,7 @@ final class HttpAdminServer {
                 + "</div>";
     }
 
-    /** Integrations (Juri, 2026-10-15): in the menu already, empty until the first ones come. */
+    /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */
     private static String integrationsBody() {
         return "<div class=\"empty\"><p class=\"h\">No integrations yet</p><p class=\"s\">Muralis"
                 + " will show and act on data from other services. The first integrations come"
@@ -4661,7 +4661,7 @@ final class HttpAdminServer {
 
     private String displayBody() {
         // The theme switch stands beside the section's name (see the menu builder); the app
-        // bar's Auto/Light/Dark went (Juri, 2026-09-27).
+        // bar's Auto/Light/Dark went (2026-09-27).
         return sharedLine("display") + "<div class=\"actions tight\">"
                 + quickAction("display.wake", "Display on", "tonal", null)
                 + quickAction("display.visual_off", "Display off", "tonal", null)
@@ -4710,9 +4710,9 @@ final class HttpAdminServer {
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
                 + "</p>"
                 // No "Back to the page" beside these: it ends a showing screensaver, which is what
-                // Display on already does to a lit panel (Juri, 2026-09-11, C16).
+                // Display on already does to a lit panel (2026-09-11, C16).
                 // Off has no page to lead to: the page holds a mode's options and Off has none
-                // (Juri, 2026-09-11), and since the page stopped carrying the chooser
+                // (2026-09-11), and since the page stopped carrying the chooser
                 // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
                 + "<div class=\"actions\">"
                 + quickAction("ambient.start", "Preview", "tonal", null)
@@ -5149,7 +5149,7 @@ final class HttpAdminServer {
     /**
      * The shuffle glyph in the held list's head while the screensaver shuffles, or nothing: a
      * mark and not a button, since shuffle is set with the other screensaver settings, and a mark
-     * rather than a sentence, because a sentence is the last resort (Juri, 2026-09-25).
+     * rather than a sentence, because a sentence is the last resort (2026-09-25).
      */
     private String shuffleMark() {
         if (!KioskConfig.screensaverOf(context).shuffle) {
@@ -5162,7 +5162,7 @@ final class HttpAdminServer {
 
     /**
      * The page's title is the playlist's own name, with the rename pencil beside it in the app
-     * bar, the way a pull request's title is edited (Juri, 2026-09-19).
+     * bar, the way a pull request's title is edited (2026-09-19).
      *
      * <p>A {@code <details>} rather than a box the script makes: it opens, closes and posts with
      * no scripting at all, and the script only keeps the answer on this page. The Cancel button
@@ -5195,19 +5195,19 @@ final class HttpAdminServer {
     /**
      * Everything the playlist holds, in the order the screensaver shows it: the picture, the
      * folder and the name, then the box that names it for its credit, the eye that switches its
-     * credit off or on, and the remove button, all 40 px on one line (Juri, 2026-09-23 and
+     * credit off or on, and the remove button, all 40 px on one line (2026-09-23 and
      * 2026-09-25). The box has no save tick: {@code admin_pictures.js} stores it when it lets go
      * of the focus, and Enter submits its form, which is also the path with no scripting.
      *
      * <p>The folder is prepended because this list is the one place two pictures with the same
-     * name from two folders sit next to each other (Juri, 2026-09-10). It is a fragment of its
+     * name from two folders sit next to each other (2026-09-10). It is a fragment of its
      * own because a tick in the browser changes it, and the page must not reload to say so.
      * Remove takes the picture out of this playlist and deletes nothing; it posts to the same
      * endpoint the browser's tick does, with the selection off.
      *
      * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
      * thumbnail; {@code admin_pictures.js} does the drag and posts the whole order, and without
-     * scripting the grip is not drawn at all. No sentence explains any of it (Juri, 2026-09-25:
+     * scripting the grip is not drawn at all. No sentence explains any of it (2026-09-25:
      * a sentence is the last resort). An empty name box shows, greyed, the words the screensaver
      * prints instead, the file's name. With every credit switched off in the screensaver
      * settings, each eye stands crossed out and inert, which says the same without a line.
@@ -5349,14 +5349,14 @@ final class HttpAdminServer {
      * <p>A fragment of its own since 2026-09-19, when the browser's two panes became two panels;
      * {@code admin_pictures.js} fetches it from {@code /api/pictures/folders} and the open folder
      * from {@code /api/pictures/content}, so each action replaces exactly that much of the page
-     * and the reader keeps their place (Juri, 2026-09-10, C3). The whole tree comes down in one
+     * and the reader keeps their place (2026-09-10, C3). The whole tree comes down in one
      * fragment, and which branches are open is decided in the browser: this method opens the top
      * of the volume and the way down to the open folder, which is the tree a browser with no
      * scripting gets and what the script starts from before the reader's own carets take over
-     * (Juri, 2026-09-23: every folder at once was a list nobody could read).
+     * (2026-09-23: every folder at once was a list nobody could read).
      *
      * <p>The count beside a folder is the pictures directly in it, not everything below it: a
-     * folder that said 41 and opened onto three pictures read as a miscount (Juri, 2026-09-19).
+     * folder that said 41 and opened onto three pictures read as a miscount (2026-09-19).
      */
     private String folderList(String location, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -5411,7 +5411,7 @@ final class HttpAdminServer {
      * check circle on every tile, the same control the panel uses, posted the moment it changes;
      * an upload keeps its bin, which asks first. The view is one preference for the panel and
      * this page alike ({@code KioskConfig.pictureViewOf}), so both open the next folder the same
-     * way (Juri, 2026-09-23).
+     * way (2026-09-23).
      */
     private String folderContent(String token, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -5575,7 +5575,7 @@ final class HttpAdminServer {
      * not a button, since without scripting it does nothing and must not look as if it did.
      *
      * <p>A button is a thing that does something; a folder is a place you go, and a list of forty
-     * buttons reads as forty decisions (Juri, 2026-09-10, C7). It is a real {@code href} so it
+     * buttons reads as forty decisions (2026-09-10, C7). It is a real {@code href} so it
      * works with no scripting and can be opened in a second tab; the script intercepts it and
      * swaps the fragment instead of reloading.
      */
@@ -5646,7 +5646,7 @@ final class HttpAdminServer {
             case "/api/playlists/activate":
                 change = document -> document.activate(id);
                 // Nothing to say: the "In use" mark moving to the row is the whole answer, and a
-                // sentence on top of it was noise (Juri, 2026-09-19).
+                // sentence on top of it was noise (2026-09-19).
                 done = null;
                 break;
             case "/api/playlists/rename":
@@ -5743,7 +5743,7 @@ final class HttpAdminServer {
             html.append("<ul class=\"list seg\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
                 int count = playlist.items.size();
-                // The left menu's row as the panel draws it (Juri, 2026-10-04): the glyph, the
+                // The left menu's row as the panel draws it (2026-10-04): the glyph, the
                 // name over its count, a tap opening the playlist's own page, and Use at the
                 // end, the radio that is state and control at once. Delete lives on that page.
                 html.append("<li class=\"two\">")
@@ -6196,7 +6196,7 @@ final class HttpAdminServer {
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        // The Sensors page's shape (Juri, 2026-09-28): the playlists at the left and the chosen
+        // The Sensors page's shape (2026-09-28): the playlists at the left and the chosen
         // mode's options at the right from 840 px, one under the other below. The mode itself
         // is chosen on the settings page, whose Screensaver section leads here; the page's
         // shell carries the mode and every title, so admin_setting.js can rename the options
@@ -6245,7 +6245,7 @@ final class HttpAdminServer {
                         null))
                 .append("</div>")
                 // Gone rather than greyed out where it does not apply: a control that can never
-                // be enabled is clutter (Juri, 2026-09-11).
+                // be enabled is clutter (2026-09-11).
                 .append("<div id=\"ambient-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
                 .append(">")
@@ -6253,7 +6253,7 @@ final class HttpAdminServer {
                         "ambient_on_wake", onWake, null))
                 .append("</div>")
                 .append(pictureOptions(saver))
-                // The sentence it all adds up to, last in the panel, which is where Juri put it:
+                // The sentence it all adds up to, last in the panel, which is where the owner put it:
                 // the settings above it, then what they mean in one line.
                 .append("<p class=\"hint").append(problem ? " bad" : "").append("\" id=\"ambient-note\">")
                 .append(escapeHtml(ScreensaverPolicy.describe(saver,
@@ -6396,7 +6396,7 @@ final class HttpAdminServer {
      * sentence the tablet's Display card shows under it, kept current by the stats poll. The real
      * screen-off is offered only to a device owner, the same gate the tablet applies, and an
      * ordinary install gets the tablet's one greyed choice rather than a menu of Automatic and
-     * Black film that meant the same thing (Juri, 2026-09-24): a disabled menu, which the poll
+     * Black film that meant the same thing (2026-09-24): a disabled menu, which the poll
      * leaves alone and the settings script never posts.
      */
     private String displayOffControl() {
@@ -6815,7 +6815,7 @@ final class HttpAdminServer {
             return "<p class=\"hint bad\">" + AdminCertificate.PLAIN_HTTP_SENTENCE + "</p>";
         }
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
-        // to break at, so inline in the sentence it wrapped mid-value (Juri, 2026-09-23).
+        // to break at, so inline in the sentence it wrapped mid-value (2026-09-23).
         return "<p class=\"hint\">"
                 + escapeHtml(AdminCertificate.servedSentence(certificate.uploaded, "this page"))
                 + "</p><p class=\"mono wrap\">" + escapeHtml(certificate.fingerprint) + "</p>";
