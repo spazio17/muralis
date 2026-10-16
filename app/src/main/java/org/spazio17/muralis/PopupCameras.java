@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The panel's cameras for pop-ups (block 6, after Dashie): each a name, an address, a mode for
+ * The panel's cameras for pop-ups: each a name, an address, a mode for
  * this panel, how long it shows and a cooldown. {@code camera.show} shows one on demand,
  * {@code camera.trigger} is what a doorbell sends. Pure: the list's form, its checks and the
  * decision whether a trigger shows are host-tested.
@@ -20,6 +20,12 @@ final class PopupCameras {
     static final int MAX_NAME = 40;
     static final int MAX_COOLDOWN = 3600;
     static final int DEFAULT_COOLDOWN = 60;
+
+    /** The Pop-ups section's line on both surfaces: "No cameras", "1 camera", "3 cameras". */
+    static String summary(java.util.List<Camera> cameras) {
+        int count = cameras == null ? 0 : cameras.size();
+        return count == 0 ? "No cameras" : count == 1 ? "1 camera" : count + " cameras";
+    }
 
     static final String ON_DEMAND = "on_demand";
     static final String TRIGGER = "trigger";

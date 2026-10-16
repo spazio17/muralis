@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -62,7 +62,7 @@ import javax.net.ssl.X509ExtendedKeyManager;
  * plain settings, since a certificate is public. An upload that cannot be read at a start, a
  * Keystore not awake yet or a stored pair that no longer verifies, is not served: the panel's own
  * certificate is, and the reason is said on both surfaces, so a bad upload never takes the web
- * admin away (Juri, 2026-10-01).
+ * admin away (2026-10-01).
  *
  * <p>There is no address in the certificate, since a panel's address changes and the certificate
  * lasts ten years, so the browser's second warning, the name mismatch, is accepted by the same
