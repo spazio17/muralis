@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -43,7 +43,7 @@ import javax.net.ssl.SSLSocketFactory;
  */
 final class HttpAdminServer {
     private static final String TAG = "MuralisHttp";
-    private static final int MIN_ADMIN_PASSWORD_LENGTH = 8;
+    static final int MIN_ADMIN_PASSWORD_LENGTH = 8;
     /**
      * The sections that have a box of their own on the settings page, and can therefore show
      * their own message. Anything else falls back to the banner above the grid.
@@ -51,7 +51,7 @@ final class HttpAdminServer {
     private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
             new java.util.HashSet<>(java.util.Arrays.asList(
                     "dashboard", "mqtt", "webadmin", "fleet", "sequences", "panel",
-                    "certificate")));
+                    "certificate", "adopt")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
 
     /**
@@ -59,7 +59,8 @@ final class HttpAdminServer {
      * box, which opens with them (review, 2026-10-05: a refusal sat in a closed box).
      */
     private static String boxOf(String noticeSection) {
-        return "certificate".equals(noticeSection) ? "webadmin" : noticeSection;
+        return "certificate".equals(noticeSection) ? "webadmin"
+                : "adopt".equals(noticeSection) ? "fleet" : noticeSection;
     }
     /**
      * From the accept to the request line, TLS handshake included. Two seconds cut off one
@@ -74,7 +75,7 @@ final class HttpAdminServer {
     private static final int MAX_HEADER_LINES = 40;
     private static final int MAX_BODY_BYTES = 16_384;
     /**
-     * The one request that carries megabytes: the picture upload for the screensaver's
+     * The one request that carries megabytes: the picture upload for Ambient's
      * playlists. Its body budget and deadline are its own; every other request keeps the 16 KB
      * and eight seconds that suit commands and settings, but for a playlist's order, which gets
      * {@link #MAX_ORDER_BYTES} in the same eight seconds. A browser sends every chosen file in
@@ -108,6 +109,11 @@ final class HttpAdminServer {
      * is reported as such in the reply, rather than this connection being closed first.
      */
     private static final int FLEET_PROXY_DEADLINE_MS = 20_000;
+    /**
+     * Add a panel by its code looks for the panel for up to thirty seconds, then
+     * joins it with calls of their own: the answer must still find the browser connected.
+     */
+    private static final int ADOPT_DEADLINE_MS = (int) FleetServer.CODE_SEARCH_MS + 20_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
     private static final int WORKER_THREADS = 16;
     private static final int PER_HOST_CONNECTIONS = 12;
@@ -270,7 +276,7 @@ final class HttpAdminServer {
         playlistScript = script(R.raw.admin_playlists);
         menuScript = script(R.raw.admin_menu);
         fleetScript = script(R.raw.admin_fleet);
-        // The chosen scheme's colours ride along: html[data-palette] picks them (Palettes).
+        // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
 
@@ -705,9 +711,12 @@ final class HttpAdminServer {
                     return;
                 }
                 authThrottle.recordSuccess(remoteHost, nowMs);
+                // Every state-changing route is POST, deliberately, so this one check before the
+                // routing covers all of them, including any handler added later.
                 if (method.equals("POST")) {
                     String refusal = crossSiteRefusal(headers);
                     if (refusal != null) {
+                        Log.w(TAG, "Refused a state-changing request: " + refusal);
                         writeResponse(output, 403, "text/plain", bytes("Forbidden: " + refusal));
                         return;
                     }
@@ -732,6 +741,12 @@ final class HttpAdminServer {
                     deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
                             UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
                 }
+                if (method.equals("POST") && requestPath.equals("/adopt")) {
+                    input.extend(ADOPT_DEADLINE_MS);
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            ADOPT_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                }
                 if (requestPath.equals("/api/fleet/screenshot")
                         || requestPath.equals("/api/fleet/identify")) {
                     input.extend(FLEET_PROXY_DEADLINE_MS);
@@ -745,10 +760,12 @@ final class HttpAdminServer {
                             && requestPath.equals("/api/playlists/order");
                     boolean document = method.equals("POST")
                             && (requestPath.equals("/api/automations")
+                                    || requestPath.equals("/settings-file")
                                     || requestPath.equals("/api/sensors/settings")
                                     || requestPath.equals("/api/beacons/names"));
                     boolean certificateUpload = method.equals("POST")
                             && (requestPath.equals("/api/certificate")
+                                    || requestPath.equals("/mqtt-certificate")
                                     || (requestPath.equals("/") && isMultipart(headers)));
                     body = readBody(input, headers, upload ? MAX_UPLOAD_BYTES
                             : order ? MAX_ORDER_BYTES : document ? MAX_DOCUMENT_BYTES
@@ -863,18 +880,6 @@ final class HttpAdminServer {
             query = target.substring(questionMark + 1);
         }
 
-        // Every state-changing route below is POST, deliberately, so this one check covers all of
-        // them. Placed before routing rather than inside each handler because the failure mode of
-        // forgetting it in a new handler is silent.
-        if (method.equals("POST")) {
-            String crossSite = crossSiteRefusal(headers);
-            if (crossSite != null) {
-                Log.w(TAG, "Refused a state-changing request: " + crossSite);
-                writeResponse(output, 403, "text/plain", bytes("Forbidden: " + crossSite));
-                return;
-            }
-        }
-
         if (path.equals("/") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsPage()));
         } else if (path.equals("/") && method.equals("POST") && isMultipart(headers)) {
@@ -898,6 +903,8 @@ final class HttpAdminServer {
             handleSetting(parseFormBody(headers, body), output);
         } else if (path.equals("/api/certificate") && method.equals("POST")) {
             handleCertificateUpload(headers, body, output, overTls, false);
+        } else if (path.equals("/mqtt-certificate") && method.equals("POST")) {
+            handleMqttClientUpload(headers, body, output, overTls);
         } else if (path.equals("/api/certificate/delete") && method.equals("POST")) {
             handleCertificateDelete(parseFormBody(headers, body), output, false);
         } else if (path.equals("/sensors") && method.equals("GET")) {
@@ -939,12 +946,63 @@ final class HttpAdminServer {
             deleteAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
-        } else if (path.equals("/appearance") && method.equals("GET")) {
-            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppearancePage()));
         } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
             serveStream(output, socket);
+        } else if (path.equals("/settings-file") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSettingsFilePage(null, null)));
+        } else if (path.equals("/settings-file") && method.equals("POST")) {
+            handleSettingsFile(headers, body, output);
+        } else if (path.equals("/api/setup-qr.svg") && method.equals("GET")) {
+            String content = setupQrContent();
+            String svg = content == null ? null : QrCodes.svg(content);
+            if (svg == null) {
+                writeResponse(output, 413, "text/plain", bytes("The settings do not fit in a QR"));
+            } else {
+                writeResponse(output, 200, "image/svg+xml", bytes(svg),
+                        java.util.Collections.singletonMap("Cache-Control", "no-store"));
+            }
+        } else if (path.equals("/app-lock") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppLockPage(null,
+                    "1".equals(queryValue(query, "system")))));
+        } else if (path.equals("/app-lock") && method.equals("POST")) {
+            String refused = saveAppLock(parseFormBody(headers, body));
+            if (refused == null) {
+                // Back to Dashboard, which now says what the panel shows.
+                writeResponse(output, 303, "text/plain", bytes("saved"),
+                        Collections.singletonMap("Location", settingsAt("dashboard")));
+            } else {
+                writeResponse(output, 400, "text/html; charset=utf-8",
+                        bytes(buildAppLockPage(refused, false)));
+            }
+        } else if (path.equals("/alerts") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAlertsPage(null)));
+        } else if (path.equals("/alerts") && method.equals("POST")) {
+            String refused = saveAlerts(parseFormBody(headers, body));
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildAlertsPage(refused == null ? "Saved." : refused)));
+        } else if (path.equals("/page-options") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildPageOptionsPage(null, null)));
+        } else if (path.equals("/page-options") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String refusal = saveSettings(form);
+            String section = form.getOrDefault("section", "");
+            writeResponse(output, refusal == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildPageOptionsPage(refusal, section)));
+            if (refusal == null) {
+                KioskService.reloadConfiguration(context);
+            }
+        } else if (path.equals("/cameras") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
+        } else if (path.equals("/adopt") && method.equals("POST")) {
+            adoptByCode(parseFormBody(headers, body), output);
+        } else if (path.equals("/cameras") && method.equals("POST")) {
+            String refused = saveCamera(parseFormBody(headers, body));
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildCamerasPage(refused)));
         } else if (path.equals("/fleet") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(null, queryValue(query, "scope"))));
@@ -955,7 +1013,7 @@ final class HttpAdminServer {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(refused, form.getOrDefault("scope",
                             queryValue(query, "scope")))));
-        } else if (path.equals("/screensaver") && method.equals("GET")) {
+        } else if (path.equals("/ambient") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
         } else if (path.equals("/playlist") && method.equals("GET")) {
@@ -963,7 +1021,7 @@ final class HttpAdminServer {
                     bytes(buildPlaylistPage(null, queryValue(query, "id"), browseTarget(query),
                             PictureBrowser.pageSize(queryValue(query, "n")))));
         } else if (path.equals("/api/playlists/table") && method.equals("GET")) {
-            // The list of playlists as a fragment, for the screensaver page's script to re-read
+            // The list of playlists as a fragment, for the Ambient page's script to re-read
             // after Use, Delete or Create without the page reloading under the reader.
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(playlistTable(PictureLibrary.get(context).playlists().load())));
@@ -1032,11 +1090,6 @@ final class HttpAdminServer {
         } else if (path.equals("/api/playlists") && method.equals("GET")) {
             writeResponse(output, 200, "application/json; charset=utf-8",
                     bytes(playlistsJson()));
-        } else if (path.equals("/api/pictures/refresh") && method.equals("POST")) {
-            PictureLibrary.get(context).refresh(KioskConfig.screensaverOf(context).source, null);
-            answerPictureChange(query, parseFormBody(headers, body),
-                    "Fetching the pictures again.",
-                    true, output);
         } else if (path.equals("/api/command") && method.equals("POST")) {
             handleCommand(method, query, headers, body, output);
         } else if (path.equals("/api/command") && method.equals("GET")) {
@@ -1055,7 +1108,7 @@ final class HttpAdminServer {
                     "{\"status\":\"rejected\",\"detail\":\"use POST; GET cannot change state\"}"),
                     java.util.Collections.singletonMap("Allow", "POST"));
         } else if (path.equals("/api/fleet/code") && method.equals("POST")) {
-            // Join a fleet and New code (block 11c): the open code, or a new one when none is.
+            // Join a fleet and New code: the open code, or a new one when none is.
             FleetServer.openJoinCode(context);
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
@@ -1073,9 +1126,14 @@ final class HttpAdminServer {
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
         } else if (path.equals("/api/fleet/leave") && method.equals("POST")) {
-            FleetServer.leaveFleet(context, "from the web admin");
+            FleetServer.leaveFleet(context, "from the web admin", true);
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
+        } else if (path.startsWith("/api/fleet/") && !FleetServer.proStatus(context).pro
+                && (path.equals("/api/fleet/screenshot") || path.equals("/api/fleet/identify"))) {
+            // The Fleet page's own requests, refused like the page itself without Pro.
+            writeResponse(output, 403, "application/json", bytes(rejectedJson(
+                    "the Fleet page is Muralis Pro. " + FleetServer.proLine(context))));
         } else if (path.equals("/api/fleet/screenshot") && method.equals("GET")) {
             serveFleetScreenshot(queryValue(query, "panel"), output);
         } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
@@ -1150,6 +1208,8 @@ final class HttpAdminServer {
         Boolean enabled = null;
         String value = null;
         String beacon = null;
+        // Every argument by name too, for the commands with more than the fields above.
+        Map<String, String> extra = new java.util.HashMap<>();
 
         String contentType = headers.getOrDefault("content-type", "");
         if (method.equals("POST") && contentType.contains("application/json") && body.length > 0) {
@@ -1158,6 +1218,13 @@ final class HttpAdminServer {
                 command = envelope.optString("command", "");
                 JSONObject args = envelope.optJSONObject("args");
                 if (args != null) {
+                    java.util.Iterator<String> names = args.keys();
+                    while (names.hasNext()) {
+                        String name = names.next();
+                        if (!args.isNull(name)) {
+                            extra.put(name, String.valueOf(args.opt(name)));
+                        }
+                    }
                     percent = args.optInt("percent", -1);
                     url = args.has("url") ? args.optString("url", null) : null;
                     value = args.has("value") ? args.optString("value", null) : null;
@@ -1193,6 +1260,7 @@ final class HttpAdminServer {
                 params.putAll(parseFormBody(headers, body));
             }
             command = params.getOrDefault("cmnd", "");
+            extra.putAll(params);
             if (params.containsKey("percent")) {
                 try {
                     percent = Integer.parseInt(params.get("percent"));
@@ -1229,7 +1297,7 @@ final class HttpAdminServer {
 
         KioskCommandDispatcher.Result result = kioskService.dispatch(
                 command, new KioskCommandDispatcher.CommandArgs(percent, url, enabled, value,
-                        beacon));
+                        beacon, extra));
         JSONObject response = new JSONObject();
         try {
             response.put("status", result.status);
@@ -1327,9 +1395,82 @@ final class HttpAdminServer {
                 }
                 return null;
             }
+            case "certificates": {
+                String host = form.getOrDefault("host", "");
+                if (!CertificatePins.isHost(host)) {
+                    return "Not done: no such host.";
+                }
+                if ("trust".equals(form.get("action"))) {
+                    String refused = KioskService.trustCertificate(context, host,
+                            form.getOrDefault("sha256", ""));
+                    return refused == null ? null : "Not trusted: " + refused + ".";
+                }
+                if ("forget".equals(form.get("action"))) {
+                    KioskService.forgetCertificate(context, host);
+                    return null;
+                }
+                return "Not done: nothing to do.";
+            }
+            case "browser": {
+                String stale = staleFormRefusal(form, browserBaseline(KioskConfig.browserOf(context)));
+                if (stale != null) {
+                    return stale;
+                }
+                String agent = form.getOrDefault("browser_user_agent", "");
+                String problem = BrowserOptions.checkUserAgent(agent);
+                Integer text = BrowserOptions.parseTextSize(form.get("browser_text_size"));
+                Integer zoom = BrowserOptions.parsePageZoom(form.get("browser_page_zoom"));
+                Integer back = BrowserOptions.parseBackAfter(form.get("browser_back_after"));
+                String user = form.getOrDefault("browser_user", "").trim();
+                if (problem == null && text == null) {
+                    problem = BrowserOptions.TEXT_SIZE_RULE;
+                }
+                if (problem == null && zoom == null) {
+                    problem = BrowserOptions.ZOOM_RULE;
+                }
+                if (problem == null && back == null) {
+                    problem = BrowserOptions.BACK_AFTER_RULE;
+                }
+                if (problem == null) {
+                    problem = BrowserOptions.checkSignInUser(user);
+                }
+                if (problem == null && isTrue(form.getOrDefault("browser_dark", "0"))
+                        && !BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)) {
+                    problem = BrowserOptions.DARK_RULE;
+                }
+                boolean camera = isTrue(form.getOrDefault("browser_page_camera", "0"));
+                boolean microphone = isTrue(form.getOrDefault("browser_page_microphone", "0"));
+                if (problem == null && ((camera && context.checkSelfPermission(
+                        android.Manifest.permission.CAMERA)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                        || (microphone && context.checkSelfPermission(
+                                android.Manifest.permission.RECORD_AUDIO)
+                                != android.content.pm.PackageManager.PERMISSION_GRANTED))) {
+                    problem = BrowserOptions.PERMISSION_RULE;
+                }
+                if (problem != null) {
+                    return "Not saved: " + problem + ".";
+                }
+                KioskConfig.Editor editor = KioskConfig.edit(context)
+                        .browserUserAgent(agent)
+                        .browserTextSize(text)
+                        .browserPageZoom(zoom)
+                        .browserBackAfter(back)
+                        .browserDark(isTrue(form.getOrDefault("browser_dark", "0")))
+                        .browserPageCamera(camera)
+                        .browserPageMicrophone(microphone)
+                        .browserUser(user);
+                String password = form.getOrDefault("browser_password", "");
+                if (!password.isEmpty() && !user.isEmpty()) {
+                    editor.browserPassword(password);
+                }
+                editor.apply();
+                kioskService.browserOptionsSaved();
+                return null;
+            }
             case "panel": {
                 // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
-                // box since 2026-09-27 (Juri: the id is the panel's identity, not the page's).
+                // box since 2026-09-27 (the owner: the id is the panel's identity, not the page's).
                 String stale = staleFormRefusal(form, fresh.deviceId);
                 if (stale != null) {
                     return stale;
@@ -1344,8 +1485,11 @@ final class HttpAdminServer {
                 return null;
             }
             case "mqtt": {
-                String stale = staleFormRefusal(form,
-                        fresh.mqttHost + "|" + fresh.mqttPort + "|" + fresh.mqttUsername);
+                String action = form.get("mqtt_action");
+                if (action != null) {
+                    return saveMqttTrust(action, form, fresh);
+                }
+                String stale = staleFormRefusal(form, mqttBaseline(fresh));
                 if (stale != null) {
                     return stale;
                 }
@@ -1356,7 +1500,9 @@ final class HttpAdminServer {
                 KioskConfig.Editor editor = KioskConfig.edit(context)
                         .mqttHost(form.getOrDefault("mqtt_host", fresh.mqttHost))
                         .mqttPort(brokerPort)
-                        .mqttUsername(form.getOrDefault("mqtt_username", fresh.mqttUsername));
+                        .mqttUsername(form.getOrDefault("mqtt_username", fresh.mqttUsername))
+                        // The whole box posts at once: an unticked switch sends nothing.
+                        .mqttTls(isTrue(form.getOrDefault("mqtt_tls", "0")));
                 String mqttPassword = form.get("mqtt_password");
                 if (mqttPassword != null && !mqttPassword.isEmpty()) {
                     editor.mqttPassword(mqttPassword);
@@ -1411,7 +1557,7 @@ final class HttpAdminServer {
             }
             case "fleet": {
                 // The member port, by the web admin port's rules: a number, 1024-65535, never
-                // the web admin's port, and free when it changes (Juri, 2026-10-08).
+                // the web admin's port, and free when it changes (2026-10-08).
                 String stale = staleFormRefusal(form, Integer.toString(fresh.fleetPort));
                 if (stale != null) {
                     return stale;
@@ -1434,7 +1580,7 @@ final class HttpAdminServer {
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
             // POST /api/setting has always accepted. It covers the stats-overlay switch, the
-            // display and screensaver keys, and since the sensors the sensor switches, their
+            // display and Ambient keys, and since the sensors the sensor switches, their
             // options, the automation switches and the beacon names. See settingScript.
             case "behaviour":
                 // Presence used to carry the meaning, because an unchecked box sends nothing and
@@ -1444,7 +1590,7 @@ final class HttpAdminServer {
                 // being set. No stale-form guard either: the posted value is what the operator
                 // just touched, not what the page remembered. One key per request, and each key
                 // applies on its own, in this order: a hand-built request carrying several keys
-                // gets the earlier ones applied and the first refusal reported. The screensaver
+                // gets the earlier ones applied and the first refusal reported. Ambient
                 // keys are the exception, checked as a set before any of them is stored.
                 for (String key : form.keySet()) {
                     if (key.startsWith("sensor_") && !key.startsWith("sensor_option_")
@@ -1499,7 +1645,7 @@ final class HttpAdminServer {
                             return "Not changed: " + refused + ".";
                         }
                     } else if (key.startsWith("alert_")) {
-                        // The fleet's alerts (block 15), the same keys the Fleet page shares.
+                        // The fleet's alerts, the same keys the Fleet page shares.
                         String refused = KioskConfig.saveAlertSetting(context, key, form.get(key));
                         if (refused != null) {
                             return "Not saved: " + refused + ".";
@@ -1512,27 +1658,24 @@ final class HttpAdminServer {
                             .volumeButtonsDisabled(isTrue(form.get("volume_buttons_disabled")))
                             .apply();
                 }
+                // The status light, by the commands' own check and the same way to the frame; a
+                // colour chosen while the light is off is kept for when it comes on.
+                if (form.containsKey("status_light") || form.containsKey("status_light_color")) {
+                    Integer color = null;
+                    if (form.containsKey("status_light_color")) {
+                        color = StatusLight.parseColor(form.get("status_light_color"));
+                        if (color == null) {
+                            return "Not saved: the " + StatusLight.COLOR_RULE + ".";
+                        }
+                    }
+                    kioskService.setStatusLight(form.containsKey("status_light")
+                            ? isTrue(form.get("status_light"))
+                            : KioskConfig.statusLightOf(context).on, color, -1);
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
                             .apply();
-                }
-                for (String key : new String[] {"appearance_colour", "separators"}) {
-                    if (!form.containsKey(key)) {
-                        continue;
-                    }
-                    String value = form.get(key).trim();
-                    String problem = KioskConfig.checkAppearance(key, value);
-                    if (problem != null) {
-                        return "Not saved: " + problem + ".";
-                    }
-                    KioskConfig.Editor editor = KioskConfig.edit(context);
-                    if (key.equals("appearance_colour")) {
-                        editor.appearanceColour(value);
-                    } else {
-                        editor.separators(value);
-                    }
-                    editor.apply();
                 }
                 if (form.containsKey("http_certificate")) {
                     String value = form.get("http_certificate").trim();
@@ -1783,7 +1926,7 @@ final class HttpAdminServer {
     private String pageStart(String title, String subtitle, String backTo) {
         // A page below the settings page says its name and nothing else: the panel's id, its
         // address and its load belong where somebody is configuring the panel, not on a page
-        // about one feature of it (Juri, 2026-09-11, C15).
+        // about one feature of it (2026-09-11, C15).
         String titles = "<div class=\"titles\"><h1>" + escapeHtml(title) + "</h1>"
                 + (subtitle == null ? "" : "<p class=\"sub\">" + escapeHtml(subtitle) + "</p>")
                 + "</div>";
@@ -1794,17 +1937,13 @@ final class HttpAdminServer {
     /**
      * The same shell around a title block a page has built for itself: the playlist's own name.
      *
-     * <p>The {@code js} class on the root element is set by the one inline script this server
+     * <p>The {@code js} class on the root element is set by an inline script this server
      * emits, in the head so it is there before the first paint: the list-detail layout of the
      * settings page needs scripting to open a section from its list, so the stylesheet applies it
      * only where scripting runs and every other browser gets the accordion, which works with none.
      */
     private String pageStartWith(String titles, String backTo, boolean chip) {
-        // The look chosen on This panel, read by the stylesheet (the scheme) and its rules for
-        // the rows of a list; the page follows a change from the panel on the next stats poll.
-        return "<!doctype html><html lang=\"en\" data-palette=\""
-                + KioskConfig.appearanceColourOf(context) + "\" data-separators=\""
-                + KioskConfig.separatorsOf(context) + "\"><head><meta charset=\"utf-8\">"
+        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                 + "<title>Muralis admin</title><style>" + pageCss + "</style>"
                 + "<script>document.documentElement.className+=' js';</script></head>"
@@ -1812,6 +1951,8 @@ final class HttpAdminServer {
                 + (backTo == null ? "" : iconLink(backTo, "back", "Back"))
                 + titles
                 + (chip ? statusChip() : "")
+                // The settings page's own controls, as on the panel: day and night, the commands.
+                + (chip && backTo == null ? themeToggle() + commandsMenu() : "")
                 + "</header>";
     }
 
@@ -1858,7 +1999,7 @@ final class HttpAdminServer {
         paths.put("display", "<rect x=\"3\" y=\"4\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M8 21h8\"/>");
         paths.put("automations", "<path d=\"M17 21H7a3 3 0 01-3-3v-1h10v1a3 3 0 006 0V5a2 2 0 00-2-2H9a2 2 0 00-2 2v12M11 8h5M11 12h5\"/>");
         paths.put("asleep_off", "<circle cx=\"12\" cy=\"12\" r=\"1\"/><path d=\"M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M5 19a10 10 0 010-14M19 5a10 10 0 010 14M3 3l18 18\"/>");
-        paths.put("screensaver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
+        paths.put("ambient", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
         paths.put("battery", "<rect x=\"3\" y=\"7\" width=\"16\" height=\"10\" rx=\"2\"/><path d=\"M21 11v2M6 10v4M9 10v4\"/>");
         paths.put("power", "<path d=\"M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0zM12 18v3\"/>");
         paths.put("network", "<path d=\"M2 9a15 15 0 0120 0M5.5 12.5a10 10 0 0113 0M9 16a5 5 0 016 0\"/><circle cx=\"12\" cy=\"19\" r=\"1\"/>");
@@ -1886,12 +2027,12 @@ final class HttpAdminServer {
         paths.put("storage", "<rect x=\"3\" y=\"6\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 10h18\"/>");
         // A dashboard: four tiles, two tall and two short, Material's own arrangement. The
-        // monitor on a stand it replaces drew hardware, which no wall panel has (Juri,
-        // 2026-09-24).
+        // monitor on a stand it replaces drew hardware, which no wall panel has
+        // (2026-09-24).
         paths.put("dash", "<path d=\"M4 4h6v7H4zM14 4h6v4h-6zM4 15h6v5H4zM14 12h6v8h-6z\"/>");
         // A hub: four things joined to one in the middle, which is what a broker is. The
-        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them (Juri,
-        // 2026-09-23).
+        // broadcast arcs it replaces were read as Wi-Fi by everybody who saw them
+        // (2026-09-23).
         paths.put("mqtt", "<circle cx=\"12\" cy=\"12\" r=\"3\"/><circle cx=\"5\" cy=\"5\" r=\"1.5\"/>"
                 + "<circle cx=\"19\" cy=\"5\" r=\"1.5\"/><circle cx=\"5\" cy=\"19\" r=\"1.5\"/>"
                 + "<circle cx=\"19\" cy=\"19\" r=\"1.5\"/>"
@@ -1908,9 +2049,12 @@ final class HttpAdminServer {
                 + "M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
         paths.put("saver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
+        // Pop-ups, a screen with a window over it; Integrations, a puzzle piece; the overflow
+        // menu's three dots: the panel's ic_popups, ic_integrations and Material's more_vert.
+        paths.put("popups", "<path d=\"M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zM12 11h6v6h-6z\"/>");
+        paths.put("integrations", "<path d=\"M10 5V4a2 2 0 014 0v1h4a1 1 0 011 1v4h1a2 2 0 010 4h-1v4a1 1 0 01-1 1H6a1 1 0 01-1-1v-4h1a2 2 0 000-4H5V6a1 1 0 011-1z\"/>");
+        paths.put("more", "<path d=\"M12 5h.01M12 12h.01M12 19h.01\" stroke-width=\"3\"/>");
         paths.put("stats", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
-        // A painter's palette with three dots of paint, the panel's ic_appearance.
-        paths.put("appearance", "<path d=\"M12 3a9 9 0 100 18c1 0 1.6-.7 1.6-1.5 0-.4-.2-.8-.5-1.1a1.5 1.5 0 011.1-2.5H16a5 5 0 005-5C21 6.6 17 3 12 3zM7.5 11h.01M10 7h.01M15 7h.01\"/>");
         paths.put("bolt", "<path d=\"M13 2L4 14h7l-1 8 9-12h-7z\"/>");
         paths.put("info", "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 11v5M12 8h.01\"/>");
         paths.put("reboot", "<path d=\"M4 4v6h6M20 20v-6h-6M20 9A8 8 0 006.3 5.3L4 10"
@@ -1931,6 +2075,8 @@ final class HttpAdminServer {
         paths.put("unfold_less", "<path d=\"M7 4l5 5 5-5M7 20l5-5 5 5\"/>");
         paths.put("unfold_more", "<path d=\"M7 9l5-5 5 5M7 15l5 5 5-5\"/>");
         paths.put("sun", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,7c-2.76,0 -5,2.24 -5,5s2.24,5 5,5 5,-2.24 5,-5 -2.24,-5 -5,-5zM2,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1L2,11c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM20,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1h-2c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM11,2v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1L13,2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM11,20v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1v-2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM5.99,4.58c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0s0.39,-1.03 0,-1.41L5.99,4.58zM18.36,16.95c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0 0.39,-0.39 0.39,-1.03 0,-1.41l-1.06,-1.06zM19.42,5.99c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06zM7.05,18.36c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06z\"/>");
+        // Material's brightness_medium, the half-lit sun for following the device.
+        paths.put("auto", "<path fill=\"currentColor\" stroke=\"none\" d=\"M20 15.31L23.31 12 20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69zM12 18V6c3.31 0 6 2.69 6 6s-2.69 6-6 6z\"/>");
         paths.put("moon", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,3c-4.97,0 -9,4.03 -9,9s4.03,9 9,9 9,-4.03 9,-9c0,-0.46 -0.04,-0.92 -0.1,-1.36 -0.98,1.37 -2.58,2.26 -4.4,2.26 -2.98,0 -5.4,-2.42 -5.4,-5.4 0,-1.81 0.89,-3.42 2.26,-4.4C12.92,3.04 12.46,3 12,3z\"/>");
         paths.put("theme", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
                 + "<path d=\"M12 3a9 9 0 010 18z\" fill=\"currentColor\"/>");
@@ -1963,7 +2109,7 @@ final class HttpAdminServer {
 
     /**
      * The settings page: one list of sections, each a glyph, its name and a one-line summary of
-     * what is stored, opening in place (Juri's drawing of 2026-09-23). Inside are the essentials;
+     * what is stored, opening in place (the owner's drawing of 2026-09-23). Inside are the essentials;
      * a section with more behind it ends with a text button that opens its own page.
      *
      * <p>The message about a refused save goes inside the section it is about, and that section
@@ -1982,58 +2128,69 @@ final class HttpAdminServer {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
 
+        // In groups under a heading each, as Android's settings are, the same as the panel (the
+        // UI round, 2026-10-15); About this panel stands alone at the end.
         java.util.List<String[]> sections = new java.util.ArrayList<>();
         sections.add(new String[] {"dashboard", "dash", "Dashboard",
-                dashboardSummary(config), dashboardBody(config, notice, noticeSection)});
+                dashboardSummary(config), dashboardBody(config, notice, noticeSection),
+                "What the panel shows"});
+        sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody(),
+                "Screen"});
+        sections.add(new String[] {"ambient", "saver", "Ambient", screensaverSummary(),
+                screensaverBody(), "Screen"});
+        sections.add(new String[] {"popups", "popups", "Pop-ups",
+                PopupCameras.summary(KioskConfig.popupCamerasOf(context)), popupsBody(), "Screen"});
+        sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
+                sensorsSectionBody(), "Automation"});
+        sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
+                automationsSectionBody(), "Automation"});
+        sections.add(new String[] {"integrations", "integrations", "Integrations", "Coming soon",
+                integrationsBody(), "Automation"});
         sections.add(new String[] {"mqtt", "mqtt", "MQTT",
                 config.mqttHost.isEmpty() ? "Not configured" : config.mqttHost + ":" + config.mqttPort,
-                mqttBody(config, notice, noticeSection)});
-        sections.add(new String[] {"webadmin", "web", "Local web admin",
+                mqttBody(config, notice, noticeSection), "Connections"});
+        sections.add(new String[] {"webadmin", "web", "Web admin",
                 "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
                         + (config.webAdminEnabled ? "" : " · off"),
-                webAdminBody(config, notice, noticeSection)});
+                webAdminBody(config, notice, noticeSection), "Connections"});
         sections.add(new String[] {"fleet", "fleet", "Fleet", FleetServer.summaryOf(config.fleetPort),
-                fleetBody(config, notice, noticeSection)});
-        sections.add(new String[] {"sequences", "esc", "Escape sequences",
-                sequencesSummary(config), sequencesBody(config, notice, noticeSection)});
-        sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
-        sections.add(new String[] {"screensaver", "saver", "Screensaver", screensaverSummary(),
-                screensaverBody()});
-        sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
-                sensorsSectionBody()});
-        sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
-                automationsSectionBody()});
-        sections.add(new String[] {"quick", "reload", "Quick actions",
-                "Reboot · Reload · Restart", quickActionsBody()});
-        sections.add(new String[] {"panel", "panel", "This panel", config.deviceId,
-                panelBody(config, notice, noticeSection)});
+                fleetBody(config, notice, noticeSection), "Connections"});
+        sections.add(new String[] {"sequences", "esc", "Way out",
+                sequencesSummary(config), sequencesBody(config, notice, noticeSection),
+                "Security"});
+        sections.add(new String[] {"panel", "panel", "About this panel", config.deviceId,
+                panelBody(config, notice, noticeSection), ""});
 
         StringBuilder nav = new StringBuilder("<nav class=\"sections\" aria-label=\"Sections\">");
         StringBuilder boxes = new StringBuilder("<div class=\"boxes\">");
+        String group = null;
         for (String[] section : sections) {
             String key = section[0];
+            if (!section[5].equals(group)) {
+                // A group's heading, Material's list subheader, over its own list of segments.
+                boxes.append(group == null ? "" : "</div>").append("<div class=\"grp\">");
+                group = section[5];
+                if (!group.isEmpty()) {
+                    nav.append("<p class=\"subhead\">").append(escapeHtml(group)).append("</p>");
+                    boxes.append("<h2 class=\"subhead\">").append(escapeHtml(group)).append("</h2>");
+                } else {
+                    nav.append("<p class=\"subhead gap\"></p>");
+                }
+            }
             boolean open = notice != null && key.equals(boxOf(noticeSection));
             nav.append("<a class=\"item\" href=\"#box-").append(key).append("\" data-box=\"box-")
                     .append(key).append("\">").append(summaryRow(section[1], section[2],
                             section[3], key)).append("</a>");
-            // This panel carries the theme switch beside its name, as the panel does: in the
-            // accordion's row before the chevron, and in the open card at the right of the
-            // title (Juri, 2026-09-27, "copy the app 1:1"; beside Display until 2026-10-04,
-            // when the look's other choices came to This panel).
-            String action = key.equals("panel") ? themeButton() : "";
             boxes.append("<details class=\"box\" id=\"box-").append(key).append("\"")
                     .append(open ? " open" : "").append("><summary>")
                     .append(summaryRow(section[1], section[2], section[3], null))
-                    .append(action)
                     .append("<span class=\"chev\">").append(glyph("down")).append("</span>")
                     .append("</summary><div class=\"body\" data-title=\"")
                     .append(escapeHtml(section[2])).append("\">")
-                    .append(action.isEmpty() ? "" : action.replace("class=\"ib themecycle\"",
-                            "class=\"ib themecycle sectionaction\""))
                     .append(section[4]).append("</div></details>");
         }
         nav.append("</nav>");
-        boxes.append("</div>");
+        boxes.append("</div></div>");
         html.append("<div class=\"menu\">").append(nav).append(boxes).append("</div>");
 
         html.append(commandScript);
@@ -2061,7 +2218,11 @@ final class HttpAdminServer {
      * that section is about and leaves out what the page already shows: the device id is the app
      * bar's subtitle, the uptime is in the stats readout.
      */
-    private static String dashboardSummary(KioskConfig config) {
+    private String dashboardSummary(KioskConfig config) {
+        // An app instead of the page says so, as "The panel shows" does.
+        if (!KioskConfig.appLockOf(context).isEmpty()) {
+            return "App: " + KioskConfig.appLockLabelOf(context);
+        }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
     }
@@ -2090,7 +2251,8 @@ final class HttpAdminServer {
     private String screensaverSummary() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         return ScreensaverPolicy.OFF.equals(saver.mode) ? "Off"
-                : ScreensaverPolicy.modeName(saver.mode) + " · after " + saver.idleSeconds + " s";
+                : ScreensaverPolicy.modeName(saver.mode) + " · after "
+                        + ScreensaverPolicy.describeDuration(saver.idleSeconds);
     }
 
     /** "n of m on" for the Sensors section and page; admin_stats.js keeps it current. */
@@ -2183,7 +2345,7 @@ final class HttpAdminServer {
      * The list-detail shell the Sensors and Automations pages share, the settings page's own
      * shape from 840 px: the list at the left, the chosen item's page at the right. Below that
      * one of the two shows, which one {@code detailPage} says, and from 600 px the column is
-     * no wider than 640 px (Juri, 2026-09-27).
+     * no wider than 640 px (2026-09-27).
      */
     private String listDetail(String kind, boolean detailPage, String nav, String detail) {
         return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
@@ -2213,7 +2375,7 @@ final class HttpAdminServer {
             if (one == null || !one.optBoolean("active")) {
                 continue;
             }
-            // The switch on the row too (Juri, 2026-09-27): switched off, admin_stats.js takes
+            // The switch on the row too (2026-09-27): switched off, admin_stats.js takes
             // the row out at the next poll; the Sensors page switches it on again.
             rows.append(navRow(listRow(def.glyph, def.name, null, one.optString("reading", ""),
                     "sensor-" + def.id + "-value", sensorSwitch(def, true, "-home"), false),
@@ -2253,7 +2415,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * This panel: its name, the volume buttons, then Appearance, the stats and log, the version
+     * About this panel: its name, then the stats and log, the version
      * and the legal pages as rows.
      */
     private String panelBody(KioskConfig config, String notice, String noticeSection) {
@@ -2264,19 +2426,7 @@ final class HttpAdminServer {
                         " data-setting=\"device_id\"", null)
                 + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>"
-                // The volume buttons, the panel's own place for them (Juri, 2026-10-05).
-                + "<div class=\"switches\">"
-                + switchRow("volume-buttons-disabled", "Disable volume buttons",
-                        " data-setting=\"volume_buttons_disabled\"",
-                        KioskConfig.volumeButtonsDisabled(context))
-                + "</div>"
                 + "<ul class=\"list gap\">"
-                // The look on a page of its own (Juri, 2026-10-07), as the panel has it.
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/appearance\"><span class=\"lead\">"
-                + glyph("appearance") + "</span><span class=\"text\"><span class=\"h\">Appearance"
-                + "</span><span class=\"s\" id=\"sum-appearance\">"
-                + escapeHtml(KioskConfig.appearanceSummary(config.appearanceColour, config.separators))
-                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
                 + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
@@ -2286,6 +2436,10 @@ final class HttpAdminServer {
                 + linkRow("/api/screenshot", "open", "Screenshot",
                         KioskRuntimeState.httpAdminAddress() + "/api/screenshot", null, "")
                         .replace("<span class=\"s\"", "<span class=\"s wrap\"")
+                + "<li class=\"link\"><a class=\"rowlink\" href=\"/settings-file\"><span class=\"lead\">"
+                + glyph("download") + "</span><span class=\"text\"><span class=\"h\">Settings file"
+                + "</span><span class=\"s\">Export, import, a setup QR for a new tablet</span></span>"
+                + "</a><span class=\"trail\">" + glyph("next") + "</span></li>"
                 + linkRow("/api/diagnostics", "download", "Download diagnostics",
                         KioskRuntimeState.httpAdminAddress() + "/api/diagnostics", null, "")
                         .replace("<span class=\"s\"", "<span class=\"s wrap\"")
@@ -2384,45 +2538,6 @@ final class HttpAdminServer {
     private static boolean webPage(Sensors.Def def) {
         return def.page && (def == Sensors.MOVEMENT || def == Sensors.CAMERA
                 || def == Sensors.BLUETOOTH || def == Sensors.NFC);
-    }
-
-    /**
-     * Appearance, a page of its own under This panel since 2026-10-07, as the panel has it: the
-     * Colour with its dot and the Separators (Juri, 2026-10-04), a panel each, side by side from
-     * 840 px. Each stores the moment it is chosen (admin_setting.js), which also re-colours the
-     * page at once.
-     */
-    private String buildAppearancePage() {
-        // The two cached readers, not KioskConfig.load, which decrypts every secret.
-        String colourNow = KioskConfig.appearanceColourOf(context);
-        String separatorsNow = KioskConfig.separatorsOf(context);
-        StringBuilder colours = new StringBuilder();
-        for (String colour : Palettes.COLOURS) {
-            // Its primary, light and dark, for the page's theme.
-            String[] lightOf = Palettes.colours(colour, false);
-            String[] darkOf = Palettes.colours(colour, true);
-            String dot = "<i class=\"dot\" style=\"--dot-light:" + (lightOf == null ? "" : lightOf[7])
-                    + ";--dot-dark:" + (darkOf == null ? "" : darkOf[7]) + "\"></i>";
-            colours.append(radioOf("appearance_colour", "appearance_colour", colour, colourNow,
-                    dot + "<span class=\"text\"><span class=\"h\">"
-                            + KioskConfig.colourLabel(colour) + "</span></span>"));
-        }
-        StringBuilder separators = new StringBuilder();
-        for (String choice : KioskConfig.SEPARATOR_CHOICES) {
-            separators.append(radioOf("separators", "separators", choice, separatorsNow,
-                    "<span class=\"text\"><span class=\"h\">"
-                            + KioskConfig.separatorsLabel(choice) + "</span></span>"));
-        }
-        return pageStart("Appearance", null, settingsAt("panel"))
-                + "<div class=\"two\">" + choiceCard("appearance_colour", "Colour", colours.toString())
-                + choiceCard("separators", "Separators", separators.toString()) + "</div>"
-                + pageEnd();
-    }
-
-    /** A card whose title names its radios, for a screen reader too. */
-    private static String choiceCard(String key, String title, String radios) {
-        return "<section class=\"card\"><h2 id=\"opt-" + key + "-label\">" + title + "</h2>"
-                + radioGroup(key, radios) + "</section>";
     }
 
     private static String choice(String key, String label, String radios) {
@@ -2540,7 +2655,7 @@ final class HttpAdminServer {
                         .replaceFirst("<span class=\"h\">" + java.util.regex.Matcher.quoteReplacement(escapeHtml(label)),
                                 java.util.regex.Matcher.quoteReplacement("<span class=\"h\">" + words)) + "</ul>";
         // The calibration and the test while asleep are the panel's alone: both need a hand
-        // at the glass, and a remote button for that is a strange thing (Juri, 2026-09-27).
+        // at the glass, and a remote button for that is a strange thing (2026-09-27).
         if (!one.optBoolean("available") || def.kind == Sensors.Kind.PANEL
                 || (def.kind == Sensors.Kind.PERMISSION && !one.optBoolean("permitted"))) {
             html.append(head).append("</section>");
@@ -2853,6 +2968,15 @@ final class HttpAdminServer {
             }
             events.append("</div>");
         }
+        // The clock, which every panel has: "At" a time of day.
+        offered |= Automations.TIME.equals(chosenSensor);
+        sensorOptions.append(selectOption(Automations.TIME, Automations.TIME_NAME, chosenSensor));
+        events.append("<div class=\"radios events\" data-sensor=\"").append(Automations.TIME)
+                .append("\" role=\"radiogroup\" aria-label=\"").append(Automations.TIME_NAME)
+                .append(" events\"><label class=\"radio one\"><input type=\"radio\" name=\"event_")
+                .append(Automations.TIME).append("\" value=\"at\" checked data-level=\"")
+                .append(Automations.TIME_UNIT).append("\" data-holds=\"\" data-tag=\"\">At</label>")
+                .append("</div>");
         if (!offered && !rule.sensor.isEmpty()) {
             // A rule on a sensor this device lacks keeps it: saving the rule for its name must
             // not move it to the first sensor of the menu (review, 2026-10-01).
@@ -2895,6 +3019,9 @@ final class HttpAdminServer {
                 + fieldWithId("a-level" + sfx, "number", "level", "Level",
                         Double.isNaN(rule.level) ? "" : Automations.number(rule.level),
                         " step=\"any\" min=\"0\"", null)
+                + fieldWithId("a-at" + sfx, "time", "at", "At",
+                        Automations.TIME.equals(rule.sensor) && !Double.isNaN(rule.level)
+                                ? Automations.clock((int) rule.level) : "07:00", "", null)
                 + fieldWithId("a-minutes" + sfx, "number", "minutes", "For (minutes)",
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
@@ -2916,7 +3043,7 @@ final class HttpAdminServer {
                         typedTo != null ? typedTo
                                 : rule.windowed() ? Automations.clock(rule.onlyTo) : "22:00", "", null)
                 + "</div></section>"
-                // One row, as the panel lays it out (Juri, 2026-09-28): Delete at the start,
+                // One row, as the panel lays it out (2026-09-28): Delete at the start,
                 // Cancel then Save at the end, ordered by the stylesheet. Save is the form's
                 // first submit button in the DOM, so Enter in a box saves (review of
                 // 2026-09-27: Enter in the Name box used to post to Delete). Delete asks first.
@@ -2928,6 +3055,12 @@ final class HttpAdminServer {
                         + " data-confirm=\"" + escapeHtml(deleteQuestion(
                                 stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
+    }
+
+    /** A "Time of day" rule's time box to its level, the minute of the day; NaN when it is none. */
+    private static double timeLevel(String typed) {
+        int minutes = Automations.minutesOf(typed);
+        return minutes < 0 || minutes >= 24 * 60 ? Double.NaN : minutes;
     }
 
     /** The first sensor the editor offers, for a new rule on a panel with no proximity sensor. */
@@ -3200,7 +3333,8 @@ final class HttpAdminServer {
         rule.name = form.getOrDefault("name", "");
         rule.sensor = form.getOrDefault("sensor", "");
         rule.event = form.getOrDefault("event_" + rule.sensor, "");
-        rule.level = parseLevel(form.get("level"));
+        rule.level = Automations.TIME.equals(rule.sensor)
+                ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
         rule.tag = form.getOrDefault("tag", "").trim();
         rule.action = form.getOrDefault("action", "");
@@ -3291,7 +3425,7 @@ final class HttpAdminServer {
     /** System stats and the log, on their own page under This panel. */
     private String buildStatsPage() {
         KioskConfig config = KioskConfig.load(context);
-        // Two panels, as the panel's page has them (Juri, 2026-09-28): side by side from 840 px,
+        // Two panels, as the panel's page has them (2026-09-28): side by side from 840 px,
         // one under the other below, the way every page of several panels without a menu is.
         return pageStart("System stats and log", null, settingsAt("panel"))
                 + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
@@ -3301,8 +3435,8 @@ final class HttpAdminServer {
     }
 
     /**
-     * The screen as the wall shows it, a PNG, or the refusal in the usual JSON with 409: the
-     * panel's switch is off, or no window of the app is in front. See KioskService.captureScreen.
+     * The screen as the wall shows it, a PNG, or the refusal in the usual JSON with 409 when no
+     * window of the app is in front. See KioskService.captureScreen.
      */
     private void serveScreenshot(OutputStream output) throws IOException {
         KioskService.Screenshot shot = kioskService.captureScreen();
@@ -3317,7 +3451,7 @@ final class HttpAdminServer {
 
     /**
      * {@code GET /api/fleet/screenshot?panel=<id>}: one member's screen as the Fleet page's
-     * thumbnail (block 16), this panel's through its own capture and another's fetched from
+     * thumbnail, this panel's through its own capture and another's fetched from
      * its member endpoint, a JPEG with the long side at most 1280 px, or the refusal in the
      * usual JSON: 404 for an id not in the fleet, 409 when the panel did not answer or
      * refused. Never a stale picture: nothing is kept between requests.
@@ -3496,7 +3630,31 @@ final class HttpAdminServer {
     // ---- the bodies, each the section's essentials in the texts the page has always had
 
     private String dashboardBody(KioskConfig config, String notice, String noticeSection) {
-        return sharedLine("dashboard") + sectionFormStart("dashboard", notice, noticeSection)
+        // What the panel shows, first and as a choice, as on the panel (the UI round,
+        // 2026-10-15): a web page, its address and its options below, or an app, App lock,
+        // chosen on its own page. "A web page" switches App lock off and comes back here.
+        String app = KioskConfig.appLockOf(context);
+        boolean showsApp = !app.isEmpty();
+        String shows = "<p class=\"label\" id=\"opt-shows-label\">The panel shows</p>"
+                + "<div class=\"segmented\" role=\"group\" aria-labelledby=\"opt-shows-label\">"
+                + "<form method=\"post\" action=\"/app-lock\"><input type=\"hidden\""
+                + " name=\"app_lock\" value=\"\"><button type=\"submit\" aria-pressed=\""
+                + !showsApp + "\">" + (showsApp ? "" : glyph("check")) + "A web page</button></form>"
+                + "<a href=\"/app-lock\" role=\"button\" aria-pressed=\"" + showsApp + "\">"
+                + (showsApp ? glyph("check") : "") + "An app</a></div>";
+        if (showsApp) {
+            String problem = AppLock.problem(context, app);
+            return shows
+                    + "<p class=\"appline\">" + escapeHtml(KioskConfig.appLockLabelOf(context))
+                    + "</p>"
+                    + (problem == null ? "" : "<p class=\"hint bad\">"
+                            + escapeHtml(Character.toUpperCase(problem.charAt(0))
+                                    + problem.substring(1)) + ".</p>")
+                    + "<div class=\"actions\"><a class=\"onward\" href=\"/app-lock\">Choose the"
+                    + " app</a></div>";
+        }
+        // The fleet shares the address, not the choice above it, so its line stands here.
+        return shows + sharedLine("dashboard") + sectionFormStart("dashboard", notice, noticeSection)
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
@@ -3511,39 +3669,601 @@ final class HttpAdminServer {
                 + sectionFormEnd("Save",
                         "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
                                 + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
-                                + "formmethod=\"post\">Open once</button>");
+                                + "formmethod=\"post\">Open once</button>")
+                + "<div class=\"actions\"><a class=\"onward\" href=\"/page-options\">Page options"
+                + "</a></div>";
+    }
+
+    /**
+     * Page options, a page of its own as on the panel (the UI round, 2026-10-15; inline in
+     * the Dashboard box until then): the browser options and the trusted certificates, each
+     * form posting back here.
+     */
+    private String buildPageOptionsPage(String notice, String noticeSection) {
+        return pageStart("Page options", null, settingsAt("dashboard"))
+                + "<div class=\"card\">" + browserForm(notice, noticeSection) + "</div>"
+                + "<div class=\"card gap\">" + certificatesBox(notice, noticeSection) + "</div>"
+                + pageEnd();
+    }
+
+    /**
+     * App lock, a page of its own as on the panel: Off or one installed app, and
+     * whether Muralis may display over other apps, which only the panel itself can allow.
+     */
+    private String buildAppLockPage(String notice, boolean withSystem) {
+        StringBuilder html = new StringBuilder(pageStart("App lock", null,
+                settingsAt("dashboard")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        String chosen = KioskConfig.appLockOf(context);
+        html.append("<form method=\"post\" action=\"/app-lock\" class=\"card\">"
+                + "<h2>The app this panel shows</h2><p class=\"hint\">One app instead of the web"
+                + " page, opened again whenever it closes. Your corner combinations work over it."
+                + "</p>");
+        if (!AppLock.canDrawOver(context)) {
+            html.append("<p class=\"hint bad\">Muralis needs to display over other apps, or"
+                    + " your corner taps cannot reach it over the app. Allow it on the panel:"
+                    + " Dashboard, An app, Allow.</p>");
+        }
+        html.append("<p><a href=\"/app-lock").append(withSystem ? "" : "?system=1")
+                .append("\">").append(withSystem ? "Hide the apps that came with the device"
+                        : "Show the apps that came with the device").append("</a></p>");
+        // No "Off" here: the web page is the other half of Dashboard's "The panel shows".
+        StringBuilder radios = new StringBuilder();
+        boolean listed = chosen.isEmpty();
+        for (AppLock.App app : AppLock.launchable(context, withSystem)) {
+            radios.append(plainRadio("app_lock", app.packageName, chosen, app.label));
+            listed |= app.packageName.equals(chosen);
+        }
+        if (!listed) {
+            boolean installed = context.getPackageManager()
+                    .getLaunchIntentForPackage(chosen) != null;
+            radios.append(plainRadio("app_lock", chosen, chosen, KioskConfig.appLockLabelOf(context)
+                    + (installed ? "" : " (not installed)")));
+        }
+        if (radios.length() == 0) {
+            // An empty list says why and what to do, not nothing.
+            html.append("<div class=\"empty\"><p class=\"h\">No apps of your own on this panel</p>"
+                    + "<p class=\"s\">Install one, or show the apps that came with the device."
+                    + "</p></div>");
+        }
+        html.append("<div class=\"radios\" role=\"radiogroup\" aria-label=\"The app\">")
+                .append(radios).append("</div><div class=\"actions\"><button type=\"submit\""
+                        + " class=\"primary\">Save</button></div></form>");
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String plainRadio(String name, String value, String current, String label) {
+        return "<label class=\"radio\"><input type=\"radio\" name=\"" + name + "\" value=\""
+                + escapeHtml(value) + "\"" + (value.equals(current) ? " checked" : "") + ">"
+                + escapeHtml(label) + "</label>";
+    }
+
+    /** Stores App lock's choice: Off, or an installed app with something to open. */
+    private String saveAppLock(Map<String, String> form) {
+        String chosen = form.getOrDefault("app_lock", "").trim();
+        if (context.getPackageName().equals(chosen)) {
+            return "Not saved: Muralis cannot lock the panel to itself.";
+        }
+        if (!chosen.isEmpty()
+                && context.getPackageManager().getLaunchIntentForPackage(chosen) == null) {
+            return "Not saved: no installed app " + chosen + " has anything to open.";
+        }
+        if (AppLock.doors(context).contains(chosen)) {
+            return "Not saved: " + chosen + " opens Android's settings, a home screen or the"
+                    + " Play Store, which would hand the panel's whole device to anyone.";
+        }
+        KioskConfig.edit(context).appLock(chosen).apply();
+        KioskService.appLockChanged();
+        KioskService.publishTelemetrySoon(context);
+        return null;
+    }
+
+    /**
+     * The pop-up cameras, a page of their own: each camera's form with Save and
+     * Remove, then an empty one to add a camera. The panel's Pop-up cameras page is the same.
+     */
+    private String buildCamerasPage(String notice) {
+        StringBuilder html = new StringBuilder(pageStart("Pop-up cameras", null,
+                settingsAt("popups")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        html.append("<div class=\"card\"><p class=\"hint\">A camera pops up on demand"
+                + " (camera.show) or on a doorbell's trigger (camera.trigger), by its mode on this"
+                + " panel.</p></div>");
+        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(context);
+        for (PopupCameras.Camera camera : cameras) {
+            html.append(cameraForm(camera));
+        }
+        if (cameras.size() < PopupCameras.MAX_CAMERAS) {
+            html.append(cameraForm(null));
+        }
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String cameraForm(PopupCameras.Camera camera) {
+        boolean fresh = camera == null;
+        StringBuilder modes = new StringBuilder();
+        for (String[] mode : PopupCameras.MODES) {
+            modes.append(selectOption(mode[0], mode[1],
+                    fresh ? PopupCameras.TRIGGER : camera.mode));
+        }
+        String sfx = fresh ? "-new" : "-" + Integer.toHexString(camera.name.hashCode());
+        return "<form method=\"post\" action=\"/cameras\" class=\"card\">"
+                + "<h2>" + (fresh ? "Add a camera" : escapeHtml(camera.name)) + "</h2>"
+                + "<input type=\"hidden\" name=\"was\" value=\""
+                + (fresh ? "" : escapeHtml(camera.name)) + "\">"
+                + fieldWithId("c-name" + sfx, "text", "name", "Name", fresh ? "" : camera.name,
+                        "", null).replace(MACHINE_TEXT, "")
+                + fieldWithId("c-url" + sfx, "text", "url", "Address", fresh ? "" : camera.url,
+                        " inputmode=\"url\"", "A snapshot, an MJPEG stream or a camera page.")
+                + selectField("c-mode" + sfx, "mode", "Mode on this panel", null,
+                        modes.toString(), null)
+                + fieldWithId("c-seconds" + sfx, "number", "seconds",
+                        "Shows for (seconds, 0 = until touched)",
+                        String.valueOf(fresh ? Popup.DEFAULT_SECONDS : camera.seconds),
+                        " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
+                + fieldWithId("c-cooldown" + sfx, "number", "cooldown", "Cooldown (seconds)",
+                        String.valueOf(fresh ? PopupCameras.DEFAULT_COOLDOWN : camera.cooldown),
+                        " min=\"0\" max=\"" + PopupCameras.MAX_COOLDOWN + "\"", null)
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\" name=\"what\""
+                + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
+                + (fresh ? "" : "<button type=\"submit\" class=\"danger\" name=\"what\""
+                        + " value=\"remove\">Remove</button>")
+                + "</div></form>";
+    }
+
+    /** The file read for Import, waiting for Apply, with its token; one at a time. */
+    private volatile SettingsTransfer.Contents pendingImport;
+    private volatile String pendingImportToken;
+
+    /** The release's own provisioning values, as the site's generate-download.py writes them. */
+    private static final String SETUP_APK =
+            "https://muralis.spazio17.org/download/muralis-latest.apk";
+    private static final String SETUP_CHECKSUM = "fnYZamPm8amKEk-zBylW0cke1QP2FIC9fEIh0w6d_ZE";
+    /** What a QR at error correction M holds with room to spare; more is refused. */
+    private static final int SETUP_QR_MAX_BYTES = 2_300;
+
+    /**
+     * The setup QR for a new tablet: the site's provisioning values and, in the admin
+     * extras, this panel's settings file without passwords; null when it does not fit.
+     */
+    private String setupQrContent() {
+        try {
+            JSONObject extras = new JSONObject().put("muralis_settings_z",
+                    SettingsTransfer.packed(SettingsTransfer.export(
+                            KioskConfig.transferableSettings(context), null, null, appVersionName())));
+            String content = new JSONObject()
+                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME",
+                            "org.spazio17.muralis/.KioskDeviceAdminReceiver")
+                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION",
+                            SETUP_APK)
+                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM",
+                            SETUP_CHECKSUM)
+                    .put("android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED", true)
+                    .put("android.app.extra.PROVISIONING_SKIP_ENCRYPTION", true)
+                    .put("android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE", extras)
+                    .toString();
+            return content.getBytes(StandardCharsets.UTF_8).length > SETUP_QR_MAX_BYTES
+                    ? null : content;
+        } catch (JSONException impossible) {
+            return null;
+        }
+    }
+
+    /**
+     * The settings file page: Export (passwords only when asked, then encrypted with
+     * a passphrase typed twice), Import (the file, then the list of what changes and Apply),
+     * and the setup QR for a new tablet.
+     */
+    private String buildSettingsFilePage(String notice, String preview) {
+        StringBuilder html = new StringBuilder(pageStart("Settings file", null,
+                settingsAt("panel")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        if (preview != null) {
+            html.append(preview);
+        }
+        html.append("<form method=\"post\" action=\"/settings-file\" class=\"card\">"
+                + "<h2>Export</h2><input type=\"hidden\" name=\"what\" value=\"export\">"
+                + "<p class=\"hint\">Every setting you set, the corner combinations included,"
+                + " never this panel's name, keys, fleet, certificates or pictures.</p>"
+                + "<div class=\"switches\">" + switchRow("include-passwords", "Include passwords",
+                        " name=\"include_passwords\" value=\"1\"", false) + "</div>"
+                + field("password", "passphrase", "Passphrase for the passwords", "", "",
+                        "At least " + SettingsTransfer.MIN_PASSPHRASE + " characters.")
+                + field("password", "passphrase_again", "The passphrase again", "", "", null)
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\">Export"
+                + "</button></div></form>");
+        html.append("<form method=\"post\" action=\"/settings-file\" enctype=\"multipart/form-data\""
+                + " class=\"card\"><h2>Import</h2>"
+                + "<input type=\"hidden\" name=\"what\" value=\"read\">"
+                + "<p class=\"hint\">The file is read first; nothing changes until Apply.</p>"
+                + "<div class=\"field\"><input type=\"file\" name=\"file\" accept=\".json,application/json\""
+                + " id=\"settings-file-input\" aria-label=\"The settings file\"></div>"
+                + field("password", "passphrase", "Passphrase, when the file carries passwords",
+                        "", "", null)
+                + "<div class=\"actions\"><button type=\"submit\" class=\"tonal\">Read the file"
+                + "</button></div></form>");
+        boolean fits = setupQrContent() != null;
+        html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
+                + "<p class=\"hint\">Scanned during a new tablet's first setup, it installs Muralis"
+                + " as the device owner and starts it with these settings, never the passwords.</p>"
+                + (fits ? "<img src=\"/api/setup-qr.svg\" alt=\"Setup QR with these settings\""
+                        + " width=\"320\" height=\"320\">"
+                        : "<p class=\"hint bad\">These settings do not fit in a QR (it holds about"
+                        + " 2 KB packed, the rules take the most). Set the tablet up with the plain QR on"
+                        + " the website, then import the file here.</p>")
+                + "</div>");
+        return html.append(pageEnd()).toString();
+    }
+
+    /** Export, read and apply, the settings file page's three posts. */
+    private void handleSettingsFile(Map<String, String> headers, byte[] body, OutputStream output)
+            throws IOException {
+        Map<String, String> form;
+        String fileText = null;
+        if (isMultipart(headers)) {
+            form = new HashMap<>();
+            String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
+            for (MultipartForm.Part part : boundary == null
+                    ? java.util.Collections.<MultipartForm.Part>emptyList()
+                    : MultipartForm.parse(body, boundary)) {
+                if ("file".equals(part.name)) {
+                    fileText = new String(part.data, StandardCharsets.UTF_8);
+                } else {
+                    form.put(part.name, new String(part.data, StandardCharsets.UTF_8));
+                }
+            }
+        } else {
+            form = parseFormBody(headers, body);
+        }
+        String what = form.getOrDefault("what", "");
+        if ("export".equals(what)) {
+            boolean withPasswords = isTrue(form.getOrDefault("include_passwords", "0"));
+            String passphrase = form.getOrDefault("passphrase", "");
+            if (withPasswords && passphrase.length() < SettingsTransfer.MIN_PASSPHRASE) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not exported: the passphrase needs at least "
+                                + SettingsTransfer.MIN_PASSPHRASE + " characters.", null)));
+                return;
+            }
+            if (withPasswords && !passphrase.equals(form.getOrDefault("passphrase_again", ""))) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not exported: the two passphrases differ.", null)));
+                return;
+            }
+            String file = SettingsTransfer.export(KioskConfig.transferableSettings(context),
+                    withPasswords ? KioskConfig.transferableSecrets(context) : null,
+                    withPasswords ? passphrase : null, appVersionName());
+            Map<String, String> extra = new HashMap<>();
+            extra.put("Content-Disposition", "attachment; filename=\"muralis-settings-"
+                    + KioskConfig.deviceIdOf(context) + ".json\"");
+            extra.put("Cache-Control", "no-store");
+            // Indented, one setting a line, so the file reads and edits in any text editor; the
+            // setup QR packs the compact form.
+            writeResponse(output, 200, "application/json; charset=utf-8",
+                    bytes(TinyJson.writeIndented(TinyJson.parse(file))), extra);
+            return;
+        }
+        if ("read".equals(what)) {
+            if (fileText == null || fileText.isEmpty()) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not read: no file was chosen.", null)));
+                return;
+            }
+            SettingsTransfer.Contents contents = SettingsTransfer.read(fileText,
+                    form.getOrDefault("passphrase", ""));
+            if (contents.problem != null) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not read: " + contents.problem + ".", null)));
+                return;
+            }
+            Map<String, String> changes = SettingsImport.changes(context, contents);
+            String token = Long.toHexString(new java.security.SecureRandom().nextLong());
+            pendingImport = contents;
+            pendingImportToken = token;
+            StringBuilder list = new StringBuilder("<div class=\"card\"><h2>What would change</h2>");
+            if (changes.isEmpty()) {
+                list.append("<p class=\"hint\">Nothing: this panel has these settings already.</p>");
+            } else {
+                list.append("<ul class=\"plain\">");
+                for (Map.Entry<String, String> change : changes.entrySet()) {
+                    list.append("<li><code>").append(escapeHtml(change.getKey())).append("</code>: ")
+                            .append(escapeHtml(change.getValue())).append("</li>");
+                }
+                list.append("</ul><form method=\"post\" action=\"/settings-file\">"
+                        + "<input type=\"hidden\" name=\"what\" value=\"apply\">"
+                        + "<input type=\"hidden\" name=\"token\" value=\"" + token + "\">"
+                        + "<div class=\"actions\"><button type=\"submit\" class=\"primary\">Apply"
+                        + "</button><a class=\"btn text\" href=\"/settings-file\">Cancel</a></div>"
+                        + "</form>");
+            }
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildSettingsFilePage(null, list.append("</div>").toString())));
+            return;
+        }
+        if ("apply".equals(what)) {
+            SettingsTransfer.Contents contents = pendingImport;
+            String token = pendingImportToken;
+            if (contents == null || token == null
+                    || !token.equals(form.getOrDefault("token", ""))) {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                        "Not applied: read the file again; another import came in between.",
+                        null)));
+                return;
+            }
+            pendingImport = null;
+            pendingImportToken = null;
+            java.util.List<String> refused = SettingsImport.apply(context, contents);
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildSettingsFilePage(
+                    refused.isEmpty() ? "Applied." : "Applied, except: " + String.join("; ",
+                            refused) + ".", null)));
+            return;
+        }
+        writeResponse(output, 400, "text/html; charset=utf-8",
+                bytes(buildSettingsFilePage("Not done: nothing to do.", null)));
+    }
+
+    /** One camera form's post: saved by the checks both surfaces share, or removed. */
+    private String saveCamera(Map<String, String> form) {
+        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(context);
+        String was = form.getOrDefault("was", "").trim();
+        if ("remove".equals(form.get("what"))) {
+            KioskConfig.edit(context).popupCameras(PopupCameras.without(cameras, was)).apply();
+            KioskService.publishTelemetrySoon(context);
+            return null;
+        }
+        String name = form.getOrDefault("name", "").trim();
+        String url = form.getOrDefault("url", "").trim();
+        String mode = form.getOrDefault("mode", "");
+        int seconds;
+        int cooldown;
+        try {
+            seconds = Integer.parseInt(form.getOrDefault("seconds", "").trim());
+            cooldown = Integer.parseInt(form.getOrDefault("cooldown", "").trim());
+        } catch (NumberFormatException notANumber) {
+            return "Not saved: the time and the cooldown must be whole numbers.";
+        }
+        String problem = PopupCameras.check(name, url, mode, seconds, cooldown);
+        if (problem != null) {
+            return "Not saved: " + problem + ".";
+        }
+        java.util.List<PopupCameras.Camera> base = was.isEmpty() ? cameras
+                : PopupCameras.without(cameras, was);
+        if (!name.equalsIgnoreCase(was) && PopupCameras.find(base, name) != null) {
+            return "Not saved: another camera has that name.";
+        }
+        java.util.List<PopupCameras.Camera> next = PopupCameras.with(base,
+                new PopupCameras.Camera(name, url, mode, seconds, cooldown));
+        if (next == null) {
+            return "Not saved: there are " + PopupCameras.MAX_CAMERAS + " cameras already.";
+        }
+        KioskConfig.edit(context).popupCameras(next).apply();
+        KioskService.publishTelemetrySoon(context);
+        return null;
+    }
+
+    /**
+     * The certificates trusted for pages Android does not trust: the one waiting for
+     * an answer with Trust, then each trusted host with its fingerprint and Remove. Each button
+     * posts its own small form, so a refusal comes back under this box.
+     */
+    private String certificatesBox(String notice, String noticeSection) {
+        StringBuilder html = new StringBuilder("<h2>Trusted certificates</h2>");
+        String message = notice != null && "certificates".equals(noticeSection)
+                ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>" : "";
+        html.append(message);
+        CertificatePins.Waiting waiting = CertificatePins.waiting;
+        if (waiting != null) {
+            html.append("<p class=\"hint bad\">Waiting for an answer: ")
+                    .append(escapeHtml(waiting.host))
+                    .append(waiting.issuedTo.isEmpty() ? ""
+                            : ", issued to " + escapeHtml(waiting.issuedTo))
+                    .append(waiting.validUntil.isEmpty() ? ""
+                            : ", valid until " + escapeHtml(waiting.validUntil))
+                    .append("<br>SHA-256 ").append(escapeHtml(waiting.fingerprint)).append("</p>")
+                    .append(certificateForm("trust", waiting.host, waiting.fingerprint,
+                            "Trust this certificate", "tonal"));
+        }
+        java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(context);
+        if (pins.isEmpty() && waiting == null) {
+            html.append("<p class=\"hint\">None. A page whose certificate Android does not trust"
+                    + " asks first.</p>");
+        }
+        for (java.util.Map.Entry<String, String> pin : pins.entrySet()) {
+            html.append("<p class=\"hint\">").append(escapeHtml(pin.getKey()))
+                    .append("<br>SHA-256 ").append(escapeHtml(pin.getValue())).append("</p>")
+                    .append(certificateForm("forget", pin.getKey(), "", "Remove", "text"));
+        }
+        if (!pins.isEmpty()) {
+            html.append("<p class=\"hint\">A removed certificate is refused from the browser's"
+                    + " next connection, at the latest after the nightly restart.</p>");
+        }
+        return html.toString();
+    }
+
+    private static String certificateForm(String action, String host, String fingerprint,
+            String label, String buttonClass) {
+        return "<form method=\"post\" action=\"/page-options\">"
+                + "<input type=\"hidden\" name=\"section\" value=\"certificates\">"
+                + "<input type=\"hidden\" name=\"action\" value=\"" + action + "\">"
+                + "<input type=\"hidden\" name=\"host\" value=\"" + escapeHtml(host) + "\">"
+                + "<input type=\"hidden\" name=\"sha256\" value=\"" + escapeHtml(fingerprint)
+                + "\"><div class=\"actions tight\"><button type=\"submit\" class=\""
+                + buttonClass + "\">" + escapeHtml(label) + "</button></div></form>";
+    }
+
+    /**
+     * The page's browser options, a box of their own under the dashboard address,
+     * saved together like the panel's Browser options page and checked by the commands' rules.
+     */
+    private String browserForm(String notice, String noticeSection) {
+        BrowserOptions.Settings browser = KioskConfig.browserOf(context);
+        return "<h2>The page</h2>"
+                // Its own section name, posted back to the Page options page it sits on.
+                + sectionFormStart("browser", notice, noticeSection)
+                        .replace(settingsAt("browser"), "/page-options")
+                + baselineField(browserBaseline(browser))
+                + field("text", "browser_user_agent", "User agent", browser.userAgent, "",
+                        "Empty: the browser's own, with Muralis.")
+                + field("number", "browser_text_size", "Text size (percent)",
+                        String.valueOf(browser.textSize))
+                + field("number", "browser_page_zoom", "Page zoom (percent, 0 = automatic)",
+                        String.valueOf(browser.pageZoom))
+                + field("number", "browser_back_after", "Back to the dashboard after (seconds, 0 = never)",
+                        String.valueOf(browser.backAfterSeconds))
+                + "<div class=\"switches\">"
+                + switchRow("browser-dark", "Dark look for the page",
+                        " name=\"browser_dark\" value=\"1\""
+                                + (BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)
+                                        ? "" : " disabled"), browser.dark)
+                + "</div>"
+                + (BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT) ? ""
+                        : "<p class=\"hint\">The dark look needs Android 10 or newer.</p>")
+                + "<p class=\"hint\">The page may use</p><div class=\"switches\">"
+                + switchRow("browser-page-camera", "The camera",
+                        " name=\"browser_page_camera\" value=\"1\"", browser.pageCamera)
+                + switchRow("browser-page-microphone", "The microphone",
+                        " name=\"browser_page_microphone\" value=\"1\"", browser.pageMicrophone)
+                + "</div>"
+                + field("text", "browser_user", "Page sign-in name", browser.signInUser, "",
+                        "Empty: no sign-in.")
+                + field("password", "browser_password", "Page sign-in password", "", "",
+                        BLANK_KEEPS)
+                + sectionFormEnd("Save");
+    }
+
+    /** What the browser box's Save compares, the password apart; the panel's page does the same. */
+    private static String browserBaseline(BrowserOptions.Settings browser) {
+        return browser.userAgent + "|" + browser.textSize + "|" + browser.pageZoom + "|"
+                + browser.dark + "|" + browser.backAfterSeconds + "|" + browser.signInUser;
+    }
+
+    private static String mqttBaseline(KioskConfig config) {
+        return config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername + "|"
+                + config.mqttTls;
     }
 
     private String mqttBody(KioskConfig config, String notice, String noticeSection) {
+        CertificatePins.Waiting refused = MqttTls.waiting;
+        boolean asking = refused != null && refused.host.equalsIgnoreCase(config.mqttHost)
+                && !refused.fingerprint.equals(config.mqttTlsPin);
+        StringBuilder trust = new StringBuilder();
+        // The broker's certificate: one refused, with Trust; or the one trusted, with Remove.
+        // The same lines the panel's MQTT section shows (KioskActivity.addMqttTrust).
+        if (asking || !config.mqttTlsPin.isEmpty()) {
+            trust.append("<form method=\"post\" action=\"").append(settingsAt("mqtt"))
+                    .append("\"><input type=\"hidden\" name=\"section\" value=\"mqtt\">"
+                            + "<input type=\"hidden\" name=\"mqtt_action\" value=\"")
+                    .append(asking ? "trust" : "forget").append("\"><input type=\"hidden\""
+                            + " name=\"sha256\" value=\"")
+                    .append(escapeHtml(asking ? refused.fingerprint : config.mqttTlsPin))
+                    .append("\"><p class=\"hint").append(asking ? " bad" : "").append("\">")
+                    .append(escapeHtml(asking ? MqttTls.waitingLine(refused)
+                            : "Trusted broker certificate, SHA-256 " + config.mqttTlsPin))
+                    .append("</p><div class=\"actions tight\"><button type=\"submit\""
+                            + " class=\"text\">").append(asking ? "Trust" : "Remove")
+                    .append("</button></div></form>");
+        }
+        // The client certificate: uploaded here only, since files go through the web admin, and
+        // like the admin's own certificate never over plain HTTP, where its key would travel
+        // in clear.
+        String locked = KioskRuntimeState.httpAdminSecure() ? "" : " disabled title=\""
+                + escapeHtml(AdminCertificate.UPLOAD_NEEDS_HTTPS) + "\"";
+        trust.append("<p class=\"hint\">")
+                .append(escapeHtml(MqttTls.clientLine(config.mqttClientName,
+                        config.mqttClientUntil))).append("</p>")
+                .append("<form method=\"post\" action=\"/mqtt-certificate\""
+                        + " enctype=\"multipart/form-data\">")
+                .append(fileRow("mqtt-client-file", "certificate", "Client certificate", locked))
+                .append(fileRow("mqtt-client-key", "key", "Its private key", locked))
+                .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\"")
+                .append(locked).append(">Upload</button></div></form>");
+        if (!config.mqttClientName.isEmpty()) {
+            trust.append("<form method=\"post\" action=\"").append(settingsAt("mqtt"))
+                    .append("\" class=\"actions\"><input type=\"hidden\" name=\"section\""
+                            + " value=\"mqtt\"><input type=\"hidden\" name=\"mqtt_action\""
+                            + " value=\"client_delete\"><button type=\"submit\" class=\"danger\""
+                            + " data-confirm=\"")
+                    .append(escapeHtml(deleteQuestion("the client certificate")
+                            + " The broker is then reached without one."))
+                    .append("\">Delete</button></form>");
+        }
         return sharedLine("mqtt") + sectionFormStart("mqtt", notice, noticeSection)
-                + baselineField(config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername)
+                + baselineField(mqttBaseline(config))
                 + urlField("mqtt_host", "Broker host", config.mqttHost)
                 + field("number", "mqtt_port", "Broker port", Integer.toString(config.mqttPort))
                 + field("text", "mqtt_username", "Username", config.mqttUsername)
                 + field("password", "mqtt_password", "Password", "", "", BLANK_KEEPS)
-                + sectionFormEnd("Save");
+                + "<div class=\"switches\">" + switchRow("mqtt-tls", "Encrypted (TLS)",
+                        " name=\"mqtt_tls\" value=\"1\"", config.mqttTls) + "</div>"
+                + sectionFormEnd("Save") + trust;
     }
 
     /**
-     * The Fleet box: the member port (block 11a), saved by its own button like the web admin's
+     * Trust or Remove for the broker's certificate, and Delete for the client certificate. Trust
+     * takes only the certificate the page showed, and only while it is still the one refused.
+     */
+    private String saveMqttTrust(String action, Map<String, String> form, KioskConfig fresh) {
+        String sha256 = form.getOrDefault("sha256", "");
+        switch (action) {
+            case "trust": {
+                CertificatePins.Waiting refused = MqttTls.waiting;
+                if (refused == null || !refused.fingerprint.equals(sha256)) {
+                    return "Not trusted: the broker now shows another certificate, or none;"
+                            + " look at the one shown now.";
+                }
+                KioskConfig.edit(context).mqttTlsPin(sha256).apply();
+                MqttTls.waiting = null;
+                break;
+            }
+            case "forget":
+                if (!sha256.equals(fresh.mqttTlsPin)) {
+                    return "Not removed: the trusted certificate changed meanwhile.";
+                }
+                KioskConfig.edit(context).mqttTlsPin("").apply();
+                break;
+            case "client_delete":
+                MqttController.forgetClientCertificate(context);
+                break;
+            default:
+                return "Not changed: no such action.";
+        }
+        KioskService.reloadConfiguration(context);
+        KioskService.publishTelemetrySoon(context);
+        return null;
+    }
+
+    /**
+     * The Fleet box: the member port, saved by its own button like the web admin's
      * port, and whether the member endpoint listens on it.
      */
     private String fleetBody(KioskConfig config, String notice, String noticeSection) {
-        return sectionFormStart("fleet", notice, noticeSection)
+        // In the order a person needs it, as on the panel (the UI round, 2026-10-15): the fleet
+        // and its panels, adding one, what this panel follows and the Fleet page, then the port
+        // and Leave.
+        boolean member = !KioskConfig.fleetIdOf(context).isEmpty();
+        return fleetMembership()
+                + addByCodeForm(notice, noticeSection)
+                + sharedSwitches()
+                + "<p class=\"label\">Connection</p>"
+                + sectionFormStart("fleet", notice, noticeSection)
                 + baselineField(Integer.toString(config.fleetPort))
                 + field("number", "fleet_port", "Member port", Integer.toString(config.fleetPort))
                 + "<p class=\"hint" + (KioskRuntimeState.fleetListening() ? "" : " bad")
                 + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
                 + sectionFormEnd("Save")
-                + fleetMembership()
-                + sharedSwitches();
+                + "<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"fleet-leave\""
+                + (member ? "" : " hidden") + ">Leave</button></div>";
     }
 
     /**
-     * The groups (fleet design, 2026-10-13): which ones this panel is in, a new one with a name
-     * the person types (generic suggestions offered), Remove for each; then what a group shares,
-     * the group chosen in a menu and the switches for it. Drawn again by a reload after a group
-     * is made or removed (admin_stats.js), since the rows change.
+     * What this panel follows: the whole fleet's shared settings, and the groups it is in, one
+     * switch each. The groups themselves are made, removed and shared from on the Fleet page.
      */
     private String sharedSwitches() {
         if (KioskConfig.fleetIdOf(context).isEmpty()) {
@@ -3557,34 +4277,35 @@ final class HttpAdminServer {
                 + switchRow("fleet-follows", "Follow the fleet's shared settings",
                         " data-setting=\"fleet_follows\"", FleetDocument.followsFleet(me))
                 + "</div><p class=\"hint\">This panel's groups</p><div class=\"switches\">");
-        StringBuilder removes = new StringBuilder();
         for (java.util.Map.Entry<String, String> group : FleetDocument.groups(list).entrySet()) {
-            html.append(switchRow("fleet-group-" + group.getKey(), group.getValue(),
-                    " data-setting=\"fleet_group_" + group.getKey() + "\"",
-                    mine.contains(group.getKey())));
-            removes.append("<button type=\"button\" class=\"text fleet-group-remove\" data-group=\"")
-                    .append(group.getKey()).append("\" data-name=\"")
-                    .append(escapeHtml(group.getValue())).append("\">Remove ")
-                    .append(escapeHtml(group.getValue())).append("</button>");
+            String id = escapeHtml(group.getKey());
+            html.append(switchRow("fleet-group-" + id, group.getValue(),
+                    " data-setting=\"fleet_group_" + id + "\"", mine.contains(group.getKey())));
         }
         html.append("</div>");
         if (FleetDocument.groups(list).isEmpty()) {
             html.append("<p class=\"hint\">No groups yet.</p>");
         }
-        // The groups themselves and what each scope shares: the Fleet page.
+        // The groups themselves and what each scope shares: the Fleet page. The fleet's alerts
+        // have a page of their own: the one shared section with no section of its own to live in.
         return html.append("<div class=\"actions\"><a class=\"onward\" href=\"/fleet\">Open the"
-                + " Fleet page</a></div>").toString();
+                + " Fleet page</a><a class=\"onward\" href=\"/alerts\">Alerts</a></div>")
+                .toString();
     }
 
-    /** "Set by the fleet …" at the top of a section the fleet shares, or nothing. */
+    /** "From the whole fleet …" at the top of a section the fleet shares, or nothing. */
     private String sharedLine(String section) {
         String line = FleetProfile.sharedLine(context, section);
-        return line == null ? "" : "<p class=\"hint\">" + escapeHtml(line) + "</p>";
+        // What the whole fleet shares a panel may stop following, right where it shows.
+        return line == null ? "" : "<p class=\"hint shared\">" + escapeHtml(line)
+                + (FleetProfile.fromWholeFleet(section) ? " <button type=\"button\""
+                        + " class=\"text\" data-stop-following=\"1\">Stop following the whole fleet</button>" : "")
+                + "</p>";
     }
 
     /**
      * Whether this panel is in a fleet, Join a fleet or Leave the fleet, and the Join code as the
-     * panel's Join screen shows it (block 11c), drawn by admin_stats.js from the status poll.
+     * panel's Join screen shows it, drawn by admin_stats.js from the status poll.
      */
     private String fleetMembership() {
         boolean member = !KioskConfig.fleetIdOf(context).isEmpty();
@@ -3594,8 +4315,7 @@ final class HttpAdminServer {
                 + "<button type=\"button\" class=\"tonal\" id=\"fleet-join-open\""
                 + (member ? " hidden" : "")
                 + (KioskRuntimeState.fleetListening() ? "" : " disabled") + ">Join</button>"
-                + "<button type=\"button\" class=\"danger\" id=\"fleet-leave\""
-                + (member ? "" : " hidden") + ">Leave</button></div>"
+                + "</div>"
                 + "<p class=\"hint bad\" id=\"fleet-error\" role=\"alert\" hidden></p>"
                 + "<div class=\"fleet-join\" id=\"fleet-join\" hidden>"
                 + "<img id=\"fleet-join-qr\" alt=\"Join code as a QR code\" width=\"240\""
@@ -3607,6 +4327,61 @@ final class HttpAdminServer {
                 + "<button type=\"button\" class=\"text\" id=\"fleet-join-close\">Close</button>"
                 + "<button type=\"button\" class=\"tonal\" id=\"fleet-join-new\" hidden>New"
                 + " code</button></div></div></div>";
+    }
+
+    /**
+     * The Add by code form's post, on a path of its own so the connection is given
+     * the search's time ({@link #ADOPT_DEADLINE_MS}): the page with who joined, or 400 with why
+     * not.
+     */
+    private void adoptByCode(Map<String, String> form, OutputStream output) throws IOException {
+        String joined = KioskConfig.fleetIdOf(context);
+        String fleet = joined.isEmpty() ? form.getOrDefault("fleet_name", "").trim()
+                : KioskConfig.fleetNameOf(context);
+        if (fleet.isEmpty()) {
+            fleet = "Muralis-" + (1000 + new java.security.SecureRandom().nextInt(9000));
+        }
+        String answer;
+        boolean added = false;
+        String invalid = FleetJoin.validateName("the fleet name", fleet);
+        if (invalid != null) {
+            answer = "Not added: " + invalid + ".";
+        } else {
+            String[] panel = new String[1];
+            FleetServer.Adopted adopted = FleetServer.adoptByCode(context,
+                    form.getOrDefault("join_code", ""),
+                    joined.isEmpty() ? FleetServer.newFleetId() : joined, fleet, panel);
+            added = adopted.refusal == null;
+            answer = !added ? "Not added: " + adopted.refusal + "."
+                    : panel[0] + " joined the fleet " + fleet + "."
+                            + (adopted.unconfirmed == null ? "" : " It did not confirm"
+                            + " afterwards: " + adopted.unconfirmed + ".");
+        }
+        writeResponse(output, added ? 200 : 400, "text/html; charset=utf-8",
+                bytes(buildSettingsPage(answer, "adopt")));
+    }
+
+    /**
+     * Add a panel by the code under its Join QR, for this browser that has no
+     * camera: the code, the new fleet's name when this panel founds one, and Add, which looks
+     * for the panel on the network for up to 30 seconds before it answers.
+     */
+    private String addByCodeForm(String notice, String noticeSection) {
+        if (!KioskRuntimeState.fleetListening()) {
+            return "";
+        }
+        boolean founding = KioskConfig.fleetIdOf(context).isEmpty();
+        return "<p class=\"hint\">" + (founding ? "Create a fleet" : "Add a panel")
+                + " by its code</p>"
+                + sectionFormStart("adopt", notice, noticeSection)
+                        .replace(settingsAt("adopt"), "/adopt")
+                + field("text", "join_code", "Code under the other panel's Join QR", "",
+                        " inputmode=\"numeric\" autocomplete=\"off\"", null)
+                + (founding ? fieldWithId("f-fleet_name", "text", "fleet_name",
+                        "Name of the new fleet", "", "", null).replace(MACHINE_TEXT, "") : "")
+                + "<p class=\"hint\">Add looks for the panel on this network for up to 30"
+                + " seconds.</p>"
+                + sectionFormEnd("Add");
     }
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */
@@ -3742,6 +4517,46 @@ final class HttpAdminServer {
     }
 
     /**
+     * The MQTT client certificate and its key, posted as files by the MQTT box's form; refused
+     * over plain HTTP like the web admin's own key. Answered with the settings page.
+     */
+    private void handleMqttClientUpload(Map<String, String> headers, byte[] body,
+            OutputStream output, boolean overTls) throws IOException {
+        String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
+        java.util.List<MultipartForm.Part> parts = boundary == null
+                ? java.util.Collections.emptyList() : MultipartForm.parse(body, boundary);
+        String certificateText = "";
+        String keyText = "";
+        for (MultipartForm.Part part : parts) {
+            if (part.name.equals("certificate")) {
+                certificateText = new String(part.data, StandardCharsets.UTF_8);
+            } else if (part.name.equals("key")) {
+                keyText = new String(part.data, StandardCharsets.UTF_8);
+            }
+        }
+        String problem;
+        if (!overTls) {
+            problem = "this page is served over plain HTTP right now, and a private key must not "
+                    + "cross the network unencrypted";
+        } else if (boundary == null) {
+            problem = "the request was not a file upload";
+        } else if (parts.isEmpty() && body.length > 0) {
+            problem = "the upload did not arrive complete; please try again";
+        } else {
+            problem = MqttController.keepClientCertificate(context, certificateText, keyText);
+        }
+        if (problem == null) {
+            KioskService.reloadConfiguration(context);
+            KioskService.publishTelemetrySoon(context);
+            writeResponse(output, 303, "text/plain", bytes("done"),
+                    Collections.singletonMap("Location", settingsAt("mqtt")));
+        } else {
+            writeResponse(output, 400, "text/html; charset=utf-8",
+                    bytes(buildSettingsPage("Not uploaded: " + problem + ".", "mqtt")));
+        }
+    }
+
+    /**
      * Deletes the upload. The page's form carries the SHA-256 of the upload it showed, so a
      * renewal that landed meanwhile is not deleted in its place; a script may leave it out.
      */
@@ -3802,20 +4617,46 @@ final class HttpAdminServer {
                         ? "<label class=\"check\"><input type=\"checkbox\" name=\"escape_pin_clear\" "
                                 + "value=\"1\">Remove the PIN</label>"
                         : "")
-                + sectionFormEnd("Save");
+                + sectionFormEnd("Save")
+                // The volume buttons, a lock-down choice, so under Way out (the UI round,
+                // 2026-10-15), stored the moment the switch is touched, as on the panel.
+                + "<div class=\"switches\">"
+                + switchRow("volume-buttons-disabled", "Disable volume buttons",
+                        " data-setting=\"volume_buttons_disabled\"",
+                        KioskConfig.volumeButtonsDisabled(context))
+                + "</div>";
     }
 
-    /** The sun or the moon: the panel's yellow sun in the dark theme, its grey moon in the light. */
-    private static String themeButton() {
-        return "<button type=\"button\" class=\"ib themecycle\" data-theme-cycle=\"1\""
-                + " title=\"Colour theme\" aria-label=\"Colour theme\">"
-                + "<span class=\"sun\">" + glyph("sun") + "</span>"
-                + "<span class=\"moon\">" + glyph("moon") + "</span></button>";
+    /** Pop-ups (the UI round, 2026-10-15): the cameras, moved here from Dashboard. */
+    private static String popupsBody() {
+        return "<div class=\"actions\"><a class=\"onward\" href=\"/cameras\">Pop-up cameras</a>"
+                + "</div>";
+    }
+
+    /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */
+    private static String integrationsBody() {
+        return "<div class=\"empty\"><p class=\"h\">No integrations yet</p><p class=\"s\">Muralis"
+                + " will show and act on data from other services. The first integrations come"
+                + " in an update.</p></div>";
+    }
+
+    /**
+     * Day and night at the end of the settings page's app bar, as on the panel: one icon button
+     * showing the mode in force (the sun, the moon, the half-lit sun for following the device),
+     * each tap moving to the next (admin_theme.js). Kept in the browser, a preference of whoever
+     * reads the page, not of the panel.
+     */
+    private static String themeToggle() {
+        return "<button type=\"button\" class=\"ib themetoggle\" id=\"theme-toggle\""
+                + " title=\"Day and night\" aria-label=\"Day and night\">"
+                + "<span class=\"m-light\">" + glyph("sun") + "</span>"
+                + "<span class=\"m-dark\">" + glyph("moon") + "</span>"
+                + "<span class=\"m-system\">" + glyph("auto") + "</span></button>";
     }
 
     private String displayBody() {
         // The theme switch stands beside the section's name (see the menu builder); the app
-        // bar's Auto/Light/Dark went (Juri, 2026-09-27).
+        // bar's Auto/Light/Dark went (2026-09-27).
         return sharedLine("display") + "<div class=\"actions tight\">"
                 + quickAction("display.wake", "Display on", "tonal", null)
                 + quickAction("display.visual_off", "Display off", "tonal", null)
@@ -3824,30 +4665,54 @@ final class HttpAdminServer {
                 + autoBrightnessControl()
                 + writeSettingsHint()
                 + orientationControl()
-                + displayOffControl();
+                + displayOffControl()
+                + statusLightControl();
+    }
+
+    /**
+     * The status light: the switch and the colour by name, applied as they are touched, the same
+     * two controls as on the panel. The brightness and any other colour are set over HTTP, MQTT
+     * and Home Assistant; a stored colour that has no name is offered as it is.
+     */
+    private String statusLightControl() {
+        StatusLight.State light = KioskConfig.statusLightOf(context);
+        String current = StatusLight.formatColor(light.color);
+        StringBuilder colours = new StringBuilder();
+        if (StatusLight.nameOf(light.color) == null) {
+            colours.append(selectOption(current, current, current));
+        }
+        for (String[] named : StatusLight.NAMED) {
+            colours.append(selectOption(named[1], named[0], current));
+        }
+        return "<div class=\"switches\">"
+                + switchRow("status-light", "Status light, a coloured frame around the screen",
+                        " data-setting=\"status_light\"", light.on)
+                + "</div>"
+                + selectField("status-light-color", null, "Status light colour",
+                        "status_light_color", colours.toString(), null);
     }
 
     private String screensaverBody() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
-        // A menu here and radios on the screensaver page, deliberately: this is one section among
+        // A menu here and radios on the Ambient page, deliberately: this is one section among
         // nine, while the page's chooser decides what the rest of that page says.
-        return sharedLine("screensaver")
-                + selectField("screensaver-mode", null, "Mode", "screensaver_mode",
+        return sharedLine("ambient")
+                + selectField("ambient-mode", null, "Mode", "ambient_mode",
                 screensaverModeOptions(saver), null)
-                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
+                + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"ambient-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
                 + "</p>"
-                // No "Back to the page" beside these: it ends a showing screensaver, which is what
-                // Display on already does to a lit panel (Juri, 2026-09-11, C16).
+                // No "Back to the page" beside these: it ends a showing Ambient, which is what
+                // Display on already does to a lit panel (2026-09-11, C16).
                 // Off has no page to lead to: the page holds a mode's options and Off has none
-                // (Juri, 2026-09-11), and since the page stopped carrying the chooser
+                // (2026-09-11), and since the page stopped carrying the chooser
                 // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
                 + "<div class=\"actions\">"
-                + quickAction("screensaver.start", "Preview", "tonal", null)
+                + quickAction("ambient.start", "Preview", "tonal", null)
                 + "<a class=\"btn text" + (ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
-                + "\" id=\"screensaver-more\" href=\"/screensaver\">More screensaver settings"
+                + "\" id=\"ambient-more\" href=\"/ambient\">More Ambient settings"
                 + glyph("next") + "</a></div>";
     }
 
@@ -3887,18 +4752,27 @@ final class HttpAdminServer {
                 + "<button type=\"button\" class=\"ib\" id=\"log-clear\" title=\"Clear\""
                 + " aria-label=\"Clear\">" + glyph("clear") + "</button>"
                 + "</div>"
-                + "<pre id=\"log\" role=\"log\" aria-label=\"The app's log\"></pre>";
+                + "<pre id=\"log\" role=\"log\" tabindex=\"0\" aria-label=\"The app's log\"></pre>";
     }
 
-    private String quickActionsBody() {
-        // Kept sorted by label. There is no "Main dashboard" (kiosk.home) action any more, dropped
-        // 2026-09-07 together with the tablet's button of the same name; the way back from a
-        // one-off URL is "Restart kiosk", and Home Assistant keeps its kiosk.home button.
-        return "<div class=\"actions tight\">"
-                + quickAction("system.reboot", "Reboot", "", "reboot")
-                + quickAction("kiosk.reload", "Reload", "", "reload")
+    /**
+     * The commands a person at a browser has where one at the panel has Open dashboard and the
+     * combinations: Material's overflow menu at the end of the settings page's app bar (the UI
+     * round, 2026-10-15; a section of their own, Quick actions, until then). There is no "Main
+     * dashboard" (kiosk.home) action, dropped 2026-09-07; the way back from a one-off URL is
+     * Restart kiosk, and Home Assistant keeps its kiosk.home button. Without scripting the menu
+     * cannot open, so it is shown as its three buttons in a row.
+     */
+    private static String commandsMenu() {
+        return "<div class=\"overflow\"><button type=\"button\" class=\"ib\" id=\"commands-button\""
+                + " aria-haspopup=\"menu\" aria-expanded=\"false\" aria-controls=\"commands-menu\""
+                + " title=\"Reload, restart, reboot\" aria-label=\"Reload, restart, reboot\">"
+                + glyph("more") + "</button>"
+                + "<div class=\"m3menu\" id=\"commands-menu\" role=\"menu\">"
+                + quickAction("kiosk.reload", "Reload the page", "", "reload")
                 + quickAction("kiosk.restart", "Restart kiosk", "", "power")
-                + "</div>";
+                + quickAction("system.reboot", "Reboot the device", "", "reboot")
+                + "</div></div>";
     }
 
     private static final String REPOSITORY_URL = "https://github.com/spazio17/muralis";
@@ -4040,8 +4914,8 @@ final class HttpAdminServer {
         if ("display_off".equals(source)) {
             return "display off";
         }
-        if ("screensaver".equals(source)) {
-            return "screensaver";
+        if ("ambient".equals(source)) {
+            return "ambient";
         }
         return autoMode ? "automatic" : "manual";
     }
@@ -4137,14 +5011,6 @@ final class HttpAdminServer {
 
     private String pictureOptions(ScreensaverPolicy.Settings saver) {
         PictureLibrary library = PictureLibrary.get(context);
-        boolean local = PictureSources.LOCAL.equals(saver.source);
-        StringBuilder sources = new StringBuilder();
-        sources.append(selectOption(PictureSources.LOCAL,
-                "This panel: uploads and folders of your own", saver.source));
-        sources.append(selectOption(PictureSources.BING, "Bing image of the day (unofficial, credited)",
-                saver.source));
-        sources.append(selectOption(PictureSources.WIKIMEDIA,
-                "Wikimedia Commons picture of the day (credited)", saver.source));
         StringBuilder transitions = new StringBuilder();
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_NONE, "Cut", saver.transition));
         transitions.append(selectOption(ScreensaverPolicy.TRANSITION_FADE, "Fade", saver.transition));
@@ -4160,65 +5026,51 @@ final class HttpAdminServer {
         corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_LEFT, "Top left", saver.creditCorner));
         corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right", saver.creditCorner));
 
-        String online = "<div id=\"screensaver-online\"" + (local ? " class=\"gone\"" : "") + ">"
-                + "<div class=\"actions tight\"><form method=\"post\" action=\"/api/pictures/refresh\">"
-                + "<button type=\"submit\">Fetch the pictures again</button></form></div>"
-                + "<p class=\"hint\">Bing's archive is an unofficial endpoint; its pictures are "
-                + "copyrighted and shown with the line Bing prints under them. Wikimedia Commons "
-                + "pictures carry free licences that require the author and licence to be named, "
-                + "which the credit line does.</p></div>";
-
-        String sourceProblem = library.problem(saver.source);
-        return "<div id=\"screensaver-pictures\""
+        String picturesProblem = library.problem();
+        return "<div id=\"ambient-pictures\""
                 + (ScreensaverPolicy.PICTURES.equals(saver.mode) ? "" : " class=\"gone\"") + ">"
-                + selectField("screensaver-source", null, "Pictures from", "screensaver_source",
-                        sources.toString(), null)
-                + "<p class=\"hint" + (sourceProblem != null ? " bad" : "") + "\" id=\"screensaver-source-note\">"
-                + escapeHtml(library.state(saver.source)) + "</p>"
-                + online
-                + fieldWithId("screensaver-picture-s", "number", null,
+                + "<p class=\"hint" + (picturesProblem != null ? " bad" : "") + "\" id=\"ambient-pictures-note\">"
+                + escapeHtml(library.state()) + "</p>"
+                + fieldWithId("ambient-picture-s", "number", null,
                         "Each picture stays for (seconds)", String.valueOf(saver.pictureSeconds),
-                        " data-setting=\"screensaver_picture_s\" min=\"1\" max=\""
+                        " data-setting=\"ambient_picture_s\" min=\"1\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
-                + selectField("screensaver-transition", null, "Change of picture",
-                        "screensaver_transition", transitions.toString(), null)
-                + selectField("screensaver-fit", null, "How a picture fills the screen",
-                        "screensaver_picture_fit", fits.toString(),
+                + selectField("ambient-transition", null, "Change of picture",
+                        "ambient_transition", transitions.toString(), null)
+                + selectField("ambient-fit", null, "How a picture fills the screen",
+                        "ambient_picture_fit", fits.toString(),
                         "Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
                         + "it out of shape, Actual size does not scale it.")
                 + "<div class=\"switches\">"
-                + switchRow("screensaver-shuffle", "Shuffle the order",
-                        " data-setting=\"screensaver_shuffle\"", saver.shuffle)
-                + switchRow("screensaver-one", "One picture per screensaver",
-                        " data-setting=\"screensaver_one_per_cycle\"", saver.onePerCycle)
-                + switchRow("screensaver-credit", "Show the title and credit line",
-                        " data-setting=\"screensaver_credit\"" + (local ? "" : " disabled"),
-                        saver.creditShown())
+                + switchRow("ambient-shuffle", "Shuffle the order",
+                        " data-setting=\"ambient_shuffle\"", saver.shuffle)
+                + switchRow("ambient-one", "One picture per cycle",
+                        " data-setting=\"ambient_one_per_cycle\"", saver.onePerCycle)
+                + switchRow("ambient-credit", "Show the title and credit line",
+                        " data-setting=\"ambient_credit\"", saver.credit)
                 + "</div>"
-                + selectField("screensaver-corner", null, "Credit line in the corner",
-                        "screensaver_credit_corner", corners.toString(), null)
+                + selectField("ambient-corner", null, "Credit line in the corner",
+                        "ambient_credit_corner", corners.toString(), null)
                 + "</div>";
     }
 
 
     /**
-     * The playlists on the screensaver page: the list and nothing else.
+     * The playlists on the Ambient page: the list and nothing else.
      *
-     * <p>Shown only for the Pictures mode with this panel as the source; there is nothing to list
-     * when the pictures come from Bing. A card since 2026-09-23, with the list re-read in place by
+     * <p>Shown only for the Pictures mode. A card since 2026-09-23, with the list re-read in place by
      * {@code admin_playlists.js} and the banner under it speaking only for a refusal: the radio
      * moving or a row appearing is the whole answer to Use and Create; Delete is on the
      * playlist's own page.
      */
     private String pictureLibraryBox() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
-        boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode)
-                && PictureSources.LOCAL.equals(saver.source);
+        boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode);
         PictureLibrary library = PictureLibrary.get(context);
         // The cell around the panel is what leaves for another mode, so the options keep
         // the right-hand column of the grid whether or not the playlists are shown.
         StringBuilder html = new StringBuilder("<div")
-                .append(shown ? "" : " class=\"gone\"").append(" id=\"screensaver-library\">")
+                .append(shown ? "" : " class=\"gone\"").append(" id=\"ambient-library\">")
                 .append("<section class=\"card\"><h2>Playlists</h2>");
         // Without the permission the playlists stay: uploads need none (2026-10-05).
         if (!library.browsesOwnStorage()) {
@@ -4240,11 +5092,11 @@ final class HttpAdminServer {
         String said = notice == null || notice.isEmpty() ? ""
                 : "<p class=\"notice\">" + escapeHtml(notice) + "</p>";
         if (playlist == null) {
-            return pageStart("Picture playlist", null, "/screensaver")
+            return pageStart("Picture playlist", null, "/ambient")
                     + said + "<p class=\"hint bad\">That playlist is gone.</p>" + pageEnd();
         }
         StringBuilder html = new StringBuilder(pageStartWith(playlistHeading(playlist),
-                "/screensaver", false));
+                "/ambient", false));
         html.append(said)
                 .append("<div class=\"two playlist\">")
                 .append("<section class=\"card\" id=\"playlist-folders\">")
@@ -4274,15 +5126,15 @@ final class HttpAdminServer {
                 .append("</section>")
                 .append("</div>")
                 // Delete, outlined red as in every editor (the delete rules, 2026-10-01), asked
-                // first in the panel's words; it left the Screensaver page's row on 2026-10-04.
-                // The answer is the Screensaver page, since this one is gone.
+                // first in the panel's words; it left the Ambient page's row on 2026-10-04.
+                // The answer is the Ambient page, since this one is gone.
                 .append("<form method=\"post\" action=\"/api/playlists/delete\" class=\"actions editor\" data-native=\"1\">")
                 .append(hidden("id", playlist.id))
                 // A refusal other than gone, a failed save, is answered on this page.
                 .append(hidden("playlist", playlist.id))
                 .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
                 .append(escapeHtml(deleteQuestion(playlist.name) + (playlist.active
-                        ? " It is the playlist in use, so the screensaver will have none until you "
+                        ? " It is the playlist in use, so Ambient will have none until you "
                                 + "choose another." : "") + " The pictures themselves are not deleted."))
                 .append("\">Delete</button></form>");
         return html.append(pageEnd()).toString();
@@ -4290,22 +5142,22 @@ final class HttpAdminServer {
 
 
     /**
-     * The shuffle glyph in the held list's head while the screensaver shuffles, or nothing: a
-     * mark and not a button, since shuffle is set with the other screensaver settings, and a mark
-     * rather than a sentence, because a sentence is the last resort (Juri, 2026-09-25).
+     * The shuffle glyph in the held list's head while Ambient shuffles, or nothing: a
+     * mark and not a button, since shuffle is set with the other Ambient settings, and a mark
+     * rather than a sentence, because a sentence is the last resort (2026-09-25).
      */
     private String shuffleMark() {
         if (!KioskConfig.screensaverOf(context).shuffle) {
             return "";
         }
-        String says = "Shuffle is on, so the screensaver does not follow this order";
+        String says = "Shuffle is on, so Ambient does not follow this order";
         return "<span class=\"mark\" role=\"img\" title=\"" + says + "\" aria-label=\"" + says
                 + "\">" + glyph("shuffle") + "</span>";
     }
 
     /**
      * The page's title is the playlist's own name, with the rename pencil beside it in the app
-     * bar, the way a pull request's title is edited (Juri, 2026-09-19).
+     * bar, the way a pull request's title is edited (2026-09-19).
      *
      * <p>A {@code <details>} rather than a box the script makes: it opens, closes and posts with
      * no scripting at all, and the script only keeps the answer on this page. The Cancel button
@@ -4320,7 +5172,7 @@ final class HttpAdminServer {
                 + glyph("pencil") + "</summary>"
                 + "<form method=\"post\" action=\"/api/playlists/rename\">"
                 + hidden("id", playlist.id)
-                // So the answer comes back as this page rather than as the screensaver page,
+                // So the answer comes back as this page rather than as the Ambient page,
                 // which is the rule every form on this page follows.
                 + hidden("playlist", playlist.id)
                 + fieldWithId("rename-name", "text", "name", "Playlist name", playlist.name,
@@ -4336,23 +5188,23 @@ final class HttpAdminServer {
 
 
     /**
-     * Everything the playlist holds, in the order the screensaver shows it: the picture, the
+     * Everything the playlist holds, in the order Ambient shows it: the picture, the
      * folder and the name, then the box that names it for its credit, the eye that switches its
-     * credit off or on, and the remove button, all 40 px on one line (Juri, 2026-09-23 and
+     * credit off or on, and the remove button, all 40 px on one line (2026-09-23 and
      * 2026-09-25). The box has no save tick: {@code admin_pictures.js} stores it when it lets go
      * of the focus, and Enter submits its form, which is also the path with no scripting.
      *
      * <p>The folder is prepended because this list is the one place two pictures with the same
-     * name from two folders sit next to each other (Juri, 2026-09-10). It is a fragment of its
+     * name from two folders sit next to each other (2026-09-10). It is a fragment of its
      * own because a tick in the browser changes it, and the page must not reload to say so.
      * Remove takes the picture out of this playlist and deletes nothing; it posts to the same
      * endpoint the browser's tick does, with the selection off.
      *
      * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
      * thumbnail; {@code admin_pictures.js} does the drag and posts the whole order, and without
-     * scripting the grip is not drawn at all. No sentence explains any of it (Juri, 2026-09-25:
-     * a sentence is the last resort). An empty name box shows, greyed, the words the screensaver
-     * prints instead, the file's name. With every credit switched off in the screensaver
+     * scripting the grip is not drawn at all. No sentence explains any of it (2026-09-25:
+     * a sentence is the last resort). An empty name box shows, greyed, the words Ambient
+     * prints instead, the file's name. With every credit switched off in Ambient
      * settings, each eye stands crossed out and inert, which says the same without a line.
      */
     private String playlistItems(PlaylistDocument.Playlist playlist, PictureLibrary library) {
@@ -4401,7 +5253,7 @@ final class HttpAdminServer {
                     .append(creditsShown ? iconButton(off ? "eye_off" : "eye",
                             off ? "Show the credit" : "Hide the credit", "")
                             : iconButton("eye_off",
-                                    "Credits are off in the screensaver settings", "", true))
+                                    "Credits are off in the Ambient settings", "", true))
                     .append("</form>")
                     .append("<form method=\"post\" action=\"/api/pictures/select\">")
                     .append(hidden("uri", uri)).append(hidden("playlist", playlist.id))
@@ -4471,7 +5323,7 @@ final class HttpAdminServer {
      */
     private static String ownPicturesHint() {
         return "<p class=\"hint bad\">" + escapeHtml(PictureLibrary.OWN_PICTURES_NEED_PERMISSION)
-                + " Allow it on the panel's Screensaver settings; Android only asks there.</p>";
+                + " Allow it on the panel's Ambient settings; Android only asks there.</p>";
     }
 
     /** Why the panels cannot show pictures, as the hint both of them then carry, or null. */
@@ -4492,14 +5344,14 @@ final class HttpAdminServer {
      * <p>A fragment of its own since 2026-09-19, when the browser's two panes became two panels;
      * {@code admin_pictures.js} fetches it from {@code /api/pictures/folders} and the open folder
      * from {@code /api/pictures/content}, so each action replaces exactly that much of the page
-     * and the reader keeps their place (Juri, 2026-09-10, C3). The whole tree comes down in one
+     * and the reader keeps their place (2026-09-10, C3). The whole tree comes down in one
      * fragment, and which branches are open is decided in the browser: this method opens the top
      * of the volume and the way down to the open folder, which is the tree a browser with no
      * scripting gets and what the script starts from before the reader's own carets take over
-     * (Juri, 2026-09-23: every folder at once was a list nobody could read).
+     * (2026-09-23: every folder at once was a list nobody could read).
      *
      * <p>The count beside a folder is the pictures directly in it, not everything below it: a
-     * folder that said 41 and opened onto three pictures read as a miscount (Juri, 2026-09-19).
+     * folder that said 41 and opened onto three pictures read as a miscount (2026-09-19).
      */
     private String folderList(String location, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -4554,7 +5406,7 @@ final class HttpAdminServer {
      * check circle on every tile, the same control the panel uses, posted the moment it changes;
      * an upload keeps its bin, which asks first. The view is one preference for the panel and
      * this page alike ({@code KioskConfig.pictureViewOf}), so both open the next folder the same
-     * way (Juri, 2026-09-23).
+     * way (2026-09-23).
      */
     private String folderContent(String token, String playlistId, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -4718,7 +5570,7 @@ final class HttpAdminServer {
      * not a button, since without scripting it does nothing and must not look as if it did.
      *
      * <p>A button is a thing that does something; a folder is a place you go, and a list of forty
-     * buttons reads as forty decisions (Juri, 2026-09-10, C7). It is a real {@code href} so it
+     * buttons reads as forty decisions (2026-09-10, C7). It is a real {@code href} so it
      * works with no scripting and can be opened in a second tab; the script intercepts it and
      * swaps the fragment instead of reloading.
      */
@@ -4789,7 +5641,7 @@ final class HttpAdminServer {
             case "/api/playlists/activate":
                 change = document -> document.activate(id);
                 // Nothing to say: the "In use" mark moving to the row is the whole answer, and a
-                // sentence on top of it was noise (Juri, 2026-09-19).
+                // sentence on top of it was noise (2026-09-19).
                 done = null;
                 break;
             case "/api/playlists/rename":
@@ -4829,13 +5681,13 @@ final class HttpAdminServer {
         if (path.equals("/api/playlists/delete")
                 && !"1".equals(queryValue(query, "fragment"))
                 && (refusal == null || PlaylistDocument.GONE.equals(refusal))) {
-            // The playlist page's own Delete, posted by the browser: sent on to the Screensaver
+            // The playlist page's own Delete, posted by the browser: sent on to the Ambient
             // page, as the automation editor's Delete is sent to Automations, so a reload does
             // not post the delete again and Back does not return to a page that is gone
             // (review, 2026-10-04). A playlist already gone is sent on too, gone it is either
             // way; any other refusal, a failed save, is answered here with its reason.
             writeResponse(output, 303, "text/plain", bytes("deleted"),
-                    Collections.singletonMap("Location", "/screensaver"));
+                    Collections.singletonMap("Location", "/ambient"));
             return;
         }
         answerPictureChange(query, form,
@@ -4869,7 +5721,7 @@ final class HttpAdminServer {
 
 
     /**
-     * The playlists as a Material list: the screensaver glyph and the name over its count open
+     * The playlists as a Material list: the Ambient glyph and the name over its count open
      * the playlist's own page, and the Use radio at the end says which one plays. Delete is on
      * the playlist's page.
      *
@@ -4886,7 +5738,7 @@ final class HttpAdminServer {
             html.append("<ul class=\"list seg\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
                 int count = playlist.items.size();
-                // The left menu's row as the panel draws it (Juri, 2026-10-04): the glyph, the
+                // The left menu's row as the panel draws it (2026-10-04): the glyph, the
                 // name over its count, a tap opening the playlist's own page, and Use at the
                 // end, the radio that is state and control at once. Delete lives on that page.
                 html.append("<li class=\"two\">")
@@ -4925,7 +5777,7 @@ final class HttpAdminServer {
      * <p>Two callers and one method. The page's own script asks for a fragment and gets a sentence
      * and a flag, which it shows in the banner and then re-reads the browser with, so nothing
      * navigates and the reader keeps their place. A browser with no scripting posts the form for
-     * real and gets the whole screensaver page back, which is all a form submit can do.
+     * real and gets the whole Ambient page back, which is all a form submit can do.
      */
     private void answerPictureChange(String query, Map<String, String> form, String message,
             boolean ok, OutputStream output) throws IOException {
@@ -4992,8 +5844,8 @@ final class HttpAdminServer {
 
 
     /**
-     * The mode as a menu, for the settings page's own Screensaver card, the one place it is
-     * chosen: the screensaver page stopped repeating it on 2026-09-28.
+     * The mode as a menu, for the settings page's own Ambient card, the one place it is
+     * chosen: Ambient page stopped repeating it on 2026-09-28.
      */
     private String screensaverModeOptions(ScreensaverPolicy.Settings saver) {
         return selectOption(ScreensaverPolicy.OFF, "Off", saver.mode)
@@ -5004,7 +5856,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * The Fleet page (block 13, the sketch of 2026-10-13): the panels with their groups and
+     * The Fleet page: the panels with their groups and
      * last contact, the groups, and the shared settings of a scope (the whole fleet or a group)
      * shown and edited here, as the fleet products do. Plain forms, posted to this page: a
      * person managing a fleet sits at a laptop, and nothing here needs to apply as it is typed.
@@ -5020,12 +5872,22 @@ final class HttpAdminServer {
             return html.append("<div class=\"card\"><p>This panel is not in a fleet, or its list"
                     + " of panels has not arrived yet.</p></div>").append(pageEnd()).toString();
         }
+        if (!FleetServer.proStatus(context).pro) {
+            // The Fleet page is Muralis Pro; the panels stay members meanwhile.
+            return html.append("<div class=\"card\"><p>The Fleet page is Muralis Pro. ")
+                    .append(escapeHtml(FleetServer.proLine(context))).append("</p></div>")
+                    .append(pageEnd()).toString();
+        }
+        if (FleetServer.proStatus(context).warn) {
+            html.append("<p class=\"notice\">").append(escapeHtml(FleetServer.proLine(context)))
+                    .append("</p>");
+        }
         java.util.Map<String, String> groups = FleetDocument.groups(list);
         String scope = scopeAsked == null || scopeAsked.isEmpty()
                 || !(FleetDocument.EVERYONE.equals(scopeAsked) || groups.containsKey(scopeAsked))
                 ? FleetDocument.EVERYONE : scopeAsked;
         // Panels: each with its picture on request, its groups to tick, its last contact and
-        // Identify (block 16). Screenshots fetches every panel's picture at once; the images
+        // Identify. Screenshots fetches every panel's picture at once; the images
         // load only then, never with the page, since each is a capture on that panel.
         html.append("<div class=\"card\"><h2>Panels</h2><div class=\"actions tight\">"
                 + "<button type=\"button\" class=\"tonal\" id=\"fleet-shots\">Screenshots"
@@ -5064,10 +5926,19 @@ final class HttpAdminServer {
                 html.append("<div class=\"actions tight\">");
             }
             html.append("<button type=\"button\" class=\"text\" data-identify=\"")
-                    .append(escapeHtml(id)).append("\">Identify</button></div></form>");
+                    .append(escapeHtml(id)).append("\">Identify</button>");
+            if (!id.equals(self)) {
+                // For a panel that cannot leave by itself; one that is reachable is told.
+                html.append("<button type=\"submit\" class=\"text\" name=\"remove\" value=\"1\""
+                        + " data-confirm=\"").append(escapeHtml("Remove " + name + "?\n\nIt is"
+                        + " taken off the fleet's list on every panel and its key is no longer"
+                        + " trusted. It can join again with a new code."))
+                        .append("\">Remove</button>");
+            }
+            html.append("</div></form>");
         }
-        html.append("<p class=\"hint\">A panel is added from another panel's camera, in its Fleet"
-                + " section.</p></div>");
+        html.append("<p class=\"hint\">A panel is added with Add a panel in the Fleet section: by"
+                + " a panel's camera, or by typing the code under its Join QR.</p></div>");
         // Groups: make one, remove one.
         html.append("<div class=\"card\"><h2>Groups</h2>");
         if (groups.isEmpty()) {
@@ -5107,75 +5978,48 @@ final class HttpAdminServer {
         html.append(selectField("fleet-page-scope", "scope", "Shared in", null,
                 options.toString(), null)).append("<div class=\"actions tight\"><button"
                 + " class=\"text\" type=\"submit\">Show</button></div></form>");
-        KioskConfig own = KioskConfig.load(context);
+        // Which sections the scope shares, one switch each (the UI round, 2026-10-15): the
+        // values are the sections' own, edited where they live on any panel of the scope, and
+        // never copied here. Switched on, the section as this panel has it now is shared; the
+        // switch posts itself where scripting runs (admin_fleet.js), Save does elsewhere.
+        html.append("<div class=\"switches\">");
         for (String section : FleetDocument.SECTIONS) {
-            java.util.Map<String, Object> shared = FleetDocument.sectionValues(list, scope, section);
-            java.util.Map<String, Object> values = shared != null ? shared
-                    : FleetProfile.read(context, section, own);
-            html.append("<form method=\"post\" action=\"/fleet\"><input type=\"hidden\""
-                    + " name=\"what\" value=\"share\"><input type=\"hidden\" name=\"scope\""
-                    + " value=\"").append(escapeHtml(scope)).append("\"><input type=\"hidden\""
-                    + " name=\"section\" value=\"").append(section).append("\">")
-                    .append("<h3>").append(escapeHtml(FleetDocument.sectionLabel(section)))
-                    .append("</h3><div class=\"switches\"><label class=\"switch\"><span>Shared"
-                            + "</span><input type=\"checkbox\" name=\"shared\" value=\"1\"")
-                    .append(shared != null ? " checked" : "").append("></label>");
-            for (FleetProfile.Field field : FleetProfile.fields(section)) {
-                Object value = values.get(field.key);
-                String text = FleetProfile.shown(value);
-                switch (field.type) {
-                    case "switch":
-                        html.append(switchRow("fleet-page-" + section + "-" + field.key,
-                                field.label, " name=\"" + field.key + "\" value=\"1\"",
-                                Boolean.TRUE.equals(value)));
-                        break;
-                    case "select": {
-                        StringBuilder choices = new StringBuilder();
-                        for (int i = 0; i + 1 < field.options.length; i += 2) {
-                            choices.append(selectOption(field.options[i], field.options[i + 1],
-                                    text));
-                        }
-                        html.append("</div>").append(selectField("fleet-page-" + section + "-"
-                                + field.key, field.key, field.label, null, choices.toString(),
-                                null)).append("<div class=\"switches\">");
-                        break;
-                    }
-                    case "password":
-                        html.append("</div>").append(fieldWithId("fleet-page-" + section + "-"
-                                + field.key, "password", field.key, field.label, "", "",
-                                text.isEmpty() ? "None shared." : BLANK_KEEPS))
-                                .append("<div class=\"switches\">");
-                        break;
-                    default:
-                        html.append("</div>").append(fieldWithId("fleet-page-" + section + "-"
-                                + field.key, "number".equals(field.type) ? "number" : "text",
-                                field.key, field.label, text, "", null))
-                                .append("<div class=\"switches\">");
-                }
-            }
-            html.append("</div><div class=\"actions tight\"><button class=\"tonal\""
-                    + " type=\"submit\">Save</button></div></form>");
+            boolean isShared = FleetDocument.sectionValues(list, scope, section) != null;
+            html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
+                    .append("\"><input type=\"hidden\" name=\"what\" value=\"share\"><input"
+                    + " type=\"hidden\" name=\"scope\" value=\"").append(escapeHtml(scope))
+                    .append("\"><input type=\"hidden\" name=\"section\" value=\"").append(section)
+                    .append("\">").append(switchRow("fleet-share-" + section,
+                            FleetDocument.sectionLabel(section),
+                            " name=\"shared\" value=\"1\" data-submit=\"1\"", isShared))
+                    .append("<div class=\"actions nojs\"><button class=\"tonal\" type=\"submit\">"
+                            + "Save</button></div></form>");
         }
-        html.append("<p class=\"hint\">Saved with the switch on, the section's values apply on"
-                + " every panel of the scope; off, the panels keep what they have. A group wins"
-                + " over the whole fleet. A page address may carry {panel.name}, {panel.group}"
-                + " and {fleet.name}. Alerts are raised while the section is shared with this"
-                + " panel, and said once: on when a condition starts, off when it ends.</p></div>");
-        // History (block 15): the versions this panel held, newest first, each with what it
+        html.append("</div>");
+        html.append("<p class=\"hint\">On, the section as it is here applies to every panel of"
+                + " the scope. A group wins over the whole fleet.</p></div>");
+        // History: the versions this panel held, newest first, each with what it
         // changed, and Restore as new for every one but the version held.
         html.append("<div class=\"card\"><h2>History</h2>");
         java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(context);
         if (history.isEmpty()) {
             html.append("<p class=\"hint\">No versions kept yet.</p>");
         }
+        // The newest few, the rest behind Older versions, as on the panel (the UI round,
+        // 2026-10-15).
+        int shownCount = 0;
         for (FleetServer.HistoryEntry entry : history) {
+            if (shownCount++ == FleetServer.HISTORY_SHOWN) {
+                html.append("<details class=\"older\"><summary>Older versions</summary>");
+            }
             html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
                     .append("\"><input type=\"hidden\" name=\"what\" value=\"restore\"><input"
                     + " type=\"hidden\" name=\"version\" value=\"").append(entry.version)
                     .append("\"><p><b>Version ").append(entry.version).append("</b>")
-                    .append(entry.held ? ", held now" : "").append(" <span class=\"hint\">by ")
+                    .append(entry.held ? ", held now" : "").append(" <span class=\"hint\">")
                     .append(escapeHtml(entry.author)).append(", ")
-                    .append(escapeHtml(entry.updated)).append("</span></p>");
+                    .append(escapeHtml(FleetServer.readableTime(entry.updated)))
+                    .append("</span></p>");
             html.append("<p class=\"hint\">").append(entry.changes.isEmpty()
                     ? "No change to the fleet's name, panels, groups or shared settings."
                     : escapeHtml(String.join("; ", entry.changes)) + ".").append("</p>");
@@ -5185,16 +6029,102 @@ final class HttpAdminServer {
             }
             html.append("</form>");
         }
+        if (shownCount > FleetServer.HISTORY_SHOWN) {
+            html.append("</details>");
+        }
         html.append("<p class=\"hint\">The last ").append(KioskConfig.FLEET_HISTORY_SIZE)
-                .append(" versions this panel held. Restore as new writes a version's fleet name,"
-                + " groups and shared settings as a new, higher version; the panels of the fleet"
-                + " stay as they are now.</p></div>");
+                .append(" versions. Restore as new brings back a version's name, groups and shared"
+                + " settings; the panels stay.</p></div>");
         html.append(fleetScript);
         return html.append(pageEnd()).toString();
     }
 
+    /**
+     * Alerts (the UI round, 2026-10-15; on the Fleet page's shared settings until then), as on
+     * the panel: the fleet's alerts, edited here and shared with the scope that shares them now,
+     * or with the whole fleet when none does yet. Alerts are raised only while they are shared.
+     */
+    private String buildAlertsPage(String notice) {
+        String section = "alerts";
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        String scope = FleetProfile.alertsScope(list);
+        java.util.Map<String, Object> shared = list == null ? null
+                : FleetDocument.sectionValues(list, scope, section);
+        java.util.Map<String, Object> values = shared != null ? shared
+                : FleetProfile.read(context, section);
+        StringBuilder html = new StringBuilder(pageStart("Alerts", null, settingsAt("fleet")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        html.append("<form method=\"post\" action=\"/alerts\" class=\"card\"><h2>Alerts</h2>"
+                + "<p class=\"hint\">").append(shared == null
+                        ? "Not shared yet: Save shares them with the whole fleet."
+                        : "Shared with " + escapeHtml(FleetDocument.EVERYONE.equals(scope)
+                                ? "the whole fleet" : "the group "
+                                        + FleetDocument.groupName(list, scope)) + ".")
+                .append(" Each alert comes once when it starts and once when it ends.</p>"
+                        + "<div class=\"switches\">");
+        for (FleetProfile.Field field : FleetProfile.fields(section)) {
+            Object value = values.get(field.key);
+            String text = FleetProfile.shown(value);
+            switch (field.type) {
+                case "switch":
+                    html.append(switchRow("alerts-" + section + "-" + field.key,
+                            field.label, " name=\"" + field.key + "\" value=\"1\"",
+                            Boolean.TRUE.equals(value)));
+                    break;
+                case "select": {
+                    StringBuilder choices = new StringBuilder();
+                    for (int i = 0; i + 1 < field.options.length; i += 2) {
+                        choices.append(selectOption(field.options[i], field.options[i + 1],
+                                text));
+                    }
+                    html.append("</div>").append(selectField("alerts-" + section + "-"
+                            + field.key, field.key, field.label, null, choices.toString(),
+                            null)).append("<div class=\"switches\">");
+                    break;
+                }
+                case "password":
+                    html.append("</div>").append(fieldWithId("alerts-" + section + "-"
+                            + field.key, "password", field.key, field.label, "", "",
+                            text.isEmpty() ? "None shared." : BLANK_KEEPS))
+                            .append("<div class=\"switches\">");
+                    break;
+                default:
+                    html.append("</div>").append(fieldWithId("alerts-" + section + "-"
+                            + field.key, "number".equals(field.type) ? "number" : "text",
+                            field.key, field.label, text, "", null))
+                            .append("<div class=\"switches\">");
+            }
+        }
+        html.append("</div><div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
+                + "</button></div></form>");
+        return html.append(pageEnd()).toString();
+    }
+
+    /** What the Alerts page posts: the values, shared with the scope the page named. */
+    private String saveAlerts(Map<String, String> form) {
+        if (!FleetServer.proStatus(context).pro) {
+            return "Not changed: the fleet's alerts are Muralis Pro. " + FleetServer.proLine(context);
+        }
+        String section = "alerts";
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        String scope = FleetProfile.alertsScope(list);
+        java.util.Map<String, Object> shared = list == null ? null
+                : FleetDocument.sectionValues(list, scope, section);
+        String[] problem = new String[1];
+        java.util.Map<String, Object> values = FleetProfile.fromForm(section, form,
+                shared != null ? shared : FleetProfile.read(context, section), problem);
+        String refused = values == null ? problem[0]
+                : FleetServer.shareSection(context, scope, section, values);
+        return refused == null ? null : "Not saved: " + refused + ".";
+    }
+
     /** What the Fleet page's forms post: a panel's groups, a group, a scope's section. */
     private String saveFleetPage(Map<String, String> form) {
+        if (!FleetServer.proStatus(context).pro) {
+            return "Not changed: the Fleet page is Muralis Pro. " + FleetServer.proLine(context);
+        }
         String what = form.getOrDefault("what", "");
         String refused;
         switch (what) {
@@ -5205,8 +6135,11 @@ final class HttpAdminServer {
                         groups.add(key.substring("group_".length()));
                     }
                 }
-                refused = FleetServer.setMemberGroups(context, form.getOrDefault("spki", ""),
-                        groups);
+                // Remove submits the same form, its own button naming it.
+                refused = isTrue(form.get("remove"))
+                        ? FleetServer.removeMember(context, form.getOrDefault("spki", ""), true)
+                        : FleetServer.setMemberGroups(context, form.getOrDefault("spki", ""),
+                                groups);
                 break;
             }
             case "add_group":
@@ -5234,18 +6167,13 @@ final class HttpAdminServer {
                     refused = "no such section";
                     break;
                 }
-                if (!isTrue(form.getOrDefault("shared", "0"))) {
-                    refused = FleetServer.shareSection(context, scope, section,
-                            (java.util.Map<String, Object>) null);
-                    break;
-                }
-                java.util.Map<String, Object> current = FleetDocument.sectionValues(
-                        KioskConfig.fleetDocumentOf(context), scope, section);
-                String[] problem = new String[1];
-                java.util.Map<String, Object> values = FleetProfile.fromForm(section, form,
-                        current != null ? current : FleetProfile.read(context, section), problem);
-                refused = values == null ? problem[0]
-                        : FleetServer.shareSection(context, scope, section, values);
+                boolean on = isTrue(form.getOrDefault("shared", "0"));
+                boolean was = FleetDocument.sectionValues(KioskConfig.fleetDocumentOf(context),
+                        scope, section) != null;
+                // Switched on, the section as this panel has it is shared; on already, nothing
+                // changes, so a stale page cannot overwrite what the scope shares now.
+                refused = on == was ? null : FleetServer.shareSection(context, scope, section,
+                        on ? FleetProfile.read(context, section) : null);
                 break;
             }
             default:
@@ -5259,16 +6187,16 @@ final class HttpAdminServer {
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
         String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
-                "Show the screensaver first, a touch opens the page", saver.onWake)
+                "Show Ambient first, a touch opens the page", saver.onWake)
                 + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once", saver.onWake);
-        StringBuilder html = new StringBuilder(pageStart("Screensaver", null,
-                settingsAt("screensaver")));
+        StringBuilder html = new StringBuilder(pageStart("Ambient", null,
+                settingsAt("ambient")));
         if (notice != null && !notice.isEmpty()) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        // The Sensors page's shape (Juri, 2026-09-28): the playlists at the left and the chosen
+        // The Sensors page's shape (2026-09-28): the playlists at the left and the chosen
         // mode's options at the right from 840 px, one under the other below. The mode itself
-        // is chosen on the settings page, whose Screensaver section leads here; the page's
+        // is chosen on the settings page, whose Ambient section leads here; the page's
         // shell carries the mode and every title, so admin_setting.js can rename the options
         // when the mode changes elsewhere, without a chooser of its own.
         org.json.JSONObject titles = new org.json.JSONObject();
@@ -5282,56 +6210,55 @@ final class HttpAdminServer {
         }
         // A mode without playlists leaves the options the page's only panel, centred at the
         // legal pages' width (class one); admin_setting.js keeps the class with the mode.
-        boolean library = ScreensaverPolicy.PICTURES.equals(saver.mode)
-                && PictureSources.LOCAL.equals(saver.source);
+        boolean library = ScreensaverPolicy.PICTURES.equals(saver.mode);
         html.append("<div class=\"ld").append(library ? "" : " one")
-                .append("\" id=\"screensaver-page\" data-mode=\"")
+                .append("\" id=\"ambient-page\" data-mode=\"")
                 .append(escapeHtml(saver.mode)).append("\" data-titles=\"")
                 .append(escapeHtml(titles.toString())).append("\">")
                 .append(pictureLibraryBox())
                 .append("<div class=\"detail\"><section class=\"card")
                 .append(ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
-                .append("\" id=\"screensaver-options\"><h2 id=\"screensaver-options-title\">")
+                .append("\" id=\"ambient-options\"><h2 id=\"ambient-options-title\">")
                 .append(escapeHtml(ScreensaverPolicy.optionsTitle(saver.mode))).append("</h2>")
-                .append(fieldWithId("screensaver-idle", "number", null,
-                        "Idle before the screensaver (seconds, 0 = off)",
+                .append(fieldWithId("ambient-idle", "number", null,
+                        "Idle before Ambient (seconds, 0 = off)",
                         String.valueOf(saver.idleSeconds),
-                        " data-setting=\"screensaver_idle_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_idle_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
-                .append(fieldWithId("screensaver-off", "number", null,
-                        "Screensaver before display off (seconds, 0 = never)",
+                .append(fieldWithId("ambient-off", "number", null,
+                        "Ambient before display off (seconds, 0 = never)",
                         String.valueOf(saver.offSeconds),
-                        " data-setting=\"screensaver_off_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_off_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
-                .append("<div id=\"screensaver-url-field\"")
+                .append("<div id=\"ambient-url-field\"")
                 .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("screensaver-url", "text", null, "Web page to show", saver.url,
-                        " data-setting=\"screensaver_url\" inputmode=\"url\"", null))
+                .append(fieldWithId("ambient-url", "text", null, "Web page to show", saver.url,
+                        " data-setting=\"ambient_url\" inputmode=\"url\"", null))
                 .append("</div>")
-                .append("<div id=\"screensaver-dim-field\"")
+                .append("<div id=\"ambient-dim-field\"")
                 .append(ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("screensaver-dim", "number", null,
+                .append(fieldWithId("ambient-dim", "number", null,
                         "Brightness while dimmed (percent)", String.valueOf(saver.dimPercent),
-                        " data-setting=\"screensaver_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
+                        " data-setting=\"ambient_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
                         null))
                 .append("</div>")
                 // Gone rather than greyed out where it does not apply: a control that can never
-                // be enabled is clutter (Juri, 2026-09-11).
-                .append("<div id=\"screensaver-wake-field\"")
+                // be enabled is clutter (2026-09-11).
+                .append("<div id=\"ambient-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
                 .append(">")
-                .append(selectField("screensaver-on-wake", null, "After a wake from display off",
-                        "screensaver_on_wake", onWake, null))
+                .append(selectField("ambient-on-wake", null, "After a wake from display off",
+                        "ambient_on_wake", onWake, null))
                 .append("</div>")
                 .append(pictureOptions(saver))
-                // The sentence it all adds up to, last in the panel, which is where Juri put it:
+                // The sentence it all adds up to, last in the panel, which is where the owner put it:
                 // the settings above it, then what they mean in one line.
-                .append("<p class=\"hint").append(problem ? " bad" : "").append("\" id=\"screensaver-note\">")
+                .append("<p class=\"hint").append(problem ? " bad" : "").append("\" id=\"ambient-note\">")
                 .append(escapeHtml(ScreensaverPolicy.describe(saver,
                         KioskRuntimeState.screensaverActive())))
                 .append("</p>")
                 .append("<div class=\"actions\">")
-                .append(quickAction("screensaver.start", "Preview", "tonal", null))
+                .append(quickAction("ambient.start", "Preview", "tonal", null))
                 .append("</div>")
                 .append("</section></div>")
                 .append("</div>");
@@ -5346,31 +6273,31 @@ final class HttpAdminServer {
     }
 
     /**
-     * The screensaver's instant settings. Each field is checked by the same rule the tablet
+     * Ambient's instant settings. Each field is checked by the same rule the tablet
      * applies and refused with the reason, never clamped: a value that cannot be stored is not
      * stored, and the page's field turns red with the sentence.
      */
     private String saveScreensaverSettings(Map<String, String> form) {
         KioskConfig.Editor editor = KioskConfig.edit(context);
         boolean changed = false;
-        if (form.containsKey("screensaver_mode")) {
-            String mode = form.get("screensaver_mode");
+        if (form.containsKey("ambient_mode")) {
+            String mode = form.get("ambient_mode");
             if (!ScreensaverPolicy.isMode(mode)) {
-                return "Not saved: the screensaver mode must be off, dim, film, url or pictures.";
+                return "Not saved: the Ambient mode must be off, dim, film, url or pictures.";
             }
             editor.screensaverMode(mode);
             changed = true;
         }
-        if (form.containsKey("screensaver_idle_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("screensaver_idle_s"));
+        if (form.containsKey("ambient_idle_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_idle_s"));
             if (seconds == null) {
                 return "Not saved: the idle time " + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverIdleSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("screensaver_off_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("screensaver_off_s"));
+        if (form.containsKey("ambient_off_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_off_s"));
             if (seconds == null) {
                 return "Not saved: the time before display off "
                         + ScreensaverPolicy.SECONDS_RULE + ".";
@@ -5378,8 +6305,8 @@ final class HttpAdminServer {
             editor.screensaverOffSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("screensaver_url")) {
-            String url = form.get("screensaver_url").trim();
+        if (form.containsKey("ambient_url")) {
+            String url = form.get("ambient_url").trim();
             if (!url.isEmpty()) {
                 String problem = KioskCommandDispatcher.validateDashboardUrl(url);
                 if (problem != null) {
@@ -5389,68 +6316,60 @@ final class HttpAdminServer {
             editor.screensaverUrl(url);
             changed = true;
         }
-        if (form.containsKey("screensaver_dim_percent")) {
-            Integer percent = ScreensaverPolicy.parseDimPercent(form.get("screensaver_dim_percent"));
+        if (form.containsKey("ambient_dim_percent")) {
+            Integer percent = ScreensaverPolicy.parseDimPercent(form.get("ambient_dim_percent"));
             if (percent == null) {
                 return "Not saved: the dimmed brightness " + ScreensaverPolicy.DIM_RULE + ".";
             }
             editor.screensaverDimPercent(percent);
             changed = true;
         }
-        if (form.containsKey("screensaver_on_wake")) {
-            String onWake = form.get("screensaver_on_wake");
+        if (form.containsKey("ambient_on_wake")) {
+            String onWake = form.get("ambient_on_wake");
             if (!ScreensaverPolicy.isOnWake(onWake)) {
-                return "Not saved: the wake choice must be screensaver or dashboard.";
+                return "Not saved: the wake choice must be ambient or dashboard.";
             }
             editor.screensaverOnWake(onWake);
             changed = true;
         }
-        if (form.containsKey("screensaver_source")) {
-            String source = form.get("screensaver_source");
-            if (!PictureSources.isSource(source)) {
-                return "Not saved: the picture source must be local, bing or wikimedia.";
-            }
-            editor.screensaverSource(source);
-            changed = true;
-        }
-        if (form.containsKey("screensaver_picture_s")) {
-            Integer seconds = ScreensaverPolicy.parsePictureSeconds(form.get("screensaver_picture_s"));
+        if (form.containsKey("ambient_picture_s")) {
+            Integer seconds = ScreensaverPolicy.parsePictureSeconds(form.get("ambient_picture_s"));
             if (seconds == null) {
                 return "Not saved: the time per picture " + ScreensaverPolicy.PICTURE_SECONDS_RULE + ".";
             }
             editor.screensaverPictureSeconds(seconds);
             changed = true;
         }
-        if (form.containsKey("screensaver_transition")) {
-            String transition = form.get("screensaver_transition");
+        if (form.containsKey("ambient_transition")) {
+            String transition = form.get("ambient_transition");
             if (!ScreensaverPolicy.isTransition(transition)) {
                 return "Not saved: the transition must be none, fade or slide.";
             }
             editor.screensaverTransition(transition);
             changed = true;
         }
-        if (form.containsKey("screensaver_picture_fit")) {
-            String fit = form.get("screensaver_picture_fit");
+        if (form.containsKey("ambient_picture_fit")) {
+            String fit = form.get("ambient_picture_fit");
             if (!ScreensaverPolicy.isFit(fit)) {
                 return "Not saved: the fit must be fit, fill, stretch or actual.";
             }
             editor.screensaverPictureFit(fit);
             changed = true;
         }
-        if (form.containsKey("screensaver_shuffle")) {
-            editor.screensaverShuffle(isTrue(form.get("screensaver_shuffle")));
+        if (form.containsKey("ambient_shuffle")) {
+            editor.screensaverShuffle(isTrue(form.get("ambient_shuffle")));
             changed = true;
         }
-        if (form.containsKey("screensaver_one_per_cycle")) {
-            editor.screensaverOnePerCycle(isTrue(form.get("screensaver_one_per_cycle")));
+        if (form.containsKey("ambient_one_per_cycle")) {
+            editor.screensaverOnePerCycle(isTrue(form.get("ambient_one_per_cycle")));
             changed = true;
         }
-        if (form.containsKey("screensaver_credit")) {
-            editor.screensaverCredit(isTrue(form.get("screensaver_credit")));
+        if (form.containsKey("ambient_credit")) {
+            editor.screensaverCredit(isTrue(form.get("ambient_credit")));
             changed = true;
         }
-        if (form.containsKey("screensaver_credit_corner")) {
-            String corner = form.get("screensaver_credit_corner");
+        if (form.containsKey("ambient_credit_corner")) {
+            String corner = form.get("ambient_credit_corner");
             if (!ScreensaverPolicy.isCorner(corner)) {
                 return "Not saved: the corner must be bottom_left, bottom_right, top_left or top_right.";
             }
@@ -5475,7 +6394,7 @@ final class HttpAdminServer {
      * sentence the tablet's Display card shows under it, kept current by the stats poll. The real
      * screen-off is offered only to a device owner, the same gate the tablet applies, and an
      * ordinary install gets the tablet's one greyed choice rather than a menu of Automatic and
-     * Black film that meant the same thing (Juri, 2026-09-24): a disabled menu, which the poll
+     * Black film that meant the same thing (2026-09-24): a disabled menu, which the poll
      * leaves alone and the settings script never posts.
      */
     private String displayOffControl() {
@@ -5894,7 +6813,7 @@ final class HttpAdminServer {
             return "<p class=\"hint bad\">" + AdminCertificate.PLAIN_HTTP_SENTENCE + "</p>";
         }
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
-        // to break at, so inline in the sentence it wrapped mid-value (Juri, 2026-09-23).
+        // to break at, so inline in the sentence it wrapped mid-value (2026-09-23).
         return "<p class=\"hint\">"
                 + escapeHtml(AdminCertificate.servedSentence(certificate.uploaded, "this page"))
                 + "</p><p class=\"mono wrap\">" + escapeHtml(certificate.fingerprint) + "</p>";
@@ -6033,6 +6952,10 @@ final class HttpAdminServer {
                 .append("\r\n");
         header.append("Content-Type: ").append(contentType).append("\r\n");
         header.append("Content-Length: ").append(body.length).append("\r\n");
+        // Never inside another site's frame, where a signed-in browser's clicks would pass the
+        // same-origin check, and never a type guessed from the bytes.
+        header.append("X-Frame-Options: DENY\r\nContent-Security-Policy: frame-ancestors 'none'\r\n"
+                + "X-Content-Type-Options: nosniff\r\n");
         boolean open = keepOpen.get();
         answered.set(true);
         header.append(open ? "Connection: keep-alive\r\nKeep-Alive: timeout="
