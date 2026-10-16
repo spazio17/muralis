@@ -1118,7 +1118,7 @@ final class HttpAdminServer {
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.equals("/api/fleet/code.svg") && method.equals("GET")) {
             String content = FleetServer.joinQrContent(context);
-            String svg = content == null ? null : QrCodes.svg(content);
+            String svg = content == null ? null : QrCodes.svg(content, true);
             if (svg == null) {
                 writeResponse(output, 404, "text/plain", bytes("No join code is open"));
             } else {
@@ -4371,17 +4371,22 @@ final class HttpAdminServer {
             return "";
         }
         boolean founding = KioskConfig.fleetIdOf(context).isEmpty();
-        return "<p class=\"hint\">" + (founding ? "Create a fleet" : "Add a panel")
-                + " by its code</p>"
+        // Greyed without Pro rather than refused after the search, with the Pro line in place
+        // of the hint to say why.
+        boolean pro = FleetServer.proStatus(context).pro;
+        return "<p class=\"hint\">" + (pro ? (founding ? "Create a fleet" : "Add a panel")
+                + " by its code" : escapeHtml(FleetServer.proLine(context))) + "</p>"
                 + sectionFormStart("adopt", notice, noticeSection)
                         .replace(settingsAt("adopt"), "/adopt")
+                + (pro ? "" : "<fieldset disabled style=\"border:0;margin:0;padding:0\">")
                 + field("text", "join_code", "Code under the other panel's Join QR", "",
                         " inputmode=\"numeric\" autocomplete=\"off\"", null)
                 + (founding ? fieldWithId("f-fleet_name", "text", "fleet_name",
                         "Name of the new fleet", "", "", null).replace(MACHINE_TEXT, "") : "")
                 + "<p class=\"hint\">Add looks for the panel on this network for up to 30"
                 + " seconds.</p>"
-                + sectionFormEnd("Add");
+                + (pro ? sectionFormEnd("Add")
+                        : sectionFormEnd("Add").replace("</form>", "</fieldset></form>"));
     }
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */

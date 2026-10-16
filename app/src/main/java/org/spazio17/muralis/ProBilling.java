@@ -116,8 +116,13 @@ final class ProBilling implements PurchasesUpdatedListener {
      */
     private boolean owned;
     private String detail = "Checking Google Play…";
-    /** When Play last said "not owned" on this anchor without the fleet being told; 0 when not. */
-    private long notOwnedAtMs;
+    /**
+     * Where an anchor keeps when Play first said "not owned" without the fleet being told yet:
+     * stored, not in memory, because the anchor is often a phone whose Muralis screen is rebuilt
+     * or closed long before the second answer, and a wait that started again each time would
+     * never let the fleet hear a refund.
+     */
+    private static final String NOT_OWNED_AT = "pro_not_owned_at_ms";
     /** How long an anchor waits to hear "not owned" a second time before the fleet hears it. */
     private static final long RECHECK_MS = 5 * 60_000L;
     /**
@@ -485,24 +490,28 @@ final class ProBilling implements PurchasesUpdatedListener {
             // Play spoke for the whole account: the fleet hears it, as its anchor's renewal or,
             // over the block this panel confirmed, as a refund (FleetTier.shouldWrite decides).
             boolean verified = nowOwned && ProEntitlement.verifiedHere(context);
-            long now = android.os.SystemClock.elapsedRealtime();
+            android.content.SharedPreferences runtime = KioskConfig.storageContext(context)
+                    .getSharedPreferences("kiosk_runtime", Context.MODE_PRIVATE);
+            long now = System.currentTimeMillis();
+            long notOwnedAt = runtime.getLong(NOT_OWNED_AT, 0L);
             if (!verified && FleetServer.wouldEndPro(context)) {
                 // Play can answer "not owned" by mistake right after a boot. On this panel that
                 // costs a moment; written for the fleet it would end Pro on every panel until
                 // this one asks again, a night away on a wall. So the fleet hears it only when
-                // Play says it twice, at least a few minutes apart (2026-10-15).
-                boolean first = notOwnedAtMs == 0 || now - notOwnedAtMs > 3 * RECHECK_MS;
-                if (first) {
-                    notOwnedAtMs = now;
-                    mainHandler.postDelayed(this::refresh, RECHECK_MS);
+                // Play says it again at least a few minutes after the first time, whenever that
+                // second answer comes.
+                if (notOwnedAt == 0L || notOwnedAt > now) {
+                    runtime.edit().putLong(NOT_OWNED_AT, now).apply();
+                    mainHandler.postDelayed(this::refresh, RECHECK_MS + 5_000L);
                     Log.i(TAG, "Google Play says not owned; asking again before the fleet hears it");
-                } else if (now - notOwnedAtMs >= RECHECK_MS) {
-                    notOwnedAtMs = 0;
+                } else if (now - notOwnedAt >= RECHECK_MS) {
+                    runtime.edit().remove(NOT_OWNED_AT).apply();
+                    Log.i(TAG, "Google Play says not owned again; the fleet hears it");
                     new Thread(() -> FleetServer.confirmTier(context, false), "MuralisProTier")
                             .start();
                 }
             } else {
-                notOwnedAtMs = 0;
+                runtime.edit().remove(NOT_OWNED_AT).apply();
                 new Thread(() -> FleetServer.confirmTier(context, verified), "MuralisProTier")
                         .start();
             }

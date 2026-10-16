@@ -3635,8 +3635,6 @@ public final class KioskActivity extends Activity {
         java.util.Map<String, CompoundButton> groupSwitches = new java.util.LinkedHashMap<>();
         String builtGroups = groupsShape(KioskConfig.fleetDocumentOf(this));
         fleetAddButton.setOnClickListener(view -> showAddPanelScanner());
-        fleetAddButton.setEnabled(KioskRuntimeState.fleetListening()
-                && !JoinScanner.lenses(this).isEmpty());
         paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, fleetAddButton,
                 theme);
 
@@ -3899,7 +3897,8 @@ public final class KioskActivity extends Activity {
         // Add by its code: for a panel without a camera, or a QR out of its reach.
         Button fleetCodeButton = textButton(theme, "Add by code");
         fleetCodeButton.setOnClickListener(view -> showAddByCode());
-        fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening());
+        fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening()
+                && FleetServer.proStatus(this).pro);
         fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton),
                 matchWrapClose());
         // Whether this panel follows what the whole fleet shares, the groups it is in, and the
@@ -3925,6 +3924,10 @@ public final class KioskActivity extends Activity {
             followsParams.topMargin = dp(10);
             fleetCard.addView(follows, followsParams);
             groupSwitches.put("", follows);
+            // What this panel follows is written into the fleet's list: Pro, like adding panels.
+            boolean pro = FleetServer.proStatus(this).pro;
+            follows.setEnabled(pro);
+            follows.setAlpha(pro ? 1f : 0.38f);
             fleetCard.addView(sectionTitle(theme, "This panel's groups", 18), matchWrap());
             if (FleetDocument.groups(fleetList).isEmpty()) {
                 TextView none = new FlushText(this);
@@ -3937,6 +3940,8 @@ public final class KioskActivity extends Activity {
                     : FleetDocument.groups(fleetList).entrySet()) {
                 String id = group.getKey();
                 CompoundButton in = themedSwitch(theme, group.getValue(), myGroups.contains(id));
+                in.setEnabled(pro);
+                in.setAlpha(pro ? 1f : 0.38f);
                 groupSwitches.put(id, in);
                 in.setOnCheckedChangeListener((button, checked) -> {
                     if (syncingLiveControls) {
@@ -7576,6 +7581,11 @@ public final class KioskActivity extends Activity {
         if (!addLabel.contentEquals(add.getText())) {
             add.setText(addLabel);
         }
+        // Greyed without Pro rather than refused after a scan: the Pro line under About says why.
+        // The camera list is read here too; it is cheap and the painter runs only while the
+        // settings are open.
+        add.setEnabled(KioskRuntimeState.fleetListening() && !JoinScanner.lenses(this).isEmpty()
+                && FleetServer.proStatus(this).pro);
     }
 
     /** Add a panel in a fleet; Create a fleet outside one, since the first panel added founds it. */
@@ -7748,7 +7758,7 @@ public final class KioskActivity extends Activity {
                 if (content == null) {
                     qr.setImageDrawable(null);
                 } else if (!content.equals(drawn[0])) {
-                    qr.setImageBitmap(qrBitmap(content, dp(240)));
+                    qr.setImageBitmap(qrBitmap(content, dp(240), true));
                 }
                 drawn[0] = content == null ? "" : content;
                 qr.setVisibility(content == null ? View.GONE : View.VISIBLE);
@@ -8135,9 +8145,12 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
-    /** A QR code as a bitmap of whole pixels per module, no wider than {@code width}. */
-    private static Bitmap qrBitmap(String content, int width) {
-        com.google.zxing.common.BitMatrix modules = QrCodes.matrix(content);
+    /**
+     * A QR code as a bitmap of whole pixels per module, no wider than {@code width}, with the
+     * app's icon in its centre when {@code withIcon}, as {@link QrCodes#svg} draws it for the web.
+     */
+    private static Bitmap qrBitmap(String content, int width, boolean withIcon) {
+        com.google.zxing.common.BitMatrix modules = QrCodes.matrix(content, withIcon);
         if (modules == null) {
             return null;
         }
@@ -8150,7 +8163,40 @@ public final class KioskActivity extends Activity {
                 pixels[y * size + x] = modules.get(x / scale, y / scale) ? Color.BLACK : Color.WHITE;
             }
         }
-        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888);
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
+        if (!withIcon) {
+            return bitmap;
+        }
+        int side = QrCodes.iconModules(modules);
+        float start = (count - side) / 2f * scale;
+        float tile = (side - 1f) * scale;
+        float origin = start + scale / 2f;
+        float unit = tile / QrCodes.ICON_UNITS;
+        android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.WHITE);
+        canvas.drawRect(start, start, start + side * scale, start + side * scale, paint);
+        canvas.translate(origin, origin);
+        canvas.scale(unit, unit);
+        paint.setColor(QrCodes.ICON_TILE);
+        canvas.drawRoundRect(0, 0, QrCodes.ICON_UNITS, QrCodes.ICON_UNITS, 24, 24, paint);
+        canvas.scale(QrCodes.ICON_GLYPH_SCALE, QrCodes.ICON_GLYPH_SCALE, 54, 54);
+        float[] outline = QrCodes.ICON_OUTLINE;
+        paint.setColor(QrCodes.ICON_LIGHT);
+        paint.setStyle(android.graphics.Paint.Style.STROKE);
+        paint.setStrokeWidth(outline[5]);
+        canvas.drawRoundRect(outline[0], outline[1], outline[2], outline[3], outline[4], outline[4],
+                paint);
+        paint.setStyle(android.graphics.Paint.Style.FILL);
+        paint.setColor(QrCodes.ICON_TILE);
+        canvas.drawCircle(QrCodes.ICON_DOT[0], QrCodes.ICON_DOT[1], QrCodes.ICON_DOT[2], paint);
+        float corner = QrCodes.ICON_PANE_CORNER;
+        for (float[] pane : QrCodes.ICON_PANES) {
+            paint.setColor(pane[4] > 0 ? QrCodes.ICON_LIGHT : QrCodes.ICON_DEEP);
+            canvas.drawRoundRect(pane[0], pane[1], pane[2], pane[3], corner, corner, paint);
+        }
+        return bitmap;
     }
 
     /**
@@ -13506,6 +13552,14 @@ public final class KioskActivity extends Activity {
             super.setBackground(background == null ? null
                     : new android.graphics.drawable.InsetDrawable(background, 0, dp(4), 0, dp(4)));
             setPadding(left, top, right, bottom);
+        }
+
+        @Override
+        public void setEnabled(boolean enabled) {
+            super.setEnabled(enabled);
+            // At 38 percent, as the other greyed controls here, so a control that cannot be used
+            // looks it rather than doing nothing when tapped.
+            setAlpha(enabled ? 1f : 0.38f);
         }
     }
 

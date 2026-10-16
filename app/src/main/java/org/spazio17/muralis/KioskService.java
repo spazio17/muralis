@@ -503,6 +503,51 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
     }
 
+    /** Set when Muralis became device owner: open the first-start screens after the setup. */
+    static final String OPEN_AFTER_SETUP = "open_after_setup";
+    private android.database.ContentObserver setupWatcher;
+
+    /**
+     * Opens Muralis once, at the end of the device's own setup, after it became device owner.
+     * Android sends a device owner set up the QR way no "provisioning done" from Android 10 on,
+     * and the system's launcher comes up instead, so the person would have to find Muralis in
+     * the app list to start the first-start screens. Watched on the setting the setup wizard
+     * writes when it finishes; nothing else is opened, and HOME still waits for the way out.
+     */
+    private void openFirstStartAfterSetup() {
+        android.content.SharedPreferences runtime = KioskConfig.storageContext(this)
+                .getSharedPreferences("kiosk_runtime", MODE_PRIVATE);
+        if (!runtime.getBoolean(OPEN_AFTER_SETUP, false)) {
+            return;
+        }
+        if (!isDeviceOwner() || KioskConfig.load(this).escapeSequencesConfigured()) {
+            runtime.edit().remove(OPEN_AFTER_SETUP).apply();
+            return;
+        }
+        if (android.provider.Settings.Secure.getInt(getContentResolver(),
+                "user_setup_complete", 0) == 1) {
+            runtime.edit().remove(OPEN_AFTER_SETUP).apply();
+            Log.i(TAG, "The device's setup is done: opening Muralis's first start");
+            try {
+                startActivity(new Intent(this, KioskActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (RuntimeException refused) {
+                Log.w(TAG, "Muralis could not open itself after the setup", refused);
+            }
+            return;
+        }
+        if (setupWatcher == null) {
+            setupWatcher = new android.database.ContentObserver(new Handler(getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    openFirstStartAfterSetup();
+                }
+            };
+            getContentResolver().registerContentObserver(android.provider.Settings.Secure
+                    .getUriFor("user_setup_complete"), false, setupWatcher);
+        }
+    }
+
     public static void reloadConfiguration(Context context) {
         context.startForegroundService(new Intent(context, KioskService.class)
                 .setAction(ACTION_RELOAD_CONFIGURATION));
@@ -540,6 +585,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         createNotificationChannel();
         // The settings a setup QR carried, once, before anything reads them.
         applyProvisionedSettings();
+        openFirstStartAfterSetup();
         // The base type alone, named: the two-argument call asks for every type the manifest
         // lists, and from Android 14 the camera and microphone types throw a SecurityException
         // here unless both permissions are already granted, which a fresh install never has
@@ -656,6 +702,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public void onDestroy() {
+        if (setupWatcher != null) {
+            getContentResolver().unregisterContentObserver(setupWatcher);
+            setupWatcher = null;
+        }
         try {
             unregisterReceiver(screenReceiver);
         } catch (IllegalArgumentException notRegistered) {

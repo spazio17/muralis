@@ -1878,6 +1878,9 @@ final class FleetServer {
 
     /** The member of key hash {@code spki} in exactly {@code groups}, from any panel. */
     static String setMemberGroups(Context context, String spki, java.util.List<String> groups) {
+        if (!proStatus(context).pro) {
+            return "a panel's groups are Muralis Pro. " + proLine(context).replaceAll("\\.$", "");
+        }
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         if (held == null) {
             return "this panel holds no fleet list yet";
@@ -2002,6 +2005,9 @@ final class FleetServer {
 
     /** Whether this panel follows what the whole fleet shares. */
     static String setFollowsFleet(Context context, boolean follows) {
+        if (!proStatus(context).pro) {
+            return "what this panel follows is Muralis Pro. " + proLine(context).replaceAll("\\.$", "");
+        }
         return writeList(context, null, null, (identity, list) -> FleetDocument
                 .withMemberFollowsFleet(list, KioskConfig.deviceIdOf(context), identity.spki,
                         follows, java.time.Instant.now().toString()),
