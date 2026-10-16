@@ -28,10 +28,11 @@ import android.util.Log;
  *
  * <p>Provisioned out of band, not by the app, over adb or by QR during out-of-box setup. Muralis degrades to its
  * previous behaviour when it is not the device owner, so an un-provisioned tablet still works.
- * From Android 12 a QR enrolment also needs {@link ProvisioningModeActivity} and
- * {@link PolicyComplianceActivity}, which also receives the setup QR's settings, so nothing depends
- * on this receiver's provisioning-complete broadcast there: {@link #onEnabled} still arrives, and
- * the process it starts brings the service.
+ * A QR enrolment asks {@link ProvisioningModeActivity} and {@link PolicyComplianceActivity}, the
+ * admin-integrated setup (needed from Android 12, used from Android 10 since the app offers it),
+ * and in that setup Android sends this receiver no provisioning-complete broadcast; nothing depends
+ * on it: PolicyComplianceActivity receives the setup QR's settings, and {@link #onEnabled} starts the
+ * service.
  */
 public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     private static final String TAG = "MuralisAdmin";
@@ -47,8 +48,8 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     }
 
     /**
-     * The setup QR's extras, where Android sends this broadcast; from Android 12
-     * PolicyComplianceActivity keeps them too, and keeping them twice is harmless.
+     * The setup QR's extras, where Android sends this broadcast; in the admin-integrated setup
+     * (Android 10 and newer) PolicyComplianceActivity keeps them instead.
      */
     @Override
     public void onProfileProvisioningComplete(Context context, android.content.Intent intent) {
@@ -58,6 +59,19 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     @Override
     public void onEnabled(Context context, android.content.Intent intent) {
         Log.i(TAG, "Muralis device admin enabled");
+        // Once the device's own setup is over, Muralis opens its first-start screens, so a panel
+        // set up by QR lands in Muralis rather than in the system's launcher; see
+        // KioskService.openFirstStartAfterSetup. HOME itself still waits for the way out.
+        KioskConfig.storageContext(context).getSharedPreferences("kiosk_runtime",
+                Context.MODE_PRIVATE).edit().putBoolean(KioskService.OPEN_AFTER_SETUP, true).apply();
+        // The process was started for the setup's questions, before Muralis was the owner, so
+        // MuralisApplication did not start the service then; it starts here, and watches for the
+        // end of the setup.
+        try {
+            KioskService.start(context);
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "The service could not start when Muralis became the owner", refused);
+        }
         // This used to call pinAsHomeActivity, on the reasoning that QR enrolment is the earliest
         // possible moment to claim HOME. It is, and that was the problem: it made Muralis the only
         // way out of the device before anybody had recorded a way out of Muralis, so when Google's
