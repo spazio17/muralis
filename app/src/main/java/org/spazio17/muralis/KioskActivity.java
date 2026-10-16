@@ -3635,8 +3635,6 @@ public final class KioskActivity extends Activity {
         java.util.Map<String, CompoundButton> groupSwitches = new java.util.LinkedHashMap<>();
         String builtGroups = groupsShape(KioskConfig.fleetDocumentOf(this));
         fleetAddButton.setOnClickListener(view -> showAddPanelScanner());
-        fleetAddButton.setEnabled(KioskRuntimeState.fleetListening()
-                && !JoinScanner.lenses(this).isEmpty());
         paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton, fleetAddButton,
                 theme);
 
@@ -3899,7 +3897,8 @@ public final class KioskActivity extends Activity {
         // Add by its code: for a panel without a camera, or a QR out of its reach.
         Button fleetCodeButton = textButton(theme, "Add by code");
         fleetCodeButton.setOnClickListener(view -> showAddByCode());
-        fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening());
+        fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening()
+                && FleetServer.proStatus(this).pro);
         fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton),
                 matchWrapClose());
         // Whether this panel follows what the whole fleet shares, the groups it is in, and the
@@ -3925,6 +3924,10 @@ public final class KioskActivity extends Activity {
             followsParams.topMargin = dp(10);
             fleetCard.addView(follows, followsParams);
             groupSwitches.put("", follows);
+            // What this panel follows is written into the fleet's list: Pro, like adding panels.
+            boolean pro = FleetServer.proStatus(this).pro;
+            follows.setEnabled(pro);
+            follows.setAlpha(pro ? 1f : 0.38f);
             fleetCard.addView(sectionTitle(theme, "This panel's groups", 18), matchWrap());
             if (FleetDocument.groups(fleetList).isEmpty()) {
                 TextView none = new FlushText(this);
@@ -3937,6 +3940,8 @@ public final class KioskActivity extends Activity {
                     : FleetDocument.groups(fleetList).entrySet()) {
                 String id = group.getKey();
                 CompoundButton in = themedSwitch(theme, group.getValue(), myGroups.contains(id));
+                in.setEnabled(pro);
+                in.setAlpha(pro ? 1f : 0.38f);
                 groupSwitches.put(id, in);
                 in.setOnCheckedChangeListener((button, checked) -> {
                     if (syncingLiveControls) {
@@ -7576,6 +7581,11 @@ public final class KioskActivity extends Activity {
         if (!addLabel.contentEquals(add.getText())) {
             add.setText(addLabel);
         }
+        // Greyed without Pro rather than refused after a scan: the Pro line under About says why.
+        // The camera list is read here too; it is cheap and the painter runs only while the
+        // settings are open.
+        add.setEnabled(KioskRuntimeState.fleetListening() && !JoinScanner.lenses(this).isEmpty()
+                && FleetServer.proStatus(this).pro);
     }
 
     /** Add a panel in a fleet; Create a fleet outside one, since the first panel added founds it. */
@@ -13506,6 +13516,14 @@ public final class KioskActivity extends Activity {
             super.setBackground(background == null ? null
                     : new android.graphics.drawable.InsetDrawable(background, 0, dp(4), 0, dp(4)));
             setPadding(left, top, right, bottom);
+        }
+
+        @Override
+        public void setEnabled(boolean enabled) {
+            super.setEnabled(enabled);
+            // At 38 percent, as the other greyed controls here, so a control that cannot be used
+            // looks it rather than doing nothing when tapped.
+            setAlpha(enabled ? 1f : 0.38f);
         }
     }
 
