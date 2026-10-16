@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -31,10 +31,10 @@ import java.util.Map;
 
 /**
  * The panel's sensors: one flat list, alphabetical on the pages, the companion app's "Manage
- * sensors" (Juri, 2026-09-26 and 2026-09-27). Every row is the same shape and only its right
+ * sensors" (2026-09-26 and 2026-09-27). Every row is the same shape and only its right
  * edge says what kind it is: a switch for the ones a person turns on, a chevron beside the
  * switch for the ones with a page of their own, Allow while a permission is missing, the reading
- * alone for what the panel always reports (display, screensaver, battery, power, network,
+ * alone for what the panel always reports (display, Ambient, battery, power, network,
  * processor, memory), greyed at the end for what this device lacks.
  *
  * <p>Every reading is a row on both surfaces, a field of the {@code sensors} block in the status
@@ -129,17 +129,16 @@ final class Sensors implements SensorEventListener {
             "measurement", 0, Kind.PANEL, false, "processor");
     static final Def PROXIMITY = new Def("proximity", "Proximity", SENSOR, "distance", "cm",
             "measurement", Sensor.TYPE_PROXIMITY, Kind.SWITCH, true, "proximity");
-    static final Def SCREENSAVER = new Def("screensaver", "Screensaver", BINARY, "running", null,
-            null, 0, Kind.PANEL, false, "screensaver");
+    static final Def SCREENSAVER = new Def("ambient", "Ambient", BINARY, "running", null,
+            null, 0, Kind.PANEL, false, "ambient");
     static final Def TEMPERATURE = new Def("temperature", "Ambient temperature", SENSOR,
             "temperature", "°C", "measurement", Sensor.TYPE_AMBIENT_TEMPERATURE, Kind.SWITCH,
             true, "temperature");
 
     /** Every sensor this app knows, alphabetical by name, which is the order the pages use. */
     static final List<Def> ALL = Collections.unmodifiableList(Arrays.asList(
-            TEMPERATURE, AUDIO, BATTERY, BLUETOOTH, CAMERA, DISPLAY, HUMIDITY, LIGHT, MEMORY,
-            MICROPHONE, MOVEMENT, NETWORK, NFC, POWER, PRESSURE, PROCESSOR, PROXIMITY,
-            SCREENSAVER));
+            SCREENSAVER, TEMPERATURE, AUDIO, BATTERY, BLUETOOTH, CAMERA, DISPLAY, HUMIDITY, LIGHT,
+            MEMORY, MICROPHONE, MOVEMENT, NETWORK, NFC, POWER, PRESSURE, PROCESSOR, PROXIMITY));
 
     /** What the beacons, the camera and the microphone report, asked when a document is built. */
     interface Reading {
@@ -180,7 +179,7 @@ final class Sensors implements SensorEventListener {
     /**
      * The readings as every surface shows them, and when each was last taken from
      * {@link #readings}: a light reading that changed several times a second was of no use
-     * on a screen (Juri, 2026-10-04), so what the panel, the web and the broker see moves at
+     * on a screen (2026-10-04), so what the panel, the web and the broker see moves at
      * most every {@link #SHOWN_EVERY_MS}. The rules still hear every event.
      */
     private final Map<String, Float> shown = new HashMap<>();
@@ -193,7 +192,7 @@ final class Sensors implements SensorEventListener {
      * it: which of the event's values moves under a hand, the line between covered and clear,
      * and on which side of it near lies. Android defines the first value, a distance, and
      * "near" as less than the range; a driver that never moves it can only be read after the
-     * person has shown the panel both states (Juri, 2026-09-27: no guessing at slots, a
+     * person has shown the panel both states (2026-09-27: no guessing at slots, a
      * procedure the user runs). Null until calibrated, and Android's rule applies.
      */
     static final class Calibration {
@@ -323,7 +322,7 @@ final class Sensors implements SensorEventListener {
      * links"). The companion app reports that id, and so does the panel, so a tag works the
      * same held to a phone or to the panel. The app refuses a tag without it
      * (TagReaderViewModel: "Tag intent had no tag id"); the panel reports such a tag by its
-     * chip's id instead, so any tag works (Juri, 2026-09-30: always as Home Assistant does).
+     * chip's id instead, so any tag works (2026-09-30: always as Home Assistant does).
      */
     static String homeAssistantTagId(String content) {
         if (content == null) {
@@ -345,7 +344,7 @@ final class Sensors implements SensorEventListener {
     /**
      * Who hears of a change of state the moment it happens: the rows showed "Near" up to three
      * seconds late, the service's two-second tick then the panel's one-second one, and a
-     * broker heard of it on the next telemetry interval (Juri, 2026-09-28).
+     * broker heard of it on the next telemetry interval (2026-09-28).
      */
     void onEdge(Runnable listener) {
         onEdge = listener;
@@ -353,7 +352,7 @@ final class Sensors implements SensorEventListener {
 
     /**
      * Who hears of a new reading from a sensor that moves all the time: the panel's rows. It
-     * was at once, to find where a panel keeps its light sensor (Juri, 2026-09-28); since
+     * was at once, to find where a panel keeps its light sensor (2026-09-28); since
      * 2026-10-04 the surfaces show such a reading every {@link #SHOWN_EVERY_MS} instead, and
      * this is what brings the next one to the rows on time rather than on the next tick.
      */
@@ -459,6 +458,8 @@ final class Sensors implements SensorEventListener {
         for (Def def : ALL) {
             names.put(def.id, def.name);
         }
+        // Not a sensor, but a When choice of its own.
+        names.put(Automations.TIME, Automations.TIME_NAME);
         return names;
     }
 
@@ -502,7 +503,7 @@ final class Sensors implements SensorEventListener {
             // on 12 and later (its denylist names the iBeacon frame), so the flag went and the
             // location permission came, "while using the app" only: the service holds the
             // location foreground type while the sensor is on, so the scan runs with the
-            // display off without the background permission (Juri, 2026-10-01). Listening only:
+            // display off without the background permission (2026-10-01). Listening only:
             // nothing is ever sent, and no position is ever read.
             // Coarse is asked alongside fine, as Android 12 requires; only a precise grant
             // lets the scan hear, so fine stays the one checked, and a person who chose
@@ -630,7 +631,7 @@ final class Sensors implements SensorEventListener {
     }
 
     /**
-     * Whether the sensor's switch is on. Every sensor has one (Juri, 2026-09-27): the panel's
+     * Whether the sensor's switch is on. Every sensor has one (2026-09-27): the panel's
      * own values start on, since they were always reported before; the rest start off.
      */
     static boolean enabled(Context context, Def def) {
@@ -1015,6 +1016,8 @@ final class Sensors implements SensorEventListener {
             }
         }
         engine.tick(now, minuteOfDay());
+        // The "Time of day" rules: the panel's own clock, the day and the minute.
+        engine.clock(java.time.LocalDate.now().toEpochDay(), minuteOfDay());
     }
 
     private Automations.Sample sampleOf(Def def) {
@@ -1122,7 +1125,7 @@ final class Sensors implements SensorEventListener {
                 if (def.androidType != 0) {
                     // What the test while asleep found: "reports", "silent", or nothing yet.
                     // Some devices stop a sensor while the display sleeps, and a person
-                    // building a rule on it is told so on the row (Juri, 2026-09-27).
+                    // building a rule on it is told so on the row (2026-09-27).
                     one.put("asleep", KioskConfig.sensorOption(context, def.id + "_asleep", ""));
                 }
                 one.put("reading", reading);
@@ -1370,7 +1373,7 @@ final class Sensors implements SensorEventListener {
      * sensors on, the rules on), the Sensors page (every sensor, whether this device has it and
      * may read it) and the Automations page (every rule by name and sentence; its switches
      * follow on their own). A rule added on the web stayed off the panel's pages until they
-     * were reopened (Juri, 2026-09-28). Short hashes, compared, never read.
+     * were reopened (2026-09-28). Short hashes, compared, never read.
      */
     static JSONObject listKeys(JSONObject sensors, JSONArray rules) {
         StringBuilder on = new StringBuilder();
