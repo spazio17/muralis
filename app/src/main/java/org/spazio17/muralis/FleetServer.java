@@ -1343,7 +1343,7 @@ final class FleetServer {
             return pro.lapsed ? "the fleet's Muralis Pro has not been confirmed for 30 days: open"
                     + " Muralis on the panel or phone that holds the account"
                     : "adding panels is Muralis Pro: buy it on a panel signed in to Google, in its"
-                    + " settings, This panel";
+                    + " settings, About this panel";
         }
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         if (held != null && FleetDocument.members(held).size() >= FleetTier.MAX_PANELS) {
@@ -1445,7 +1445,7 @@ final class FleetServer {
                 }
                 return KioskConfig.fleetIdOf(context).isEmpty() ? "Free."
                         : "Free: buy Muralis Pro on a panel signed in to Google, in its settings,"
-                                + " This panel.";
+                                + " About this panel.";
         }
     }
 
@@ -1757,12 +1757,14 @@ final class FleetServer {
             if (peer != null && spki.equals(peer.optString("spki"))) {
                 long ago = peer.optLong("seen_ago_ms", -1);
                 if (ago >= 0) {
-                    return (peer.optBoolean("online") ? "online, seen " : "offline, last seen ")
-                            + agoWords(ago);
+                    // Offline says what to look at, the three things that keep a panel quiet.
+                    return peer.optBoolean("online") ? "online, seen " + agoWords(ago)
+                            : "offline, last seen " + agoWords(ago) + ": is it on, on this"
+                                    + " network, with Muralis open?";
                 }
             }
         }
-        return "not heard from yet";
+        return "not heard from yet: is it on, on this network, with Muralis open?";
     }
 
     /** The other panels as last heard from, for the web API and the console to come. */
@@ -1916,6 +1918,25 @@ final class FleetServer {
     }
 
     /** One version of the history as both surfaces show it. */
+    /** How many versions the history shows before "Older versions". */
+    static final int HISTORY_SHOWN = 5;
+
+    /**
+     * A version's time as a person reads it, in this panel's zone: "21:04" today, else
+     * "14 Oct, 21:04"; the stored text as it is when it is not a time.
+     */
+    static String readableTime(String iso) {
+        try {
+            java.time.ZonedDateTime at = java.time.Instant.parse(iso)
+                    .atZone(java.time.ZoneId.systemDefault());
+            boolean today = at.toLocalDate().equals(java.time.LocalDate.now());
+            return at.format(java.time.format.DateTimeFormatter.ofPattern(
+                    today ? "HH:mm" : "d MMM, HH:mm", java.util.Locale.ENGLISH));
+        } catch (RuntimeException notATime) {
+            return iso;
+        }
+    }
+
     static final class HistoryEntry {
         final long version;
         /** The authoring panel's name, as the list held now knows it, else its id. */

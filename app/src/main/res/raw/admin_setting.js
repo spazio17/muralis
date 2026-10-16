@@ -48,10 +48,6 @@ if(!rejected){
 // tablet behind a slow link, the two rows disagreeing meanwhile).
 window.muralisLocal=window.muralisLocal||{};
 window.muralisLocal[el.dataset.setting]={value:value,at:Date.now()};
-// The look applies to this page at once, the way the panel redraws itself: the scheme from the
-// colour, the rows from the separators.
-if(el.dataset.setting==='appearance_colour'){document.documentElement.setAttribute('data-palette',value);}
-if(el.dataset.setting==='separators'){document.documentElement.setAttribute('data-separators',value);}
 // The web admin serves the other certificate from its next connection, so the page goes onto it,
 // fetched afresh: a reload of a page that answered an upload would offer to post the files again.
 // Back in the Local web admin section, named in the query: an address that differs from this

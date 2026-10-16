@@ -44,10 +44,10 @@ if(ok===true||!message){banner.classList.add('gone');if(hideTimer){clearTimeout(
 banner.firstChild.textContent=message;
 banner.classList.toggle('bad',ok===false);
 banner.classList.remove('gone');
-// Five seconds, and a cross for anyone who wants it gone sooner. A banner that stays until the
-// next action is a banner that is still claiming something after it stopped being true.
+// News goes after five seconds; a refusal stays until it is closed or the next action succeeds,
+// so it is read rather than missed (the UI round, 2026-10-15).
 if(hideTimer){clearTimeout(hideTimer);}
-hideTimer=setTimeout(function(){banner.classList.add('gone');},5000);
+if(ok!==false){hideTimer=setTimeout(function(){banner.classList.add('gone');},5000);}
 }
 if(banner){banner.querySelector('.dismiss').addEventListener('click',function(){
 banner.classList.add('gone');

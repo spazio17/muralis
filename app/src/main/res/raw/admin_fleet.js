@@ -51,3 +51,7 @@ if(parsed.status==='accepted'&&id!=='all'){tell(button,'');return;}
 tell(button,parsed.status==='accepted'?parsed.detail:'Not done: '+(parsed.detail||'the panel refused it')+'.');})
 .catch(function(){button.disabled=false;tell(button,'The panel did not answer. It may be rebooting or off the network.');});});});
 })();
+// The Fleet page's share switches post their form the moment they change, as the panel's do;
+// the Save beside each is for a browser without scripting.
+Array.prototype.forEach.call(document.querySelectorAll('input[data-submit]'),function(box){
+box.addEventListener('change',function(){if(box.form){box.form.submit();}});});

@@ -14,7 +14,8 @@
 // diagnosable rather than silently vanishing.
 function show(text,ok){if(!ok&&window.console){console.warn('Muralis: '+text);}else if(window.console){console.log('Muralis: '+text);}}
 // A refusal, though, is said on the page, under the button that was pressed: the same banner
-// the playlist page uses, red, with a cross, gone by itself after five seconds. Until
+// the playlist page uses, red, with a cross, kept until it is closed or the next press
+// succeeds, so a refusal is read rather than missed (the UI round, 2026-10-15). Until
 // 2026-09-24 a refused Preview went to the console alone, and a person who pressed it while
 // the panel's settings were open saw a button that did nothing (Juri: "the preview does not
 // work"). A success still says nothing: the panel itself is the answer. A control that is not
@@ -23,7 +24,8 @@ function show(text,ok){if(!ok&&window.console){console.warn('Muralis: '+text);}e
 function tell(source,message){
 if(!source){return;}
 if(source.tagName!=='FORM'){source.classList.toggle('check-bad',!!message);source.title=message||'';return;}
-var host=(source.closest&&source.closest('.actions'))||source;
+// The overflow menu's commands say it under the app bar, the menu being closed by then.
+var host=(source.closest&&(source.closest('.actions')||source.closest('header')))||source;
 var banner=host.nextElementSibling;
 if(!message){if(banner&&banner.classList.contains('banner')){banner.remove();}return;}
 if(!banner||!banner.classList.contains('banner')){
@@ -31,9 +33,7 @@ banner=document.createElement('p');banner.className='banner bad';banner.setAttri
 banner.innerHTML='<span></span><button type="button" class="dismiss" aria-label="Close">&times;</button>';
 banner.querySelector('.dismiss').addEventListener('click',function(){banner.remove();});
 host.parentNode.insertBefore(banner,host.nextSibling);}
-banner.firstChild.textContent=message;
-if(banner.timer){clearTimeout(banner.timer);}
-banner.timer=setTimeout(function(){banner.remove();},5000);}
+banner.firstChild.textContent=message;}
 function encode(form){var parts=[];
 Array.prototype.forEach.call(form.elements,function(el){
 if(el.name){parts.push(encodeURIComponent(el.name)+'='+encodeURIComponent(el.value));}});

@@ -40,8 +40,8 @@ final class SettingsTransfer {
     private static Map<String, Character> keys() {
         Map<String, Character> keys = new LinkedHashMap<>();
         for (String key : new String[] {"dashboard_url", "mqtt_host", "browser_user_agent",
-                "screensaver_url", "alert_mqtt_topic", "alert_webhook_url", "appearance_colour",
-                "separators", "orientation", "display_off_method", "screensaver_mode",
+                "screensaver_url", "alert_mqtt_topic", "alert_webhook_url",
+                "orientation", "display_off_method", "screensaver_mode",
                 "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
                 "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
                 "automations", "beacon_names", "popup_cameras", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {

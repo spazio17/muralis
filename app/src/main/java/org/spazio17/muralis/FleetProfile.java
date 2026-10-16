@@ -301,6 +301,28 @@ final class FleetProfile {
         return state;
     }
 
+    /** Whether a section's values here come from the whole fleet, which a panel may stop following. */
+    static boolean fromWholeFleet(String section) {
+        return FleetDocument.EVERYONE.equals(FleetServer.profileSource(section));
+    }
+
+    /**
+     * The scope the Alerts page edits: the one this panel takes them from, else any that shares
+     * them, else the whole fleet, so a Save never makes a second copy beside a group's.
+     */
+    static String alertsScope(Map<String, Object> document) {
+        String source = FleetServer.profileSource("alerts");
+        if (!source.isEmpty()) {
+            return source;
+        }
+        if (document != null) {
+            for (String scope : FleetDocument.sharedBy(document, "alerts").keySet()) {
+                return scope;
+            }
+        }
+        return FleetDocument.EVERYONE;
+    }
+
     /**
      * A line for a person under a section a group of this panel's shares, or null: which group
      * sets it here, which other groups share it too, and what was not applied.
@@ -319,9 +341,9 @@ final class FleetProfile {
             }
         }
         String line = FleetDocument.EVERYONE.equals(group)
-                ? "Set by the whole fleet. A change here changes every panel."
-                : "Set by the group " + FleetDocument.groupName(document, group)
-                        + ". A change here changes every panel of it.";
+                ? "From the whole fleet: a change here changes every panel."
+                : "From the group " + FleetDocument.groupName(document, group)
+                        + ": a change here changes every panel of it.";
         if (!others.isEmpty()) {
             line += " Also shared by " + String.join(", ", others) + ".";
         }
@@ -447,7 +469,7 @@ final class FleetProfile {
                         "text"));
                 break;
             case "web_admin":
-                fields.add(new Field("web_admin_enabled", "Local web admin on", "switch"));
+                fields.add(new Field("web_admin_enabled", "Web admin on", "switch"));
                 fields.add(new Field("http_port", "Port", "number"));
                 fields.add(new Field("http_admin_password", "Admin password", "password"));
                 break;

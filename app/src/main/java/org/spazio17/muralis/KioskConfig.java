@@ -58,15 +58,6 @@ final class KioskConfig {
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
     private static final String STATS_OVERLAY_ANCHOR = "stats_overlay_anchor";
-    /** The look a person chose on the Appearance page; see appearanceColourOf, Palettes. */
-    private static final String APPEARANCE_COLOUR = "appearance_colour";
-    private static final String SEPARATORS = "separators";
-    static final String SEPARATORS_LINES = "lines";
-    static final String SEPARATORS_SEGMENTS = "segments";
-    static final String SEPARATORS_NONE = "none";
-    /** The separators on offer, in the order both surfaces list them. */
-    static final String[] SEPARATOR_CHOICES = {SEPARATORS_LINES, SEPARATORS_SEGMENTS,
-            SEPARATORS_NONE};
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
     private static final String SCREENSAVER_MODE = "screensaver_mode";
@@ -173,8 +164,6 @@ final class KioskConfig {
      * volume.
      */
     boolean volumeButtonsDisabled;
-    String appearanceColour = Palettes.COLOURS[0];
-    String separators = SEPARATORS_LINES;
     /**
      * How the panel is mounted: {@link #ORIENTATION_LANDSCAPE}, {@link #ORIENTATION_PORTRAIT},
      * or {@link #ORIENTATION_AUTO}, which follows the accelerometer until the operator picks a
@@ -269,8 +258,6 @@ final class KioskConfig {
         config.httpUploadUntil = certificate.httpUploadUntil;
         config.statsOverlay = statsOverlayEnabled(context);
         config.volumeButtonsDisabled = volumeButtonsDisabled(context);
-        config.appearanceColour = appearanceColourOf(context);
-        config.separators = separatorsOf(context);
         config.orientation = orientationOf(context);
         config.displayOffMethod = displayOffMethodOf(context);
         config.screensaver = screensaverOf(context);
@@ -608,21 +595,6 @@ final class KioskConfig {
 
         Editor volumeButtonsDisabled(boolean value) {
             plain.putBoolean(VOLUME_BUTTONS_DISABLED, value);
-            return this;
-        }
-
-        /** The look, checked first by checkAppearance; see Palettes. */
-        Editor appearanceColour(String value) {
-            plain.putString(APPEARANCE_COLOUR, value);
-            // Written through, not cleared: cleared here and read back before apply(), the
-            // cache took the old value and kept it (review, 2026-10-04). Checked by the caller.
-            appearanceColourCache = value;
-            return this;
-        }
-
-        Editor separators(String value) {
-            plain.putString(SEPARATORS, value);
-            separatorsCache = value;
             return this;
         }
 
@@ -1382,86 +1354,6 @@ final class KioskConfig {
         String anchor = prefs.getString(STATS_OVERLAY_ANCHOR, "tl");
         return new OverlayPlace(anchor.endsWith("r"), anchor.startsWith("b"),
                 prefs.getFloat(STATS_OVERLAY_X, 0f), prefs.getFloat(STATS_OVERLAY_Y, 0f));
-    }
-
-    /**
-     * The look a person chose on the Appearance page under This panel (Juri, 2026-10-04; a page
-     * of its own since 2026-10-07): a seed colour, which names a scheme of Palettes, and how
-     * the rows of a list are kept apart. A second axis went twice the same day (Material's
-     * variants, then its contrast levels): other apps offer a colour and day or night, nothing
-     * more. This panel's alone, like the light theme of the settings: a look is a thing of the
-     * screen in front of someone. Purple with lines is Muralis's own look and the default; a
-     * stored value nothing offers reads as the default.
-     */
-    static String appearanceColourOf(Context context) {
-        String cached = appearanceColourCache;
-        if (cached != null) {
-            return cached;
-        }
-        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(APPEARANCE_COLOUR, null);
-        String colour = checkAppearance("appearance_colour", stored) == null ? stored
-                : Palettes.COLOURS[0];
-        appearanceColourCache = colour;
-        return colour;
-    }
-
-    static String separatorsOf(Context context) {
-        String cached = separatorsCache;
-        if (cached != null) {
-            return cached;
-        }
-        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(SEPARATORS, null);
-        String separators = checkAppearance("separators", stored) == null ? stored
-                : SEPARATORS_LINES;
-        separatorsCache = separators;
-        return separators;
-    }
-
-    /**
-     * The two look settings as last read: every row of a list asked for them, and each ask was a
-     * storage context and a preferences lookup on the UI thread (review, 2026-10-04). The Editor
-     * is the only writer and writes them through.
-     */
-    private static volatile String appearanceColourCache;
-    private static volatile String separatorsCache;
-
-    /** A colour's name, "Purple", on both surfaces' radios and in the Appearance summary. */
-    static String colourLabel(String colour) {
-        return colour == null || colour.isEmpty() ? ""
-                : Character.toUpperCase(colour.charAt(0)) + colour.substring(1);
-    }
-
-    /** A separators choice's name, "Lines", "Segments" or "None", wherever it is shown. */
-    static String separatorsLabel(String separators) {
-        return SEPARATORS_SEGMENTS.equals(separators) ? "Segments"
-                : SEPARATORS_NONE.equals(separators) ? "None" : "Lines";
-    }
-
-    /** The Appearance row's summary on both surfaces, "Purple · Lines", from the two labels. */
-    static String appearanceSummary(String colour, String separators) {
-        return colourLabel(colour) + " \u00b7 " + separatorsLabel(separators);
-    }
-
-    /** Why a value for one of the two look settings is refused, or null when it is offered. */
-    static String checkAppearance(String key, String value) {
-        String[] offered;
-        switch (key) {
-            case "appearance_colour": offered = Palettes.COLOURS; break;
-            case "separators": offered = SEPARATOR_CHOICES; break;
-            default: return "no setting is called " + key;
-        }
-        if (value != null) {
-            for (String one : offered) {
-                if (one.equals(value)) {
-                    return null;
-                }
-            }
-        }
-        return key.replace('_', ' ') + " must be " + String.join(", ",
-                java.util.Arrays.copyOf(offered, offered.length - 1)) + " or "
-                + offered[offered.length - 1];
     }
 
     /** Narrow reader for Disable volume buttons, asked on every press of one. */

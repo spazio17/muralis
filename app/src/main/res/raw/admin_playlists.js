@@ -11,17 +11,16 @@
 (function(){
 var box=document.getElementById('playlist-table');
 if(!box){return;}
-var banner=document.getElementById('playlist-banner'),hideTimer=0;
+var banner=document.getElementById('playlist-banner');
 
 function say(message){
 if(!banner){return;}
-if(hideTimer){clearTimeout(hideTimer);}
 // An empty sentence is "nothing to say": the table re-read below is the whole answer.
 if(!message){banner.classList.add('gone');return;}
 banner.firstChild.textContent=message;
 banner.classList.remove('gone');
-// Five seconds, and a cross for anyone who wants it gone sooner.
-hideTimer=setTimeout(function(){banner.classList.add('gone');},5000);
+// Every sentence here is a refusal: it stays until it is closed or the next change succeeds,
+// so it is read rather than missed (the UI round, 2026-10-15).
 }
 if(banner){banner.querySelector('.dismiss').addEventListener('click',function(){say('');});}
 

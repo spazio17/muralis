@@ -192,7 +192,13 @@ public final class KioskActivity extends Activity {
         return null;
     }
     private static final String UI_PREFERENCES = "kiosk_ui";
+    /** Follow the device, light or dark: how the settings screens are drawn (themeToggle). */
+    private static final String CONFIGURATION_THEME = "configuration_theme";
+    /** The switch it replaced, light or not, read once to carry a choice over. */
     private static final String LIGHT_CONFIGURATION_THEME = "light_configuration_theme";
+    private static final String THEME_SYSTEM = "system";
+    private static final String THEME_LIGHT = "light";
+    private static final String THEME_DARK = "dark";
 
     private WebView webView;
     private View blackout;
@@ -258,6 +264,8 @@ public final class KioskActivity extends Activity {
         }
     };
     private TextView statsOverlay;
+    /** App lock: the same readout over the app, in a window of its own (AppLock.showReadout). */
+    private TextView statsOverApp;
     /**
      * Identify (block 16): the panel's name drawn over whatever is on the glass for
      * {@link #IDENTIFY_MS}, the last child of the window's content, so it sits over the page,
@@ -381,6 +389,12 @@ public final class KioskActivity extends Activity {
     private final Runnable appLockOpen = this::openLockedApp;
     /** The robot is up because App lock's app is gone. */
     private boolean appGoneShowing;
+    /**
+     * The dashboard screen is App lock's plain plate: the app is what the panel shows, so the
+     * web page is never loaded behind it (it flashed up as Muralis came forward for a
+     * combination, Juri 2026-10-15, and cost a renderer for nothing).
+     */
+    private boolean appLockPlate;
     /** App lock's page lists the device's own apps too; asked for on the page, not stored. */
     private boolean appLockShowSystem;
     /** The robot over a dashboard that cannot be reached, while it is retried underneath. */
@@ -661,6 +675,10 @@ public final class KioskActivity extends Activity {
                 }
                 anythingToRepaint = true;
             }
+            syncStatsOverApp();
+            if (statsOverApp != null) {
+                anythingToRepaint = true;
+            }
             // Dropped by the readout's own detach listener (see showStatsPage) as soon as the
             // page holding it has gone: repainting a detached view tree once a second is a leak
             // that keeps the whole page alive behind the dashboard.
@@ -897,6 +915,7 @@ public final class KioskActivity extends Activity {
         AppLock.opening = false;
         AppLock.calledForward = false;
         AppLock.hideOverWindows(this);
+        syncStatsOverApp();
         if (scanAfterResume) {
             scanAfterResume = false;
             // Only back over the settings it was opened from: a command or Back that showed the
@@ -957,8 +976,9 @@ public final class KioskActivity extends Activity {
         }
         scheduleLockedApp();
         // App lock's app went away while Muralis was elsewhere: the robot says so.
+        // App lock switched on or off meanwhile: the plate or the page, whichever is true now.
         if (!configurationVisible && !wizardVisible && !recorderVisible
-                && appGoneShowing != appLockGone()) {
+                && (appGoneShowing != appLockGone() || appLockPlate != appLockOn())) {
             // Gone meanwhile, or back again: the robot's line follows what is true now.
             showDashboard(KioskConfig.load(this).dashboardUrl);
         }
@@ -994,6 +1014,8 @@ public final class KioskActivity extends Activity {
             AppLock.appUp = true;
             AppLock.lastTouchUptimeMs = android.os.SystemClock.uptimeMillis();
             AppLock.showOverWindows(this);
+            mainHandler.removeCallbacks(overlayTask);
+            mainHandler.post(overlayTask);
         }
         applyNfcReader();
         // The camera is let go with the screen, and taken again in onResume.
@@ -1011,6 +1033,10 @@ public final class KioskActivity extends Activity {
     protected void onDestroy() {
         KioskRuntimeState.publishDashboardAlive(false);
         mainHandler.removeCallbacksAndMessages(null);
+        if (statsOverApp != null) {
+            AppLock.removeOver(this, statsOverApp);
+            statsOverApp = null;
+        }
         // No screen means no operator screen; without this, exiting to the launcher from the
         // configuration screen would leave the pressure rebuild deferred until the app returns.
         KioskRuntimeState.publishOperatorOnScreen(false);
@@ -1921,6 +1947,12 @@ public final class KioskActivity extends Activity {
         return chosen;
     }
 
+    /** App lock is on and can run: its app installed and Muralis allowed to draw over it. */
+    private boolean appLockOn() {
+        String chosen = KioskConfig.appLockOf(this);
+        return !chosen.isEmpty() && AppLock.problem(this, chosen) == null;
+    }
+
     /** App lock is on and its app has nothing to open any more (uninstalled). */
     private boolean appLockGone() {
         String locked = KioskConfig.appLockOf(this);
@@ -1947,7 +1979,7 @@ public final class KioskActivity extends Activity {
         }
         if (unreachable == null) {
             unreachableFor = shown;
-            unreachable = parkingScene(currentTheme(), "Can't reach " + shown
+            unreachable = parkingScene(KioskTheme.of(false), "Can't reach " + shown
                     + ", trying again", "The page comes back by itself once it answers.", false);
             unreachable.setClickable(true);
             dashboard.addView(unreachable, dashboard.indexOfChild(webView) + 1,
@@ -2394,70 +2426,6 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * Appearance, a page of its own under This panel since 2026-10-07 (Juri: both choices are
-     * about how the app and the web admin look, so they belong together and out of the panel's
-     * own facts), with the name Signal, macOS and iOS give the same page. The Colour (a seed,
-     * each with its dot) and the Separators between a list's rows (Juri, 2026-10-04; a second
-     * axis of the colour went twice the same day, see Palettes), a panel each, side by side from
-     * 840 dp as every page of several panels without a menu. Each applies the moment it is
-     * tapped and the page is drawn again in it, in place; the web admin's Appearance page
-     * mirrors both.
-     */
-    private void showAppearancePage() {
-        currentScreen = this::showAppearancePage;
-        LinearLayout page = subPage("Appearance", this::showSettings);
-        KioskTheme theme = currentTheme();
-        // The two cached readers, not KioskConfig.load, which decrypts every secret, on every
-        // tap here: a choice redraws the page.
-        String colourNow = KioskConfig.appearanceColourOf(this);
-        String separatorsNow = KioskConfig.separatorsOf(this);
-        LinearLayout colourCard = card(theme, "Colour");
-        RadioGroup colours = new RadioGroup(this);
-        for (String colour : Palettes.COLOURS) {
-            RadioButton radio = radioChoice(theme, colours, KioskConfig.colourLabel(colour),
-                    colour);
-            // The colour itself before its name: its primary in this theme.
-            String[] scheme = Palettes.colours(colour, !theme.light);
-            android.graphics.drawable.GradientDrawable dot =
-                    new android.graphics.drawable.GradientDrawable();
-            dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            dot.setColor(scheme == null ? theme.accent : Color.parseColor(scheme[7]));
-            dot.setSize(dp(18), dp(18));
-            radio.setCompoundDrawablesRelativeWithIntrinsicBounds(dot, null, null, null);
-            radio.setCompoundDrawablePadding(dp(12));
-        }
-        checkRadioIfChanged(colours, colourNow);
-        colours.setOnCheckedChangeListener((group, checkedId) -> {
-            View checked = group.findViewById(checkedId);
-            if (checked == null || syncingLiveControls) {
-                return;
-            }
-            applyLiveSetting(editor -> editor.appearanceColour((String) checked.getTag()));
-            redrawThisScreen();
-        });
-        colourCard.addView(colours, matchWrapClose());
-
-        LinearLayout separatorsCard = card(theme, "Separators");
-        RadioGroup separators = new RadioGroup(this);
-        for (String choice : KioskConfig.SEPARATOR_CHOICES) {
-            radioChoice(theme, separators, KioskConfig.separatorsLabel(choice), choice);
-        }
-        checkRadioIfChanged(separators, separatorsNow);
-        separators.setOnCheckedChangeListener((group, checkedId) -> {
-            View checked = group.findViewById(checkedId);
-            if (checked == null || syncingLiveControls) {
-                return;
-            }
-            applyLiveSetting(editor -> editor.separators((String) checked.getTag()));
-            redrawThisScreen();
-        });
-        separatorsCard.addView(separators, matchWrapClose());
-        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(colourCard, separatorsCard)),
-                matchWrap());
-        setContentView(scrollPage(theme, page));
-    }
-
-    /**
      * The page's browser options (block 3a), a page of their own under Dashboard: the user
      * agent, text size, page zoom, the dark look, the way back to the dashboard and the page's
      * sign-in, saved together by one button with the commands' own checks; the web admin's
@@ -2465,7 +2433,7 @@ public final class KioskActivity extends Activity {
      */
     private void showBrowserOptionsPage() {
         currentScreen = this::showBrowserOptionsPage;
-        LinearLayout page = subPage("Browser options", this::showSettings);
+        LinearLayout page = subPage("Page options", this::showSettings);
         KioskTheme theme = currentTheme();
         BrowserOptions.Settings browser = KioskConfig.browserOf(this);
         LinearLayout pageCard = card(theme, "The page");
@@ -2648,17 +2616,15 @@ public final class KioskActivity extends Activity {
         TextView about = new FlushText(this);
         about.setTextSize(13);
         about.setTextColor(theme.subtext);
-        about.setText("Instead of the web page, one app, opened again whenever it closes. Your"
-                + " corner combinations work over it, in the four corners.");
+        about.setText("One app instead of the web page, opened again whenever it closes. Your"
+                + " corner combinations work over it.");
         card.addView(about, matchWrapClose());
         if (!AppLock.canDrawOver(this)) {
             TextView needs = new FlushText(this);
             needs.setTextSize(13);
             needs.setTextColor(theme.bad);
-            needs.setText("Muralis needs to display over other apps: that is how your corner"
-                    + " taps reach it over the app, and how pop-ups and the status light show"
-                    + " over it. Allow opens Android's page; where it lists apps, tap Muralis,"
-                    + " then the switch, and Muralis comes back by itself.");
+            needs.setText("Muralis needs to display over other apps, or your corner taps cannot"
+                    + " reach it over the app. Allow, then turn on the switch for Muralis.");
             card.addView(needs, matchWrapClose());
             Button allow = primaryButton(theme, "Allow");
             allow.setOnClickListener(view -> offerOverlayGrant());
@@ -2671,8 +2637,8 @@ public final class KioskActivity extends Activity {
             redrawInPlace(this::showAppLockPage);
         });
         card.addView(system, matchWrapClose());
+        // No "Off" here: the web page is the other half of Dashboard's "The panel shows".
         RadioGroup apps = new RadioGroup(this);
-        radioChoice(theme, apps, "Off: the web page", "");
         boolean listed = chosen.isEmpty();
         for (AppLock.App app : AppLock.launchable(this, appLockShowSystem)) {
             radioChoice(theme, apps, app.label, app.packageName);
@@ -2684,6 +2650,11 @@ public final class KioskActivity extends Activity {
             boolean installed = getPackageManager().getLaunchIntentForPackage(chosen) != null;
             radioChoice(theme, apps, KioskConfig.appLockLabelOf(this)
                     + (installed ? "" : " (not installed)"), chosen);
+        }
+        if (apps.getChildCount() == 0) {
+            // An empty list says why and what to do, not nothing.
+            card.addView(emptyState(theme, "No apps of your own on this panel",
+                    "Install one, or show the apps that came with the device."), matchWrapClose());
         }
         checkRadioIfChanged(apps, chosen);
         apps.setOnCheckedChangeListener((group, id) -> {
@@ -2905,69 +2876,47 @@ public final class KioskActivity extends Activity {
     }
 
     private KioskTheme currentTheme() {
-        return KioskTheme.of(KioskConfig.storageContext(this)
-                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
-                .getBoolean(LIGHT_CONFIGURATION_THEME, false),
-                KioskConfig.appearanceColourOf(this));
+        String mode = themeMode();
+        boolean light = THEME_SYSTEM.equals(mode)
+                ? (getResources().getConfiguration().uiMode
+                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                        != android.content.res.Configuration.UI_MODE_NIGHT_YES
+                : THEME_LIGHT.equals(mode);
+        return KioskTheme.of(light);
     }
 
-    /** The look the screen on show was drawn with, so a change from another surface redraws. */
-    private String drawnAppearance = "";
+    /**
+     * The chosen mode. Following the device is the default from Android 10, which has a dark
+     * theme of its own; below it there is none to follow, so the choice is Light or Dark and
+     * Light is the default (Juri, 2026-10-15). A choice made with the old switch stays.
+     */
+    private String themeMode() {
+        android.content.SharedPreferences prefs = KioskConfig.storageContext(this)
+                .getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE);
+        String mode = prefs.getString(CONFIGURATION_THEME, null);
+        if (mode == null && prefs.contains(LIGHT_CONFIGURATION_THEME)) {
+            mode = prefs.getBoolean(LIGHT_CONFIGURATION_THEME, false) ? THEME_LIGHT : THEME_DARK;
+            prefs.edit().putString(CONFIGURATION_THEME, mode)
+                    .remove(LIGHT_CONFIGURATION_THEME).apply();
+        }
+        boolean canFollow = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+        if (mode == null || THEME_SYSTEM.equals(mode) && !canFollow) {
+            return canFollow ? THEME_SYSTEM : THEME_LIGHT;
+        }
+        return mode;
+    }
 
-    /** The PIN prompt on show, if it is, which a look change leaves as it is. */
+    /** The PIN prompt on show, if it is. */
     private Runnable pinPrompt;
 
     /**
-     * Every screen is set through here: where its Back goes is taken up ({@link #pageBack}), the
-     * look it is drawn in is noted, and while a settings screen is up, {@link #lookWatch}
-     * compares it with the stored one. Stamped here and not in
-     * currentTheme, which the ticker and the bar painter call too; for every screen and not the
-     * settings page alone, since an open Sensors or Screensaver page kept the old look until
-     * it was left (review, 2026-10-04).
+     * Every screen is set through here: where its Back goes is taken up ({@link #pageBack}).
      */
     @Override
     public void setContentView(View view) {
         super.setContentView(view);
         pageBack = pendingBack;
         pendingBack = null;
-        drawnAppearance = appearanceKey();
-        mainHandler.removeCallbacks(lookWatch);
-        if (configurationVisible) {
-            mainHandler.postDelayed(lookWatch, LOOK_WATCH_MS);
-        }
-    }
-
-    private static final long LOOK_WATCH_MS = 1_500L;
-
-    /** Draws the screen on show again, in place, when the look was changed on the web admin. */
-    private final Runnable lookWatch = new Runnable() {
-        @Override
-        public void run() {
-            if (!configurationVisible) {
-                return;
-            }
-            // The PIN prompt keeps its look: drawn again it lost the digits typed (review,
-            // 2026-10-04); the screen behind it is drawn in the new look.
-            if (!drawnAppearance.equals(appearanceKey()) && currentScreen != pinPrompt) {
-                // Drawn again through setContentView, which stamps the new look and watches on.
-                redrawSettingsSoon();
-                return;
-            }
-            mainHandler.postDelayed(this, LOOK_WATCH_MS);
-        }
-    };
-
-    /**
-     * Whether a hairline is drawn between rows at all: Separators = None takes every one away,
-     * on the web too (the settings menu's, the picture lists', the folder tree's), where the
-     * lists with segments are addListRow's and addMenuRow's business.
-     */
-    private boolean hairlines() {
-        return !KioskConfig.SEPARATORS_NONE.equals(KioskConfig.separatorsOf(this));
-    }
-
-    private String appearanceKey() {
-        return KioskConfig.appearanceColourOf(this) + "|" + KioskConfig.separatorsOf(this);
     }
 
     /**
@@ -3010,11 +2959,10 @@ public final class KioskActivity extends Activity {
 
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
-        // The panel's id under the name, as the web page has it. The theme toggle used to sit at
-        // the right of this bar; it is at the right of the Display section's title now, with the
-        // other settings for what this screen looks like (Juri, 2026-09-23).
+        // The panel's id under the name, as the web page has it, and at the right the readings
+        // and the day and night toggle (Juri, 2026-10-15).
         page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null, null,
-                null, true), matchWrap());
+                themeToggle(theme), true), matchWrap());
         View provisioningNotice = provisioningNotice(theme);
         if (provisioningNotice != null) {
             page.addView(provisioningNotice, matchWrap());
@@ -3025,7 +2973,25 @@ public final class KioskActivity extends Activity {
         }
 
         LinearLayout dashboardCard = sectionBody(theme);
-        addSharedLine(dashboardCard, theme, "dashboard");
+        // What the panel shows, first and as a choice (the UI round, 2026-10-15): a web page,
+        // the address and its options below, or an app, App lock, chosen on a page of its own.
+        String lockedApp = KioskConfig.appLockOf(this);
+        boolean showsApp = !lockedApp.isEmpty();
+        dashboardCard.addView(fieldCaption(theme, "The panel shows"), matchWrapClose());
+        LinearLayout.LayoutParams showsParams = matchWrapClose();
+        showsParams.topMargin = dp(8);
+        dashboardCard.addView(segmentedChoice(theme, new String[] {"A web page", "An app"},
+                showsApp ? 1 : 0, index -> {
+                    if (index == 1) {
+                        showAppLockPage();
+                    } else if (!KioskConfig.appLockOf(this).isEmpty()) {
+                        KioskConfig.edit(this).appLock("").apply();
+                        // The lock-task allowlist follows the choice at once.
+                        applyKioskPolicy();
+                        KioskService.publishTelemetrySoon(this);
+                        redrawThisScreen();
+                    }
+                }), showsParams);
         // The box holds what is stored and nothing else; the example is a hint. It used to be
         // prefilled with a Home Assistant address as real text, so a fresh panel saved and loaded
         // it at the first press of Open dashboard and showed an error page for a host that does
@@ -3034,7 +3000,11 @@ public final class KioskActivity extends Activity {
         urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        addField(dashboardCard, theme, "Dashboard URL", urlInput);
+        if (!showsApp) {
+            // The fleet shares the address, not the choice above it, so its line stands here.
+            addSharedLine(dashboardCard, theme, "dashboard");
+            addField(dashboardCard, theme, "Dashboard URL", urlInput);
+        }
         // The panel's name (the device id) is in This panel since 2026-09-27; its box is built
         // there and read here, so the aggregate save still carries it.
         EditText deviceIdInput = themedInput(theme, config.deviceId, false);
@@ -3066,17 +3036,32 @@ public final class KioskActivity extends Activity {
             pageAway = true;
             touchedSinceHome = true;
         });
-        dashboardCard.addView(buttonRow(openOnce), matchWrap());
-        Button browserMore = textButtonOnward(theme, "Browser options");
-        browserMore.setOnClickListener(view -> showBrowserOptionsPage());
-        dashboardCard.addView(buttonRow(browserMore), matchWrap());
-        Button camerasMore = textButtonOnward(theme, "Pop-up cameras");
-        camerasMore.setOnClickListener(view -> showCamerasPage());
-        dashboardCard.addView(buttonRow(camerasMore), matchWrap());
-        Button appLockMore = textButtonOnward(theme, "App lock");
-        appLockMore.setOnClickListener(view -> showAppLockPage());
-        dashboardCard.addView(buttonRow(appLockMore), matchWrap());
-        String webViewProvider = webViewProviderSummary();
+        if (showsApp) {
+            // The app, and why it cannot run if it cannot, in the words App lock's page uses.
+            TextView appLine = new FlushText(this);
+            appLine.setTextColor(theme.text);
+            appLine.setTextSize(16);
+            appLine.setText(KioskConfig.appLockLabelOf(this));
+            dashboardCard.addView(appLine, matchWrapClose());
+            String appProblem = AppLock.problem(this, lockedApp);
+            if (appProblem != null) {
+                TextView problemLine = new FlushText(this);
+                problemLine.setTextColor(theme.bad);
+                problemLine.setTextSize(14);
+                problemLine.setText(Character.toUpperCase(appProblem.charAt(0))
+                        + appProblem.substring(1) + ".");
+                dashboardCard.addView(problemLine, matchWrapClose());
+            }
+            Button appLockMore = textButtonOnward(theme, "Choose the app");
+            appLockMore.setOnClickListener(view -> showAppLockPage());
+            dashboardCard.addView(buttonRow(appLockMore), matchWrap());
+        } else {
+            dashboardCard.addView(buttonRow(openOnce), matchWrap());
+            Button browserMore = textButtonOnward(theme, "Page options");
+            browserMore.setOnClickListener(view -> showBrowserOptionsPage());
+            dashboardCard.addView(buttonRow(browserMore), matchWrap());
+        }
+        String webViewProvider = showsApp ? null : webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
             TextView engine = new FlushText(this);
@@ -3609,8 +3594,8 @@ public final class KioskActivity extends Activity {
         automationsCard.addView(buttonRow(automationsMore), matchWrap());
 
         // The volume buttons, applied the moment the switch is touched, as on the web admin. A
-        // choice about the panel itself, not its screen, so it stands in This panel (Juri,
-        // 2026-10-05); built here so the sync below can follow it.
+        // lock-down choice, so it stands under Way out (the UI round, 2026-10-15); built here so
+        // the sync below can follow it.
         CompoundButton volumeButtonsInput = themedSwitch(theme, "Disable volume buttons",
                 config.volumeButtonsDisabled);
         volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
@@ -3626,7 +3611,7 @@ public final class KioskActivity extends Activity {
             FleetServer.openJoinCode(this);
             showJoinPage();
         });
-        Button fleetLeaveButton = dangerButton(theme, "Leave");
+        Button fleetLeaveButton = dangerOutlinedButton(theme, "Leave");
         fleetLeaveButton.setOnClickListener(view -> {
             if (!KioskConfig.fleetIdOf(this).isEmpty()) {
                 confirmLeaveFleet();
@@ -3730,9 +3715,25 @@ public final class KioskActivity extends Activity {
                 + EscapeSequence.describe(EscapeSequence.parse(config.launcherSequence))
                 + "\nPIN: " + (KioskConfig.escapePinSet(this) ? "set" : "not set"));
         escapeCard.addView(escapeSummary, matchWrap());
-        Button manageSequences = textButtonOnward(theme, "Manage escape sequences");
+        Button manageSequences = textButtonOnward(theme, "Change the combinations");
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(buttonRow(manageSequences), matchWrap());
+        LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
+        volumeButtonsParams.topMargin = dp(14);
+        escapeCard.addView(volumeButtonsInput, volumeButtonsParams);
+
+        // Pop-ups (the UI round, 2026-10-15): a section of their own, the cameras that pop up
+        // on demand or on a doorbell's trigger, moved here from Dashboard.
+        LinearLayout popupsCard = sectionBody(theme);
+        Button camerasMore = textButtonOnward(theme, "Pop-up cameras");
+        camerasMore.setOnClickListener(view -> showCamerasPage());
+        popupsCard.addView(buttonRow(camerasMore), matchWrap());
+
+        // Integrations (Juri, 2026-10-15): in the menu already, empty until the first ones come.
+        LinearLayout integrationsCard = sectionBody(theme);
+        integrationsCard.addView(emptyState(theme, "No integrations yet",
+                "Muralis will show and act on data from other services. The first integrations"
+                        + " come in an update."), matchWrap());
 
         // The Pro state lives in This panel (About until 2026-09-27; moved here 2026-08-29, by
         // decision of that day): it is a fact about this installation, like the version line
@@ -3792,13 +3793,6 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
-        LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
-        volumeButtonsParams.topMargin = dp(14);
-        aboutCard.addView(volumeButtonsInput, volumeButtonsParams);
-        // The look on a page of its own, the first of the rows, as on the web (Juri, 2026-10-07).
-        aboutCard.addView(glyphRow(theme, R.drawable.ic_appearance, "Appearance",
-                KioskConfig.appearanceSummary(config.appearanceColour, config.separators), null,
-                this::showAppearancePage, false), matchWrap());
         // The web's row: the stats glyph and the overlay's state under the name (review,
         // 2026-10-01).
         aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
@@ -3877,10 +3871,11 @@ public final class KioskActivity extends Activity {
         // The fleet's own port on this panel (block 11a, Juri 2026-10-08: a setting like the web
         // admin's, never the same port), saved with the other connection fields by the foot
         // button, and whether the member endpoint listens on it, with the reason when it does not.
+        // In the order a person needs it (the UI round, 2026-10-15): the fleet and its panels,
+        // adding one, what this panel follows and the Fleet page, then the port and Leave.
         LinearLayout fleetCard = sectionBody(theme);
         EditText memberPortInput = themedInput(theme, Integer.toString(config.fleetPort), false);
         memberPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(fleetCard, theme, "Member port", memberPortInput);
         TextView fleetState = new FlushText(this);
         fleetState.setTextSize(13);
         boolean fleetListening = KioskRuntimeState.fleetListening();
@@ -3889,16 +3884,13 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams fleetStateParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fleetStateParams.topMargin = dp(10);
-        fleetCard.addView(fleetState, fleetStateParams);
-        LinearLayout.LayoutParams fleetMemberParams = matchWrap();
-        fleetMemberParams.topMargin = dp(14);
+        LinearLayout.LayoutParams fleetMemberParams = wideRow();
         fleetCard.addView(fleetMember, fleetMemberParams);
         // Add by its code (block 11e): for a panel without a camera, or a QR out of its reach.
         Button fleetCodeButton = textButton(theme, "Add by code");
         fleetCodeButton.setOnClickListener(view -> showAddByCode());
         fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening());
-        fleetCard.addView(fittingButtonRow(fleetCodeButton), matchWrapClose());
-        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetLeaveButton, fleetAddButton),
+        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton),
                 matchWrapClose());
         // Whether this panel follows what the whole fleet shares, the groups it is in, and the
         // way to the Fleet page (block 13); the group switches are followed by the live sync
@@ -3958,7 +3950,18 @@ public final class KioskActivity extends Activity {
             Button fleetPage = textButtonOnward(theme, "Open the Fleet page");
             fleetPage.setOnClickListener(view -> showFleetPage(FleetDocument.EVERYONE));
             fleetCard.addView(fittingButtonRow(fleetPage), matchWrapClose());
+            // The fleet's alerts, a page of their own (the UI round, 2026-10-15): the one shared
+            // section with no section of its own to live in.
+            Button alertsPage = textButtonOnward(theme, "Alerts");
+            alertsPage.setOnClickListener(view -> showAlertsPage());
+            fleetCard.addView(fittingButtonRow(alertsPage), matchWrapClose());
         }
+        // The fleet's own port on this panel, and whether the member endpoint listens on it;
+        // then Leave, apart, as an action that ends something.
+        fleetCard.addView(sectionTitle(theme, "Connection", 18), matchWrap());
+        addField(fleetCard, theme, "Member port", memberPortInput);
+        fleetCard.addView(fleetState, fleetStateParams);
+        fleetCard.addView(fittingButtonRow(fleetLeaveButton), matchWrap());
         int adminPortNow = config.httpPort;
         memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(memberPortInput, theme);
@@ -3972,30 +3975,34 @@ public final class KioskActivity extends Activity {
 
         // One list of sections, each a glyph, its name and a line of what is stored, opening in
         // place, one at a time (Juri's drawing of 2026-09-23); from 840 dp the list stands at the
-        // left and the open section at the right. Same order as the web page, which has one more
-        // section, Quick actions, for the commands that a person standing at the panel has as
-        // Open dashboard and the escape combinations.
+        // left and the open section at the right. In groups under a heading each, as Android's
+        // settings are (the UI round, 2026-10-15), the same as the web page.
         final List<Section> sections = java.util.Arrays.asList(
-                new Section(R.drawable.ic_dashboard, "Dashboard", dashboardSummary(config),
-                        dashboardCard),
-                new Section(R.drawable.ic_mqtt, "MQTT", config.mqttHost.isEmpty()
-                        ? "Not configured" : config.mqttHost + ":" + config.mqttPort, mqttCard),
-                new Section(R.drawable.ic_web, "Local web admin", webAdminSummary(config), httpCard),
-                new Section(R.drawable.ic_fleet, "Fleet", FleetServer.summaryOf(config.fleetPort),
-                        fleetCard),
-                new Section(R.drawable.ic_escape, "Escape sequences", sequencesSummary(config),
-                        escapeCard),
-                new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard),
-                new Section(R.drawable.ic_screensaver, "Ambient", screensaverSummary(),
-                        screensaverCard),
-                new Section(R.drawable.ic_sensors, "Sensors", sensorsSummary(), sensorsCard),
-                new Section(R.drawable.ic_automations, "Automations", automationsSummary(),
-                        automationsCard),
-                // The one section with a control of its own beside its name: the day and night
-                // toggle, which is what this screen looks like. Beside Display from 2026-09-23,
-                // beside This panel since 2026-10-04 (Juri), where the look's other choices are.
-                new Section(R.drawable.ic_sensor_panel, "This panel", config.deviceId, aboutCard,
-                        themeToggle(theme)));
+                new Section(GROUP_SHOWS, R.drawable.ic_dashboard, "Dashboard",
+                        dashboardSummary(config), dashboardCard),
+                new Section(GROUP_SCREEN, R.drawable.ic_display, "Display", displaySummary(),
+                        displayCard),
+                new Section(GROUP_SCREEN, R.drawable.ic_screensaver, "Ambient",
+                        screensaverSummary(), screensaverCard),
+                new Section(GROUP_SCREEN, R.drawable.ic_popups, "Pop-ups",
+                        popupsSummary(), popupsCard),
+                new Section(GROUP_AUTOMATION, R.drawable.ic_sensors, "Sensors", sensorsSummary(),
+                        sensorsCard),
+                new Section(GROUP_AUTOMATION, R.drawable.ic_automations, "Automations",
+                        automationsSummary(), automationsCard),
+                new Section(GROUP_AUTOMATION, R.drawable.ic_integrations, "Integrations",
+                        "Coming soon", integrationsCard),
+                new Section(GROUP_CONNECTIONS, R.drawable.ic_mqtt, "MQTT",
+                        config.mqttHost.isEmpty() ? "Not configured"
+                                : config.mqttHost + ":" + config.mqttPort, mqttCard),
+                new Section(GROUP_CONNECTIONS, R.drawable.ic_web, "Web admin",
+                        webAdminSummary(config), httpCard),
+                new Section(GROUP_CONNECTIONS, R.drawable.ic_fleet, "Fleet",
+                        FleetServer.summaryOf(config.fleetPort), fleetCard),
+                new Section(GROUP_SECURITY, R.drawable.ic_escape, "Way out",
+                        sequencesSummary(config), escapeCard),
+                new Section("", R.drawable.ic_sensor_panel, "About this panel", config.deviceId,
+                        aboutCard));
 
         Runnable openDashboard = () -> {
             String url = normalizeUrl(urlInput.getText().toString());
@@ -4154,27 +4161,22 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * One section of the settings menu: its glyph, its name, one line of what is stored, its body,
-     * and at most one control that belongs beside its name wherever that name is drawn, which is
-     * the accordion's row or the open card's title.
+     * One section of the settings menu: its group, its glyph, its name, one line of what is
+     * stored, its body.
      */
     private static final class Section {
+        final String group;
         final int icon;
         final String title;
         final String summary;
         final LinearLayout body;
-        final View action;
 
-        Section(int icon, String title, String summary, LinearLayout body) {
-            this(icon, title, summary, body, null);
-        }
-
-        Section(int icon, String title, String summary, LinearLayout body, View action) {
+        Section(String group, int icon, String title, String summary, LinearLayout body) {
+            this.group = group;
             this.icon = icon;
             this.title = title;
             this.summary = summary;
             this.body = body;
-            this.action = action;
         }
     }
 
@@ -4410,8 +4412,7 @@ public final class KioskActivity extends Activity {
         });
         groupsCard.addView(fittingButtonRow(addGroup), matchWrapClose());
         column.addView(groupsCard, matchWrap());
-        // Shared settings of one scope: the whole fleet or a group, then each section with its
-        // switch and its values, saved from here from any panel.
+        // Shared settings of one scope: the whole fleet or a group, then which sections it shares.
         LinearLayout sharedCard = card(theme, "Shared settings");
         sharedCard.addView(sectionTitle(theme, "Shared in", 4), matchWrap());
         RadioGroup scopeInput = new RadioGroup(this);
@@ -4429,110 +4430,35 @@ public final class KioskActivity extends Activity {
             }
         });
         sharedCard.addView(scopeInput, matchWrapClose());
-        KioskConfig own = KioskConfig.load(this);
+        // Which sections the scope shares, one switch each (the UI round, 2026-10-15): the
+        // values are the sections' own, edited where they live on any panel of the scope, and
+        // never copied here. Switched on, the section as this panel has it now is shared.
+        String shownScope = shown;
         for (String section : FleetDocument.SECTIONS) {
-            java.util.Map<String, Object> shared = FleetDocument.sectionValues(list, shown, section);
-            java.util.Map<String, Object> values = shared != null ? shared
-                    : FleetProfile.read(this, section, own);
-            sharedCard.addView(sectionTitle(theme, FleetDocument.sectionLabel(section), 18),
-                    matchWrap());
-            CompoundButton sharedSwitch = themedSwitch(theme, "Shared", shared != null);
+            boolean isShared = FleetDocument.sectionValues(list, shown, section) != null;
+            CompoundButton sharedSwitch = themedSwitch(theme,
+                    FleetDocument.sectionLabel(section), isShared);
+            sharedSwitch.setOnCheckedChangeListener((button, on) -> fleetWork(app, () -> {
+                String refused = FleetServer.shareSection(app, shownScope, section,
+                        on ? FleetProfile.read(app, section) : null);
+                if (refused != null) {
+                    // The switch goes back to what the fleet holds.
+                    mainHandler.post(() -> showFleetPage(shownScope));
+                } else if (on && "alerts".equals(section)) {
+                    // An alert kind on: the notification needs its grant on Android 13 and
+                    // newer, asked at the panel; without it the alert still goes to the topic
+                    // and the web address.
+                    mainHandler.post(this::requestNotificationPermissionIfNeeded);
+                }
+                return refused;
+            }));
             sharedCard.addView(sharedSwitch, matchWrapClose());
-            java.util.Map<String, java.util.function.Supplier<String>> readers =
-                    new java.util.LinkedHashMap<>();
-            for (FleetProfile.Field field : FleetProfile.fields(section)) {
-                Object value = values.get(field.key);
-                String text = FleetProfile.shown(value);
-                switch (field.type) {
-                    case "switch": {
-                        CompoundButton box = themedSwitch(theme, field.label,
-                                Boolean.TRUE.equals(value));
-                        sharedCard.addView(box, matchWrapClose());
-                        readers.put(field.key, () -> box.isChecked() ? "1" : "0");
-                        break;
-                    }
-                    case "select": {
-                        TextView caption = new FlushText(this);
-                        caption.setTextSize(13);
-                        caption.setTextColor(theme.subtext);
-                        caption.setText(field.label);
-                        LinearLayout.LayoutParams captionParams = matchWrap();
-                        captionParams.topMargin = dp(8);
-                        sharedCard.addView(caption, captionParams);
-                        RadioGroup choices = new RadioGroup(this);
-                        for (int i = 0; i + 1 < field.options.length; i += 2) {
-                            radioChoice(theme, choices, field.options[i + 1], field.options[i]);
-                        }
-                        checkRadioIfChanged(choices, text);
-                        sharedCard.addView(choices, matchWrapClose());
-                        // A value outside the choices (a newer version's) stays as it is.
-                        readers.put(field.key, () -> {
-                            View picked = choices.findViewById(choices.getCheckedRadioButtonId());
-                            return picked == null ? text : (String) picked.getTag();
-                        });
-                        break;
-                    }
-                    default: {
-                        boolean secret = "password".equals(field.type);
-                        EditText input = themedInput(theme, secret ? "" : text, secret);
-                        if ("number".equals(field.type)) {
-                            input.setInputType(InputType.TYPE_CLASS_NUMBER);
-                        } else if ("url".equals(field.type) || "host".equals(field.type)) {
-                            // The URL keyboard, as the settings page gives the same values.
-                            input.setInputType(InputType.TYPE_CLASS_TEXT
-                                    | InputType.TYPE_TEXT_VARIATION_URI
-                                    | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-                        }
-                        if (secret) {
-                            addField(sharedCard, theme, field.label, input,
-                                    text.isEmpty() ? "None shared." : "Blank keeps the current one.");
-                        } else {
-                            addField(sharedCard, theme, field.label, input);
-                        }
-                        readers.put(field.key, () -> input.getText().toString());
-                    }
-                }
-            }
-            Button save = tonalButton(theme, "Save");
-            String shownScope = shown;
-            save.setOnClickListener(view -> {
-                java.util.Map<String, String> form = new java.util.HashMap<>();
-                for (java.util.Map.Entry<String, java.util.function.Supplier<String>> reader
-                        : readers.entrySet()) {
-                    form.put(reader.getKey(), reader.getValue().get());
-                }
-                boolean on = sharedSwitch.isChecked();
-                fleetWork(app, () -> {
-                    if (!on) {
-                        return FleetServer.shareSection(app, shownScope, section,
-                                (java.util.Map<String, Object>) null);
-                    }
-                    java.util.Map<String, Object> current = FleetDocument.sectionValues(
-                            KioskConfig.fleetDocumentOf(app), shownScope, section);
-                    String[] problem = new String[1];
-                    java.util.Map<String, Object> typed = FleetProfile.fromForm(section, form,
-                            current != null ? current : FleetProfile.read(app, section), problem);
-                    String refused = typed == null ? problem[0]
-                            : FleetServer.shareSection(app, shownScope, section, typed);
-                    if (refused == null && "alerts".equals(section)) {
-                        // An alert kind switched on here: the notification needs its grant on
-                        // Android 13 and newer, asked at the panel; without it the alert still
-                        // goes to the topic and the web address.
-                        mainHandler.post(this::requestNotificationPermissionIfNeeded);
-                    }
-                    return refused;
-                });
-            });
-            sharedCard.addView(fittingButtonRow(save), matchWrapClose());
         }
         TextView rule = new FlushText(this);
         rule.setTextSize(13);
         rule.setTextColor(theme.subtext);
-        rule.setText("Saved with Shared on, the section's values apply on every panel of the"
-                + " scope; off, the panels keep what they have. A group wins over the whole"
-                + " fleet. A page address may carry {panel.name}, {panel.group} and"
-                + " {fleet.name}. Alerts are raised while the section is shared with this"
-                + " panel, and said once: on when a condition starts, off when it ends.");
+        rule.setText("On, the section as it is here applies to every panel of the scope. A group"
+                + " wins over the whole fleet.");
         LinearLayout.LayoutParams ruleParams = matchWrap();
         ruleParams.topMargin = dp(12);
         sharedCard.addView(rule, ruleParams);
@@ -4550,22 +4476,29 @@ public final class KioskActivity extends Activity {
             none.setText("No versions kept yet.");
             historyCard.addView(none, matchWrap());
         }
+        // The newest few, the rest behind Older versions, so the page does not end in a wall
+        // of versions (the UI round, 2026-10-15).
+        LinearLayout older = new LinearLayout(this);
+        older.setOrientation(LinearLayout.VERTICAL);
+        older.setVisibility(View.GONE);
+        int shownCount = 0;
         for (FleetServer.HistoryEntry entry : history) {
+            LinearLayout into = shownCount++ < FleetServer.HISTORY_SHOWN ? historyCard : older;
             TextView line = new FlushText(this);
             line.setTextSize(15);
             line.setTextColor(theme.text);
             line.setText("Version " + entry.version + (entry.held ? ", held now" : ""));
             LinearLayout.LayoutParams lineParams = matchWrap();
             lineParams.topMargin = dp(10);
-            historyCard.addView(line, lineParams);
+            into.addView(line, lineParams);
             TextView detail = new FlushText(this);
             detail.setTextSize(13);
             detail.setTextColor(theme.subtext);
-            detail.setText("By " + entry.author + ", " + entry.updated + ". "
+            detail.setText(entry.author + ", " + FleetServer.readableTime(entry.updated) + ". "
                     + (entry.changes.isEmpty()
                             ? "No change to the fleet's name, panels, groups or shared settings."
                             : String.join("; ", entry.changes) + "."));
-            historyCard.addView(detail, matchWrapClose());
+            into.addView(detail, matchWrapClose());
             if (!entry.held) {
                 Button restore = textButton(theme, "Restore as new");
                 long version = entry.version;
@@ -4577,16 +4510,24 @@ public final class KioskActivity extends Activity {
                             mainHandler.post(() -> showFleetPage(scope));
                             return refused;
                         }), () -> showFleetPage(scope)));
-                historyCard.addView(fittingButtonRow(restore), matchWrapClose());
+                into.addView(fittingButtonRow(restore), matchWrapClose());
             }
+        }
+        if (older.getChildCount() > 0) {
+            Button showOlder = textButton(theme, "Older versions");
+            showOlder.setOnClickListener(view -> {
+                older.setVisibility(View.VISIBLE);
+                showOlder.setVisibility(View.GONE);
+            });
+            historyCard.addView(fittingButtonRow(showOlder), matchWrapClose());
+            historyCard.addView(older, wideRow());
         }
         TextView historyRule = new FlushText(this);
         historyRule.setTextSize(13);
         historyRule.setTextColor(theme.subtext);
-        historyRule.setText("The last " + KioskConfig.FLEET_HISTORY_SIZE + " versions this panel"
-                + " held. Restore as new writes a version's fleet name, groups and shared"
-                + " settings as a new, higher version; the panels of the fleet stay as they are"
-                + " now.");
+        historyRule.setText("The last " + KioskConfig.FLEET_HISTORY_SIZE + " versions. Restore as"
+                + " new brings back a version's name, groups and shared settings; the panels"
+                + " stay.");
         LinearLayout.LayoutParams historyRuleParams = matchWrap();
         historyRuleParams.topMargin = dp(12);
         historyCard.addView(historyRule, historyRuleParams);
@@ -4614,6 +4555,117 @@ public final class KioskActivity extends Activity {
             }
         };
         mainHandler.postDelayed(follow, 1_000);
+    }
+
+    /**
+     * Alerts (the UI round, 2026-10-15; on the Fleet page's shared settings until then): the
+     * fleet's alerts, edited here and shared with the scope that shares them now, or with the
+     * whole fleet when none does yet. Alerts are raised only while they are shared.
+     */
+    private void showAlertsPage() {
+        currentScreen = this::showAlertsPage;
+        LinearLayout page = subPage("Alerts", this::showSettings);
+        KioskTheme theme = currentTheme();
+        Context app = getApplicationContext();
+        String section = "alerts";
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
+        String scope = FleetProfile.alertsScope(list);
+        java.util.Map<String, Object> shared = list == null ? null
+                : FleetDocument.sectionValues(list, scope, section);
+        java.util.Map<String, Object> values = shared != null ? shared
+                : FleetProfile.read(this, section);
+        LinearLayout card = card(theme, "Alerts");
+        TextView about = new FlushText(this);
+        about.setTextSize(13);
+        about.setTextColor(theme.subtext);
+        about.setText((shared == null ? "Not shared yet: Save shares them with the whole fleet."
+                : "Shared with " + (FleetDocument.EVERYONE.equals(scope) ? "the whole fleet"
+                        : "the group " + FleetDocument.groupName(list, scope)) + ".")
+                + " Each alert comes once when it starts and once when it ends.");
+        card.addView(about, matchWrapClose());
+        java.util.Map<String, java.util.function.Supplier<String>> readers =
+                new java.util.LinkedHashMap<>();
+        for (FleetProfile.Field field : FleetProfile.fields(section)) {
+            Object value = values.get(field.key);
+            String text = FleetProfile.shown(value);
+            switch (field.type) {
+                case "switch": {
+                    CompoundButton box = themedSwitch(theme, field.label,
+                            Boolean.TRUE.equals(value));
+                    card.addView(box, matchWrapClose());
+                    readers.put(field.key, () -> box.isChecked() ? "1" : "0");
+                    break;
+                }
+                case "select": {
+                    TextView caption = new FlushText(this);
+                    caption.setTextSize(13);
+                    caption.setTextColor(theme.subtext);
+                    caption.setText(field.label);
+                    LinearLayout.LayoutParams captionParams = matchWrap();
+                    captionParams.topMargin = dp(8);
+                    card.addView(caption, captionParams);
+                    RadioGroup choices = new RadioGroup(this);
+                    for (int i = 0; i + 1 < field.options.length; i += 2) {
+                        radioChoice(theme, choices, field.options[i + 1], field.options[i]);
+                    }
+                    checkRadioIfChanged(choices, text);
+                    card.addView(choices, matchWrapClose());
+                    // A value outside the choices (a newer version's) stays as it is.
+                    readers.put(field.key, () -> {
+                        View picked = choices.findViewById(choices.getCheckedRadioButtonId());
+                        return picked == null ? text : (String) picked.getTag();
+                    });
+                    break;
+                }
+                default: {
+                    boolean secret = "password".equals(field.type);
+                    EditText input = themedInput(theme, secret ? "" : text, secret);
+                    if ("number".equals(field.type)) {
+                        input.setInputType(InputType.TYPE_CLASS_NUMBER);
+                    } else if ("url".equals(field.type) || "host".equals(field.type)) {
+                        // The URL keyboard, as the settings page gives the same values.
+                        input.setInputType(InputType.TYPE_CLASS_TEXT
+                                | InputType.TYPE_TEXT_VARIATION_URI
+                                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+                    }
+                    if (secret) {
+                        addField(card, theme, field.label, input,
+                                text.isEmpty() ? "None shared." : "Blank keeps the current one.");
+                    } else {
+                        addField(card, theme, field.label, input);
+                    }
+                    readers.put(field.key, () -> input.getText().toString());
+                }
+            }
+        }
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            java.util.Map<String, String> form = new java.util.HashMap<>();
+            for (java.util.Map.Entry<String, java.util.function.Supplier<String>> reader
+                    : readers.entrySet()) {
+                form.put(reader.getKey(), reader.getValue().get());
+            }
+            fleetWork(app, () -> {
+                String[] problem = new String[1];
+                java.util.Map<String, Object> typed = FleetProfile.fromForm(section, form,
+                        values, problem);
+                String refused = typed == null ? problem[0]
+                        : FleetServer.shareSection(app, scope, section, typed);
+                if (refused == null) {
+                    // An alert kind switched on here: the notification needs its grant on
+                    // Android 13 and newer, asked at the panel; without it the alert still
+                    // goes to the topic and the web address.
+                    mainHandler.post(() -> {
+                        requestNotificationPermissionIfNeeded();
+                        Toast.makeText(app, "Alerts saved", Toast.LENGTH_SHORT).show();
+                    });
+                }
+                return refused;
+            });
+        });
+        card.addView(buttonRow(save), matchWrap());
+        page.addView(card, matchWrap());
+        setContentView(scrollPage(theme, page));
     }
 
     /** A fleet change off the main thread; its refusal, if any, as a toast. */
@@ -4679,7 +4731,7 @@ public final class KioskActivity extends Activity {
         return title;
     }
 
-    /** "Set by the fleet …" at the top of a section the fleet shares (block 12d). */
+    /** "From the whole fleet …" at the top of a section the fleet shares (block 12d). */
     private void addSharedLine(LinearLayout card, KioskTheme theme, String section) {
         String line = FleetProfile.sharedLine(this, section);
         if (line == null) {
@@ -4690,8 +4742,21 @@ public final class KioskActivity extends Activity {
         shared.setTextColor(theme.subtext);
         shared.setText(line);
         LinearLayout.LayoutParams params = matchWrap();
-        params.bottomMargin = dp(10);
+        params.bottomMargin = FleetProfile.fromWholeFleet(section) ? 0 : dp(10);
         card.addView(shared, params);
+        if (FleetProfile.fromWholeFleet(section)) {
+            // What the whole fleet shares a panel may stop following, right where it shows.
+            Context app = getApplicationContext();
+            Button stop = textButton(theme, "Stop following the whole fleet");
+            stop.setOnClickListener(view -> fleetWork(app, () -> {
+                String refused = FleetServer.setFollowsFleet(app, false);
+                if (refused == null) {
+                    mainHandler.post(this::redrawThisScreen);
+                }
+                return refused;
+            }));
+            card.addView(buttonRow(stop), matchWrapClose());
+        }
     }
 
     /** A section's contents, built like a card's without the card: the menu draws the frame. */
@@ -4708,6 +4773,12 @@ public final class KioskActivity extends Activity {
      * starts with it empty. It lived in the UI preferences until then and came back every time.
      */
     private String openSection = "";
+    /** The settings menu's groups, as the web page names them; About this panel stands alone. */
+    private static final String GROUP_SHOWS = "What the panel shows";
+    private static final String GROUP_SCREEN = "Screen";
+    private static final String GROUP_AUTOMATION = "Automation";
+    private static final String GROUP_CONNECTIONS = "Connections";
+    private static final String GROUP_SECURITY = "Security";
 
     /**
      * The settings as one menu, in the shape the width allows.
@@ -4840,13 +4911,6 @@ public final class KioskActivity extends Activity {
         texts.addView(summary);
         row.addView(texts, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        // The accordion's row is where that section's name is drawn, so a section's own control
-        // rides here; in the list-detail layout the name is the open card's title and it rides
-        // there instead. Either way it is beside the name, once.
-        if (chevron && section.action != null) {
-            row.addView(section.action, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
         if (chevron) {
             ImageView arrow = new ImageView(this);
             arrow.setImageResource(R.drawable.ic_expand_more);
@@ -4874,23 +4938,30 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         stackParams.gravity = Gravity.CENTER_HORIZONTAL;
         stack.setLayoutParams(stackParams);
-        LinearLayout menu = new LinearLayout(this);
-        menu.setOrientation(LinearLayout.VERTICAL);
-        menu.setBackground(theme.panel(theme.card, dp(12)));
-        menu.setClipToOutline(true);
-        stack.addView(menu, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        if (footer != null) {
-            LinearLayout.LayoutParams footerParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            footerParams.topMargin = dp(16);
-            stack.addView(footer, footerParams);
-        }
         List<LinearLayout> rows = new ArrayList<>();
         List<LinearLayout> bodies = new ArrayList<>();
         boolean phone = width < 600;
+        String group = null;
+        LinearLayout list = null;
+        View previous = null;
         for (int index = 0; index < sections.size(); index++) {
             Section section = sections.get(index);
+            boolean first = !section.group.equals(group);
+            if (first) {
+                // Each group its own list of segments under its heading, as Android's settings
+                // draw them; a section with no group (About this panel) stands alone.
+                group = section.group;
+                if (!group.isEmpty()) {
+                    stack.addView(groupHeading(theme, group, stack.getChildCount() == 0),
+                            wideRow());
+                }
+                list = new LinearLayout(this);
+                list.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams listParams = wideRow();
+                listParams.topMargin = group.isEmpty() ? dp(16) : 0;
+                stack.addView(list, listParams);
+                previous = null;
+            }
             LinearLayout row = sectionRow(theme, section, true);
             LinearLayout body = new LinearLayout(this);
             body.setOrientation(LinearLayout.VERTICAL);
@@ -4901,19 +4972,23 @@ public final class KioskActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             boolean open = section.title.equals(openSection);
             body.setVisibility(open ? View.VISIBLE : View.GONE);
-            paintAccordionRow(theme, row, open);
             rows.add(row);
             bodies.add(body);
-            menu.addView(row, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            menu.addView(body, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            if (index < sections.size() - 1 && hairlines()) {
-                View rule = new View(this);
-                rule.setBackgroundColor(theme.outlineVariant);
-                menu.addView(rule, new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            // The row and its body are one segment, so the open section is one rounded piece.
+            LinearLayout segment = new LinearLayout(this);
+            segment.setOrientation(LinearLayout.VERTICAL);
+            segment.addView(row, wideRow());
+            segment.addView(body, wideRow());
+            segment.setTag(R.id.segment_state, new Object[] {first, theme.card});
+            paintAccordionRow(theme, row, open);
+            if (previous != null) {
+                paintSegment(theme, previous, false);
             }
+            paintSegment(theme, segment, true);
+            LinearLayout.LayoutParams segmentParams = wideRow();
+            segmentParams.topMargin = first ? 0 : dp(2);
+            list.addView(segment, segmentParams);
+            previous = segment;
             final int mine = index;
             row.setOnClickListener(view -> {
                 boolean opening = bodies.get(mine).getVisibility() != View.VISIBLE;
@@ -4928,14 +5003,152 @@ public final class KioskActivity extends Activity {
                 }
             });
         }
+        if (footer != null) {
+            LinearLayout.LayoutParams footerParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            footerParams.topMargin = dp(16);
+            stack.addView(footer, footerParams);
+        }
         return stack;
     }
 
-    /** The open row lifted a step, its chevron turned; the closed rows plain. */
+    /**
+     * Material's segmented button with text segments, one chosen: outlined, full round ends,
+     * the chosen segment filled with a check before its words. {@code onChoose} is told the
+     * index tapped, the chosen one included.
+     */
+    private LinearLayout segmentedChoice(KioskTheme theme, String[] labels, int chosen,
+            java.util.function.IntConsumer onChoose) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        int height = dp(40);
+        float radius = height / 2f;
+        android.graphics.drawable.GradientDrawable outline =
+                new android.graphics.drawable.GradientDrawable();
+        outline.setCornerRadius(radius);
+        outline.setStroke(dp(1), theme.border);
+        // 40 dp drawn, 48 dp to the touch: the outline and the fills inset 4 dp above and below.
+        bar.setBackground(new android.graphics.drawable.InsetDrawable(outline, 0, dp(4), 0,
+                dp(4)));
+        bar.setPadding(dp(1), 0, dp(1), 0);
+        for (int index = 0; index < labels.length; index++) {
+            boolean on = index == chosen;
+            if (index > 0) {
+                View divider = new View(this);
+                divider.setBackgroundColor(theme.border);
+                LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1),
+                        height - dp(2));
+                dividerParams.gravity = Gravity.CENTER_VERTICAL;
+                bar.addView(divider, dividerParams);
+            }
+            // The check and the words centred together, the check just before them.
+            LinearLayout segment = new LinearLayout(this);
+            segment.setOrientation(LinearLayout.HORIZONTAL);
+            segment.setGravity(Gravity.CENTER);
+            if (on) {
+                ImageView check = new ImageView(this);
+                check.setImageResource(R.drawable.ic_check);
+                check.setImageTintList(ColorStateList.valueOf(theme.onSecondaryContainer));
+                LinearLayout.LayoutParams checkParams = new LinearLayout.LayoutParams(dp(18),
+                        dp(18));
+                checkParams.rightMargin = dp(8);
+                segment.addView(check, checkParams);
+            }
+            TextView words = new FlushText(this);
+            words.setText(labels[index]);
+            words.setTextSize(14);
+            words.setTypeface(MEDIUM);
+            words.setSingleLine(true);
+            words.setTextColor(on ? theme.onSecondaryContainer : theme.text);
+            segment.addView(words);
+            segment.setContentDescription(labels[index]);
+            float left = index == 0 ? radius : 0;
+            float right = index == labels.length - 1 ? radius : 0;
+            float[] radii = {left, left, right, right, right, right, left, left};
+            android.graphics.drawable.GradientDrawable fill =
+                    new android.graphics.drawable.GradientDrawable();
+            fill.setCornerRadii(radii);
+            fill.setColor(on ? theme.secondaryContainer : Color.TRANSPARENT);
+            android.graphics.drawable.GradientDrawable mask =
+                    new android.graphics.drawable.GradientDrawable();
+            mask.setCornerRadii(radii);
+            mask.setColor(Color.WHITE);
+            segment.setBackground(theme.ripple(
+                    new android.graphics.drawable.InsetDrawable(fill, 0, dp(5), 0, dp(5)),
+                    new android.graphics.drawable.InsetDrawable(mask, 0, dp(5), 0, dp(5)),
+                    theme.text));
+            // After the background, whose inset would otherwise become the padding.
+            segment.setPadding(dp(12), 0, dp(12), 0);
+            segment.setSelected(on);
+            final int mine = index;
+            segment.setOnClickListener(view -> onChoose.accept(mine));
+            bar.addView(segment, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        }
+        return bar;
+    }
+
+    /**
+     * A group's heading in the settings menu: Material's list subheader, the group's name in the
+     * primary colour over its rows.
+     */
+    private TextView groupHeading(KioskTheme theme, String name, boolean top) {
+        TextView heading = new FlushText(this);
+        heading.setText(name);
+        heading.setTextColor(theme.accent);
+        heading.setTextSize(14);
+        heading.setTypeface(MEDIUM);
+        heading.setPadding(dp(16), dp(top ? 4 : 20), dp(16), dp(8));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            heading.setAccessibilityHeading(true);
+        }
+        return heading;
+    }
+
+    /** Full width, wrapping its content, no margin: matchWrap's 16 dp gap is for fields. */
+    private static LinearLayout.LayoutParams wideRow() {
+        return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    /** A section with nothing in it yet: what it will hold, in one heading and one line. */
+    private LinearLayout emptyState(KioskTheme theme, String title, String line) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, dp(8), 0, dp(8));
+        TextView heading = new FlushText(this);
+        heading.setText(title);
+        heading.setTextColor(theme.text);
+        heading.setTextSize(16);
+        box.addView(heading, wideRow());
+        TextView body = new FlushText(this);
+        body.setText(line);
+        body.setTextColor(theme.subtext);
+        body.setTextSize(14);
+        LinearLayout.LayoutParams bodyParams = wideRow();
+        bodyParams.topMargin = dp(4);
+        box.addView(body, bodyParams);
+        return box;
+    }
+
+    /**
+     * The open row lifted a step, its chevron turned; the closed rows plain. The lift has the
+     * segment's top corners, since a segment does not clip what it holds.
+     */
     private void paintAccordionRow(KioskTheme theme, LinearLayout row, boolean open) {
-        row.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
-                open ? theme.cardHigh : Color.TRANSPARENT),
-                new android.graphics.drawable.ColorDrawable(Color.WHITE), theme.text));
+        Object state = row.getParent() instanceof View
+                ? ((View) row.getParent()).getTag(R.id.segment_state) : null;
+        float top = state instanceof Object[] && Boolean.TRUE.equals(((Object[]) state)[0])
+                ? dp(16) : dp(4);
+        float[] radii = {top, top, top, top, 0, 0, 0, 0};
+        android.graphics.drawable.GradientDrawable fill =
+                new android.graphics.drawable.GradientDrawable();
+        fill.setCornerRadii(radii);
+        fill.setColor(open ? theme.cardHigh : Color.TRANSPARENT);
+        android.graphics.drawable.GradientDrawable mask =
+                new android.graphics.drawable.GradientDrawable();
+        mask.setCornerRadii(radii);
+        mask.setColor(Color.WHITE);
+        row.setBackground(theme.ripple(fill, mask, theme.text));
         View chevron = row.findViewWithTag("chevron");
         if (chevron != null) {
             chevron.setRotation(open ? 180f : 0f);
@@ -4970,18 +5183,8 @@ public final class KioskActivity extends Activity {
         pair.addView(navColumn, navParams);
 
         LinearLayout detail = card(theme, null);
-        // The title, and at the right of it whatever control that section brings: the day and
-        // night toggle for Display, nothing for the rest (Juri, 2026-09-23).
-        LinearLayout titleRow = new LinearLayout(this);
-        titleRow.setOrientation(LinearLayout.HORIZONTAL);
-        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView detailTitle = cardTitle(theme, "");
-        titleRow.addView(detailTitle, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        FrameLayout titleAction = new FrameLayout(this);
-        titleRow.addView(titleAction, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        detail.addView(titleRow, new LinearLayout.LayoutParams(
+        detail.addView(detailTitle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         pair.addView(detail, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f));
@@ -4993,8 +5196,20 @@ public final class KioskActivity extends Activity {
             }
         }
         List<LinearLayout> rows = new ArrayList<>();
+        String group = null;
         for (int index = 0; index < sections.size(); index++) {
             Section section = sections.get(index);
+            if (!section.group.equals(group)) {
+                group = section.group;
+                if (group.isEmpty()) {
+                    View gap = new View(this);
+                    nav.addView(gap, new LinearLayout.LayoutParams(1, dp(12)));
+                } else {
+                    TextView heading = groupHeading(theme, group, index == 0);
+                    heading.setPadding(dp(16), dp(index == 0 ? 8 : 16), dp(16), dp(4));
+                    nav.addView(heading, wideRow());
+                }
+            }
             LinearLayout row = sectionRow(theme, section, false);
             rows.add(row);
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
@@ -5002,18 +5217,18 @@ public final class KioskActivity extends Activity {
             nav.addView(row, rowParams);
             final int mine = index;
             row.setOnClickListener(view -> {
-                showDetail(theme, detail, detailTitle, titleAction, sections, rows, mine);
+                showDetail(theme, detail, detailTitle, sections, rows, mine);
                 openSection = section.title;
                 hideKeyboardIfShown();
             });
         }
-        showDetail(theme, detail, detailTitle, titleAction, sections, rows, openIndex);
+        showDetail(theme, detail, detailTitle, sections, rows, openIndex);
         return pair;
     }
 
     /** Moves one section's body into the detail card and marks its row in the list. */
     private void showDetail(KioskTheme theme, LinearLayout detail, TextView detailTitle,
-            FrameLayout titleAction, List<Section> sections, List<LinearLayout> rows, int index) {
+            List<Section> sections, List<LinearLayout> rows, int index) {
         for (int other = 0; other < rows.size(); other++) {
             boolean on = other == index;
             LinearLayout row = rows.get(other);
@@ -5031,11 +5246,6 @@ public final class KioskActivity extends Activity {
             ((ViewGroup) section.body.getParent()).removeView(section.body);
         }
         detailTitle.setText(section.title);
-        titleAction.removeAllViews();
-        if (section.action != null) {
-            titleAction.addView(section.action, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
         detail.addView(section.body, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
@@ -5079,25 +5289,33 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The sun or the moon in the app bar, switching this screen's palette. Kept in UI preferences
-     * rather than KioskConfig, and so deliberately outside applyLiveSetting: it is a preference of
-     * whoever is standing at the tablet reading this screen, not a property of the device.
+     * Day and night in the app bar: one icon button showing the mode in force, the sun, the moon
+     * or the half-lit sun for following the device, and each tap moves to the next (Juri,
+     * 2026-10-15: one icon at a time, no menu). Below Android 10 the device has no dark theme to
+     * follow, so it goes between the sun and the moon. Kept in UI preferences rather than
+     * KioskConfig, and so outside applyLiveSetting: it is a preference of whoever stands at the
+     * panel reading this screen, not a property of the device; the web admin's is the browser's
+     * own for the same reason.
      */
     private ImageButton themeToggle(KioskTheme theme) {
-        ImageButton toggle = iconButton(theme, theme.light
-                ? R.drawable.ic_theme_moon : R.drawable.ic_theme_sun, theme.light
-                ? "Switch this screen to the dark theme" : "Switch this screen to the light theme");
-        // The sun in the palette's yellow, the moon in the neutral grey: shapes and colours
-        // people already read as day and night.
-        toggle.setImageTintList(ColorStateList.valueOf(theme.light ? theme.subtext : theme.warn));
-        toggle.setOnClickListener(view -> {
+        String mode = themeMode();
+        boolean canFollow = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+        String next = THEME_LIGHT.equals(mode) ? THEME_DARK
+                : THEME_DARK.equals(mode) && canFollow ? THEME_SYSTEM : THEME_LIGHT;
+        int glyph = THEME_SYSTEM.equals(mode) ? R.drawable.ic_theme_auto
+                : THEME_LIGHT.equals(mode) ? R.drawable.ic_theme_sun : R.drawable.ic_theme_moon;
+        String now = THEME_SYSTEM.equals(mode) ? "Follow the device"
+                : THEME_LIGHT.equals(mode) ? "Light" : "Dark";
+        String then = THEME_SYSTEM.equals(next) ? "follow the device"
+                : THEME_LIGHT.equals(next) ? "light" : "dark";
+        ImageButton button = iconButton(theme, glyph, "Day and night: " + now + ". Tap for "
+                + then);
+        button.setOnClickListener(view -> {
             KioskConfig.storageContext(this).getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(LIGHT_CONFIGURATION_THEME, !theme.light)
-                    .apply();
+                    .edit().putString(CONFIGURATION_THEME, next).apply();
             redrawThisScreen();
         });
-        return toggle;
+        return button;
     }
 
     // ---- the summaries: stored values only, never a status line the pages do not already carry
@@ -5107,7 +5325,11 @@ public final class KioskActivity extends Activity {
      * that section is about and leaves out what the page already shows: the device id is the app
      * bar's subtitle, the uptime is in the stats readout, the build number is on the About page.
      */
-    private static String dashboardSummary(KioskConfig config) {
+    private String dashboardSummary(KioskConfig config) {
+        // An app instead of the page says so, as "The panel shows" does.
+        if (!KioskConfig.appLockOf(this).isEmpty()) {
+            return "App: " + KioskConfig.appLockLabelOf(this);
+        }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
     }
@@ -5148,7 +5370,13 @@ public final class KioskActivity extends Activity {
     private String screensaverSummary() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(this);
         return ScreensaverPolicy.OFF.equals(saver.mode) ? "Off"
-                : ScreensaverPolicy.modeName(saver.mode) + " · after " + saver.idleSeconds + " s";
+                : ScreensaverPolicy.modeName(saver.mode) + " · after "
+                        + ScreensaverPolicy.describeDuration(saver.idleSeconds);
+    }
+
+    /** "2 cameras", the same line the web page's section shows. */
+    private String popupsSummary() {
+        return PopupCameras.summary(KioskConfig.popupCamerasOf(this));
     }
 
     /** "2 of 7 on", the same line the web page's section shows. */
@@ -5705,7 +5933,7 @@ public final class KioskActivity extends Activity {
         list.addView(listHead(theme, "Sensors", count), listHeadParams(wide));
         java.util.List<LinearLayout> absent = new java.util.ArrayList<>();
         // The narrow list is the web's ul.list; the wide one is the left menu beside the
-        // chosen sensor's cards, both kept apart as This panel's Separators say.
+        // chosen sensor's cards, both in segments.
         final boolean[] firstRow = {true};
         java.util.function.Consumer<LinearLayout> addRow = row -> {
             if (wide) {
@@ -6670,7 +6898,7 @@ public final class KioskActivity extends Activity {
             for (String[] link : new String[][] {{"Live stream", "/camera/stream"},
                     {"Snapshot", "/camera/snapshot.jpg"}}) {
                 LinearLayout row = glyphRow(theme, R.drawable.ic_web, link[0],
-                        serving ? address + link[1] : "Needs the local web admin", null, null,
+                        serving ? address + link[1] : "Needs the web admin", null, null,
                         !serving);
                 TextView sub = readingOf(row);
                 sub.setSingleLine(false);
@@ -9602,7 +9830,7 @@ public final class KioskActivity extends Activity {
                 screen.pictures.body.addView(pictureRow(screen, entry, details),
                         new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.WRAP_CONTENT));
-                if (index < listing.entries.size() - 1 && hairlines()) {
+                if (index < listing.entries.size() - 1) {
                     View rule = new View(this);
                     rule.setBackgroundColor(theme.outlineVariant);
                     screen.pictures.body.addView(rule, new LinearLayout.LayoutParams(
@@ -9908,7 +10136,7 @@ public final class KioskActivity extends Activity {
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         View rule = new View(this);
         rule.setBackgroundColor(theme.outlineVariant);
-        rule.setVisibility(hairlines() ? View.VISIBLE : View.GONE);
+        rule.setVisibility(View.VISIBLE);
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
         wrapper.addView(row, new LinearLayout.LayoutParams(
@@ -10118,7 +10346,7 @@ public final class KioskActivity extends Activity {
             String uri = items.get(index);
             LinearLayout entry = new LinearLayout(this);
             entry.setOrientation(LinearLayout.VERTICAL);
-            if (index > 0 && hairlines()) {
+            if (index > 0) {
                 View rule = new View(this);
                 rule.setBackgroundColor(theme.outlineVariant);
                 entry.addView(rule, new LinearLayout.LayoutParams(
@@ -10715,7 +10943,7 @@ public final class KioskActivity extends Activity {
         applyKioskPolicy();
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
-        page.addView(pageHeading(theme, "Escape sequences",
+        page.addView(pageHeading(theme, "Way out",
                 "Tap combinations that unlock the kiosk",
                 this::showSettings), matchWrap());
 
@@ -10772,7 +11000,7 @@ public final class KioskActivity extends Activity {
             // Confirmed with the PIN itself (2026-09-09): a settings screen left open must not be
             // enough to take the second lock away. The web admin's removal stays unconfirmed on
             // purpose, it is the reset for a forgotten PIN.
-            Button remove = dangerButton(theme, "Remove the PIN");
+            Button remove = dangerOutlinedButton(theme, "Remove the PIN");
             remove.setOnClickListener(view -> showPinPrompt("To remove the PIN", () -> {
                 KioskConfig.setEscapePinHash(this, null);
                 Toast.makeText(this, "PIN removed.", Toast.LENGTH_SHORT).show();
@@ -10971,11 +11199,47 @@ public final class KioskActivity extends Activity {
         // There is a way out of the kiosk now, so Play may be asked. See startProBilling.
         startProBilling();
         KioskConfig config = KioskConfig.load(this);
-        if (config.dashboardUrl.isEmpty()) {
-            showConfiguration(config);
+        if (config.dashboardUrl.isEmpty() && KioskConfig.appLockOf(this).isEmpty()) {
+            showWhatToShow();
         } else {
             showDashboard(config.dashboardUrl);
         }
+    }
+
+    /**
+     * The wizard's last question (the UI round, 2026-10-15): what the panel should show. A web
+     * page opens the settings on Dashboard, an app App lock's list, and Later the panel's own
+     * screen, which says what to do next; the settings combination brings any of them back.
+     */
+    private void showWhatToShow() {
+        currentScreen = this::showWhatToShow;
+        wizardVisible = false;
+        configurationVisible = true;
+        publishOperatorScreenState();
+        // Locked from here, as the settings are: the way out exists now.
+        applyKioskPolicy();
+        setDashboardFullscreen(true);
+        enterImmersiveMode();
+        KioskTheme theme = currentTheme();
+        LinearLayout page = pageColumn(theme);
+        page.addView(pageHeading(theme, "What should this panel show?", "Your way out is set"),
+                matchWrap());
+        Button web = primaryButton(theme, "A web page");
+        web.setOnClickListener(view -> {
+            openSection = "Dashboard";
+            showConfiguration(KioskConfig.load(this));
+        });
+        Button app = tonalButton(theme, "An app");
+        app.setOnClickListener(view -> showAppLockPage());
+        Button later = textButton(theme, "Later");
+        later.setOnClickListener(view -> showDashboard(KioskConfig.load(this).dashboardUrl));
+        page.addView(fittingButtonRow(web, app, later), matchWrap());
+        TextView hint = new FlushText(this);
+        hint.setTextColor(theme.subtext);
+        hint.setTextSize(13);
+        hint.setText("A web page can also be set from a computer, in the web admin.");
+        page.addView(hint, matchWrap());
+        setContentView(scrollPage(theme, page));
     }
 
     /** Draws the recorder from whatever has been tapped so far. See {@link #showSequenceRecorder}. */
@@ -11391,7 +11655,7 @@ public final class KioskActivity extends Activity {
         for (int i = 0; i < chips.length; i++) {
             final char level = levels[i];
             final boolean own = owns[i];
-            chips[i] = pillShaped(new Button(this), labels[i], 12);
+            chips[i] = pillShaped(new PillButton(this), labels[i], 12);
             chips[i].setContentDescription(spoken[i]);
             chips[i].setMinWidth(dp(40));
             chips[i].setMinimumWidth(dp(40));
@@ -12499,45 +12763,34 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Adds a row to a list the web draws as {@code ul.list seg}, the way This panel's
-     * Separators says (Juri, 2026-10-04): Lines, a 1 dp hairline between rows (Juri,
-     * 2026-09-28: the Sensors section's rows sat 16 dp apart with nothing between, and in
-     * landscape a name and its switch did not read as one row); Segments, each row its own
+     * Adds a row to a list the web draws as {@code ul.list seg}: segments, each row its own
      * rounded surface with 2 dp of the card between them, 16 dp corners at the list's ends and
-     * 4 dp inside, as the Pixel's settings draw a list; None, the rows touching. The first row
-     * keeps a small gap to what is above it.
+     * 4 dp inside, as the Pixel's settings draw a list (Material 3 Expressive's segmented list,
+     * the one look since 2026-10-15). The first row keeps a small gap to what is above it.
      */
     private void addListRow(LinearLayout list, KioskTheme theme, View row, boolean first) {
-        String separators = KioskConfig.separatorsOf(this);
         LinearLayout.LayoutParams params = navRowParams();
         params.topMargin = first ? dp(8) : 0;
-        if (KioskConfig.SEPARATORS_SEGMENTS.equals(separators)) {
-            // The row before this one was the list's last until now: its bottom corners close.
-            View previous = list.getTag() instanceof View ? (View) list.getTag() : null;
-            if (previous != null && previous.getParent() == list) {
-                paintSegment(theme, previous, false);
-            }
-            // {first, fill}: the fill a menu row chose (addMenuRow), or null for the card's.
-            Object[] state = row.getTag(R.id.segment_state) instanceof Object[]
-                    ? (Object[]) row.getTag(R.id.segment_state) : new Object[] {first, null};
-            state[0] = first;
-            row.setTag(R.id.segment_state, state);
-            paintSegment(theme, row, true);
-            // A segment's contents stand 16 dp in from its edges, as the Pixel's do; a row that
-            // pads itself already keeps its own.
-            if (row.getPaddingLeft() == 0 && row.getPaddingRight() == 0) {
-                row.setPadding(dp(16), row.getPaddingTop(), dp(16), row.getPaddingBottom());
-            }
-            if (!first) {
-                params.topMargin = dp(2);
-            }
-            list.setTag(row);
-        } else if (!first && KioskConfig.SEPARATORS_LINES.equals(separators)) {
-            View rule = new View(this);
-            rule.setBackgroundColor(theme.outlineVariant);
-            list.addView(rule, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        // The row before this one was the list's last until now: its bottom corners close.
+        View previous = list.getTag() instanceof View ? (View) list.getTag() : null;
+        if (previous != null && previous.getParent() == list) {
+            paintSegment(theme, previous, false);
         }
+        // {first, fill}: the fill a menu row chose (addMenuRow), or null for the card's.
+        Object[] state = row.getTag(R.id.segment_state) instanceof Object[]
+                ? (Object[]) row.getTag(R.id.segment_state) : new Object[] {first, null};
+        state[0] = first;
+        row.setTag(R.id.segment_state, state);
+        paintSegment(theme, row, true);
+        // A segment's contents stand 16 dp in from its edges, as the Pixel's do; a row that
+        // pads itself already keeps its own.
+        if (row.getPaddingLeft() == 0 && row.getPaddingRight() == 0) {
+            row.setPadding(dp(16), row.getPaddingTop(), dp(16), row.getPaddingBottom());
+        }
+        if (!first) {
+            params.topMargin = dp(2);
+        }
+        list.setTag(row);
         list.addView(row, params);
     }
 
@@ -12554,39 +12807,23 @@ public final class KioskActivity extends Activity {
 
     /**
      * Adds a row to an internal page's left menu, the list beside its detail (Juri,
-     * 2026-10-04: one style for Sensors, Automations and the Screensaver's playlists). The rows
-     * are kept apart as This panel's Separators say; the chosen row is the pill the menus always
-     * had, with no hairline against it, and with Segments a tinted segment instead, as Android
-     * marks a selected row (sketch B, media/drafts/left-menus).
+     * 2026-10-04: one style for Sensors, Automations and the Screensaver's playlists). Each row
+     * is a segment; the chosen one is tinted, as Android marks a selected row (sketch B,
+     * media/drafts/left-menus).
      */
     private void addMenuRow(LinearLayout list, KioskTheme theme, LinearLayout row,
             boolean first, boolean chosen, Runnable open) {
-        String separators = KioskConfig.separatorsOf(this);
-        if (KioskConfig.SEPARATORS_SEGMENTS.equals(separators)) {
-            // The menu's 64 dp row and padding, as markChosen gives the pills, and the web's.
-            sizeMenuRow(row);
-            row.setTag(R.id.segment_state,
-                    new Object[] {first, chosen ? theme.secondaryContainer : theme.cardHigh});
-            if (open != null) {
-                row.setOnClickListener(view -> open.run());
-            }
-            TextView name = (TextView) ((ViewGroup) row.getChildAt(1)).getChildAt(0);
-            name.setTextColor(chosen ? theme.onSecondaryContainer : theme.text);
-            name.setTypeface(chosen ? MEDIUM : Typeface.DEFAULT);
-            addListRow(list, theme, row, first);
-            return;
+        // The menu's 64 dp row and padding, as markChosen gives the pills, and the web's.
+        sizeMenuRow(row);
+        row.setTag(R.id.segment_state,
+                new Object[] {first, chosen ? theme.secondaryContainer : theme.cardHigh});
+        if (open != null) {
+            row.setOnClickListener(view -> open.run());
         }
-        markChosen(theme, row, chosen, open);
-        boolean previousChosen = Boolean.TRUE.equals(list.getTag(R.id.menu_chosen));
-        if (!first && KioskConfig.SEPARATORS_LINES.equals(separators) && !chosen
-                && !previousChosen) {
-            View rule = new View(this);
-            rule.setBackgroundColor(theme.outlineVariant);
-            list.addView(rule, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
-        }
-        list.addView(row, navRowParams());
-        list.setTag(R.id.menu_chosen, chosen);
+        TextView name = (TextView) ((ViewGroup) row.getChildAt(1)).getChildAt(0);
+        name.setTextColor(chosen ? theme.onSecondaryContainer : theme.text);
+        name.setTypeface(chosen ? MEDIUM : Typeface.DEFAULT);
+        addListRow(list, theme, row, first);
     }
 
     /**
@@ -12662,7 +12899,7 @@ public final class KioskActivity extends Activity {
     /**
      * The app bar: the way back at the left where a page has one, the title with an optional view
      * against its last letter (the playlist page's pencil), the subtitle under it, then the status
-     * chip and, on the settings screen, the theme toggle at the right.
+     * chip and, on the settings screen, the day and night toggle at the right.
      *
      * <p>Back is the arrow in the app bar, once, where every Material screen has it; the "← Back"
      * buttons at the head and foot of a page went with the redesign of 2026-09-23. Drawing the
@@ -12679,8 +12916,7 @@ public final class KioskActivity extends Activity {
      * settings page alone (Juri, 2026-09-27). A page below it says its name and nothing else.
      * There the subtitle is the panel's id at 16 sp, Material's Title medium, and the readings
      * stay at the right on every width, phones included (Juri, 2026-10-01: at 12 sp the id was
-     * "barely readable"). They went onto the id's line below 840 dp only while the theme toggle
-     * shared the bar, which it stopped doing on 2026-09-23.
+     * "barely readable"), with the day and night toggle after them since 2026-10-15.
      */
     private LinearLayout pageHeading(KioskTheme theme, TextView main, String subtitle,
             View beside, Runnable back, View trailing, boolean readings) {
@@ -13241,6 +13477,28 @@ public final class KioskActivity extends Activity {
      * The platform Button's 88 dp minimum width and its elevation animator are cleared: the
      * first made short labels into slabs, the second fought the flat Material face.
      */
+    /**
+     * A pill drawn 40 dp tall with a 48 dp touch, Material's target (the UI round, 2026-10-15):
+     * its background is inset 4 dp above and below, and the touch is the whole view.
+     */
+    private final class PillButton extends Button {
+        PillButton(Context context) {
+            super(context);
+        }
+
+        @Override
+        public void setBackground(android.graphics.drawable.Drawable background) {
+            // The inset would become the padding: the pill's own is kept.
+            int left = getPaddingLeft();
+            int top = getPaddingTop();
+            int right = getPaddingRight();
+            int bottom = getPaddingBottom();
+            super.setBackground(background == null ? null
+                    : new android.graphics.drawable.InsetDrawable(background, 0, dp(4), 0, dp(4)));
+            setPadding(left, top, right, bottom);
+        }
+    }
+
     private Button pillShaped(Button button, String label, int padXdp) {
         button.setText(label);
         button.setAllCaps(false);
@@ -13249,8 +13507,8 @@ public final class KioskActivity extends Activity {
         button.setPadding(dp(padXdp), 0, dp(padXdp), 0);
         button.setMinWidth(0);
         button.setMinimumWidth(0);
-        button.setMinHeight(dp(40));
-        button.setMinimumHeight(dp(40));
+        button.setMinHeight(dp(48));
+        button.setMinimumHeight(dp(48));
         button.setStateListAnimator(null);
         button.setElevation(0);
         return button;
@@ -13262,7 +13520,7 @@ public final class KioskActivity extends Activity {
 
     /** The filled pill in a chosen colour: the accent for the main action, red inside a confirm. */
     private Button filledButton(KioskTheme theme, String label, int fill) {
-        Button button = pillShaped(new Button(this), label, 24);
+        Button button = pillShaped(new PillButton(this), label, 24);
         button.setTextColor(theme.onAccent());
         button.setBackground(theme.ripple(theme.pill(fill), null, theme.onAccent()));
         return button;
@@ -13282,7 +13540,7 @@ public final class KioskActivity extends Activity {
      * the row's main action (Juri, 2026-10-01).
      */
     private Button dangerOutlinedButton(KioskTheme theme, String label) {
-        Button button = pillShaped(new Button(this), label, 24);
+        Button button = pillShaped(new PillButton(this), label, 24);
         button.setTextColor(theme.bad);
         button.setBackground(theme.ripple(theme.pillOutlined(dp(1), theme.bad),
                 theme.pill(Color.WHITE), theme.bad));
@@ -13296,7 +13554,7 @@ public final class KioskActivity extends Activity {
      * touch it is a control nobody finds.
      */
     private Button tonalButton(KioskTheme theme, String label) {
-        Button button = pillShaped(new Button(this), label, 24);
+        Button button = pillShaped(new PillButton(this), label, 24);
         button.setTextColor(theme.onSecondaryContainer);
         button.setBackground(theme.ripple(theme.pill(theme.secondaryContainer), null,
                 theme.onSecondaryContainer));
@@ -13305,7 +13563,7 @@ public final class KioskActivity extends Activity {
 
     /** The outlined pill: a command that acts now and stores nothing. */
     private Button secondaryButton(KioskTheme theme, String label) {
-        Button button = pillShaped(new Button(this), label, 24);
+        Button button = pillShaped(new PillButton(this), label, 24);
         button.setTextColor(theme.accent);
         button.setBackground(theme.ripple(theme.pillOutlined(dp(1), theme.border),
                 theme.pill(Color.WHITE), theme.accent));
@@ -13314,7 +13572,7 @@ public final class KioskActivity extends Activity {
 
     /** Words alone: navigation and the quiet half of a pair (Cancel beside Save). */
     private Button textButton(KioskTheme theme, String label) {
-        Button button = pillShaped(new Button(this), label, 12);
+        Button button = pillShaped(new PillButton(this), label, 12);
         button.setTextColor(theme.accent);
         button.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
                 Color.TRANSPARENT), theme.pill(Color.WHITE), theme.accent));
@@ -13517,7 +13775,8 @@ public final class KioskActivity extends Activity {
         disableStatusBarIfPinned();
         enterImmersiveMode();
 
-        KioskTheme theme = currentTheme();
+        // The wall's own screen, dark whatever the settings screens use.
+        KioskTheme theme = KioskTheme.of(false);
         FrameLayout root = parkingScene(theme, titleText, bodyText, true);
 
         addScreensaverLayer(root);
@@ -13554,14 +13813,18 @@ public final class KioskActivity extends Activity {
 
     private void showDashboard(String url) {
         appGoneShowing = false;
+        appLockPlate = false;
         if (appLockGone()) {
             // App lock's app was uninstalled: the robot says so (Juri, 2026-10-15).
             appGoneShowing = true;
             showParkingPage(KioskConfig.appLockLabelOf(this) + " is not installed",
-                    "Choose another app, or Off, in the Muralis settings: Dashboard, App lock.");
+                    "Choose another app, or A web page, in the Muralis settings: Dashboard.");
             return;
         }
-        if (url == null || url.trim().isEmpty()) {
+        // App lock: the app is what the panel shows, so a page address is neither needed nor
+        // loaded; the screen behind the app is the dark plate the dashboard starts as.
+        appLockPlate = appLockOn();
+        if (!appLockPlate && (url == null || url.trim().isEmpty())) {
             showParkingPage();
             return;
         }
@@ -13678,10 +13941,17 @@ public final class KioskActivity extends Activity {
         restoreScreensaverAfterRebuild();
         resetLoadTracking();
         mainHandler.removeCallbacks(dashboardSupervisor);
-        mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
         mainHandler.removeCallbacks(frozenPageCheckTask);
-        mainHandler.postDelayed(frozenPageCheckTask, FROZEN_PAGE_CHECK_INTERVAL_MS);
         mainHandler.removeCallbacks(serverProbeTask);
+        cancelDashboardGate();
+        if (appLockPlate) {
+            // No page, so nothing to watch over, and no page for the status to name.
+            KioskRuntimeState.clearPage();
+            KioskService.publishTelemetrySoon(this);
+            return;
+        }
+        mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
+        mainHandler.postDelayed(frozenPageCheckTask, FROZEN_PAGE_CHECK_INTERVAL_MS);
         mainHandler.postDelayed(serverProbeTask, SERVER_PROBE_INTERVAL_MS);
         loadWhenOnline(url);
     }
@@ -13735,9 +14005,9 @@ public final class KioskActivity extends Activity {
     private void addNetworkWaitLabel(FrameLayout dashboard) {
         networkWaitLabel = new FlushText(this);
         networkWaitLabel.setText("Waiting for the network");
-        // The dark scheme of the chosen colour: this label sits on the dark dashboard plate.
+        // The dark scheme: this label sits on the dark dashboard plate.
         networkWaitLabel.setTextColor(
-                KioskTheme.of(false, KioskConfig.appearanceColourOf(this)).subtext);
+                KioskTheme.of(false).subtext);
         networkWaitLabel.setTextSize(18);
         networkWaitLabel.setGravity(Gravity.CENTER);
         networkWaitLabel.setClickable(false);
@@ -13762,44 +14032,8 @@ public final class KioskActivity extends Activity {
      * keep working.
      */
     private void addStatsOverlay(FrameLayout dashboard) {
-        statsOverlay = new FlushText(this);
-        statsOverlay.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        // Sized to be read from across a room, which is the whole point of an on-glass readout;
-        // the colours carry the meaning, so it does not have to be studied.
-        statsOverlay.setTextSize(OVERLAY_TEXT_SP);
-        statsOverlay.setBackgroundColor(Color.argb(150, 0, 0, 0));
-        int padding = dp(10);
-        statsOverlay.setPadding(padding, padding, padding, padding);
-        statsOverlay.setLineSpacing(dp(2), 1.1f);
-        statsOverlay.setShadowLayer(dp(2), 0, 0, Color.BLACK);
-        statsOverlay.setClickable(false);
-        statsOverlay.setFocusable(false);
-        statsOverlay.setText(renderOverlay());
+        statsOverlay = addStatsReadout(dashboard);
         statsOverlay.setVisibility(KioskConfig.statsOverlayEnabled(this) ? View.VISIBLE : View.GONE);
-
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        // Top-right: the bottom corners are the nine-tap escape zones. The top margin is not a
-        // constant: see placeStatsOverlay, which puts the block one pixel under the status bar.
-        params.gravity = Gravity.TOP | Gravity.END;
-        params.topMargin = 1;
-        params.rightMargin = dp(4);
-        dashboard.addView(statsOverlay, params);
-        // Placed once the view is attached and knows its insets, and again whenever the insets
-        // change (bars shown or hidden, a rotation). The listener consumes nothing.
-        statsOverlay.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.post(this::placeStatsOverlay);
-            return insets;
-        });
-        statsOverlay.post(this::placeStatsOverlay);
-        // A dragged block keeps its place as shares of the screen, so it is laid out again
-        // when the screen's room changes (a rotation). Not on its own size: that changes with
-        // every line it draws, and re-placing it then made it flicker (Juri, 2026-10-04).
-        dashboard.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
-            if (r - l != or - ol || b - t != ob - ot) {
-                view.post(this::placeStatsOverlay);
-            }
-        });
 
         mainHandler.removeCallbacks(overlayTask);
         mainHandler.post(overlayTask);
@@ -13817,28 +14051,219 @@ public final class KioskActivity extends Activity {
      * system's own dimension for it, so the readout lands in the same place on every device.
      */
     private void placeStatsOverlay() {
-        if (statsOverlay == null || statsOverlay.getParent() == null) {
+        placeStatsReadout(statsOverlay);
+    }
+
+    /** The stats block itself, as it is drawn on the dashboard and over App lock's app. */
+    private TextView newStatsReadout() {
+        TextView readout = new FlushText(this);
+        readout.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        // Sized to be read from across a room, which is the whole point of an on-glass readout;
+        // the colours carry the meaning, so it does not have to be studied.
+        readout.setTextSize(OVERLAY_TEXT_SP);
+        readout.setBackgroundColor(Color.argb(150, 0, 0, 0));
+        int padding = dp(10);
+        readout.setPadding(padding, padding, padding, padding);
+        readout.setLineSpacing(dp(2), 1.1f);
+        readout.setShadowLayer(dp(2), 0, 0, Color.BLACK);
+        readout.setClickable(false);
+        readout.setFocusable(false);
+        readout.setText(renderOverlay());
+        return readout;
+    }
+
+    /** The dashboard's stats block, in {@code frame} and placed by placeStatsReadout. */
+    private TextView addStatsReadout(FrameLayout frame) {
+        TextView readout = newStatsReadout();
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        // Top-right: the bottom corners are the nine-tap escape zones. The top margin is not a
+        // constant: see placeStatsReadout, which puts the block one pixel under the status bar.
+        params.gravity = Gravity.TOP | Gravity.END;
+        params.topMargin = 1;
+        params.rightMargin = dp(4);
+        frame.addView(readout, params);
+        // Placed once the view is attached and knows its insets, and again whenever the insets
+        // change (bars shown or hidden, a rotation). The listener consumes nothing.
+        readout.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.post(() -> placeStatsReadout(readout));
+            return insets;
+        });
+        readout.post(() -> placeStatsReadout(readout));
+        // A dragged block keeps its place as shares of the screen, so it is laid out again
+        // when the screen's room changes (a rotation). Not on its own size: that changes with
+        // every line it draws, and re-placing it then made it flicker (Juri, 2026-10-04).
+        frame.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l != or - ol || b - t != ob - ot) {
+                view.post(() -> placeStatsReadout(readout));
+            }
+        });
+        return readout;
+    }
+
+    /**
+     * App lock: the stats block over the app while the overlay is on (Juri, 2026-10-15), in a
+     * window of its own size, so the app keeps every tap outside it; held and moved like the
+     * dashboard's, and the place is the same one. Gone when Muralis is back in front or the
+     * overlay is switched off. Repainted by overlayTask.
+     */
+    private void syncStatsOverApp() {
+        boolean wanted = AppLock.appUp && KioskConfig.statsOverlayEnabled(this);
+        if (!wanted) {
+            if (statsOverApp != null) {
+                AppLock.removeOver(this, statsOverApp);
+                statsOverApp = null;
+            }
+            // A drag cut short by Muralis coming forward never sees its lift.
+            readoutOverAppDragging = false;
+            if (readoutOverAppPickUp != null) {
+                mainHandler.removeCallbacks(readoutOverAppPickUp);
+                readoutOverAppPickUp = null;
+            }
+            return;
+        }
+        if (statsOverApp == null) {
+            TextView readout = newStatsReadout();
+            readout.setOnTouchListener(this::readoutOverAppTouch);
+            int[] at = readoutOverAppPlace(readout);
+            if (!AppLock.showReadout(this, readout, at[0], at[1])) {
+                return;
+            }
+            statsOverApp = readout;
+        }
+        statsOverApp.setText(renderOverlay());
+        if (!readoutOverAppDragging) {
+            int[] at = readoutOverAppPlace(statsOverApp);
+            AppLock.moveReadout(this, statsOverApp, at[0], at[1]);
+        }
+    }
+
+    /**
+     * Where the readout over the app goes, from the screen's top left: the stored place as
+     * shares of the screen, or under the status bar at the top right, kept whole on the screen.
+     */
+    private int[] readoutOverAppPlace(TextView readout) {
+        android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(screen);
+        readout.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        // The window's own size once it has one: the unconstrained measure runs a little short.
+        int width = Math.max(readout.getMeasuredWidth(), readout.getWidth());
+        int height = Math.max(readout.getMeasuredHeight(), readout.getHeight());
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        int bar = id == 0 ? dp(24) : getResources().getDimensionPixelSize(id);
+        KioskConfig.OverlayPlace place = KioskConfig.statsOverlayPlace(this);
+        int x;
+        int y;
+        if (place == null) {
+            x = screen.widthPixels - width - dp(4);
+            y = bar + 1;
+        } else {
+            int gapX = Math.round(place.x * screen.widthPixels);
+            int gapY = Math.round(place.y * screen.heightPixels);
+            x = place.right ? screen.widthPixels - width - gapX : gapX;
+            y = place.bottom ? screen.heightPixels - height - gapY : gapY;
+        }
+        x = Math.max(0, Math.min(screen.widthPixels - width, x));
+        y = Math.max(0, Math.min(screen.heightPixels - height, y));
+        return new int[] {x, y};
+    }
+
+    private boolean readoutOverAppDragging;
+    private Runnable readoutOverAppPickUp;
+
+    /**
+     * The readout over the app, held and moved as on the dashboard: a hold picks it up, it
+     * follows the finger, and where it is dropped is kept as the one place both use.
+     */
+    private boolean readoutOverAppTouch(View view, MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                overlayDownX = event.getRawX();
+                overlayDownY = event.getRawY();
+                overlayGrabDx = event.getX();
+                overlayGrabDy = event.getY();
+                readoutOverAppPickUp = () -> {
+                    readoutOverAppPickUp = null;
+                    readoutOverAppDragging = true;
+                    view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    view.setAlpha(0.85f);
+                };
+                mainHandler.postDelayed(readoutOverAppPickUp,
+                        android.view.ViewConfiguration.getLongPressTimeout() * 4L / 5);
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if (readoutOverAppDragging) {
+                    android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+                    getWindowManager().getDefaultDisplay().getRealMetrics(screen);
+                    int x = Math.round(event.getRawX() - overlayGrabDx);
+                    int y = Math.round(event.getRawY() - overlayGrabDy);
+                    x = Math.max(0, Math.min(screen.widthPixels - view.getWidth(), x));
+                    y = Math.max(0, Math.min(screen.heightPixels - view.getHeight(), y));
+                    AppLock.moveReadout(this, view, x, y);
+                } else if (readoutOverAppPickUp != null && Math.hypot(
+                        event.getRawX() - overlayDownX, event.getRawY() - overlayDownY)
+                        > android.view.ViewConfiguration.get(this).getScaledTouchSlop()) {
+                    mainHandler.removeCallbacks(readoutOverAppPickUp);
+                    readoutOverAppPickUp = null;
+                }
+                return true;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (readoutOverAppPickUp != null) {
+                    mainHandler.removeCallbacks(readoutOverAppPickUp);
+                    readoutOverAppPickUp = null;
+                }
+                if (readoutOverAppDragging) {
+                    readoutOverAppDragging = false;
+                    view.setAlpha(1f);
+                    dropReadoutOverApp(view);
+                }
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    /** Keeps where the readout over the app was dropped, from the edges it is nearest to. */
+    private void dropReadoutOverApp(View view) {
+        if (!(view.getLayoutParams() instanceof WindowManager.LayoutParams)) {
+            return;
+        }
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) view.getLayoutParams();
+        android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(screen);
+        boolean right = params.x + view.getWidth() / 2f > screen.widthPixels / 2f;
+        boolean bottom = params.y + view.getHeight() / 2f > screen.heightPixels / 2f;
+        float gapX = right ? screen.widthPixels - params.x - view.getWidth() : params.x;
+        float gapY = bottom ? screen.heightPixels - params.y - view.getHeight() : params.y;
+        KioskConfig.edit(this).statsOverlayPlace(right, bottom,
+                Math.max(0f, Math.min(1f, gapX / screen.widthPixels)),
+                Math.max(0f, Math.min(1f, gapY / screen.heightPixels))).apply();
+    }
+
+    private void placeStatsReadout(TextView readout) {
+        if (readout == null || readout.getParent() == null) {
             return;
         }
         if (overlayDragging) {
             return;
         }
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) statsOverlay.getLayoutParams();
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) readout.getLayoutParams();
         KioskConfig.OverlayPlace place = KioskConfig.statsOverlayPlace(this);
         if (place != null) {
             // Dragged somewhere once: that place, measured from the nearest edges as shares of
             // the screen, so it stays on the screen whichever way the panel is turned (Juri,
             // 2026-10-04) and does not depend on the block's own size, which changes with
             // every line it draws.
-            View parent = (View) statsOverlay.getParent();
+            View parent = (View) readout.getParent();
             int gapX = Math.round(place.x * parent.getWidth());
             int gapY = Math.round(place.y * parent.getHeight());
             // Kept whole on the screen by its natural size, measured unconstrained: its laid-out
             // width is what the last margins left it, and clamping by that squeezed a block at
             // the edge into a narrow column of wrapped lines.
-            statsOverlay.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
-            gapX = Math.max(0, Math.min(parent.getWidth() - statsOverlay.getMeasuredWidth(), gapX));
-            gapY = Math.max(0, Math.min(parent.getHeight() - statsOverlay.getMeasuredHeight(), gapY));
+            readout.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+            gapX = Math.max(0, Math.min(parent.getWidth() - readout.getMeasuredWidth(), gapX));
+            gapY = Math.max(0, Math.min(parent.getHeight() - readout.getMeasuredHeight(), gapY));
             int gravity = (place.right ? Gravity.END : Gravity.START)
                     | (place.bottom ? Gravity.BOTTOM : Gravity.TOP);
             int leftMargin = place.right ? 0 : gapX;
@@ -13850,14 +14275,14 @@ public final class KioskActivity extends Activity {
                     || params.bottomMargin != bottomMargin) {
                 params.gravity = gravity;
                 params.setMargins(leftMargin, topMargin, rightMargin, bottomMargin);
-                statsOverlay.setLayoutParams(params);
+                readout.setLayoutParams(params);
             }
             return;
         }
-        View content = findViewById(android.R.id.content);
+        View content = (View) readout.getParent();
         int[] location = new int[2];
         content.getLocationOnScreen(location);
-        android.view.WindowInsets insets = statsOverlay.getRootWindowInsets();
+        android.view.WindowInsets insets = readout.getRootWindowInsets();
         int bar;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             bar = insets == null ? 0
@@ -13878,7 +14303,7 @@ public final class KioskActivity extends Activity {
         int margin = bar + 1;
         if (params.topMargin != margin) {
             params.topMargin = margin;
-            statsOverlay.setLayoutParams(params);
+            readout.setLayoutParams(params);
         }
     }
 
@@ -14353,6 +14778,10 @@ public final class KioskActivity extends Activity {
 
     /** Every load of the page goes here, so a refused certificate knows what to load again. */
     private void loadPage(String url) {
+        if (appLockPlate) {
+            // App lock's plate: a reload, a new address or a trusted certificate loads nothing.
+            return;
+        }
         lastPageStarted = url;
         webView.loadUrl(url);
     }
@@ -14649,8 +15078,14 @@ public final class KioskActivity extends Activity {
                 // comes forward and its resume applies the choice; in front, at once.
                 if (AppLock.appUp) {
                     AppLock.bringMuralisForward(this);
-                } else if (inFront && !configurationVisible) {
+                } else if (inFront && configurationVisible) {
+                    // Dashboard's "The panel shows" and the menu's line follow the change.
+                    redrawSettingsSoon();
+                } else if (inFront) {
                     applyKioskPolicy();
+                    if (appLockPlate != appLockOn()) {
+                        showDashboard(KioskConfig.load(this).dashboardUrl);
+                    }
                     scheduleLockedApp();
                 }
                 break;
@@ -14756,7 +15191,7 @@ public final class KioskActivity extends Activity {
                 }
                 break;
             case "kiosk.reload":
-                if (webView != null) {
+                if (webView != null && !appLockPlate) {
                     beginLoad();
                     webView.reload();
                 }
@@ -15610,7 +16045,7 @@ public final class KioskActivity extends Activity {
         caption.setPadding(padX, padY, padX, padY);
         android.graphics.drawable.GradientDrawable pill =
                 new android.graphics.drawable.GradientDrawable();
-        pill.setColor(0xCC1E1E2E);
+        pill.setColor(0xCC12131D);
         pill.setCornerRadius(dp(14));
         caption.setBackground(pill);
         caption.setVisibility(View.GONE);
@@ -16622,7 +17057,7 @@ public final class KioskActivity extends Activity {
      * the one in force filled with the secondary container and a tick before its number.
      */
     private Button rowButton(KioskTheme theme, String label, RowColour colour) {
-        Button chip = pillShaped(new Button(this), label, 12);
+        Button chip = pillShaped(new PillButton(this), label, 12);
         chip.setMinHeight(dp(32));
         chip.setMinimumHeight(dp(32));
         boolean on = colour != RowColour.PLAIN;

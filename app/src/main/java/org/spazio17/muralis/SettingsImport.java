@@ -169,9 +169,6 @@ final class SettingsImport {
                 return number >= 0 && number <= 0xFFFFFF ? null : StatusLight.COLOR_RULE;
             case "status_light_percent":
                 return StatusLight.isPercent(number) ? null : StatusLight.PERCENT_RULE;
-            case "appearance_colour":
-            case "separators":
-                return KioskConfig.checkAppearance(key, text);
             case "orientation":
                 return KioskConfig.ORIENTATION_AUTO.equals(text)
                         || KioskConfig.ORIENTATION_LANDSCAPE.equals(text)

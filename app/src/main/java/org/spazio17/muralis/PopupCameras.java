@@ -21,6 +21,12 @@ final class PopupCameras {
     static final int MAX_COOLDOWN = 3600;
     static final int DEFAULT_COOLDOWN = 60;
 
+    /** The Pop-ups section's line on both surfaces: "No cameras", "1 camera", "3 cameras". */
+    static String summary(java.util.List<Camera> cameras) {
+        int count = cameras == null ? 0 : cameras.size();
+        return count == 0 ? "No cameras" : count == 1 ? "1 camera" : count + " cameras";
+    }
+
     static final String ON_DEMAND = "on_demand";
     static final String TRIGGER = "trigger";
     static final String ALERT = "alert";

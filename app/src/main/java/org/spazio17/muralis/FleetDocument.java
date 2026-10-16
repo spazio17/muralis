@@ -184,7 +184,7 @@ final class FleetDocument {
         switch (section) {
             case "dashboard": return "Dashboard";
             case "mqtt": return "MQTT";
-            case "web_admin": return "Local web admin";
+            case "web_admin": return "Web admin";
             case "display": return "Display";
             case "alerts": return "Alerts";
             default: return "Ambient";

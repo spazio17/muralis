@@ -25,7 +25,7 @@ on purpose.
   the system launcher, optionally behind a PIN. A panel with no page shows a parking screen that
   says what to do next, as does one whose App lock app is gone; over a dashboard that cannot be
   reached the same screen says so while the page is retried underneath. App lock shows one installed app the person chose instead of the
-  page, opened again whenever it closes, with the escape combinations read in four small
+  page (the page is not loaded behind it), opened again whenever it closes, with the escape combinations read in four small
   corner windows over it (display over other apps), pop-ups and Identify drawn straight over
   it, Ambient and the dark brought over it on Muralis's own screen, and never Android's
   Settings, a home screen or the Play Store as the app. The page's browser options: a sign-in for a page behind HTTP basic
@@ -157,8 +157,10 @@ on purpose.
   engine's memory, so it reacts to the system's own signals and restarts nightly.
 - **Home Assistant discovery.** An entity's key, id and name say the same thing. A panel removes from
   Home Assistant only what it announced itself, so a fresh install starts with nothing to remove.
-- **One design on both surfaces.** The panel and the web admin are one Material 3 design in the
-  app's own palette, light and dark, with the same sections, words and behaviour. Plain words for
+- **One design on both surfaces.** The panel and the web admin are one Material 3 design in one
+  scheme from the ultramarine seed, with segmented lists, light and dark (a toggle in the settings
+  page's app bar: follow the device, light or dark; the wall's own screens are always dark),
+  with the same sections, words and behaviour. Plain words for
   the person in front of the panel; a familiar glyph or control before an explanatory sentence.
 - **Legal texts** are copies of the canonical texts kept in the website repository; the release
   workflow fails when they differ.

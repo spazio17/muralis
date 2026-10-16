@@ -1474,9 +1474,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("dashboard_url", config.dashboardUrl);
             applied.put("device_id", config.deviceId);
             if (includeAdminDetail) {
-                // The web admin's Appearance row follows the panel by it, in the words worded once.
-                applied.put("appearance_summary",
-                        KioskConfig.appearanceSummary(config.appearanceColour, config.separators));
                 applied.put("settings_sequence", config.settingsSequence);
                 applied.put("launcher_sequence", config.launcherSequence);
                 applied.put("escape_pin_set", KioskConfig.escapePinSet(this));
@@ -1484,9 +1481,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("stats_overlay", config.statsOverlay);
             applied.put("volume_buttons_disabled", config.volumeButtonsDisabled);
             applied.put("orientation", config.orientation);
-            // The look, for the web admin's page to follow a change made on the panel.
-            applied.put("appearance_colour", config.appearanceColour);
-            applied.put("separators", config.separators);
             // What applies, which on an ordinary install is the film whatever is stored.
             applied.put("display_off_method",
                     isDeviceOwner() ? config.displayOffMethod : DisplayOffPolicy.FILM);

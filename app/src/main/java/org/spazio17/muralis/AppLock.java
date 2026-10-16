@@ -366,6 +366,12 @@ final class AppLock {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         wholeScreen(params);
+        if (!touchable) {
+            // Android 12 and newer drop a tap that passes through another app's overlay unless
+            // the overlay is at most 0.8 opaque, so a window that takes no touch stays at that;
+            // fully opaque, it took every tap from the app (Identify).
+            params.alpha = 0.8f;
+        }
         params.setTitle("Muralis over the app");
         if (!add(manager, view, params)) {
             return false;
@@ -379,6 +385,67 @@ final class AppLock {
             add(manager, corner, own);
         }
         return true;
+    }
+
+    /**
+     * The stats readout over the app (Juri, 2026-10-15): a window the size of the readout at
+     * {@code x}, {@code y} from the screen's top left, taking the touches on it alone, so it can
+     * be picked up and moved while the app keeps every other tap. False when refused.
+     */
+    static boolean showReadout(Context context, View view, int x, int y) {
+        WindowManager manager = context.getApplicationContext()
+                .getSystemService(WindowManager.class);
+        if (manager == null || !canDrawOver(context)) {
+            return false;
+        }
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        params.gravity = android.view.Gravity.TOP | android.view.Gravity.LEFT;
+        params.x = x;
+        params.y = y;
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            params.setFitInsetsTypes(0);
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            params.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+        params.setTitle("Muralis stats over the app");
+        if (!add(manager, view, params)) {
+            return false;
+        }
+        // The corners laid again on top, so a combination tapped there is still theirs.
+        for (View corner : windows) {
+            WindowManager.LayoutParams own =
+                    (WindowManager.LayoutParams) corner.getLayoutParams();
+            remove(manager, corner);
+            add(manager, corner, own);
+        }
+        return true;
+    }
+
+    /** Moves the readout's window to {@code x}, {@code y} from the screen's top left. */
+    static void moveReadout(Context context, View view, int x, int y) {
+        if (!(view.getLayoutParams() instanceof WindowManager.LayoutParams)) {
+            return;
+        }
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) view.getLayoutParams();
+        if (params.x == x && params.y == y) {
+            return;
+        }
+        params.x = x;
+        params.y = y;
+        try {
+            context.getApplicationContext().getSystemService(WindowManager.class)
+                    .updateViewLayout(view, params);
+        } catch (RuntimeException gone) {
+            Log.d(TAG, "The readout over the app was already gone");
+        }
     }
 
     /** Takes a window {@link #showOver} laid away. */

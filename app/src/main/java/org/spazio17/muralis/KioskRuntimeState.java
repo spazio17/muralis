@@ -130,6 +130,17 @@ final class KioskRuntimeState {
         lastPageUrl = url == null ? "" : url;
     }
 
+    /**
+     * No page any more (App lock's plate): what the last page did is no longer the panel's
+     * state, so the status reports none, as after a start with App lock on.
+     */
+    static void clearPage() {
+        lastPageFinishedAtMs = -1;
+        lastPageUrl = "";
+        lastPageErrorAtMs = -1;
+        lastPageError = "";
+    }
+
     static void recordPageError(String description) {
         lastPageErrorAtMs = nowMs();
         lastPageError = description == null ? "" : description;
