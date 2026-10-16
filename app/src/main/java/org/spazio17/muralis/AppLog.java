@@ -114,8 +114,9 @@ final class AppLog {
         if (text == null) {
             return "";
         }
+        // A quote ends an address too, so one inside JSON keeps its closing quote.
         java.util.regex.Matcher url = java.util.regex.Pattern
-                .compile("[A-Za-z][A-Za-z0-9+.-]*://\\S+").matcher(text);
+                .compile("[A-Za-z][A-Za-z0-9+.-]*://[^\\s\"]+").matcher(text);
         StringBuffer out = new StringBuffer();
         while (url.find()) {
             url.appendReplacement(out,

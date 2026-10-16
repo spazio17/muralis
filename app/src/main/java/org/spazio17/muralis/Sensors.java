@@ -34,7 +34,7 @@ import java.util.Map;
  * sensors" (2026-09-26 and 2026-09-27). Every row is the same shape and only its right
  * edge says what kind it is: a switch for the ones a person turns on, a chevron beside the
  * switch for the ones with a page of their own, Allow while a permission is missing, the reading
- * alone for what the panel always reports (display, screensaver, battery, power, network,
+ * alone for what the panel always reports (display, Ambient, battery, power, network,
  * processor, memory), greyed at the end for what this device lacks.
  *
  * <p>Every reading is a row on both surfaces, a field of the {@code sensors} block in the status
@@ -458,7 +458,7 @@ final class Sensors implements SensorEventListener {
         for (Def def : ALL) {
             names.put(def.id, def.name);
         }
-        // Not a sensor, but a When choice of its own (block 5).
+        // Not a sensor, but a When choice of its own.
         names.put(Automations.TIME, Automations.TIME_NAME);
         return names;
     }
@@ -1016,7 +1016,7 @@ final class Sensors implements SensorEventListener {
             }
         }
         engine.tick(now, minuteOfDay());
-        // The "Time of day" rules: the panel's own clock, the day and the minute (block 5).
+        // The "Time of day" rules: the panel's own clock, the day and the minute.
         engine.clock(java.time.LocalDate.now().toEpochDay(), minuteOfDay());
     }
 

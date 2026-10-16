@@ -229,8 +229,8 @@ final class PictureLibrary {
     }
 
     /**
-     * The folder where the online pictures of the day were cached before they left the app in
-     * 0.7: removed once, at the first start of a build without them.
+     * The folder where the online pictures of the day were cached by older versions: removed at
+     * every start, which costs nothing once it is gone.
      */
     private void dropOldDownloads() {
         deleteTree(new File(app.getCacheDir(), "screensaver"));
@@ -364,7 +364,7 @@ final class PictureLibrary {
         if (!dir.isDirectory() && !dir.mkdirs()) {
             return null;
         }
-        Picture picture = new Picture(uri, "", "", "");
+        Picture picture = new Picture(uri, "", "");
         Bitmap full = decode(picture, THUMBNAIL_PX, THUMBNAIL_PX, false);
         if (full == null) {
             return null;
@@ -701,7 +701,7 @@ final class PictureLibrary {
                 forgetLocalCount();
             }
         } catch (RuntimeException unavailable) {
-            // Retried at the next call; a caption is not worth failing a screensaver over.
+            // Retried at the next call; a caption is not worth failing Ambient over.
             Log.w(TAG, "Caption keys not migrated yet", unavailable);
         }
     }
@@ -744,7 +744,7 @@ final class PictureLibrary {
         String caption = captions.get(url);
         String title = caption != null && !caption.isEmpty()
                 ? caption : PictureSources.fileTitleToWords(name);
-        return new Picture(url, title, name, "", hidden.contains(url));
+        return new Picture(url, title, name, hidden.contains(url));
     }
 
     /** The first bytes of a file, enough for {@link PictureSources#imageMime}. */
@@ -1259,7 +1259,7 @@ final class PictureLibrary {
      *
      * <p>The web admin's playlist page edits the playlist you opened, which may not be the one on
      * the glass; a null id keeps the old meaning, "whichever is in use", which is what the
-     * screensaver page and the commands want.
+     * Ambient page and the commands want.
      */
     synchronized String selectPicture(String playlistId, String url, boolean selected) {
         ensurePlaylist();

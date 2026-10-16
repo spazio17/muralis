@@ -8,10 +8,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * How Muralis Pro reaches the panels of a fleet that never see Google (block 14): the fleet's
+ * How Muralis Pro reaches the panels of a fleet that never see Google: the fleet's
  * signed list carries a tier block written by an anchor, a member whose own Google Play says the
- * account owns Pro, and every member leases it for thirty days. Reasoning and rejected
- * alternatives: the board's card "Why Pro travels on a 30-day lease".
+ * account owns Pro, and every member leases it for thirty days from each confirmation.
  *
  * <p>The block is {@code tier} ("pro" or "free"), {@code confirmed_by} (a panel id, never an
  * account), {@code confirmed} and {@code valid_until} (milliseconds since 1970). Pure, with no

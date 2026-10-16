@@ -31,7 +31,7 @@ import java.util.List;
  * The Play Billing client: shows the Pro product's price, runs a purchase, reads back what the
  * signed-in Google account owns, and acknowledges a purchase Play delivers.
  *
- * <p><b>Pro is the fleet (block 14).</b> The price query and the purchase sheet left with the
+ * <p><b>Pro is the fleet.</b> The price query and the purchase sheet left with the
  * Buy button on 2026-10-06, when nothing was sold that gated nothing, and came back with the
  * fleet; a panel whose account owns Pro tells its fleet so ({@link FleetServer#confirmTier}).
  *

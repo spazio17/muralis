@@ -26,7 +26,7 @@ inside the same container.
 
 ## Status
 
-On Google Play (`org.spazio17.muralis`, the test tracks until 0.7 reaches production) and as an APK
+On Google Play (`org.spazio17.muralis`) and as an APK
 with a setup QR on [muralis.spazio17.org](https://muralis.spazio17.org). Everything a single panel
 does is free; Muralis Pro, one purchase on Google Play, adds the fleet.
 

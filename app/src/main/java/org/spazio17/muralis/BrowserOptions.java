@@ -5,7 +5,7 @@
 package org.spazio17.muralis;
 
 /**
- * The page's browser options (block 3a): the sign-in a page behind HTTP basic auth asks for,
+ * The page's browser options: the sign-in a page behind HTTP basic auth asks for,
  * the user agent, the text size, the page zoom, the dark look and the way back to the dashboard
  * after a while. Pure, so every validator both surfaces and the commands share is host-tested;
  * the WebView side is {@code KioskActivity}'s.
@@ -44,7 +44,7 @@ final class BrowserOptions {
         final boolean dark;
         final int backAfterSeconds;
         final String signInUser;
-        /** Whether the page may use the camera and the microphone when it asks (block 3b). */
+        /** Whether the page may use the camera and the microphone when it asks. */
         final boolean pageCamera;
         final boolean pageMicrophone;
 

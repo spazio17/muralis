@@ -88,7 +88,7 @@ public final class PictureSourcesTest {
     }
 
     private static void testFileTitleToWords() {
-        require(PictureSources.fileTitleToWords("File:Great_Wave_off_Kanagawa2.jpg")
+        require(PictureSources.fileTitleToWords("Great_Wave_off_Kanagawa2.jpg")
                 .equals("Great Wave off Kanagawa2"), "file title to words");
     }
 

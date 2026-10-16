@@ -23,8 +23,7 @@ import javax.net.ssl.X509ExtendedTrustManager;
 
 /**
  * Mutual TLS between panels with no authority: each side presents its own self-signed fleet
- * certificate and accepts the other only by the SHA-256 of its public key (fleet design, section
- * 4). The shape KDE Connect and Syncthing use: the certificate's chain, dates and names are not
+ * certificate and accepts the other only by the SHA-256 of its public key. The shape KDE Connect and Syncthing use: the certificate's chain, dates and names are not
  * what is trusted, the key is.
  *
  * <p>Pure, with no Android imports, so the handshakes are covered by host tests with real sockets.

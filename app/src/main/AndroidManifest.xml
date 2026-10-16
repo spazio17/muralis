@@ -82,7 +82,7 @@
          hides every iBeacon from Android 12 on; "while using the app" is enough, because the
          service holds the location foreground type while the sensor is on (2026-10-01).
          No position is ever read. NFC: tags read by the activity's reader mode, nothing written. Camera: the IP-camera stream and
-         motion detection, and reading another panel's join code in the Fleet section. Microphone: a sound level, nothing recorded. Each runtime permission
+         motion detection, reading another panel's join code in the Fleet section, and the dashboard page when allowed. Microphone: a sound level, nothing recorded, and the dashboard page when allowed. Each runtime permission
          is asked for once from the Sensors page on an ordinary install and granted silently on a
          device-owner panel. Play consequence: CAMERA and RECORD_AUDIO need their use described
          in the listing's Data safety form, and the camera and microphone foreground types a
@@ -98,7 +98,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Granted at install, no prompt: the WebView refuses to open the microphone for a page
-         without it ("Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO"), block 3b. -->
+         without it ("Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO"). -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -109,7 +109,7 @@
          System namespace. The interim MediaPad does have a light sensor
          (als-bh1745), so unlike the ROM's tablet this path is live and testable here. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
-    <!-- App lock (block 9): "Display over other apps". While the chosen app is in front, Muralis
+    <!-- App lock: "Display over other apps". While the chosen app is in front, Muralis
          lays four small corner windows over it so the escape combinations still reach Muralis,
          and the status light's frame; the person allows it once, and Muralis says why. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -135,7 +135,7 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
-        <!-- App lock (block 9): the apps with a launcher icon, to choose one and open it. -->
+        <!-- App lock: the apps with a launcher icon, to choose one and open it. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -178,7 +178,8 @@
         <!-- usesCleartextTraffic is app-wide and stays that way, a decision rather than an
              omission. What actually needs it is the dashboard WebView and the server probe: a
              typical Home Assistant install on a home LAN is plain http, and the host is whatever
-             the operator types at runtime, so a network-security-config allowlist (which is
+             the operator types at runtime; the same holds for the alerts' web address, the
+             automations' Call an address and the sounds the panel is asked to play, so a network-security-config allowlist (which is
              static XML, resolved at install) cannot express it; scoping to specific domains
              would just break the next customer's URL. The app's own sockets are unaffected
              either way: both the admin server and Paho MQTT use raw java.net sockets, which
@@ -287,7 +288,7 @@
             android:foregroundServiceType="specialUse|camera|microphone|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent single-purpose kiosk launcher supervising a Home Assistant dashboard on wall-mounted hardware." />
+                android:value="Persistent single-purpose kiosk launcher supervising a web page or an app on wall-mounted hardware." />
         </service>
     </application>
 </manifest>

@@ -7,7 +7,7 @@ package org.spazio17.muralis;
 import java.util.HashMap;
 import java.util.Map;
 
-/** The settings file (block 8): what it carries, what it never does, and its passwords. */
+/** The settings file: what it carries, what it never does, and its passwords. */
 public final class SettingsTransferTest {
     public static void main(String[] args) {
         Map<String, Object> stored = new HashMap<>();

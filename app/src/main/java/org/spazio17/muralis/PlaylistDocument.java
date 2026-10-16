@@ -244,7 +244,7 @@ final class PlaylistDocument {
 
     /**
      * Removes a playlist. Deleting the one that was playing leaves nothing active, which the
-     * screensaver has to be able to say out loud rather than showing a blank panel.
+     * Ambient has to be able to say out loud rather than showing a blank panel.
      */
     String delete(String id) {
         Playlist playlist = byId(id);

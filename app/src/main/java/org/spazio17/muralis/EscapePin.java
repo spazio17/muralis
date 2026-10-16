@@ -54,6 +54,20 @@ final class EscapePin {
         return PREFIX + "$" + ITERATIONS + "$" + hex(salt) + "$" + hex(derive(pin, salt, ITERATIONS));
     }
 
+    /**
+     * Whether a stored form from elsewhere (a settings file) is one this class could have
+     * written: the four parts, hex, and a sane iteration count, so an imported value can neither
+     * make the PIN unmatchable nor make each try take minutes.
+     */
+    static boolean wellFormed(String stored) {
+        if (stored == null || !stored.matches(java.util.regex.Pattern.quote(PREFIX)
+                + "\\$\\d{1,7}\\$[0-9a-f]{2,128}\\$[0-9a-f]{2,128}")) {
+            return false;
+        }
+        int iterations = Integer.parseInt(stored.split("\\$")[1]);
+        return iterations >= 1_000 && iterations <= 1_000_000;
+    }
+
     /** Constant-time; false for anything stored that is not a hash this class wrote. */
     static boolean matches(String pin, String stored) {
         if (pin == null || stored == null) {

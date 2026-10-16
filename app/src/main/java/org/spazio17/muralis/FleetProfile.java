@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The fleet's shared settings on this panel (block 12d): which sections this panel shares, what
+ * The fleet's shared settings on this panel: which sections this panel shares, what
  * each section's values are here, and how a section the fleet shares is applied, through the
  * same commands and checks a person's own change goes through. The sections are
  * {@link FleetDocument#SECTIONS}; which ones are shared, and their values, live in the fleet
@@ -107,7 +107,7 @@ final class FleetProfile {
      * Applies the fleet's values of {@code section} on this panel, each through the command or
      * the check a person's own change takes, and returns the refusals, one line each, in the
      * words those checks use. Only what differs is touched. Needs the service running for the
-     * display and screensaver commands; without it those are reported as not applied.
+     * display and Ambient commands; without it those are reported as not applied.
      */
     static List<String> apply(Context context, String section, Map<String, Object> values) {
         List<String> refused = new ArrayList<>();
@@ -340,10 +340,13 @@ final class FleetProfile {
                         : FleetDocument.groupName(document, other));
             }
         }
+        boolean pro = FleetServer.proStatus(context).pro;
         String line = FleetDocument.EVERYONE.equals(group)
-                ? "From the whole fleet: a change here changes every panel."
-                : "From the group " + FleetDocument.groupName(document, group)
-                        + ": a change here changes every panel of it.";
+                ? "From the whole fleet: " + (pro ? "a change here changes every panel."
+                        : "without Pro, a change here stays on this panel.")
+                : "From the group " + FleetDocument.groupName(document, group) + ": "
+                        + (pro ? "a change here changes every panel of it."
+                                : "without Pro, a change here stays on this panel.");
         if (!others.isEmpty()) {
             line += " Also shared by " + String.join(", ", others) + ".";
         }

@@ -14,7 +14,7 @@ function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}
 function dur(ms){if(ms==null||ms<0){return '--';}
 var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
 return d>0?(d+'d'+h+'h'):(h>0?(h+'h'+m+'m'):(m+'m'));}
-// The Fleet box's membership and the Join code (block 11c), in the panel's words. The code's
+// The Fleet box's membership and the Join code, in the panel's words. The code's
 // box shows once Join a fleet was pressed here; Close ends the code on the panel too, and a
 // join made meanwhile turns the box into its sentence. A poll that left before a press here
 // carries the state from before it, so only a poll sent after the press repaints the box.
@@ -125,7 +125,7 @@ follow('fleet-follows',prof.follows_fleet);}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('volume-buttons-disabled',cfg.volume_buttons_disabled);
-// The fleet's groups and what the chosen one shares (fleet design, 2026-10-13).
+// The fleet's groups and what the chosen one shares.
 fleetGroupsPaint(cfg.fleet_profile);
 // The panel's name, renamed on the panel or over MQTT: the box and the app bar's subtitle.
 follow('f-device_id',cfg.device_id);

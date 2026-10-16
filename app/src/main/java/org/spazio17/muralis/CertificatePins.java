@@ -11,7 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Certificates a person trusted for a page Android itself does not trust (block 4): one
+ * Certificates a person trusted for a page Android itself does not trust: one
  * SHA-256 fingerprint per host, asked about once and then accepted for that host alone, never
  * any other certificate on it and never every certificate. Pure, so the store and the
  * fingerprint's form are host-tested; the WebView side is {@code KioskActivity}'s.

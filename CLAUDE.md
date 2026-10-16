@@ -53,10 +53,11 @@ on purpose.
   panel and the web admin offer the same settings and show the same thing, except what needs a
   hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
   as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
-  image and button), the password being the gate; and a diagnostics file (device, permissions,
+  image and button), the web admin's password or the broker's credentials being the gate; and a diagnostics file (device, permissions,
   status, counters, log) downloaded from the web admin, never uploaded. A settings file exported
   and imported in the web admin (passwords only when asked, then encrypted with a passphrase),
-  and a setup QR for a new tablet that carries the settings without passwords.
+  and a setup QR for a new tablet that carries the settings without passwords; both carry the
+  escape combinations and the page addresses as written.
 - **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
   network and others), the camera as a network camera with motion detection, a sound level from
   the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
@@ -90,10 +91,11 @@ on purpose.
   link and never stored, and Identify shows a panel's name on its screen.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels:
-  adding panels (at most six to a Pro fleet) and the Fleet page. A panel whose account owns Pro
-  writes it into the fleet's signed list, and the members without Google lease it for thirty
-  days from each confirmation; a refund ends it, a lapse makes the fleet free until a panel with
-  the account confirms again.
+  adding panels (at most six to a Pro fleet), the Fleet page and the fleet's alerts. A panel whose
+  account owns Pro writes it into the fleet's signed list, and the members without Google lease it
+  for thirty days from each confirmation; a refund ends it, a lapse makes the fleet free until a
+  panel with the account confirms again: what it shares stays applied, but a change on one panel
+  no longer reaches the others and no alert is raised.
 
 ## How the code is shaped
 
@@ -127,7 +129,8 @@ on purpose.
 ## Rules the code keeps
 
 - **Never lock someone in.** Lock task and the home-screen role engage only after both escape
-  combinations are recorded. The escape works from every screen, the chosen app of App lock
+  combinations exist: recorded on the panel, or brought by a settings file, a setup QR or the
+  fleet that adds it, from a panel where they were recorded. The escape works from every screen, the chosen app of App lock
   included. Only this app is allowed under lock task, and in App lock the one app the person
   chose; any other app is reached by releasing lock task first, never by widening that list. Accessibility services and foreign keyboards are restricted where the app is device
   owner, and the page cannot hand control to another app through non-web links.

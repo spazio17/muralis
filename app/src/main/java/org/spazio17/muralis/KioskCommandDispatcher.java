@@ -21,7 +21,7 @@ final class KioskCommandDispatcher {
     }
 
     /**
-     * The screensaver's settings as commands, so every one of them can be set over MQTT and HTTP
+     * Ambient's settings as commands, so every one of them can be set over MQTT and HTTP
      * and not only in the two user interfaces (2026-09-09). One executor method rather
      * than a dozen: the validation is here, where the repo keeps it, and the executor's job is
      * one {@code KioskConfig.edit} call.
@@ -172,11 +172,11 @@ final class KioskCommandDispatcher {
          */
         void setStatusLight(boolean on, Integer color, int percent);
 
-        /** Draws a pop-up over the screen (block 6); the display was woken first if asked. */
+        /** Draws a pop-up over the screen; the display was woken first if asked. */
         void showPopup(Popup.Request request);
 
         /**
-         * A camera's pop-up (block 6): shown on demand, or for a doorbell's trigger by the
+         * A camera's pop-up: shown on demand, or for a doorbell's trigger by the
          * camera's mode and cooldown. Returns why it does not show, or null.
          */
         String cameraPopup(String name, boolean trigger);
@@ -190,7 +190,7 @@ final class KioskCommandDispatcher {
         String setBrowserOption(BrowserOption option, String value);
 
         /**
-         * Shows the screensaver now, whatever the idle time. Returns why it cannot, or null: the
+         * Shows Ambient now, whatever the idle time. Returns why it cannot, or null: the
          * mode is off or has no address, the kiosk is stopped, Muralis is not on screen, the
          * display is off, or the wizard or the escape recorder is up; the shape of
          * {@link #setBrightness}. With the settings open it shows as a preview.
@@ -204,7 +204,7 @@ final class KioskCommandDispatcher {
         String setScreensaverPlaylist(String name);
 
         /**
-         * Stores one screensaver setting. The value arrives checked and canonical: this switch
+         * Stores one Ambient setting. The value arrives checked and canonical: this switch
          * validates every one of them against {@link ScreensaverPolicy} and
          * {@link PictureSources} before calling, so the executor only writes.
          */

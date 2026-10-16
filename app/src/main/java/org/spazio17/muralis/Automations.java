@@ -111,7 +111,7 @@ final class Automations {
                 new Event("lost", "Network lost", null, false, false)));
         map.put("processor", Collections.singletonList(
                 new Event("hotter", "Hotter than", "°C", false, false)));
-        // Not a sensor: the panel's clock (block 5). The level is the minute of the day, and
+        // Not a sensor: the panel's clock. The level is the minute of the day, and
         // the engine's day tick fires it, not a reading; see Engine.clock.
         map.put(TIME, Collections.singletonList(
                 new Event("at", "At", TIME_UNIT, false, false)));
@@ -425,7 +425,7 @@ final class Automations {
     }
 
     /**
-     * The new actions' arguments (block 5), checked when the rule is saved so a rule cannot
+     * The new actions' arguments, checked when the rule is saved so a rule cannot
      * wait all night to fail: null when it can run.
      */
     static String checkArgument(String action, String argument) {
@@ -787,7 +787,7 @@ final class Automations {
         static final int LATE_MINUTES = 2;
 
         /**
-         * The clock's day tick (block 5): a "Time of day" rule fires once on a day when the
+         * The clock's day tick: a "Time of day" rule fires once on a day when the
          * minute of the day has reached its time, a tick up to {@link #LATE_MINUTES} late
          * included; a later one means the panel slept or was stopped through the time, and that
          * day's run is dropped rather than replayed at wake, so a panel never fires a pile of

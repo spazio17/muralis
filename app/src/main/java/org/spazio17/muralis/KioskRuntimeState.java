@@ -261,7 +261,7 @@ final class KioskRuntimeState {
         return fleetDownReason;
     }
 
-    /** Per profile section, what this panel could not apply of the fleet's values (block 12d). */
+    /** Per profile section, what this panel could not apply of the fleet's values. */
     private static final java.util.concurrent.ConcurrentHashMap<String, java.util.List<String>>
             fleetProfileRefused = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -396,8 +396,8 @@ final class KioskRuntimeState {
 
     /**
      * The escape-combination recorder is up, with its two-minute clock: the service refuses a
-     * screensaver over it. The settings screens are not refused since 2026-09-24: there the
-     * activity shows the screensaver as a preview and a touch brings the settings back.
+     * Ambient over it. The settings screens are not refused since 2026-09-24: there the
+     * activity shows Ambient as a preview and a touch brings the settings back.
      */
     static void publishRecorderOnScreen(boolean onScreen) {
         recorderOnScreen = onScreen;
@@ -407,7 +407,7 @@ final class KioskRuntimeState {
         return recorderOnScreen;
     }
 
-    /** Whether the screensaver is on the glass right now; set by the activity, read by the stats. */
+    /** Whether Ambient is on the glass right now; set by the activity, read by the stats. */
     static void publishScreensaver(boolean active) {
         screensaverActive = active;
     }

@@ -10,25 +10,25 @@ import android.util.Log;
 /**
  * Whether this panel has Muralis Pro, and the only place that question is answered.
  *
- * <p>Pro is one purchase, bound to a Google account rather than a device. Until 2026-10-06 it
- * unlocked MQTT and the web admin; since then every panel has both for free and Pro is the fleet
- * (0.7), which reads this answer on the panel that holds the account and carries it to the others
- * on a lease (see the fleet design). The rules below are the ones that make a Play purchase work
+ * <p>Pro is one purchase, bound to a Google account rather than a device. Pro is the fleet,
+ * which reads this answer on the panel that holds the account and carries it to the others on a
+ * lease ({@link FleetTier}). The rules below are the ones that make a Play purchase work
  * on a wall panel, and each exists because the obvious alternative breaks something.
  *
  * <p><b>Google Play's answer is the truth, and the stored copy is only a bridge.</b> {@link #record}
  * writes a verified purchase into {@link SecretStore} (keystore-backed AES-GCM, the same envelope
  * the broker and admin credentials use) so the answer is known at boot, before Play has been
  * asked, and stays while Play cannot be asked: the service unreachable, the network down, the
- * Store mid-update, and since 2026-10-06 also {@code BILLING_UNAVAILABLE}, which is what a device
+ * Store mid-update, and also {@code BILLING_UNAVAILABLE}, which is what a device
  * with no Google account signed in gets. Those answers change nothing. What Play says clearly
  * does: an {@code OK} answer for the whole account that does not contain the purchase makes
  * {@link ProBilling} call {@link #drop}, at once. So a refund ends Pro the next time a signed-in
  * account is asked, and a panel that lost its account keeps what it holds until one says
  * otherwise, even one whose owner disabled the Store or removed the account to keep it after a
  * refund: the price of carrying Pro to panels without Google, and how apps that keep a purchase
- * offline behave. In a fleet the lease does the rest. The account check and the day-long grace that briefly stood here (2026-09-03) are
- * gone: Play already answers the question, and that is how client-only apps on Play behave.
+ * offline behave. In a fleet the lease does the rest. There is no account check and no grace
+ * period of its own: Play already answers the question, and that is how client-only apps on
+ * Play behave.
  *
  * <p><b>Reversible by design.</b> Signing back in, or Play recovering, returns the purchase on the
  * next query and {@link #record} stores it again. Nothing but Play's own answer is needed to get

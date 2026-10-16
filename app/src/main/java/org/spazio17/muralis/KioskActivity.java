@@ -163,7 +163,7 @@ public final class KioskActivity extends Activity {
      * starting them, which is the case they had to prevent.
      */
     private String[] lockTaskPackages() {
-        // Muralis and, in App lock, the one app the person chose; nothing else (block 9).
+        // Muralis and, in App lock, the one app the person chose; nothing else.
         String chosen = KioskConfig.load(this).appLockPackage;
         return chosen.isEmpty() || getPackageManager().getLaunchIntentForPackage(chosen) == null
                 ? new String[] {getPackageName()} : new String[] {getPackageName(), chosen};
@@ -209,7 +209,7 @@ public final class KioskActivity extends Activity {
      * in KioskConfig, and the two are written together.
      */
     private boolean filmOn;
-    // The screensaver (2026-09-09): the clock, where the panel is in ScreensaverPolicy's diagram,
+    // Ambient (2026-09-09): the clock, where the panel is in ScreensaverPolicy's diagram,
     // when the current stage began, the layer the web-page mode draws in (under the black view,
     // so Display off still covers it), and which mode is on the glass, null for none.
     private static final long SCREENSAVER_TICK_MS = 1_000L;
@@ -223,10 +223,10 @@ public final class KioskActivity extends Activity {
     /** Display off resolved to a real sleep; cleared by the wake, whichever way it arrives. */
     private boolean asleep;
     /**
-     * The showing screensaver is a preview (the settings page's Preview, or a start that arrived
+     * the showing Ambient is a preview (the settings page's Preview, or a start that arrived
      * with the settings open): the touch that ends it goes
      * back to that page, not to the dashboard (2026-09-09: a test must not leave the test
-     * page). Ends with the screensaver; a remote stop or the display going dark drops it.
+     * page). Ends with Ambient; a remote stop or the display going dark drops it.
      */
     private boolean screensaverPreview;
     /**
@@ -240,7 +240,7 @@ public final class KioskActivity extends Activity {
     /** The strip that names a preview; without it the dimmed page is just the page, darker. */
     private TextView screensaverPreviewCaption;
     // The Pictures mode: the frame in the layer, the set being shown and where in it we are, the
-    // clock that advances it, and how many screensavers this process has shown (one-per-cycle
+    // clock that advances it, and how many Ambient screens this process has shown (one-per-cycle
     // takes the next picture each time). Pictures are decoded on PictureLibrary's worker.
     private PictureFrame pictureFrame;
     private java.util.List<PictureSources.Picture> pictureSet;
@@ -267,9 +267,9 @@ public final class KioskActivity extends Activity {
     /** App lock: the same readout over the app, in a window of its own (AppLock.showReadout). */
     private TextView statsOverApp;
     /**
-     * Identify (block 16): the panel's name drawn over whatever is on the glass for
+     * Identify: the panel's name drawn over whatever is on the glass for
      * {@link #IDENTIFY_MS}, the last child of the window's content, so it sits over the page,
-     * the screensaver, the parking screen and the black film alike, with no window of its own.
+     * Ambient, the parking screen and the black film alike, with no window of its own.
      * A second Identify while one shows restarts the time; a screen change takes it away with
      * the content it was drawn over.
      */
@@ -283,7 +283,7 @@ public final class KioskActivity extends Activity {
      */
     private StatusLightFrame statusLightFrame;
     /**
-     * Where the page is against the dashboard (block 3a): the address it settled on before
+     * Where the page is against the dashboard: the address it settled on before
      * anybody touched it, whether a touch has come since, and whether the page has moved away
      * (or an open-once address took its place). See {@link #pageMoved} and the clock's tick.
      */
@@ -379,8 +379,19 @@ public final class KioskActivity extends Activity {
      */
     private int carriedScrollY = -1;
     private final java.util.List<EscapeSequence.Tap> escapeTaps = new java.util.ArrayList<>();
-    /** App lock: a combination tapped over the app, handed here to finish (AppLock). */
-    static final String EXTRA_ESCAPE = "org.spazio17.muralis.ESCAPE";
+    /**
+     * App lock: a combination tapped over the app, handed here to finish (AppLock). Handed in
+     * this process's memory, never as an intent extra: the activity is exported as the home
+     * screen, so any app could send an extra and leave the kiosk without the combination.
+     */
+    private static volatile String pendingEscape;
+    private static volatile long pendingEscapeAt;
+
+    /** AppLock: a combination its corners recognised, to be finished by the next onNewIntent. */
+    static void handEscape(String which) {
+        pendingEscapeAt = android.os.SystemClock.elapsedRealtime();
+        pendingEscape = which;
+    }
     static final String ESCAPE_SETTINGS = "settings";
     static final String ESCAPE_LAUNCHER = "launcher";
     /** App lock: when the app was last opened, and how often in a row it came straight back. */
@@ -1548,7 +1559,7 @@ public final class KioskActivity extends Activity {
                 return super.dispatchTouchEvent(event);
             }
             // A touch proves the screen is on: a sleep that never darkened, or a wake this
-            // activity was not told about, must not leave the screensaver's clock blocked.
+            // activity was not told about, must not leave Ambient's clock blocked.
             asleep = false;
             if (screensaverStage == ScreensaverPolicy.Stage.DASHBOARD) {
                 screensaverSinceMs = event.getEventTime();
@@ -1556,7 +1567,7 @@ public final class KioskActivity extends Activity {
             if (!configurationVisible) {
                 touchedSinceHome = true;
             }
-            // The screensaver: the first touch brings the page back and never reaches it, and a
+            // Ambient: the first touch brings the page back and never reaches it, and a
             // corner tap still counts for the escape combinations, which work from every screen.
             // A preview waits for the lift, above.
             if (screensaverShowing != null) {
@@ -1887,7 +1898,7 @@ public final class KioskActivity extends Activity {
 
     /** A combination recognised, here or over App lock's app: the PIN, then where it leads. */
     private void escapeMatched(boolean toLauncher) {
-        // The fleet's alert (block 15), said whether or not a PIN then stops the way out.
+        // The fleet's alert, said whether or not a PIN then stops the way out.
         KioskService alerting = KioskService.liveService();
         if (alerting != null) {
             alerting.alertEvent(FleetAlerts.COMBINATION_USED, true,
@@ -1908,16 +1919,16 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        String escape = intent == null ? null : intent.getStringExtra(EXTRA_ESCAPE);
-        if (escape != null && KioskConfig.load(this).escapeSequencesConfigured()) {
-            // Only a combination App lock's corners recognised sends this; the activity is not
-            // exported for it to be sent by anyone else (the manifest).
+        String escape = pendingEscape;
+        boolean fresh = android.os.SystemClock.elapsedRealtime() - pendingEscapeAt < 5_000L;
+        pendingEscape = null;
+        if (escape != null && fresh && KioskConfig.load(this).escapeSequencesConfigured()) {
             escapeMatched(ESCAPE_LAUNCHER.equals(escape));
         }
     }
 
     /**
-     * App lock (block 9): opens the chosen app over Muralis whenever Muralis is uncovered and
+     * App lock: opens the chosen app over Muralis whenever Muralis is uncovered and
      * shows nothing of its own (the settings, a PIN, a pop-up, Identify, Ambient, the dark).
      * An app that keeps coming straight back is opened again later each time, up to a minute
      * apart, so a crashing app is not a loop.
@@ -2104,7 +2115,7 @@ public final class KioskActivity extends Activity {
             if (pinThrottle.recordFailure(PIN_THROTTLE_KEY, now)) {
                 long locked = pinThrottle.lockedOutFor(PIN_THROTTLE_KEY, now);
                 verdict.setText("Too many wrong PINs. Try again in " + (locked + 999) / 1000 + " s.");
-                // The fleet's alert (block 15): on at the lockout, off when it ends.
+                // The fleet's alert: on at the lockout, off when it ends.
                 KioskService alerting = KioskService.liveService();
                 if (alerting != null) {
                     alerting.alertEvent(FleetAlerts.PIN_LOCKOUT, true,
@@ -2426,7 +2437,7 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * The page's browser options (block 3a), a page of their own under Dashboard: the user
+     * The page's browser options, a page of their own under Dashboard: the user
      * agent, text size, page zoom, the dark look, the way back to the dashboard and the page's
      * sign-in, saved together by one button with the commands' own checks; the web admin's
      * Dashboard box has the same form.
@@ -2463,7 +2474,7 @@ public final class KioskActivity extends Activity {
             pageCard.addView(darkNote, matchWrapClose());
         }
 
-        // What the page may use (block 3b), applied the moment they are touched: on an ordinary
+        // What the page may use, applied the moment they are touched: on an ordinary
         // install Android is asked first, and the switch is tapped again once it said yes.
         LinearLayout useCard = card(theme, "The page may use");
         CompoundButton cameraInput = themedSwitch(theme, "The camera", browser.pageCamera);
@@ -2538,7 +2549,7 @@ public final class KioskActivity extends Activity {
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
             redrawInPlace(this::showBrowserOptionsPage);
         });
-        // The certificates trusted for pages Android does not trust (block 4), each with Remove:
+        // The certificates trusted for pages Android does not trust, each with Remove:
         // the next load of that host asks again.
         LinearLayout pinsCard = card(theme, "Trusted certificates");
         java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(this);
@@ -2604,7 +2615,7 @@ public final class KioskActivity extends Activity {
     private static final int REQUEST_PAGE_PERMISSION = 7_301;
 
     /**
-     * App lock (block 9): the one app the panel shows instead of the web page, or Off, chosen
+     * App lock: the one app the panel shows instead of the web page, or Off, chosen
      * from the installed apps and stored at once; the permission it needs, asked for with why.
      */
     private void showAppLockPage() {
@@ -2736,7 +2747,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The pop-up cameras (block 6), a page under Dashboard: each camera's card with Save and
+     * The pop-up cameras, a page under Dashboard: each camera's card with Save and
      * Remove, then one to add a camera; the web admin's Pop-up cameras page is the same.
      */
     private void showCamerasPage() {
@@ -2947,8 +2958,8 @@ public final class KioskActivity extends Activity {
         setDashboardFullscreen(true);
         recorderVisible = false;
         wizardVisible = false;
-        // The operator asked for the settings, not the screensaver; the record goes too, so the
-        // dashboard they open afterwards is the page and not the screensaver coming back.
+        // The operator asked for the settings, not Ambient; the record goes too, so the
+        // dashboard they open afterwards is the page and not Ambient coming back.
         stopScreensaver("settings opened");
         destroyWebView();
         kioskStopped = false;
@@ -3538,7 +3549,7 @@ public final class KioskActivity extends Activity {
         // formatter, with the switch that puts them on the dashboard directly under them. A switch
         // labelled "show system stats" sitting three cards away from the stats it shows was a
         // question the operator had to answer by toggling it and looking somewhere else.
-        // The screensaver card: the mode and the one sentence that says what is set; every
+        // Ambient card: the mode and the one sentence that says what is set; every
         // field, the two times, the page address, the dim floor, the wake choice and "Show it
         // now", is on its own page, reached by the button (2026-09-09: the times were on
         // the card too and were the same boxes twice).
@@ -3558,7 +3569,7 @@ public final class KioskActivity extends Activity {
 
         // The Sensors section lists only what is on, one row per sensor with its reading, and the
         // way to the rest: the page where every sensor is switched on and set up
-        // (2026-09-27, the Screensaver section's shape). The readings follow the status document
+        // (2026-09-27, the Ambient section's shape). The readings follow the status document
         // on the one-second tick (see overlayTask).
         LinearLayout sensorsCard = sectionBody(theme);
         sensorReadouts.clear();
@@ -3600,7 +3611,7 @@ public final class KioskActivity extends Activity {
                 config.volumeButtonsDisabled);
         volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
                 applyLiveSetting(editor -> editor.volumeButtonsDisabled(checked)));
-        // Whether this panel is in a fleet, and its one button, Join or Leave (block 11c); made
+        // Whether this panel is in a fleet, and its one button, Join or Leave; made
         // here so the sync below can follow a join or a leave made from elsewhere.
         TextView fleetMember = new FlushText(this);
         fleetMember.setTextSize(14);
@@ -3617,7 +3628,7 @@ public final class KioskActivity extends Activity {
                 confirmLeaveFleet();
             }
         });
-        // Create a fleet or Add a panel (block 11d): this panel's camera reads another panel's Join
+        // Create a fleet or Add a panel: this panel's camera reads another panel's Join
         // screen; the first panel added creates the fleet, so the label says which it is.
         Button fleetAddButton = tonalButton(theme, addPanelLabel());
         // The Fleet section's group switches, filled where that card is built.
@@ -3808,7 +3819,7 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         proCaptionParams.topMargin = dp(14);
         aboutCard.addView(proCaption, proCaptionParams);
-        // What Pro is, in one line, with no version promise (block 14): the fleet. A single
+        // What Pro is, in one line, with no version promise: the fleet. A single
         // panel has everything without it, so a free panel reads "Free" and is never nagged.
         TextView proWhat = new FlushText(this);
         proWhat.setTextColor(theme.subtext);
@@ -3868,8 +3879,7 @@ public final class KioskActivity extends Activity {
         aboutCard.addView(listRow(theme, "Version and device details", this::showAbout),
                 matchWrapClose());
 
-        // The fleet's own port on this panel (block 11a, the owner 2026-10-08: a setting like the web
-        // admin's, never the same port), saved with the other connection fields by the foot
+        // The fleet's own port on this panel, saved with the other connection fields by the foot
         // button, and whether the member endpoint listens on it, with the reason when it does not.
         // In the order a person needs it (the UI round, 2026-10-15): the fleet and its panels,
         // adding one, what this panel follows and the Fleet page, then the port and Leave.
@@ -3886,21 +3896,21 @@ public final class KioskActivity extends Activity {
         fleetStateParams.topMargin = dp(10);
         LinearLayout.LayoutParams fleetMemberParams = wideRow();
         fleetCard.addView(fleetMember, fleetMemberParams);
-        // Add by its code (block 11e): for a panel without a camera, or a QR out of its reach.
+        // Add by its code: for a panel without a camera, or a QR out of its reach.
         Button fleetCodeButton = textButton(theme, "Add by code");
         fleetCodeButton.setOnClickListener(view -> showAddByCode());
         fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening());
         fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton),
                 matchWrapClose());
         // Whether this panel follows what the whole fleet shares, the groups it is in, and the
-        // way to the Fleet page (block 13); the group switches are followed by the live sync
+        // way to the Fleet page; the group switches are followed by the live sync
         // above, as the web admin follows them from its poll.
         if (!KioskConfig.fleetIdOf(this).isEmpty()) {
             Context app = getApplicationContext();
             java.util.Map<String, Object> fleetList = KioskConfig.fleetDocumentOf(this);
             java.util.List<String> myGroups = FleetDocument.memberGroups(fleetList,
                     FleetDocument.memberByKey(fleetList, KioskRuntimeState.fleetKey()));
-            // The groups (fleet design, 2026-10-13): which ones this panel is in, a new one with
+            // The groups: which ones this panel is in, a new one with
             // a name the person types (generic suggestions offered), and Remove for each.
             // Whether this panel takes what the whole fleet shares; its groups it always follows.
             CompoundButton follows = themedSwitch(theme, "Follow the fleet's shared settings",
@@ -4181,7 +4191,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Fleet page (block 13, the sketch of 2026-10-13), the web admin's /fleet on the panel:
+     * The Fleet page, the web admin's /fleet on the panel:
      * the panels with their groups and last contact, the groups, and the shared settings of a
      * scope (the whole fleet or a group) shown and edited here, from any panel.
      */
@@ -4203,7 +4213,7 @@ public final class KioskActivity extends Activity {
             return;
         }
         if (!FleetServer.proStatus(this).pro) {
-            // The Fleet page is Muralis Pro (block 14); the panels stay members meanwhile.
+            // The Fleet page is Muralis Pro; the panels stay members meanwhile.
             TextView free = new FlushText(this);
             free.setTextColor(theme.text);
             free.setText("The Fleet page is Muralis Pro. " + FleetServer.proLine(this));
@@ -4220,7 +4230,7 @@ public final class KioskActivity extends Activity {
         }
         java.util.Map<String, String> groups = FleetDocument.groups(list);
         // Panels: each with its picture on request, its groups to tick, its last contact and
-        // Identify (block 16). Screenshots fetches every panel's picture at once, off the main
+        // Identify. Screenshots fetches every panel's picture at once, off the main
         // thread, each drawn into its row as it arrives; a panel that does not answer says so.
         LinearLayout panels = card(theme, "Panels");
         org.json.JSONArray peers = FleetServer.peersJson(this);
@@ -4465,7 +4475,7 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams cardParams = matchWrap();
         cardParams.topMargin = dp(12);
         column.addView(sharedCard, cardParams);
-        // History (block 15): the versions this panel held, newest first, each with what it
+        // History: the versions this panel held, newest first, each with what it
         // changed, and Restore as new for every one but the version held.
         LinearLayout historyCard = card(theme, "History");
         java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(this);
@@ -4731,7 +4741,7 @@ public final class KioskActivity extends Activity {
         return title;
     }
 
-    /** "From the whole fleet …" at the top of a section the fleet shares (block 12d). */
+    /** "From the whole fleet …" at the top of a section the fleet shares. */
     private void addSharedLine(LinearLayout card, KioskTheme theme, String section) {
         String line = FleetProfile.sharedLine(this, section);
         if (line == null) {
@@ -7078,7 +7088,7 @@ public final class KioskActivity extends Activity {
             }
             sensorMenu.add(def.name, def.id);
         }
-        // The clock, which every panel has (block 5).
+        // The clock, which every panel has.
         sensorMenu.add(Automations.TIME_NAME, Automations.TIME);
         if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
             // A rule on a sensor this device lacks keeps it: opening and saving the rule for
@@ -7142,7 +7152,7 @@ public final class KioskActivity extends Activity {
             levelBox.setVisibility(level ? View.VISIBLE : View.GONE);
             boolean time = level && Automations.TIME_UNIT.equals(event.levelUnit);
             if (time) {
-                // A time of day in the same box, typed as 22:00 (block 5).
+                // A time of day in the same box, typed as 22:00.
                 levelCaption.setText("At (hours:minutes)");
                 levelInput.setInputType(InputType.TYPE_CLASS_DATETIME
                         | InputType.TYPE_DATETIME_VARIATION_TIME);
@@ -7626,7 +7636,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Join screen (fleet design, section 5): a code a manager scans or types, used once and
+     * The Join screen: a code a manager scans or types, used once and
      * valid ten minutes, as a QR and as digits, with this panel's key in short form and where it
      * listens. Join a fleet and New code open the code (FleetServer.openJoinCode); drawing the
      * screen never does, so a redraw cannot open one nobody asked for. Its arrow and Close end
@@ -7657,7 +7667,7 @@ public final class KioskActivity extends Activity {
         };
         LinearLayout page = subPage("Join a fleet", close);
         if (fromWizard) {
-            // Still the wizard for the service: no screensaver and no automation may run over
+            // Still the wizard for the service: no Ambient and no automation may run over
             // a panel whose way out is not recorded yet, whatever the fleet's settings say.
             wizardVisible = true;
             configurationVisible = false;
@@ -7778,7 +7788,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Add a panel (block 11d, path A): this panel's camera reads the QR on another panel's Join
+     * Add a panel: this panel's camera reads the QR on another panel's Join
      * screen, then asks the names (showAddPanelForm). The preview is the camera's brightness,
      * grey and upright; Switch camera where there is more than one. A QR that is not a Join
      * screen's says so and the camera keeps reading. Panel only: the camera is at the panel.
@@ -7894,7 +7904,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * The names, after the code was read: the new panel's, its id to start with, and the fleet's
-     * when this panel founds one, with a Muralis-digits suggestion (fleet design, 2026-09-24).
+     * when this panel founds one, with a Muralis-digits suggestion.
      * Add sends the code to the other panel, pinned to the key in its QR, and records it here.
      */
     private void showAddPanelForm(FleetJoin.Invitation invitation) {
@@ -8029,7 +8039,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Add a panel by the code under its Join QR (block 11e): the code, and the new fleet's name
+     * Add a panel by the code under its Join QR: the code, and the new fleet's name
      * when this panel founds one; the panels announced as ready to be joined are asked for 30
      * seconds, and the one that takes the code is added.
      */
@@ -8223,7 +8233,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The screensaver's own page: every field, "Preview", and the way back. The card on the
+     * Ambient's own page: every field, "Preview", and the way back. The card on the
      * configuration screen carries the mode alone; this page has the times and the rest.
      */
     private void showScreensaverSettings() {
@@ -8246,7 +8256,7 @@ public final class KioskActivity extends Activity {
         page.addView(pageHeading(theme, "Ambient", null,
                 this::showSettings), matchWrap());
 
-        // The mode is chosen on the settings page, whose Screensaver section leads here, so this
+        // The mode is chosen on the settings page, whose Ambient section leads here, so this
         // page no longer repeats the chooser (2026-09-28): it has the chosen mode's
         // options and, for pictures from this panel, the playlists, in the Sensors page's shape,
         // the playlists at the left and the options at the right from 840 dp, one under the
@@ -8339,7 +8349,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The screensaver's controls, on the card and on the page, all of them applied the moment
+     * Ambient's controls, on the card and on the page, all of them applied the moment
      * they are touched like the Display card's, and followed from storage so a change made in
      * the web admin or over MQTT appears here. A text box is not overwritten while it has the
      * focus, so nothing is typed over.
@@ -8363,7 +8373,7 @@ public final class KioskActivity extends Activity {
         TextView pictureState;
         /** The options panel's heading, which names the mode its fields belong to. */
         TextView optionsTitle;
-        /** The whole options panel, hidden for Off: a screensaver that is off has no settings. */
+        /** The whole options panel, hidden for Off: Ambient switched off has no settings. */
         LinearLayout optionsCard;
         /** The Playlist panel, which belongs to the Pictures mode with this panel as the source. */
         LinearLayout playlistCard;
@@ -8421,7 +8431,7 @@ public final class KioskActivity extends Activity {
                     ScreensaverPolicy.PICTURES.equals(mode) ? View.VISIBLE : View.GONE);
             // Off has no options panel at all (2026-09-11): "it is Off so there is no
             // settings for it in any case". The times are still stored and still apply the moment
-            // a mode is picked; they are simply not shown beside a screensaver that is not on.
+            // a mode is picked; they are simply not shown while Ambient is off.
             if (optionsCard != null) {
                 optionsCard.setVisibility(
                         ScreensaverPolicy.OFF.equals(mode) ? View.GONE : View.VISIBLE);
@@ -8519,8 +8529,8 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The screensaver's controls; {@code parent} takes the mode chooser and is null on the
-     * screensaver page, which has none since 2026-09-28.
+     * Ambient's controls; {@code parent} takes the mode chooser and is null on the
+     * Ambient page, which has none since 2026-09-28.
      */
     private ScreensaverControls addScreensaverControls(LinearLayout parent, LinearLayout options,
             LinearLayout playlists, KioskTheme theme, boolean full) {
@@ -8690,7 +8700,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The Pictures mode's controls on the Screensaver page: the playlist's sentence, then how long
+     * The Pictures mode's controls on the Ambient page: the playlist's sentence, then how long
      * each picture stays, how it changes, shuffle, one per cycle, and the credit line with its
      * corner.
      */
@@ -8940,8 +8950,8 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * One playlist as a row of the Screensaver page's left menu, the Sensors page's shape
-     * (2026-10-04): the screensaver's glyph, the name over its count, "in use" in green,
+     * One playlist as a row of the Ambient page's left menu, the Sensors page's shape
+     * (2026-10-04): Ambient's glyph, the name over its count, "in use" in green,
      * and the Use radio at the end where a sensor has its switch, the control that switches
      * which playlist plays (2026-09-23: Use is not a button, tap the circle). Edit and
      * Delete left the row: a tap on it opens the playlist's own page, which has Delete as
@@ -9053,7 +9063,7 @@ public final class KioskActivity extends Activity {
      * No returns to.
      *
      * <p>Deleting the one in use leaves nothing in use, which the Pictures sentence then says out
-     * loud ("No playlist is in use."), because a screensaver that goes black without explanation is
+     * loud ("No playlist is in use."), because Ambient that goes black without explanation is
      * the worse failure.
      */
     private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist, Runnable back) {
@@ -9177,7 +9187,7 @@ public final class KioskActivity extends Activity {
      * A playlist being created or edited, held here so a rotation redraws it rather than losing it.
      *
      * <p>Nothing is written until Save, which is what makes Cancel mean something and what keeps a
-     * half-picked playlist from ever reaching the screensaver.
+     * half-picked playlist from ever reaching Ambient.
      */
     private static final class PlaylistDraft {
         /** Null for a new playlist. */
@@ -9378,7 +9388,7 @@ public final class KioskActivity extends Activity {
                 // question's wording (in use or not); gone meanwhile, from the web, it says so.
                 PictureLibrary library = PictureLibrary.get(this);
                 // The answer comes back only to the page that asked: a Cancel or Back meanwhile
-                // would have it ask over the Screensaver page (review, 2026-10-04).
+                // would have it ask over the Ambient page (review, 2026-10-04).
                 final Runnable asking = currentScreen;
                 library.run(() -> {
                     PlaylistDocument.Playlist stored = library.playlists().load().byId(draft.id);
@@ -10280,7 +10290,7 @@ public final class KioskActivity extends Activity {
 
 
     /**
-     * Everything picked so far, in the order the screensaver shows it: the picture, the folder and
+     * Everything picked so far, in the order Ambient shows it: the picture, the folder and
      * the name, then the box that names the picture for its credit, the eye that switches its
      * credit off or on, and the remove button, all 40 dp on one line (2026-09-23 and
      * 2026-09-25; the Save and Remove words that stood there read as noise repeated down the
@@ -10296,8 +10306,8 @@ public final class KioskActivity extends Activity {
      * go of the focus, and the eye are stored at once instead, because they belong to the picture
      * and not to this playlist. No
      * sentence explains any of it (2026-09-25: a sentence is the last resort): an empty name
-     * box shows, greyed, the file name the screensaver prints instead, a shuffling screensaver
-     * puts its glyph in the pane's head, and with every credit switched off in the screensaver
+     * box shows, greyed, the file name Ambient prints instead, a shuffling Ambient
+     * puts its glyph in the pane's head, and with every credit switched off in Ambient
      * settings each eye stands crossed out and inert.
      */
     private void paintSelectedPane(PlaylistPage screen) {
@@ -10448,7 +10458,7 @@ public final class KioskActivity extends Activity {
             boolean[] off = {creditsOff.contains(uri)};
             Runnable paintCredit = () -> {
                 if (!saver.credit) {
-                    // Every credit is off in the screensaver settings: the eye says so, crossed
+                    // Every credit is off in Ambient settings: the eye says so, crossed
                     // out and inert, and the picture's own choice waits underneath.
                     eye.setImageResource(R.drawable.ic_visibility_off);
                     eye.setContentDescription("Credits are off in the Ambient settings");
@@ -10542,8 +10552,8 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The shuffle glyph for the held pane's head while the screensaver shuffles: a mark and not a
-     * button, since shuffle is set with the other screensaver settings, and a mark rather than a
+     * The shuffle glyph for the held pane's head while Ambient shuffles: a mark and not a
+     * button, since shuffle is set with the other Ambient settings, and a mark rather than a
      * sentence (2026-09-25). The web page draws the same one.
      */
     private ImageView shuffleMark(KioskTheme theme) {
@@ -11104,7 +11114,7 @@ public final class KioskActivity extends Activity {
 
         Button start = primaryButton(theme, "Record the first one");
         start.setOnClickListener(view -> showWizardRecorder(false));
-        // Joining the fleet from here (block 12e): one scan from another panel, before anything
+        // Joining the fleet from here: one scan from another panel, before anything
         // locks; the adding panel hands over its combinations and PIN, once, so the wizard is
         // done and the dashboard follows. Afterwards the combinations are this panel's own.
         page.addView(buttonRow(start), matchWrap());
@@ -12155,7 +12165,7 @@ public final class KioskActivity extends Activity {
     private ViewGroup cardGrid(KioskTheme theme, List<View> cards) {
         int columns = getResources().getConfiguration().screenWidthDp >= 840 ? 2 : 1;
         // The grid is placed with its own 16 dp above it, so the first card of a lane carries
-        // none: two margins stacked was the gap over the first panels of the Screensaver, Escape
+        // none: two margins stacked was the gap over the first panels of the Ambient, Escape
         // sequences and About pages (2026-09-28).
         if (columns == 1) {
             LinearLayout single = new LinearLayout(this);
@@ -12807,7 +12817,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * Adds a row to an internal page's left menu, the list beside its detail
-     * (2026-10-04: one style for Sensors, Automations and the Screensaver's playlists). Each row
+     * (2026-10-04: one style for Sensors, Automations and the Ambient's playlists). Each row
      * is a segment; the chosen one is tinted, as Android marks a selected row (sketch B,
      * media/drafts/left-menus).
      */
@@ -13549,7 +13559,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * The second weight: the hue's container behind the hue's own ink, for a card's second action
-     * (Open once, Preview) and for a way to a page (More screensaver settings). Tonal rather than
+     * (Open once, Preview) and for a way to a page (More Ambient settings). Tonal rather than
      * a bare text button because a wall panel has no hover, and a control with no body until you
      * touch it is a control nobody finds.
      */
@@ -14549,7 +14559,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Back to the dashboard after the time set (block 3a), once the page has moved away from
+     * Back to the dashboard after the time set, once the page has moved away from
      * it and nobody has touched the glass since; the idle time is the one Ambient counts.
      */
     private void goBackIfIdle() {
@@ -14571,15 +14581,21 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * What the page may have (block 3b): the camera and the microphone each when its switch is
-     * on and Android has given Muralis the permission; everything else, and anything not asked
+     * What the page may have: the camera and the microphone each when its switch is on, Android
+     * has given Muralis the permission and the page is on the dashboard's own host; everything else, and anything not asked
      * for this way, is refused as a browser would refuse it. The camera is handed over by the
      * camera sensor first, which cannot share it.
      */
     private void grantPagePermissions(android.webkit.PermissionRequest request) {
         BrowserOptions.Settings browser = KioskConfig.browserOf(this);
         java.util.List<String> allowed = new java.util.ArrayList<>();
-        for (String resource : request.getResources()) {
+        // Only the dashboard's own host: a frame from another site, or a site the dashboard links
+        // to, gets nothing.
+        android.net.Uri origin = request.getOrigin();
+        boolean ownHost = origin != null && BrowserOptions.signInHost(
+                FleetProfile.fillPlaceholders(this, KioskConfig.load(this).dashboardUrl),
+                origin.getHost());
+        for (String resource : ownHost ? request.getResources() : new String[0]) {
             if (android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
                     && browser.pageCamera && checkSelfPermission(
                             android.Manifest.permission.CAMERA)
@@ -14703,7 +14719,7 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** The question over the page (block 4), at most one; see {@link #askAboutCertificate}. */
+    /** The question over the page, at most one; see {@link #askAboutCertificate}. */
     private View certificateQuestion;
 
     /**
@@ -14831,13 +14847,13 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** The pop-up on the glass (block 6), and its web view when it shows an address. */
+    /** The pop-up on the glass, and its web view when it shows an address. */
     private View popupView;
     private WebView popupWeb;
     private final Runnable popupEnd = this::closePopup;
 
     /**
-     * Draws the pop-up waiting (block 6) over whatever is on the window: a card with the title,
+     * Draws the pop-up waiting over whatever is on the window: a card with the title,
      * the message and the address in a small web view, closed by a touch on it or after its
      * seconds. A new one replaces the one showing; while the settings are open, or another app
      * is in front, it waits, for a minute at most.
@@ -15207,7 +15223,7 @@ public final class KioskActivity extends Activity {
                     // The service put the screen to sleep. Nothing is drawn: the dark state is
                     // the screen being off, and the power button or a remote wake ends it. A film
                     // drawn here as well would greet the power button with black and a second
-                    // tap, which is not what a person pressing it meant. A showing screensaver
+                    // tap, which is not what a person pressing it meant. A showing Ambient
                     // stays as it is too, so nothing flashes on the way down; the wake decides
                     // what comes back (onDisplayWoke). Not "active" meanwhile: dark is dark.
                     asleep = true;
@@ -15237,7 +15253,7 @@ public final class KioskActivity extends Activity {
             case "display.wake": {
                 // Judged before the flags are cleared: a wake from a dark panel applies the user's
                 // on-wake choice; "Display on" or the presence blueprint reaching a lit panel that
-                // is showing its screensaver brings the page back, as a touch would. A broadcast
+                // is showing its Ambient brings the page back, as a touch would. A broadcast
                 // that follows an onResume already judged as the wake is the same wake.
                 boolean wasDark = asleep || filmOn
                         || screensaverStage == ScreensaverPolicy.Stage.DARK
@@ -15264,7 +15280,7 @@ public final class KioskActivity extends Activity {
                 ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(this);
                 if (configurationVisible) {
                     // Somebody is in the panel's settings: the same thing the settings page's own
-                    // Preview button does, the page under, the screensaver over it, the caption
+                    // Preview button does, the page under, Ambient over it, the caption
                     // saying a tap goes back, and the tap returns to the screen that was open.
                     // Until 2026-09-24 the service refused this ("Muralis settings are open on
                     // the panel") and a Preview pressed on the web looked broken (the owner: "Preview
@@ -15340,10 +15356,10 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The screensaver's clock, once a second: {@link ScreensaverPolicy} decides, this method only
+     * Ambient's clock, once a second: {@link ScreensaverPolicy} decides, this method only
      * supplies the facts and does what it says. Blocked while an operator is on a settings screen,
      * while the kiosk is stopped, while the panel is already dark, while the activity is not in
-     * front, and when no page root exists to draw in. A mode changed under a showing screensaver
+     * front, and when no page root exists to draw in. A mode changed under a showing Ambient
      * ends it: the next one comes after the idle time, in the new mode.
      */
     private void tickScreensaver() {
@@ -15399,8 +15415,8 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Puts the screensaver on the glass in the stored mode, or restarts its clock when that mode
-     * is already showing, which is what a wake into "screensaver first" needs: the page that
+     * Puts Ambient on the glass in the stored mode, or restarts its clock when that mode
+     * is already showing, which is what a wake into "Ambient first" needs: the page that
      * survived the sleep stays rather than reloading.
      *
      * @return false when nothing can be shown: mode off, the web-page mode without an address,
@@ -15489,7 +15505,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * After a WebView rebuild in the same boot (the nightly clean, the pressure rebuild, a
-     * kiosk restart), the screensaver that was on the glass comes back at once, like the film
+     * kiosk restart), Ambient that was on the glass comes back at once, like the film
      * does, instead of the page lighting up for the idle time. A process restart in the same
      * boot is covered by the same record; a reboot is not, by the rule every dark state follows.
      */
@@ -15507,7 +15523,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * Ends a preview on the screen it was started from: the settings screen that was open for
-     * one asked for from the web or MQTT, the Screensaver page for its own Preview button.
+     * one asked for from the web or MQTT, the Ambient page for its own Preview button.
      */
     private void endPreview(String reason) {
         Runnable back = screensaverPreviewReturn;
@@ -15535,7 +15551,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * Takes the screensaver off the glass without deciding what comes next: the callers that
+     * Takes Ambient off the glass without deciding what comes next: the callers that
      * darken the panel keep the film's brightness and black view, the others get the page back.
      */
     private void hideScreensaverSurface() {
@@ -15581,7 +15597,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * The display is lit again, by a touch on the film, a remote wake, the presence blueprint or
-     * the power button: the user's on-wake choice decides between the screensaver and the page.
+     * the power button: the user's on-wake choice decides between Ambient and the page.
      * Idempotent, because a wake from sleep reaches here twice, from onResume and from the
      * display.wake broadcast, in either order.
      */
@@ -15595,7 +15611,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The web-page screensaver's own WebView, made when the mode starts and destroyed when it
+     * The web-page Ambient's own WebView, made when the mode starts and destroyed when it
      * ends: the dashboard stays loaded underneath, so a touch brings it back at once, and the
      * second renderer costs memory only while it is on the glass. Same web-scheme rule as the
      * dashboard: a page that hands control to another app is an exit from the kiosk.
@@ -15640,7 +15656,7 @@ public final class KioskActivity extends Activity {
     /**
      * The Pictures mode: a frame in the layer, the playlist in use, one picture at a time.
      * The set is read and every picture decoded on {@link PictureLibrary}'s worker, and each
-     * result is checked against the frame it was meant for, so a screensaver that ended while a
+     * result is checked against the frame it was meant for, so Ambient that ended while a
      * decode was in flight gets nothing drawn over the page.
      */
     private void showPictures(ScreensaverPolicy.Settings settings) {
@@ -15738,10 +15754,10 @@ public final class KioskActivity extends Activity {
         }
         if (asleep || !inFront) {
             // Nothing is on the glass, so nothing rotates: no timer is re-posted here (decided
-            // 2026-09-10). Turning a screensaver into a real sleep used to leave this advancing
+            // 2026-09-10). Turning Ambient into a real sleep used to leave this advancing
             // once a second behind a dark screen, decoding pictures nobody could see. The wake
             // restarts the clock in startScreensaver, and because the frame keeps the picture it
-            // was showing, "screensaver first" comes back to the last used image and one touch on
+            // was showing, "Ambient first" comes back to the last used image and one touch on
             // it opens the dashboard.
             return;
         }
@@ -16020,7 +16036,7 @@ public final class KioskActivity extends Activity {
         }
     }
 
-    /** Under the black view, over the page: Display off covers the screensaver like anything else. */
+    /** Under the black view, over the page: Display off covers Ambient like anything else. */
     private void addScreensaverLayer(FrameLayout root) {
         screensaverLayer = new FrameLayout(this);
         screensaverLayer.setBackgroundColor(Color.BLACK);
@@ -16031,7 +16047,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * Over everything, the black view included, so it reads on the film too. Only a "Show it
-     * now" shows it: the real screensaver has nothing to explain, a preview has to say that the
+     * now" shows it: the real Ambient has nothing to explain, a preview has to say that the
      * darker dashboard on the glass is the preview (2026-09-09: the dimmed page was taken for
      * the dashboard having opened, and the test was thought to have done nothing).
      */
@@ -16053,7 +16069,7 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         // Top centre: at the bottom it covered a picture's own credit line, which is a licence
         // obligation and outranks a preview's hint (seen on the phone 2026-09-09). The stats
-        // overlay is hidden under every screensaver that covers the page, so nothing collides.
+        // overlay is hidden under every Ambient that covers the page, so nothing collides.
         params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         params.topMargin = dp(28);
         params.leftMargin = dp(24);
@@ -16182,7 +16198,7 @@ public final class KioskActivity extends Activity {
         private final java.util.Set<String> signedIn = new java.util.HashSet<>();
 
         /**
-         * A page behind HTTP basic auth (block 3a): the stored sign-in, for the dashboard
+         * A page behind HTTP basic auth: the stored sign-in, for the dashboard
          * address's own host only and once per load, so another site's frame never receives it
          * and a wrong password ends on the server's refusal.
          */
@@ -16203,7 +16219,7 @@ public final class KioskActivity extends Activity {
         }
 
         /**
-         * A certificate Android does not trust (block 4): accepted only when the person pinned
+         * A certificate Android does not trust: accepted only when the person pinned
          * that very fingerprint for that host; otherwise refused, and the person asked once,
          * over the page. Never every certificate.
          */

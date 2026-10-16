@@ -116,13 +116,13 @@ final class PanelCamera implements Sensors.Reading {
     }
 
     /**
-     * Add a panel's scanner holds the camera (block 11d): the sensor lets go of it meanwhile, as
+     * Add a panel's scanner holds the camera: the sensor lets go of it meanwhile, as
      * if switched off, and takes it again at the next refresh after the scanner closes.
      */
     static volatile boolean heldByScanner;
 
     /**
-     * The shown page was given the camera (block 3b): the sensor lets go of it in the same way,
+     * The shown page was given the camera: the sensor lets go of it in the same way,
      * and takes it again once the page has released it (KioskActivity.holdCameraForPage).
      */
     static volatile boolean heldByPage;

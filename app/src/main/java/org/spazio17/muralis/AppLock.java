@@ -21,7 +21,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * App lock (block 9): the panel shows one installed app the person chose instead of the web
+ * App lock: the panel shows one installed app the person chose instead of the web
  * page, as Fully's Single App Mode and FreeKiosk's External App do. Muralis stays HOME underneath
  * and opens the app again whenever it is uncovered (the app closed, crashed or was left); on a
  * device-owner panel the lock-task allowlist is Muralis and that one app.
@@ -316,9 +316,9 @@ final class AppLock {
         }
         Log.i(TAG, "A combination over the app: " + matched);
         calledForward = true;
+        KioskActivity.handEscape(matched);
         try {
             context.startActivity(new Intent(context, KioskActivity.class)
-                    .putExtra(KioskActivity.EXTRA_ESCAPE, matched)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                             | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
         } catch (RuntimeException refused) {
