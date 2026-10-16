@@ -1,13 +1,13 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
 import java.util.HashMap;
 import java.util.Map;
 
-/** The settings file (block 8): what it carries, what it never does, and its passwords. */
+/** The settings file: what it carries, what it never does, and its passwords. */
 public final class SettingsTransferTest {
     public static void main(String[] args) {
         Map<String, Object> stored = new HashMap<>();
@@ -71,6 +71,11 @@ public final class SettingsTransferTest {
         stored.put("sensor_option_beacon_x", "Keys");
         require(!SettingsTransfer.export(stored, null, null, "0.7.0").contains("beacon_x"),
                 "old loose beacon names stay out");
+        String readable = TinyJson.writeIndented(TinyJson.parse(plain));
+        require(readable.contains("\n  \"settings\": {\n    \"")
+                && SettingsTransfer.read(readable, null).problem == null
+                && TinyJson.write(TinyJson.parse(readable)).equals(plain),
+                "the indented file reads back as the compact one: " + readable);
         System.out.println("SettingsTransferTest passed");
     }
 

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -18,9 +18,10 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * The settings file (block 8): every setting a person sets, as one JSON document the web admin
+ * The settings file: every setting a person sets, as one JSON document the web admin
  * exports and imports, and the provisioning QR may carry. Never the panel's name or keys, its
- * fleet, its certificates, its purchase or its pictures. Passwords only when asked for, and
+ * fleet, its certificates or their keys, its purchase or its pictures; the fingerprints of the
+ * certificates a person trusted (pages, the broker) are settings and travel. Passwords only when asked for, and
  * then encrypted with a passphrase (AES-GCM, the key from PBKDF2). Pure, so the form, the
  * allowed keys and the encryption are host-tested; each value's own check is the caller's.
  */
@@ -40,11 +41,11 @@ final class SettingsTransfer {
     private static Map<String, Character> keys() {
         Map<String, Character> keys = new LinkedHashMap<>();
         for (String key : new String[] {"dashboard_url", "mqtt_host", "browser_user_agent",
-                "screensaver_url", "alert_mqtt_topic", "alert_webhook_url", "appearance_colour",
-                "separators", "orientation", "display_off_method", "screensaver_mode",
+                "screensaver_url", "alert_mqtt_topic", "alert_webhook_url",
+                "orientation", "display_off_method", "screensaver_mode",
                 "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
                 "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "popup_cameras", "certificate_pins"}) {
+                "automations", "beacon_names", "popup_cameras", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",
@@ -61,7 +62,7 @@ final class SettingsTransfer {
                 "browser_page_microphone", "status_light_on", "volume_buttons_disabled",
                 "screensaver_shuffle", "screensaver_one_per_cycle", "screensaver_credit",
                 "web_admin_enabled", "alert_page_error", "alert_combination_used",
-                "alert_pin_lockout"}) {
+                "alert_pin_lockout", "mqtt_tls"}) {
             keys.put(key, 'b');
         }
         return java.util.Collections.unmodifiableMap(keys);

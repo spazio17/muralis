@@ -106,7 +106,7 @@ android {
 
     buildFeatures {
         // Off by default since AGP 8, and this project needs it for LICENSE_KEY and PRO_OVERRIDE
-        // below. Nothing else uses BuildConfig.
+        // below, and for the version the diagnostics and the fleet's check-in report.
         buildConfig true
     }
 
