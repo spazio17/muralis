@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -41,7 +41,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The camera of Add a panel (block 11d): reads the QR of another panel's Join screen. Camera2,
+ * The camera of Add a panel: reads the QR of another panel's Join screen. Camera2,
  * as the Camera sensor uses it, one lens at a time; each frame's brightness plane is decoded with
  * ZXing and drawn, grey and upright, as the preview, so no preview surface has to be turned to
  * match the sensor. The Camera sensor lets go of the camera meanwhile
