@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -59,6 +59,26 @@ final class KioskRuntimeState {
 
     static void publishActivityInFront(boolean inFront) { activityInFront = inFront; }
     static boolean activityInFront() { return activityInFront; }
+
+    /**
+     * A capture of the screen the service asked for and the activity answers: the service
+     * leaves the future here and sends its UI_CONTROL broadcast, the activity takes it, copies
+     * its window and completes it with the PNG, or exceptionally with the reason it could not.
+     * The same shape as the broadcasts' other one-way facts above, because the activity owns
+     * the window and the service owns the surfaces that ask.
+     */
+    private static volatile java.util.concurrent.CompletableFuture<byte[]> screenshotRequest;
+
+    static void publishScreenshotRequest(java.util.concurrent.CompletableFuture<byte[]> request) {
+        screenshotRequest = request;
+    }
+
+    /** The open request, once; null when none is open or it was taken already. */
+    static java.util.concurrent.CompletableFuture<byte[]> takeScreenshotRequest() {
+        java.util.concurrent.CompletableFuture<byte[]> request = screenshotRequest;
+        screenshotRequest = null;
+        return request;
+    }
     private static volatile long lastRecycleAtMs = -1;
     private static volatile String lastRecycleReason = "";
     private static final AtomicInteger recycles = new AtomicInteger();
@@ -108,6 +128,17 @@ final class KioskRuntimeState {
     static void recordPageFinished(String url) {
         lastPageFinishedAtMs = nowMs();
         lastPageUrl = url == null ? "" : url;
+    }
+
+    /**
+     * No page any more (App lock's plate): what the last page did is no longer the panel's
+     * state, so the status reports none, as after a start with App lock on.
+     */
+    static void clearPage() {
+        lastPageFinishedAtMs = -1;
+        lastPageUrl = "";
+        lastPageErrorAtMs = -1;
+        lastPageError = "";
     }
 
     static void recordPageError(String description) {
@@ -204,6 +235,56 @@ final class KioskRuntimeState {
         }
     }
 
+    private static volatile boolean fleetListening;
+    private static volatile int fleetPort;
+    private static volatile String fleetDownReason = "";
+
+    /**
+     * Whether the member endpoint listens, on which port, and why not; for the Fleet section of
+     * both surfaces, which say it rather than leave a dead member unexplained (review of #80).
+     */
+    static void publishFleetState(boolean listening, int port, String downReason) {
+        fleetListening = listening;
+        fleetPort = port;
+        fleetDownReason = listening || downReason == null ? "" : downReason;
+    }
+
+    static boolean fleetListening() {
+        return fleetListening;
+    }
+
+    static int fleetPort() {
+        return fleetPort;
+    }
+
+    static String fleetDownReason() {
+        return fleetDownReason;
+    }
+
+    /** Per profile section, what this panel could not apply of the fleet's values. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.List<String>>
+            fleetProfileRefused = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static void publishFleetProfileRefused(String section, java.util.List<String> refused) {
+        fleetProfileRefused.put(section, new java.util.ArrayList<>(refused));
+    }
+
+    static java.util.List<String> fleetProfileRefused(String section) {
+        java.util.List<String> refused = fleetProfileRefused.get(section);
+        return refused == null ? java.util.Collections.emptyList() : refused;
+    }
+
+    private static volatile String fleetKey = "";
+
+    /** This panel's key hash once the member endpoint has read it, for the Join screen. */
+    static void publishFleetKey(String spki) {
+        fleetKey = spki == null ? "" : spki;
+    }
+
+    static String fleetKey() {
+        return fleetKey;
+    }
+
     private static volatile boolean httpAdminSecure;
     private static volatile String httpAdminFingerprint = "";
     private static volatile String httpAdminCertificate = "";
@@ -247,7 +328,7 @@ final class KioskRuntimeState {
         return httpAdminSecure ? "https://" : "http://";
     }
 
-    /** "https://10.0.10.43:8080", from the address the panel last reported. */
+    /** "https://192.168.1.20:8080", from the address the panel last reported. */
     static String httpAdminAddress() {
         SystemStats.RuntimeFacts facts = lastFacts;
         String host = facts == null || facts.ipAddress.isEmpty() ? "<panel>" : facts.ipAddress;
@@ -315,8 +396,8 @@ final class KioskRuntimeState {
 
     /**
      * The escape-combination recorder is up, with its two-minute clock: the service refuses a
-     * screensaver over it. The settings screens are not refused since 2026-09-24: there the
-     * activity shows the screensaver as a preview and a touch brings the settings back.
+     * Ambient over it. The settings screens are not refused since 2026-09-24: there the
+     * activity shows Ambient as a preview and a touch brings the settings back.
      */
     static void publishRecorderOnScreen(boolean onScreen) {
         recorderOnScreen = onScreen;
@@ -326,7 +407,7 @@ final class KioskRuntimeState {
         return recorderOnScreen;
     }
 
-    /** Whether the screensaver is on the glass right now; set by the activity, read by the stats. */
+    /** Whether Ambient is on the glass right now; set by the activity, read by the stats. */
     static void publishScreensaver(boolean active) {
         screensaverActive = active;
     }

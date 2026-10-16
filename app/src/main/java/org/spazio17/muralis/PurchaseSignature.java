@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -34,8 +34,8 @@ import java.util.Base64;
  * a fake-billing app on a rooted device serves up. It cannot defend against someone patching the
  * check out of the APK, because no client-side scheme can. That is why the release build is
  * obfuscated (see {@code minifyEnabled} in app/build.gradle) and why this is proportionate rather
- * than airtight: the asset being protected is a 4.99 euro unlock on hardware its owner controls
- * completely.
+ * than airtight: the asset being protected is a one-time Pro purchase on hardware its owner
+ * controls completely.
  *
  * <p>SHA1withRSA is Play's signing scheme for this document, not a choice made here, and it cannot
  * be modernised from this side: the signature is produced by Google with the private half of the

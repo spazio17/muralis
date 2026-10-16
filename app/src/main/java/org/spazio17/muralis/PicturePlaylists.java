@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -73,6 +73,7 @@ final class PicturePlaylists {
     synchronized PlaylistDocument load() {
         File file = file();
         if (!file.isFile()) {
+            namesKey = namesOf(PlaylistDocument.empty());
             return PlaylistDocument.empty();
         }
         try {
@@ -89,6 +90,9 @@ final class PicturePlaylists {
                             + " and a fresh start was made."
                     : "The playlists could not be read.";
             damagedAt = android.os.SystemClock.elapsedRealtime();
+            // The names of what was returned, as on every other path: the old key would differ
+            // from the empty document's forever and make every MQTT state publish announce again.
+            namesKey = namesOf(PlaylistDocument.empty());
             return PlaylistDocument.empty();
         }
     }

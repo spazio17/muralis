@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -8,23 +8,27 @@ import android.content.Context;
 import android.util.Log;
 
 /**
- * Whether this panel may run the paid surfaces, and the only place that question is answered.
+ * Whether this panel has Muralis Pro, and the only place that question is answered.
  *
- * <p>Pro is one purchase, bound to a Google account rather than a device, unlocking MQTT and the
- * web admin together. The rules below are the ones that make that work on a wall panel, and each
- * exists because the obvious alternative breaks something.
+ * <p>Pro is one purchase, bound to a Google account rather than a device. Pro is the fleet,
+ * which reads this answer on the panel that holds the account and carries it to the others on a
+ * lease ({@link FleetTier}). The rules below are the ones that make a Play purchase work
+ * on a wall panel, and each exists because the obvious alternative breaks something.
  *
  * <p><b>Google Play's answer is the truth, and the stored copy is only a bridge.</b> {@link #record}
  * writes a verified purchase into {@link SecretStore} (keystore-backed AES-GCM, the same envelope
- * the broker and admin credentials use) so the paid surfaces can come up at boot, before Play has
- * been asked, and stay up while Play cannot be asked: the service unreachable, the network down,
- * the Store mid-update. Those answers change nothing. What Play says clearly does: an {@code OK}
- * answer for the whole account that does not contain the purchase, or {@code BILLING_UNAVAILABLE},
- * which is what a device with no Google account signed in gets, both make {@link ProBilling} call
- * {@link #drop}, at once. This is the rule of 2026-09-03, absolute: Muralis works with or without
- * a Google account, Muralis Pro only with one, and a refund ends it. It is also how client-only
- * apps on Play behave in general, which is why the account check and the day-long grace that
- * briefly stood here are gone: Play already answers both questions.
+ * the broker and admin credentials use) so the answer is known at boot, before Play has been
+ * asked, and stays while Play cannot be asked: the service unreachable, the network down, the
+ * Store mid-update, and also {@code BILLING_UNAVAILABLE}, which is what a device
+ * with no Google account signed in gets. Those answers change nothing. What Play says clearly
+ * does: an {@code OK} answer for the whole account that does not contain the purchase makes
+ * {@link ProBilling} call {@link #drop}, at once. So a refund ends Pro the next time a signed-in
+ * account is asked, and a panel that lost its account keeps what it holds until one says
+ * otherwise, even one whose owner disabled the Store or removed the account to keep it after a
+ * refund: the price of carrying Pro to panels without Google, and how apps that keep a purchase
+ * offline behave. In a fleet the lease does the rest. There is no account check and no grace
+ * period of its own: Play already answers the question, and that is how client-only apps on
+ * Play behave.
  *
  * <p><b>Reversible by design.</b> Signing back in, or Play recovering, returns the purchase on the
  * next query and {@link #record} stores it again. Nothing but Play's own answer is needed to get
@@ -61,9 +65,9 @@ final class ProEntitlement {
      * What to tell the operator when a debug build has taken the decision out of Play's hands, or
      * null when no override is compiled in.
      *
-     * <p>Exists because the About card reports Play's own answer, and on a panel with no Google
-     * account that answer is a refusal even while the paid cards are open. Showing "Google Play
-     * refused" beside an unlocked MQTT box is the same invisible divergence the honest-status work
+     * <p>Exists because the Pro line reports Play's own answer, and on a panel with no Google
+     * account that answer is a refusal even while the override has Pro on. Showing "Google Play
+     * refused" beside a forced answer is the same invisible divergence the honest-status work
      * removed once already (2026-09-10, the API 26 tablet after its reset). {@code BuildConfig.DEBUG}
      * is a compile-time constant, so this string is not in a release build at all.
      */
@@ -77,14 +81,14 @@ final class ProEntitlement {
     }
 
     /**
-     * Whether the paid surfaces may run on this panel.
+     * Whether this panel has Muralis Pro.
      *
      * <p>Cheap after the first call. Safe from any thread.
      */
     static boolean isActive(Context context) {
         // Debug builds only, and both directions, because testing the free path matters as much as
         // testing the paid one: with a real purchase now on the developer's own account, "it works
-        // on my panel" stopped being evidence that the gate works at all. BuildConfig.DEBUG is a
+        // on my panel" stopped being evidence that a panel without Pro works. BuildConfig.DEBUG is a
         // compile-time constant, so R8 removes this whole block from a release build rather than
         // leaving an override for somebody to find.
         if (BuildConfig.DEBUG && !BuildConfig.PRO_OVERRIDE.isEmpty()) {
@@ -101,8 +105,8 @@ final class ProEntitlement {
         // A negative computed before the user's first unlock is not memoised. Before the unlock
         // the keystore cannot decrypt anything, so "no purchase" is not a finding, it is the
         // keystore being closed, and the service is directBootAware so this genuinely runs then.
-        // Caching that false would hold the paid surfaces off until the next process restart on
-        // any device with a secure lock screen, which is exactly the panel-stays-broken shape the
+        // Caching that false would hold Pro off until the next process restart on any device with
+        // a secure lock screen, which is exactly the panel-stays-broken shape the
         // credential-loss fix in SecretStore exists to prevent. A positive is always safe to keep,
         // and a negative computed after the unlock is a real answer.
         if (active || isUserUnlocked(context)) {
@@ -131,7 +135,7 @@ final class ProEntitlement {
     static boolean record(Context context, String originalJson, String signature) {
         if (!PurchaseSignature.verify(BuildConfig.LICENSE_KEY, originalJson, signature)) {
             // Either this build has no licensing key (the likely case in development) or the
-            // document is not Play's. Both mean "do not unlock", and neither is a reason to throw
+            // document is not Play's. Both mean "not Pro", and neither is a reason to throw
             // away an entitlement that was verified earlier.
             Log.w(TAG, BuildConfig.LICENSE_KEY.isEmpty()
                     ? "No licensing key in this build, so a purchase cannot be verified"
@@ -159,7 +163,7 @@ final class ProEntitlement {
         SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
         String json = secrets.getOrNull(PURCHASE_JSON);
         String signature = secrets.getOrNull(PURCHASE_SIGNATURE);
-        // Two different nothings, and both mean "not unlocked here". Null is the Keystore being
+        // Two different nothings, and both mean "not Pro here". Null is the Keystore being
         // unavailable, which SecretStore reports separately so a caller does not mistake it for an
         // absent value. Empty is genuinely nothing stored: a panel that never bought Pro, or one
         // {@link #drop} has cleared. The empty case used to fall through to a signature check over
@@ -196,6 +200,15 @@ final class ProEntitlement {
             Log.w(TAG, "Muralis Pro is off on this panel: " + why);
         }
         cachedAnswer = Boolean.FALSE;
+    }
+
+    /**
+     * Whether a purchase Play signed is stored and verifies in this build, whatever a debug
+     * override says: what a panel may tell its fleet (FleetTier), since a forced answer is no
+     * purchase to lease to others.
+     */
+    static boolean verifiedHere(Context context) {
+        return verifyStored(context);
     }
 
     /** Drops the memoised answer, so the next {@link #isActive} recomputes it. */

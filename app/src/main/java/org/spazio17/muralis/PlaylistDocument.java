@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -244,7 +244,7 @@ final class PlaylistDocument {
 
     /**
      * Removes a playlist. Deleting the one that was playing leaves nothing active, which the
-     * screensaver has to be able to say out loud rather than showing a blank panel.
+     * Ambient has to be able to say out loud rather than showing a blank panel.
      */
     String delete(String id) {
         Playlist playlist = byId(id);
