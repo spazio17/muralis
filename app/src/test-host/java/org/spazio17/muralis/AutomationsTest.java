@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -55,7 +55,7 @@ public final class AutomationsTest {
         return rule;
     }
 
-    /** The clock's rules (block 5): once a day, late ticks, a seed after the time, the clock back. */
+    /** The clock's rules: once a day, late ticks, a seed after the time, the clock back. */
     private static void testTimeOfDay() {
         List<String> fired = new java.util.ArrayList<>();
         Automations.Engine engine = new Automations.Engine(rule -> fired.add(rule.id));

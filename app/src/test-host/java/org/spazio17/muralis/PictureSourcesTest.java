@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -88,7 +88,7 @@ public final class PictureSourcesTest {
     }
 
     private static void testFileTitleToWords() {
-        require(PictureSources.fileTitleToWords("File:Great_Wave_off_Kanagawa2.jpg")
+        require(PictureSources.fileTitleToWords("Great_Wave_off_Kanagawa2.jpg")
                 .equals("Great Wave off Kanagawa2"), "file title to words");
     }
 

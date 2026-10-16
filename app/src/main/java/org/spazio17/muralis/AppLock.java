@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -21,7 +21,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * App lock (block 9): the panel shows one installed app the person chose instead of the web
+ * App lock: the panel shows one installed app the person chose instead of the web
  * page, as Fully's Single App Mode and FreeKiosk's External App do. Muralis stays HOME underneath
  * and opens the app again whenever it is uncovered (the app closed, crashed or was left); on a
  * device-owner panel the lock-task allowlist is Muralis and that one app.
@@ -30,7 +30,7 @@ import java.util.List;
  * of its own over the app ("Display over other apps"): four transparent squares in the
  * corners, as large as the dashboard's ({@link #CORNER_DP}), which take the taps landing in
  * them for the escape combinations (Android gives a tap to one app only, so the app loses
- * those corners; Juri, 2026-10-15), one of them also told of
+ * those corners; the owner, 2026-10-15), one of them also told of
  * every other touch, without where, so Ambient knows the panel is in use; and the status light's
  * frame, which takes no touch. Pop-ups and Identify are drawn in windows of their own straight
  * over the app; Ambient and the black display-off, which cover the whole screen anyway, bring
@@ -40,7 +40,7 @@ final class AppLock {
     private static final String TAG = "MuralisAppLock";
     /**
      * The corners as large as the ones the dashboard listens on, so a combination recorded
-     * anywhere in them works over the app too (Juri, 2026-10-15, after testing with Spotify;
+     * anywhere in them works over the app too (2026-10-15, after testing with Spotify;
      * it replaces the 48 dp of the first version).
      */
     static final int CORNER_DP = KioskActivity.ADMIN_ESCAPE_ZONE_DP;
@@ -76,7 +76,7 @@ final class AppLock {
      * Every app with a launcher icon but Muralis, by name, and never Android's own doors out:
      * Settings, a home screen or the Play Store, which would hand the person the whole device.
      * The apps that came with the device (Chrome, the maker's tools) only when {@code withSystem}:
-     * left out unless the person asks, since the choice is theirs to make (Juri, 2026-10-15).
+     * left out unless the person asks, since the choice is theirs to make (2026-10-15).
      */
     static List<App> launchable(Context context, boolean withSystem) {
         PackageManager packages = context.getPackageManager();
@@ -316,9 +316,9 @@ final class AppLock {
         }
         Log.i(TAG, "A combination over the app: " + matched);
         calledForward = true;
+        KioskActivity.handEscape(matched);
         try {
             context.startActivity(new Intent(context, KioskActivity.class)
-                    .putExtra(KioskActivity.EXTRA_ESCAPE, matched)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                             | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
         } catch (RuntimeException refused) {
@@ -347,7 +347,7 @@ final class AppLock {
     }
 
     /**
-     * A pop-up or Identify drawn straight over the app (Juri, 2026-10-15: over the locked app,
+     * A pop-up or Identify drawn straight over the app (2026-10-15: over the locked app,
      * not over Muralis's page): {@code view} in a window of its own over the whole screen,
      * taking touches when {@code touchable} (the pop-up closes on a touch). False when refused.
      */
@@ -366,6 +366,12 @@ final class AppLock {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         wholeScreen(params);
+        if (!touchable) {
+            // Android 12 and newer drop a tap that passes through another app's overlay unless
+            // the overlay is at most 0.8 opaque, so a window that takes no touch stays at that;
+            // fully opaque, it took every tap from the app (Identify).
+            params.alpha = 0.8f;
+        }
         params.setTitle("Muralis over the app");
         if (!add(manager, view, params)) {
             return false;
@@ -379,6 +385,67 @@ final class AppLock {
             add(manager, corner, own);
         }
         return true;
+    }
+
+    /**
+     * The stats readout over the app (2026-10-15): a window the size of the readout at
+     * {@code x}, {@code y} from the screen's top left, taking the touches on it alone, so it can
+     * be picked up and moved while the app keeps every other tap. False when refused.
+     */
+    static boolean showReadout(Context context, View view, int x, int y) {
+        WindowManager manager = context.getApplicationContext()
+                .getSystemService(WindowManager.class);
+        if (manager == null || !canDrawOver(context)) {
+            return false;
+        }
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        params.gravity = android.view.Gravity.TOP | android.view.Gravity.LEFT;
+        params.x = x;
+        params.y = y;
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            params.setFitInsetsTypes(0);
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            params.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+        params.setTitle("Muralis stats over the app");
+        if (!add(manager, view, params)) {
+            return false;
+        }
+        // The corners laid again on top, so a combination tapped there is still theirs.
+        for (View corner : windows) {
+            WindowManager.LayoutParams own =
+                    (WindowManager.LayoutParams) corner.getLayoutParams();
+            remove(manager, corner);
+            add(manager, corner, own);
+        }
+        return true;
+    }
+
+    /** Moves the readout's window to {@code x}, {@code y} from the screen's top left. */
+    static void moveReadout(Context context, View view, int x, int y) {
+        if (!(view.getLayoutParams() instanceof WindowManager.LayoutParams)) {
+            return;
+        }
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) view.getLayoutParams();
+        if (params.x == x && params.y == y) {
+            return;
+        }
+        params.x = x;
+        params.y = y;
+        try {
+            context.getApplicationContext().getSystemService(WindowManager.class)
+                    .updateViewLayout(view, params);
+        } catch (RuntimeException gone) {
+            Log.d(TAG, "The readout over the app was already gone");
+        }
     }
 
     /** Takes a window {@link #showOver} laid away. */
