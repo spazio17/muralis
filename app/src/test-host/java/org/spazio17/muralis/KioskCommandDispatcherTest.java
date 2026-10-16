@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -215,7 +215,7 @@ public final class KioskCommandDispatcherTest {
                 "a port above 65535 must be refused");
         require(KioskCommandDispatcher.validateAdminPort(80, 8080, 8081).contains("1024"),
                 "the refusal must name the allowed range");
-        // The web admin and the member endpoint never share a port (Juri, 2026-10-08).
+        // The web admin and the member endpoint never share a port (2026-10-08).
         require(KioskCommandDispatcher.validateAdminPort(8081, 8080, 8081) != null,
                 "the member port must be refused as a new web admin port");
         require(KioskCommandDispatcher.validateAdminPort(8082, 8080, 8081) == null,
@@ -617,7 +617,7 @@ public final class KioskCommandDispatcherTest {
 
     /**
      * Every screensaver setting is a command, because MQTT and HTTP must be able to set what the
-     * two user interfaces can (Juri, 2026-09-09). The table below is the whole vocabulary: a
+     * two user interfaces can (2026-09-09). The table below is the whole vocabulary: a
      * good value forwarded canonically, a bad one refused with its rule.
      */
     private static void testScreensaverSettingCommands() {
@@ -761,7 +761,7 @@ public final class KioskCommandDispatcherTest {
     }
 
     /**
-     * The browser options (block 3a): each command checked against BrowserOptions and forwarded
+     * The browser options: each command checked against BrowserOptions and forwarded
      * canonically, refused with its rule; and the pure helpers the page relies on.
      */
     private static void testBrowserOptions() {
@@ -846,7 +846,7 @@ public final class KioskCommandDispatcherTest {
                 "the page's camera and microphone reach the executor");
     }
 
-    /** The trusted certificates (block 4): the store, the fingerprint's form, never a wildcard. */
+    /** The trusted certificates: the store, the fingerprint's form, never a wildcard. */
     private static void testCertificatePins() {
         String fp = CertificatePins.fingerprint("a certificate".getBytes(
                 java.nio.charset.StandardCharsets.UTF_8));
@@ -870,7 +870,7 @@ public final class KioskCommandDispatcherTest {
                 "a full list refuses a new host and still replaces a known one");
     }
 
-    /** panel.notify (block 6): the defaults, each argument's limit, the wake. */
+    /** panel.notify: the defaults, each argument's limit, the wake. */
     private static void testPopups() {
         RecordingExecutor executor = new RecordingExecutor();
         java.util.Map<String, String> extra = new java.util.HashMap<>();
@@ -912,7 +912,7 @@ public final class KioskCommandDispatcherTest {
                 executor).status.equals("rejected"), "a message past 500 characters");
     }
 
-    /** The pop-up cameras (block 6): the list, the checks, the modes and the cooldown. */
+    /** The pop-up cameras: the list, the checks, the modes and the cooldown. */
     private static void testPopupCameras() {
         require(PopupCameras.check("Door", "http://cam.local/snap.jpg", "trigger", 30, 60) == null,
                 "a camera");

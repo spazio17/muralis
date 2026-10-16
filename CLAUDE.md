@@ -23,7 +23,12 @@ on purpose.
   owner.
   The way out is a combination of corner taps the person records, one for the settings and one for
   the system launcher, optionally behind a PIN. A panel with no page shows a parking screen that
-  says what to do next. The page's browser options: a sign-in for a page behind HTTP basic
+  says what to do next, as does one whose App lock app is gone; over a dashboard that cannot be
+  reached the same screen says so while the page is retried underneath. App lock shows one installed app the person chose instead of the
+  page (the page is not loaded behind it), opened again whenever it closes, with the escape combinations read in four small
+  corner windows over it (display over other apps), pop-ups and Identify drawn straight over
+  it, Ambient and the dark brought over it on Muralis's own screen, and never Android's
+  Settings, a home screen or the Play Store as the app. The page's browser options: a sign-in for a page behind HTTP basic
   auth, the user agent, text size, page zoom, a dark look, the way back to the dashboard
   after a while, and the camera and microphone for the page when allowed (the camera handed
   over by the camera sensor). A page certificate Android does not trust is asked about once,
@@ -42,46 +47,55 @@ on purpose.
   or until touched), from HTTP, MQTT, Home Assistant's notify and the automations, and cameras
   that pop up on demand or on a doorbell's trigger, each with a mode on each panel and a cooldown.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
-  uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery. The
+  uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery, plain
+  or over TLS (the broker trusted by Android or by the certificate a person trusted on the panel,
+  a client certificate optional). The
   panel and the web admin offer the same settings and show the same thing, except what needs a
   hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
   as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
-  image and button), the password being the gate; and a diagnostics file (device, permissions,
-  status, counters, log) downloaded from the web admin, never uploaded.
+  image and button), the web admin's password or the broker's credentials being the gate; and a diagnostics file (device, permissions,
+  status, counters, log) downloaded from the web admin, never uploaded. A settings file exported
+  and imported in the web admin (passwords only when asked, then encrypted with a passphrase),
+  and a setup QR for a new tablet that carries the settings without passwords; both carry the
+  escape combinations and the page addresses as written.
 - **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
   network and others), the camera as a network camera with motion detection, a sound level from
   the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
   them on the panel itself, also at a time of day, with actions on the panel, an MQTT message or
   a call to an address (a charger's smart plug at 20 and 80 percent needs nothing else).
-- **Fleet (being built).** Panels on one network will trust each other by their own keys, and any
-  panel's web admin will manage all of them. No server, no cloud. So far each panel has its fleet
-  key and a member endpoint, announces itself on the local network (mDNS) while it is in a fleet
-  or shows its Join code, joins a fleet with a single-use code shown on its Join screen (proven
-  by both sides with SPAKE2, never sent), or
-  leaves it, and creates a fleet or adds another
-  panel by reading that code with its camera, or by typing it on a device with none (the panels
-  announce whether they are ready to be joined); every member holds the fleet's signed list of
-  panels, the members tell each other every few minutes that they are there and which
-  version they hold, so one that fell behind fetches the list, and sections of settings (the
-  dashboard, MQTT, the web admin, the display, Ambient) can be shared in a group of
-  panels or with the whole fleet: groups are sets of panels with the same job, made with a name
-  the person gives; a panel ticks the groups it belongs to and may stop following what the whole
-  fleet shares; a shared section is applied on every panel of its scope, a group winning over
-  the whole fleet, and a change to it on any of them reaches all of them. A panel at its welcome
-  screen can be joined before anything locks: it takes the adding panel's escape combinations
-  and PIN as its own, once, at that moment, and goes to the dashboard; a panel that has
-  combinations keeps them, they are never shared afterwards. A page address may carry
-  `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by each panel when it loads the
-  page, so one shared address shows each panel its own page. Alerts are a shared section too
-  (a panel offline, a page error, battery or temperature past a threshold, a combination used,
-  a PIN lockout): each panel judges itself and one panel judges the fleet's offline, each alert
-  is said once, on and off, as a notification on the panel, on a plain MQTT topic and to a web
-  address; every member keeps the last versions of the fleet's list, with what each changed,
-  and can restore one as a new version, membership kept as it is now. The Fleet page shows a
-  picture of every panel's screen on request, fetched from each panel over the fleet's own
-  link and never stored, and Identify shows a panel's name on its screen and says it.
+- **Fleet.** Panels on one network trust each other by their own keys, and any panel's web admin
+  manages all of them. No server, no cloud. Each panel has its fleet key and a member endpoint,
+  announces itself on the local network (mDNS) while it is in a fleet or shows its Join code, joins
+  a fleet with a single-use code shown on its Join screen (proven by both sides with SPAKE2, never
+  sent), or leaves it (telling one member, which takes it off the list for all), removes another
+  panel that cannot leave by itself, and creates a fleet or adds another panel by reading that code
+  with its camera, or by typing it on a device with none (the panels announce whether they are ready
+  to be joined); every member holds the fleet's signed list of panels, the members tell each other
+  every few minutes that they are there and which version they hold, so one that fell behind fetches
+  the list, and sections of settings (the dashboard, MQTT, the web admin, the display, Ambient, the
+  alerts) can be shared, each by a switch on the Fleet page, in a group of panels or with the whole
+  fleet: groups are sets of panels with the same job, made with a name the person gives; a panel
+  ticks the groups it belongs to and may stop following what the whole fleet shares; a shared
+  section is applied on every panel of its scope, a group winning over the whole fleet, and a change
+  to it on any of them reaches all of them. A panel at its welcome screen can be joined before
+  anything locks: it takes the adding panel's escape combinations and PIN as its own, once, at that
+  moment, and goes to the dashboard; a panel that has combinations keeps them, they are never shared
+  afterwards. A page address may carry `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by
+  each panel when it loads the page, so one shared address shows each panel its own page. Alerts are
+  a shared section too (a panel offline, a page error, battery or temperature past a threshold, a
+  combination used, a PIN lockout): each panel judges itself and one panel judges the fleet's
+  offline, each alert is said once, on and off, as a notification on the panel, on a plain MQTT
+  topic and to a web address; every member keeps the last versions of the fleet's list, with what
+  each changed, and can restore one as a new version, membership kept as it is now. The Fleet page
+  shows a picture of every panel's screen on request, fetched from each panel over the fleet's own
+  link and never stored, and Identify shows a panel's name on its screen.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
-  one-time purchase through Google Play, is the fleet and what only makes sense across panels.
+  one-time purchase through Google Play, is the fleet and what only makes sense across panels:
+  adding panels (at most six to a Pro fleet), the Fleet page and the fleet's alerts. A panel whose
+  account owns Pro writes it into the fleet's signed list, and the members without Google lease it
+  for thirty days from each confirmation; a refund ends it, a lapse makes the fleet free until a
+  panel with the account confirms again: what it shares stays applied, but a change on one panel
+  no longer reaches the others and no alert is raised.
 
 ## How the code is shaped
 
@@ -115,9 +129,10 @@ on purpose.
 ## Rules the code keeps
 
 - **Never lock someone in.** Lock task and the home-screen role engage only after both escape
-  combinations are recorded. The escape works from every screen. Only this app is
-  allowed under lock task; another app is reached by releasing lock task first, never by widening
-  that list. Accessibility services and foreign keyboards are restricted where the app is device
+  combinations exist: recorded on the panel, or brought by a settings file, a setup QR or the
+  fleet that adds it, from a panel where they were recorded. The escape works from every screen, the chosen app of App lock
+  included. Only this app is allowed under lock task, and in App lock the one app the person
+  chose; any other app is reached by releasing lock task first, never by widening that list. Accessibility services and foreign keyboards are restricted where the app is device
   owner, and the page cannot hand control to another app through non-web links.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
   password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
@@ -136,12 +151,17 @@ on purpose.
   up on the others within seconds; a change applied outside the dispatcher asks for a telemetry
   publish itself. Values whose validity depends on the device (a port, an address)
   are checked against the device when the field is left, with a coloured border.
+- **No backlog.** A panel acts at the moment something arrives, or drops it once it is stale;
+  it never replays in one go what it missed while it was asleep, stopped or behind another app
+  (a pop-up waits a minute at most, a time rule slept through is skipped).
 - **Self-healing has no user switch** and no memory threshold: the app cannot measure the browser
   engine's memory, so it reacts to the system's own signals and restarts nightly.
 - **Home Assistant discovery.** An entity's key, id and name say the same thing. A panel removes from
   Home Assistant only what it announced itself, so a fresh install starts with nothing to remove.
-- **One design on both surfaces.** The panel and the web admin are one Material 3 design in the
-  app's own palette, light and dark, with the same sections, words and behaviour. Plain words for
+- **One design on both surfaces.** The panel and the web admin are one Material 3 design in one
+  scheme from the ultramarine seed, with segmented lists, light and dark (a toggle in the settings
+  page's app bar: follow the device, light or dark; the wall's own screens are always dark),
+  with the same sections, words and behaviour. Plain words for
   the person in front of the panel; a familiar glyph or control before an explanatory sentence.
 - **Legal texts** are copies of the canonical texts kept in the website repository; the release
   workflow fails when they differ.

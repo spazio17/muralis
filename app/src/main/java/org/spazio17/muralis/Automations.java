@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -18,7 +18,7 @@ import java.util.Map;
 
 /**
  * The panel's own automations: "when a sensor says this, then do that", the shape Apple Home,
- * Alexa, Google Home, SmartThings and Homey all write an automation in (Juri, 2026-09-27).
+ * Alexa, Google Home, SmartThings and Homey all write an automation in (2026-09-27).
  *
  * <p>Pure: no Android imports, so the vocabulary, the storage format and the clock that decides
  * when a rule fires are host-tested. A rule names a sensor, one of that sensor's events, a
@@ -111,7 +111,7 @@ final class Automations {
                 new Event("lost", "Network lost", null, false, false)));
         map.put("processor", Collections.singletonList(
                 new Event("hotter", "Hotter than", "°C", false, false)));
-        // Not a sensor: the panel's clock (block 5). The level is the minute of the day, and
+        // Not a sensor: the panel's clock. The level is the minute of the day, and
         // the engine's day tick fires it, not a reading; see Engine.clock.
         map.put(TIME, Collections.singletonList(
                 new Event("at", "At", TIME_UNIT, false, false)));
@@ -229,7 +229,7 @@ final class Automations {
     static final int MAX_ARGUMENT = 500;
     static final int MAX_MINUTES = 24 * 60;
 
-    /** The one automation that ships, switched on, so the panel is not empty (Juri, 2026-09-27). */
+    /** The one automation that ships, switched on, so the panel is not empty (2026-09-27). */
     static List<Rule> defaults() {
         Rule wake = new Rule();
         wake.id = "wake";
@@ -425,7 +425,7 @@ final class Automations {
     }
 
     /**
-     * The new actions' arguments (block 5), checked when the rule is saved so a rule cannot
+     * The new actions' arguments, checked when the rule is saved so a rule cannot
      * wait all night to fail: null when it can run.
      */
     static String checkArgument(String action, String argument) {
@@ -783,9 +783,15 @@ final class Automations {
             return due;
         }
 
+        /** How late a tick may see a time rule's minute and still run it; the tick is 2 s. */
+        static final int LATE_MINUTES = 2;
+
         /**
-         * The clock's day tick (block 5): a "Time of day" rule fires once on a day when the
-         * minute of the day has reached its time, however late the tick that sees it. The first
+         * The clock's day tick: a "Time of day" rule fires once on a day when the
+         * minute of the day has reached its time, a tick up to {@link #LATE_MINUTES} late
+         * included; a later one means the panel slept or was stopped through the time, and that
+         * day's run is dropped rather than replayed at wake, so a panel never fires a pile of
+         * missed rules at once (2026-10-15). The first
          * tick after a start seeds it as already run today when its time has passed, so a
          * restart never repeats a morning's run and a rule made at noon for 07:00 waits for
          * tomorrow; a day number that went back (the clock set right) seeds it again, so the
@@ -814,7 +820,8 @@ final class Automations {
                 }
                 if (epochDay > state.lastDay && minuteOfDay >= at) {
                     state.lastDay = epochDay;
-                    if (rule.enabled && inWindow(rule, minuteOfDay)) {
+                    if (minuteOfDay - at <= LATE_MINUTES && rule.enabled
+                            && inWindow(rule, minuteOfDay)) {
                         due.add(rule);
                     }
                 }

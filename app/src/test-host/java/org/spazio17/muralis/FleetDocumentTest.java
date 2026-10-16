@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -296,6 +296,18 @@ public final class FleetDocumentTest {
                 && "Offices".equals(FleetDocument.groups(edits).get("group-2")),
                 "the later edit of a member's groups lost, or a group made apart was lost");
 
+        // A member that left, or was removed: off the list, its key revoked, and an older list
+        // merged in does not bring it back.
+        Map<String, Object> gone = FleetDocument.withoutMember(inLobby, "kiosk-a", memberSpki,
+                "2026-10-12T21:11:00Z");
+        require(FleetDocument.memberByKey(gone, memberSpki) == null
+                && FleetDocument.revoked(gone).contains(memberSpki)
+                && !FleetDocument.trustedKeys(gone).contains(memberSpki)
+                && FleetDocument.memberByKey(gone, managerSpki) != null
+                && FleetDocument.memberByKey(FleetDocument.merge(gone, inLobby), memberSpki) == null
+                && FleetDocument.memberByKey(FleetDocument.merge(inLobby, gone), memberSpki) == null,
+                "a member taken off the list stayed, or came back in a merge");
+
         // Placeholders in a page address: plain or percent-encoded, values encoded, none left.
         require("https://x/rooms/Meeting%20room%202?g=Lobby&f=New%20Home".equals(
                 FleetDocument.fillPlaceholders("https://x/rooms/{panel.name}?g={panel.group}&f={fleet.name}",
@@ -307,7 +319,7 @@ public final class FleetDocumentTest {
                 "Hall", "", "")) && "https://x/plain".equals(FleetDocument.fillPlaceholders(
                 "https://x/plain", "Hall", "Lobby", "F")), "an empty fact or a plain address is wrong");
 
-        // History (block 15): what a version changed against the one before, in words.
+        // History: what a version changed against the one before, in words.
         Map<String, Object> h1 = document("fleet-1", 1, "kiosk-a", managerSpki, memberSpki,
                 secondSpki);
         require(FleetDocument.describeChange(null, h1).size() == 3

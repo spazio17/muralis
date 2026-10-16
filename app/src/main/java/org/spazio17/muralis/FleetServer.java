@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -32,17 +32,21 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 /**
- * The member endpoint (the fleet design): the member port (8081 until a person sets
+ * The member endpoint: the member port (8081 until a person sets
  * another, {@link KioskConfig#fleetPortOf}) on every panel, free, mutual TLS,
  * independent of the web admin, which may be off. A caller is admitted only if the public key it
  * presents is one this panel trusts and has not revoked ({@link FleetTls}); nothing else
  * authenticates a fleet call, and plain HTTP is dropped, not redirected.
  *
  * <p>It answers {@code GET /fleet} (this panel's id, its fleet key and the fleet it is in),
- * {@code POST /fleet/exchange} and {@code POST /fleet/join} (the two routes an unknown key
- * reaches, while a join code is open: {@link FleetJoin}), {@code POST /fleet/leave}, {@code GET /fleet/screenshot} (this panel's
- * screen as a JPEG, for the Fleet page's thumbnails) and {@code POST /fleet/identify} (the
- * panel's name shown and said on it). One request per connection, small and bounded: a fleet
+ * {@code /fleet/exchange} and {@code /fleet/join} (the two routes an unknown key reaches, while a
+ * join code is open: {@link FleetJoin}), {@code /fleet/document} (the signed list, handed to it or
+ * fetched), {@code /fleet/setup} (a panel at its welcome screen taking the adding panel's
+ * combinations), {@code /fleet/checkin} (the members' few-minute check-in, the one route a
+ * removed key reaches, to be told so), {@code /fleet/left} (a panel leaving by itself),
+ * {@code /fleet/screenshot} (this panel's screen as a JPEG, for
+ * the Fleet page's thumbnails) and {@code /fleet/identify} (the panel's name shown on
+ * it). One request per connection, small and bounded: a fleet
  * call is a few hundred bytes between panels, never a browser's burst, the picture being the
  * one answer that is not.
  */
@@ -60,7 +64,7 @@ final class FleetServer {
     private static final int MAX_LINE = 2_048;
     private static final int MAX_HEADER_LINES = 50;
     private static final int MAX_BODY = 4_096;
-    /** A fleet document: a few hundred bytes per member, and the profile to come (block 12d). */
+    /** A fleet document: a few hundred bytes per member, and the shared settings. */
     private static final int MAX_DOCUMENT = 65_536;
     /** One document change at a time: a delivery taken here and a panel added here. */
     private static final Object DOCUMENT_LOCK = new Object();
@@ -209,7 +213,7 @@ final class FleetServer {
      * Adds another panel to this one's fleet (founding it when this panel has none): the code
      * to its join route, pinned to the key it showed, then this panel's combinations when it
      * asks at its welcome screen, then the member in the fleet's list. The camera's Add a panel
-     * and the typed code (block 11e) both end here. Off the main thread.
+     * and the typed code both end here. Off the main thread.
      */
     static Adopted adopt(Context context, FleetJoin.Invitation invitation, String fleetId,
             String fleetName, String name) {
@@ -322,11 +326,14 @@ final class FleetServer {
     /** A panel that proved a different code than the one typed or read. */
     private static final String OTHER_CODE = "that panel shows another code";
 
-    /** How long a typed code looks for its panel on the network (Juri, 2026-10-14: 30 s). */
+    /** How long a typed code looks for its panel on the network (2026-10-14: 30 s). */
     static final long CODE_SEARCH_MS = 30_000L;
 
+    /** How many panels may fail to prove a typed code before the search gives up. */
+    private static final int MAX_CODE_PROOFS = 3;
+
     /**
-     * Adopts the panel that shows {@code code}, for a device without a camera (block 11e): the
+     * Adopts the panel that shows {@code code}, for a device without a camera: the
      * panels announced on this network as ready to be joined with the code's first two digits
      * as their tag are asked, each once, pinned to the key their announcement carries, until one
      * proves the same code or the time runs out. The code is what proves the person sees that
@@ -336,6 +343,11 @@ final class FleetServer {
      */
     static Adopted adoptByCode(Context context, String code, String fleetId, String fleetName,
             String[] added) {
+        // Before the search: a panel that may not add one need not look for thirty seconds.
+        String refusal = addRefusal(context);
+        if (refusal != null) {
+            return new Adopted(refusal, null);
+        }
         String digits = code == null ? "" : code.replaceAll("\\s", "");
         if (!digits.matches("\\d{8}")) {
             return new Adopted("the code is the eight digits under the panel's Join QR", null);
@@ -360,9 +372,20 @@ final class FleetServer {
                         found.add(info);
                     }
                 };
+        // A panel whose display sleeps hears no announcement unless it holds this lock; the
+        // person adds from a computer's browser while this panel's screen may well be off.
+        android.net.wifi.WifiManager wifi = context.getApplicationContext()
+                .getSystemService(android.net.wifi.WifiManager.class);
+        android.net.wifi.WifiManager.MulticastLock listening = wifi == null ? null
+                : wifi.createMulticastLock("muralis-add-by-code");
+        if (listening != null) {
+            listening.setReferenceCounted(false);
+            listening.acquire();
+        }
         String self = KioskConfig.deviceIdOf(context);
         java.util.Set<String> tried = new java.util.HashSet<>();
         String lastProblem = null;
+        int proofsFailed = 0;
         long deadline = android.os.SystemClock.elapsedRealtime() + CODE_SEARCH_MS;
         try {
             nsd.discoverServices("_muralis._tcp", android.net.nsd.NsdManager.PROTOCOL_DNS_SD,
@@ -390,9 +413,12 @@ final class FleetServer {
                 }
                 if (!"joining".equals(text(txt, "state"))
                         || !digits.substring(0, 2).equals(text(txt, "tag"))) {
-                    // Not showing this code yet: when it opens one it announces itself again,
-                    // and is asked then.
+                    // Not showing this code yet: asked again after a pause, while the time
+                    // lasts. Android 13 and older report no change of a found service's TXT, so
+                    // a panel that opens its code after the search began is caught only so.
                     tried.remove(seen.getServiceName());
+                    Thread.sleep(1_000);
+                    found.add(seen);
                     continue;
                 }
                 String address = resolved.getHost().getHostAddress();
@@ -404,12 +430,20 @@ final class FleetServer {
                     return adopted;
                 }
                 lastProblem = adopted.refusal;
+                // Each panel answering with the right tag is a guess at the code's six secret
+                // digits; a few are honest coincidences, more are someone announcing on purpose.
+                if (++proofsFailed >= MAX_CODE_PROOFS) {
+                    break;
+                }
             }
         } catch (InterruptedException stopped) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException refused) {
             Log.w(TAG, "Looking for panels on the network failed", refused);
         } finally {
+            if (listening != null) {
+                listening.release();
+            }
             try {
                 nsd.stopServiceDiscovery(listener);
             } catch (RuntimeException alreadyStopped) {
@@ -882,9 +916,9 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only POST"));
                 }
-            } else if ("/fleet/leave".equals(parts[1])) {
+            } else if ("/fleet/left".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
-                    leave(caller, output);
+                    left(caller, output);
                 } else {
                     respond(output, 405, error("only POST"));
                 }
@@ -1148,7 +1182,22 @@ final class FleetServer {
      * is never undone by a list being merged at the same moment. {@code how} says who asked.
      */
     static void leaveFleet(Context context, String how) {
+        leaveFleet(context, how, false);
+    }
+
+    /**
+     * Leaves the fleet; with {@code tellFleet}, as a person's Leave on this panel or its web
+     * admin, one member that answers is told first (off the caller's thread), so it takes this
+     * panel off the list for everyone. This panel leaves whether or not one answers; the others
+     * then see it offline until someone removes it on their Fleet page.
+     */
+    static void leaveFleet(Context context, String how, boolean tellFleet) {
         String name = KioskConfig.fleetNameOf(context);
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        FleetIdentity identity = tellFleet ? FleetIdentity.load(context) : null;
+        if (held != null && identity != null && !KioskConfig.fleetIdOf(context).isEmpty()) {
+            new Thread(() -> tellLeaving(context, identity, held), "MuralisFleetLeave").start();
+        }
         synchronized (DOCUMENT_LOCK) {
             if (KioskConfig.fleetIdOf(context).isEmpty()) {
                 return;
@@ -1170,10 +1219,65 @@ final class FleetServer {
         Log.i(TAG, "Left the fleet " + name + " " + how);
     }
 
+    /** Tells the first member that answers that this panel left; see {@link #leaveFleet}. */
+    private static void tellLeaving(Context context, FleetIdentity identity,
+            java.util.Map<String, Object> held) {
+        for (java.util.Map<String, Object> one : FleetDocument.members(held)) {
+            String spki = TinyJson.string(one, FleetDocument.SPKI, "");
+            String address = addressOf(one, spki);
+            if (spki.equals(identity.spki) || address.isEmpty()) {
+                continue;
+            }
+            try {
+                Reply reply = call(context, address, portOf(one, spki), spki, "POST",
+                        "/fleet/left", new JSONObject());
+                if (reply.status == 200) {
+                    Log.i(TAG, "Told " + TinyJson.string(one, FleetDocument.NAME, "")
+                            + " that this panel left");
+                    return;
+                }
+                Log.w(TAG, "Leaving: " + TinyJson.string(one, FleetDocument.NAME, "")
+                        + " refused: " + reply.reason());
+            } catch (IOException failed) {
+                Log.d(TAG, "Leaving: a member did not answer", failed);
+            }
+        }
+        Log.w(TAG, "Left without telling the fleet: no member answered");
+    }
+
+    /**
+     * Takes the member of key hash {@code spki} off the fleet's list and revokes its key, as Remove
+     * on the Fleet page ({@code removed}: also handed the list, so a reachable panel sees it was
+     * removed and leaves by itself) or for a panel that said it left. Null when done.
+     */
+    static String removeMember(Context context, String spki, boolean removed) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        java.util.Map<String, Object> member = FleetDocument.memberByKey(held, spki);
+        if (member == null) {
+            return "no such panel";
+        }
+        if (spki.equals(KioskRuntimeState.fleetKey())) {
+            return "this panel leaves with Leave the fleet, not Remove";
+        }
+        String name = TinyJson.string(member, FleetDocument.NAME, "");
+        String refused = writeList(context, null, null, (identity, list) ->
+                FleetDocument.withoutMember(list, KioskConfig.deviceIdOf(context), spki,
+                        java.time.Instant.now().toString()),
+                (removed ? "Removed " : "Took off the list ") + name);
+        if (refused == null && removed) {
+            String text = KioskConfig.fleetDocumentText(context);
+            new Thread(() -> deliver(context, member, text), "MuralisFleetRemoved").start();
+        }
+        return refused;
+    }
+
     /**
      * Adds a panel that just joined to this panel's fleet document, signed as this panel, and
      * keeps it: the first one founds the fleet. Then hands the document to every other member
-     * once; a member that cannot be reached gets it with the next change (retries are block 12b).
+     * once; a member that cannot be reached fetches it at its next check-in.
      * Returns the new member's refusal or network failure, null when it took the document. Not
      * on the main thread.
      */
@@ -1244,6 +1348,18 @@ final class FleetServer {
      * panel is never left in a fleet that does not list it.
      */
     static String addRefusal(Context context) {
+        FleetTier.Status pro = proStatus(context);
+        if (!pro.pro) {
+            return pro.lapsed ? "the fleet's Muralis Pro has not been confirmed for 30 days: open"
+                    + " Muralis on the panel or phone that holds the account"
+                    : "adding panels is Muralis Pro: buy it on a panel signed in to Google, in its"
+                    + " settings, About this panel";
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held != null && FleetDocument.members(held).size() >= FleetTier.MAX_PANELS) {
+            return "a Pro fleet holds at most " + FleetTier.MAX_PANELS + " panels, this one"
+                    + " included";
+        }
         if (!KioskConfig.fleetIdOf(context).isEmpty()
                 && KioskConfig.fleetDocumentOf(context) == null) {
             return "this panel has not received the fleet's list of panels yet; add it from the"
@@ -1257,6 +1373,101 @@ final class FleetServer {
             return "this panel has no network address yet";
         }
         return null;
+    }
+
+    /**
+     * This panel's Muralis Pro: its own verified purchase, or the fleet's lease, at
+     * this moment. A debug build's override stands for its own purchase.
+     */
+    static FleetTier.Status proStatus(Context context) {
+        java.util.Map<String, Object> held = KioskConfig.fleetIdOf(context).isEmpty() ? null
+                : KioskConfig.fleetDocumentOf(context);
+        return FleetTier.status(ProEntitlement.isActive(context), FleetDocument.tierOf(held),
+                System.currentTimeMillis());
+    }
+
+    /**
+     * Google Play answered for this panel's account ({@code owned} only for a purchase that
+     * verifies here): as the fleet's anchor it renews the lease, or, over the block it confirmed
+     * itself, writes the refund; see {@link FleetTier#shouldWrite}. Nothing outside a fleet.
+     * Off the main thread.
+     */
+    static void confirmTier(Context context, boolean owned) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return;
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        String self = KioskConfig.deviceIdOf(context);
+        long now = System.currentTimeMillis();
+        if (held == null || !FleetTier.shouldWrite(owned, self, FleetDocument.tierOf(held), now)) {
+            return;
+        }
+        String refused = writeList(context, null, null, (identity, list) -> FleetDocument.withTier(
+                list, self, FleetTier.confirmed(owned, self, now),
+                java.time.Instant.now().toString()),
+                owned ? "Confirmed Muralis Pro for the fleet" : "Muralis Pro ended for the fleet");
+        if (refused != null) {
+            Log.w(TAG, "The fleet's Pro could not be written: " + refused);
+        }
+    }
+
+    /** Whether "not owned" from this panel's Play would end the fleet's Pro (it anchors it). */
+    static boolean wouldEndPro(Context context) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return false;
+        }
+        return FleetTier.shouldWrite(false, KioskConfig.deviceIdOf(context),
+                FleetDocument.tierOf(KioskConfig.fleetDocumentOf(context)),
+                System.currentTimeMillis());
+    }
+
+    /**
+     * The Pro line for both surfaces, from {@link #proStatus}: whose purchase, until when, and
+     * the warning from day 20.
+     */
+    static String proLine(Context context) {
+        FleetTier.Status pro = proStatus(context);
+        java.text.DateFormat date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM);
+        switch (pro.source) {
+            case OWN:
+                return pro.warn ? "Muralis Pro is on this panel's Google account. The fleet's Pro"
+                        + " was last confirmed " + pro.daysSinceConfirmed + " days ago: sign this"
+                        + " panel in to Google again, or open Muralis on another panel or phone"
+                        + " that holds the account."
+                        : "Muralis Pro is on this panel's Google account.";
+            case FLEET: {
+                String line = "Muralis Pro through the fleet " + KioskConfig.fleetNameOf(context)
+                        + ", confirmed by " + memberName(context, pro.confirmedBy) + " on "
+                        + date.format(new java.util.Date(pro.confirmedMs)) + ", valid until "
+                        + date.format(new java.util.Date(pro.validUntilMs)) + ".";
+                return pro.warn ? line + " Pro was last confirmed " + pro.daysSinceConfirmed
+                        + " days ago: open Muralis on the panel or phone that holds the account."
+                        : line;
+            }
+            default:
+                if (pro.lapsed) {
+                    return "Free: the fleet's Pro has not been confirmed for 30 days. Open Muralis"
+                            + " on the panel or phone that holds the account.";
+                }
+                if (pro.ended) {
+                    return "Free: the Google account that confirmed the fleet's Pro does not own"
+                            + " it any more.";
+                }
+                return KioskConfig.fleetIdOf(context).isEmpty() ? "Free."
+                        : "Free: buy Muralis Pro on a panel signed in to Google, in its settings,"
+                                + " About this panel.";
+        }
+    }
+
+    /** A member's name in the fleet's list, or its id. */
+    private static String memberName(Context context, String id) {
+        for (java.util.Map<String, Object> member
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            if (id.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+                return TinyJson.string(member, FleetDocument.NAME, id);
+            }
+        }
+        return id;
     }
 
     /** Hands {@code text} to one member at its first address; null when it took it. */
@@ -1294,7 +1505,7 @@ final class FleetServer {
     }
 
     /**
-     * What this panel knows of another from its heartbeats (block 12b): where it was last reached,
+     * What this panel knows of another from its heartbeats: where it was last reached,
      * which version of the list it held, when, its health summary and its clock against this
      * panel's. In memory only: a restart starts with nothing seen.
      */
@@ -1556,12 +1767,14 @@ final class FleetServer {
             if (peer != null && spki.equals(peer.optString("spki"))) {
                 long ago = peer.optLong("seen_ago_ms", -1);
                 if (ago >= 0) {
-                    return (peer.optBoolean("online") ? "online, seen " : "offline, last seen ")
-                            + agoWords(ago);
+                    // Offline says what to look at, the three things that keep a panel quiet.
+                    return peer.optBoolean("online") ? "online, seen " + agoWords(ago)
+                            : "offline, last seen " + agoWords(ago) + ": is it on, on this"
+                                    + " network, with Muralis open?";
                 }
             }
         }
-        return "not heard from yet";
+        return "not heard from yet: is it on, on this network, with Muralis open?";
     }
 
     /** The other panels as last heard from, for the web API and the console to come. */
@@ -1684,7 +1897,7 @@ final class FleetServer {
     }
 
     /**
-     * Restore as new (block 15): the version {@code version} of the history, written as a new,
+     * Restore as new: the version {@code version} of the history, written as a new,
      * higher version by this panel ({@link FleetDocument#restored}: its fleet name, groups and
      * shared settings; the members and revoked keys stay as held now) and handed to every
      * member, which applies it as any change.
@@ -1715,6 +1928,25 @@ final class FleetServer {
     }
 
     /** One version of the history as both surfaces show it. */
+    /** How many versions the history shows before "Older versions". */
+    static final int HISTORY_SHOWN = 5;
+
+    /**
+     * A version's time as a person reads it, in this panel's zone: "21:04" today, else
+     * "14 Oct, 21:04"; the stored text as it is when it is not a time.
+     */
+    static String readableTime(String iso) {
+        try {
+            java.time.ZonedDateTime at = java.time.Instant.parse(iso)
+                    .atZone(java.time.ZoneId.systemDefault());
+            boolean today = at.toLocalDate().equals(java.time.LocalDate.now());
+            return at.format(java.time.format.DateTimeFormatter.ofPattern(
+                    today ? "HH:mm" : "d MMM, HH:mm", java.util.Locale.ENGLISH));
+        } catch (RuntimeException notATime) {
+            return iso;
+        }
+    }
+
     static final class HistoryEntry {
         final long version;
         /** The authoring panel's name, as the list held now knows it, else its id. */
@@ -1915,6 +2147,11 @@ final class FleetServer {
             if (!KioskRuntimeState.fleetProfileRefused(section).isEmpty()) {
                 continue;
             }
+            if (!proStatus(context).pro) {
+                // Without Pro the fleet is free: what it shares is still applied here, but a
+                // change made on this panel is no longer handed to the others.
+                continue;
+            }
             java.util.Map<String, Object> own = FleetProfile.read(context, section);
             // A secret is a change only when both sides have one and they differ: one this
             // panel cannot read right now, or one the group shares empty (a member keeps its
@@ -1923,6 +2160,14 @@ final class FleetServer {
                 if (shared.containsKey(key) && (String.valueOf(own.get(key)).isEmpty()
                         || String.valueOf(shared.get(key)).isEmpty())) {
                     own.put(key, shared.get(key));
+                }
+            }
+            // A key this build does not know (a newer panel's) is kept as the group shares it:
+            // without this, an older panel would write the section back without it and undo
+            // the newer panels' setting (seen with mqtt_tls across two builds).
+            for (java.util.Map.Entry<String, Object> entry : shared.entrySet()) {
+                if (!own.containsKey(entry.getKey())) {
+                    own.put(entry.getKey(), entry.getValue());
                 }
             }
             if (!FleetProfile.same(own, shared)) {
@@ -2005,6 +2250,12 @@ final class FleetServer {
             return;
         }
         String pinHash = setup.optString("escape_pin_hash", "");
+        if (!pinHash.isEmpty() && !EscapePin.wellFormed(pinHash)) {
+            // Taken as it is, a malformed PIN could never be matched, or make every try take
+            // minutes: a panel locked in at its first start.
+            respond(output, 400, error("not a PIN this app wrote"));
+            return;
+        }
         try {
             config.settingsSequence = settings;
             config.launcherSequence = launcher;
@@ -2023,10 +2274,22 @@ final class FleetServer {
         respond(output, 200, fleetState());
     }
 
-    /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */
-    private void leave(String caller, OutputStream output) throws IOException {
-        leaveFleet(context, "at the request of key " + FleetTls.shortForm(caller));
-        respond(output, 200, fleetState());
+    /**
+     * {@code POST /fleet/left} from a member that is leaving the fleet from its own panel or
+     * web admin: taken off the fleet's list here and the list handed to the others, so it
+     * disappears from every Fleet page at once: Leave tells one manager, which tells the rest.
+     */
+    private void left(String caller, OutputStream output) throws IOException {
+        String refused = removeMember(context, caller, false);
+        if (refused != null) {
+            respond(output, 409, error(refused));
+        } else {
+            try {
+                respond(output, 200, new JSONObject().put("status", "removed"));
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+        }
     }
 
     /**
