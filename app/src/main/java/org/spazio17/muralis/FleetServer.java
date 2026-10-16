@@ -32,7 +32,7 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 /**
- * The member endpoint (fleet design, section 7): the member port (8081 until a person sets
+ * The member endpoint (the fleet design): the member port (8081 until a person sets
  * another, {@link KioskConfig#fleetPortOf}) on every panel, free, mutual TLS,
  * independent of the web admin, which may be off. A caller is admitted only if the public key it
  * presents is one this panel trusts and has not revoked ({@link FleetTls}); nothing else

@@ -4,8 +4,8 @@ A self-recovering Android kiosk launcher that turns a tablet into a wall panel f
 a dashboard, a board or a page on your own network, controllable over MQTT and HTTP.
 
 Targets the public Android SDK only (no platform signature, no privileged permissions), so it
-installs as an ordinary APK on stock Android, from API 26 up. See [`CLAUDE.md`](CLAUDE.md) for the
-architecture and the decisions behind it.
+installs as an ordinary APK on stock Android, from API 26 up. See [`CLAUDE.md`](CLAUDE.md) for an
+overview of the app and the rules its code keeps.
 
 ## Building
 

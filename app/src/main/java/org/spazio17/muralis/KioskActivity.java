@@ -5756,7 +5756,7 @@ public final class KioskActivity extends Activity {
      * available options can be collapsed, consider using a dropdown menu because it uses less
      * space" (Material Components for Android, radio buttons), and Nielsen Norman Group's is
      * radio buttons for five or fewer, a dropdown for five to fifteen (Listboxes vs. Dropdown
-     * Lists). Five or fewer stay radios, the house rule (Juri, 2026-09-28).
+     * Lists). Five or fewer stay radios (2026-09-28).
      */
     private final class MenuField {
         final EditText box;

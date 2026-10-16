@@ -27,7 +27,7 @@ import java.util.Locale;
  *
  * <p>What it is for: a panel on a wall that is doing something odd, read from the sofa. Nothing is
  * stored or sent anywhere; every call reads the daemon's ring buffer afresh, and logd prunes that
- * buffer as it likes, so a line missing here is not evidence of anything (see the project notes).
+ * buffer as it likes, so a line missing here is not evidence of anything.
  * Best effort throughout: a device that refuses the command answers with nothing.
  */
 final class AppLog {

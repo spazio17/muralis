@@ -111,7 +111,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private volatile MqttController mqttController;
     private volatile HttpAdminServer httpAdminServer;
-    /** The member endpoint (fleet design, section 7); null until the fleet key can be read. */
+    /** The member endpoint (the fleet design); null until the fleet key can be read. */
     private volatile FleetServer fleetServer;
     private SystemStats systemStats;
     private NetworkGate startupGate;
@@ -733,8 +733,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     private void startControllersNow() {
         // MQTT and the web admin are free on every panel since 2026-10-06; the gate that stood
-        // here until then (Pro unlocking the two) is history in CLAUDE.md. Pro gates the fleet,
-        // and only there.
+        // here until then (Pro unlocking the two) is in the git history. Pro will gate the fleet,
+        // and only that.
         KioskConfig config = KioskConfig.load(this);
         mqttInputs = mqttInputsOf(config);
         httpInputs = httpInputsOf(config);

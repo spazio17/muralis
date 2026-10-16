@@ -817,7 +817,7 @@ final class MqttController implements MqttCallbackExtended {
             // dropped and for how long is the MQTT state entity's own history, and knowing WHY
             // turned out not to be worth an entity. Its withdrawal was published, confirmed
             // processed on the only installation that ever saw it, and then retired with the
-            // rest of the stale-keys block; the history is in CLAUDE.md's entity naming rule.
+            // rest of the stale-keys block; the history is in git.
             // Four values, not two, so this one stays a text sensor: charging, discharging,
             // charged, on hold. Straight from battery.charge_state, which is
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
@@ -876,7 +876,7 @@ final class MqttController implements MqttCallbackExtended {
             // "Recycle time" clock; both are gone, along with the commands behind them, because
             // recycling is a recovery mechanism rather than a preference and its schedule is now
             // derived per device. Their withdrawals ran until 2026-08-25 and were then retired as
-            // confirmed processed; the history is in CLAUDE.md's entity naming rule. The stats
+            // confirmed processed; the history is in git. The stats
             // overlay is deliberately absent for a different reason: it changes what is drawn on
             // the panel's own glass, which is a decision for whoever is standing at it or holding
             // the admin page, not something a broker subscriber needs.
