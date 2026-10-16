@@ -1,21 +1,21 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
 /**
- * When the screensaver starts, when it hands over to Display off, and what each of its settings
+ * When Ambient starts, when it hands over to Display off, and what each of its settings
  * is allowed to be.
  *
- * <p>The screensaver is the quieter thing a panel shows after a chosen time without a touch: the
+ * <p>Ambient is the quieter thing a panel shows after a chosen time without a touch: the
  * page dimmed to a floor, the black film, or another web page (a photo frame's slideshow, a clock,
  * a picture dashboard). After a second chosen time it turns the display off exactly the way
  * "Display off" does, so {@link DisplayOffPolicy} decides sleep or film there as everywhere. A
  * touch, a remote wake or the presence blueprint bring the page back. Designed 2026-09-09.
  *
  * <pre>
- * dashboard --idle A--> screensaver --idle B--> display off
+ * dashboard --idle A--> Ambient --idle B--> display off
  *     ^                      |   ^                    |
  *     | touch / remote wake / presence                |
  *     +----------------------+   +--- wake ----------+
@@ -32,7 +32,7 @@ package org.spazio17.muralis;
  * a tablet with a stopwatch.
  */
 final class ScreensaverPolicy {
-    /** No screensaver. */
+    /** No Ambient. */
     static final String OFF = "off";
     /** The page itself, at a brightness floor the user sets. */
     static final String DIM = "dim";
@@ -40,7 +40,7 @@ final class ScreensaverPolicy {
     static final String FILM = "film";
     /** Another web page, shown over the dashboard, which stays loaded underneath. */
     static final String URL = "url";
-    /** Pictures from a {@link PictureSources} source, full screen, with the credit line. */
+    /** Pictures from the playlist in use, full screen, with the credit line. */
     static final String PICTURES = "pictures";
 
     /** How one picture gives way to the next. */
@@ -50,8 +50,8 @@ final class ScreensaverPolicy {
 
     /**
      * How a picture is laid on the glass: the whole of it inside the screen, cropped to cover the
-     * screen, pulled out of shape to cover it, or left at the size it was taken (Juri,
-     * 2026-09-23). One setting for every picture, whatever its shape.
+     * screen, pulled out of shape to cover it, or left at the size it was taken
+     * (2026-09-23). One setting for every picture, whatever its shape.
      */
     static final String FIT_WHOLE = "fit";
     static final String FIT_FILL = "fill";
@@ -64,7 +64,7 @@ final class ScreensaverPolicy {
     static final String CORNER_TOP_LEFT = "top_left";
     static final String CORNER_TOP_RIGHT = "top_right";
 
-    /** After a wake from display off, the screensaver first: a glance, then a touch for the page. */
+    /** After a wake from display off, Ambient first: a glance, then a touch for the page. */
     static final String WAKE_SCREENSAVER = "ambient";
     /** After a wake from display off, straight to the page. */
     static final String WAKE_DASHBOARD = "dashboard";
@@ -89,9 +89,9 @@ final class ScreensaverPolicy {
     /** The stored settings, read once per decision so a tick never sees half of an edit. */
     static final class Settings {
         final String mode;
-        /** Seconds without a touch before the screensaver; 0 means only when asked for. */
+        /** Seconds without a touch before Ambient; 0 means only when asked for. */
         final int idleSeconds;
-        /** Seconds of screensaver before display off; 0 means never. */
+        /** Seconds of Ambient before display off; 0 means never. */
         final int offSeconds;
         final String url;
         final int dimPercent;
@@ -100,7 +100,7 @@ final class ScreensaverPolicy {
         final int pictureSeconds;
         final String transition;
         final boolean shuffle;
-        /** One picture per screensaver: chosen at the start, kept until the page returns. */
+        /** One picture per Ambient: chosen at the start, kept until the page returns. */
         final boolean onePerCycle;
         /** The credit line under a picture. */
         final boolean credit;
@@ -205,7 +205,7 @@ final class ScreensaverPolicy {
      * Why the chosen mode cannot run with the other settings, or null when it can. The web-page
      * mode with no address is the one case: the mode is stored anyway, so the operator can choose
      * it and then type the address in either order, and until both are there the panel says so
-     * on every surface instead of starting a screensaver that shows nothing.
+     * on every surface instead of starting Ambient that shows nothing.
      */
     static String modeProblem(String mode, String url) {
         if (URL.equals(mode) && (url == null || url.trim().isEmpty())) {
@@ -214,7 +214,7 @@ final class ScreensaverPolicy {
         return null;
     }
 
-    /** Whether the screensaver can run at all, by mode and by the setting the mode needs. */
+    /** Whether Ambient can run at all, by mode and by the setting the mode needs. */
     static boolean runnable(Settings settings) {
         return settings.enabled() && modeProblem(settings.mode, settings.url) == null;
     }
@@ -226,7 +226,7 @@ final class ScreensaverPolicy {
      * @param blocked  a reason nothing may start: the operator is on a settings screen, the kiosk
      *                 is stopped, the activity is not in front, or the panel is already dark
      * @param sinceMs  monotonic time the current stage began: the last touch on the dashboard,
-     *                 or the moment the screensaver came on
+     *                 or the moment Ambient came on
      * @param nowMs    monotonic time now
      */
     static Step next(Settings settings, Stage stage, boolean blocked, long sinceMs, long nowMs) {
@@ -248,7 +248,7 @@ final class ScreensaverPolicy {
     }
 
     /**
-     * Whether a wake from display off shows the screensaver rather than the page. The web page
+     * Whether a wake from display off shows Ambient rather than the page. The web page
      * and the dimmed page are something to glance at; a wake to the black film would be no wake
      * at all, so the choice does not apply there (the surfaces grey it out and say so).
      */

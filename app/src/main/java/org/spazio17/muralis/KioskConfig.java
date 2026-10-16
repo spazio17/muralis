@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -17,6 +17,18 @@ final class KioskConfig {
     private static final String MQTT_PORT = "mqtt_port";
     private static final String MQTT_USERNAME = "mqtt_username";
     private static final String MQTT_PASSWORD = "mqtt_password";
+    private static final String MQTT_TLS = "mqtt_tls";
+    /** App lock: the package shown instead of the web page; empty when off. */
+    private static final String APP_LOCK = "app_lock";
+    /** What the chosen app is called, kept so a panel can name it after it was uninstalled. */
+    private static final String APP_LOCK_LABEL = "app_lock_label";
+    /** The broker certificate a person trusted, its SHA-256 (MqttTls); empty when none. */
+    private static final String MQTT_TLS_PIN = "mqtt_tls_pin";
+    /** The client certificate's chain and key, in the SecretStore; its name and end in plain. */
+    static final String MQTT_CLIENT_CHAIN = "mqtt_client_chain";
+    static final String MQTT_CLIENT_KEY = "mqtt_client_key";
+    private static final String MQTT_CLIENT_NAME = "mqtt_client_name";
+    private static final String MQTT_CLIENT_UNTIL = "mqtt_client_until";
     private static final String HTTP_PORT = "http_port";
     private static final String HTTP_ADMIN_PASSWORD = "http_admin_password";
     /** The optional PIN behind the tap combinations, as EscapePin stores it; absent means none. */
@@ -28,6 +40,12 @@ final class KioskConfig {
     private static final String BROWSER_PAGE_ZOOM = "browser_page_zoom";
     private static final String BROWSER_DARK = "browser_dark";
     private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
+    /** The certificates a person trusted, one host and fingerprint a line (CertificatePins). */
+    private static final String CERTIFICATE_PINS = "certificate_pins";
+    /** The cameras for pop-ups, as PopupCameras writes them. */
+    private static final String POPUP_CAMERAS = "popup_cameras";
+    private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
+    private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
     private static final String BROWSER_PASSWORD = "browser_password";
     /** The status light (StatusLight): on or off, its colour as 0xRRGGBB, its brightness. */
@@ -40,15 +58,6 @@ final class KioskConfig {
     private static final String STATS_OVERLAY_X = "stats_overlay_x";
     private static final String STATS_OVERLAY_Y = "stats_overlay_y";
     private static final String STATS_OVERLAY_ANCHOR = "stats_overlay_anchor";
-    /** The look a person chose on the Appearance page; see appearanceColourOf, Palettes. */
-    private static final String APPEARANCE_COLOUR = "appearance_colour";
-    private static final String SEPARATORS = "separators";
-    static final String SEPARATORS_LINES = "lines";
-    static final String SEPARATORS_SEGMENTS = "segments";
-    static final String SEPARATORS_NONE = "none";
-    /** The separators on offer, in the order both surfaces list them. */
-    static final String[] SEPARATOR_CHOICES = {SEPARATORS_LINES, SEPARATORS_SEGMENTS,
-            SEPARATORS_NONE};
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
     private static final String SCREENSAVER_MODE = "screensaver_mode";
@@ -94,10 +103,10 @@ final class KioskConfig {
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
 
     static final int DEFAULT_HTTP_PORT = 8080;
-    /** The member endpoint's port until a person sets another (fleet design, 2026-09-24). */
+    /** The member endpoint's port until a person sets another. */
     static final int DEFAULT_FLEET_PORT = 8081;
     private static final String FLEET_PORT = "fleet_port";
-    /** The fleet's alerts (fleet design, section 10), stored under the keys both surfaces use. */
+    /** The fleet's alerts, stored under the keys both surfaces use. */
     private static final String ALERT_OFFLINE_MINUTES = "alert_offline_minutes";
     private static final String ALERT_PAGE_ERROR = "alert_page_error";
     private static final String ALERT_BATTERY_BELOW = "alert_battery_below";
@@ -129,8 +138,14 @@ final class KioskConfig {
     int mqttPort = 1883;
     String mqttUsername = "";
     String mqttPassword = "";
+    boolean mqttTls;
+    String appLockPackage = "";
+    String mqttTlsPin = "";
+    /** The client certificate's names and when it ends; empty and 0 when none is uploaded. */
+    String mqttClientName = "";
+    long mqttClientUntil;
     int httpPort = DEFAULT_HTTP_PORT;
-    /** The member endpoint's port, a setting like the web admin's (Juri, 2026-10-08). */
+    /** The member endpoint's port, a setting like the web admin's (2026-10-08). */
     int fleetPort = DEFAULT_FLEET_PORT;
     /** The fleet's alerts: thresholds and destinations; see FleetAlerts. */
     FleetAlerts.Settings alerts = new FleetAlerts.Settings();
@@ -149,8 +164,6 @@ final class KioskConfig {
      * volume.
      */
     boolean volumeButtonsDisabled;
-    String appearanceColour = Palettes.COLOURS[0];
-    String separators = SEPARATORS_LINES;
     /**
      * How the panel is mounted: {@link #ORIENTATION_LANDSCAPE}, {@link #ORIENTATION_PORTRAIT},
      * or {@link #ORIENTATION_AUTO}, which follows the accelerometer until the operator picks a
@@ -226,6 +239,11 @@ final class KioskConfig {
         config.mqttUsername = storedUsername == null ? "" : storedUsername;
         String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
+        config.mqttTls = preferences.getBoolean(MQTT_TLS, false);
+        config.appLockPackage = preferences.getString(APP_LOCK, "");
+        config.mqttTlsPin = preferences.getString(MQTT_TLS_PIN, "");
+        config.mqttClientName = preferences.getString(MQTT_CLIENT_NAME, "");
+        config.mqttClientUntil = preferences.getLong(MQTT_CLIENT_UNTIL, 0);
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
         config.fleetPort = preferences.getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
         config.alerts = alertsOf(preferences);
@@ -240,8 +258,6 @@ final class KioskConfig {
         config.httpUploadUntil = certificate.httpUploadUntil;
         config.statsOverlay = statsOverlayEnabled(context);
         config.volumeButtonsDisabled = volumeButtonsDisabled(context);
-        config.appearanceColour = appearanceColourOf(context);
-        config.separators = separatorsOf(context);
         config.orientation = orientationOf(context);
         config.displayOffMethod = displayOffMethodOf(context);
         config.screensaver = screensaverOf(context);
@@ -331,6 +347,32 @@ final class KioskConfig {
             return this;
         }
 
+        /** The app App lock shows, a package name; empty switches App lock off. */
+        Editor appLock(String packageName) {
+            String chosen = packageName == null ? "" : packageName.trim();
+            plain.putString(APP_LOCK, chosen)
+                    .putString(APP_LOCK_LABEL, chosen.isEmpty() ? ""
+                            : AppLock.labelOf(storageContext, chosen));
+            return this;
+        }
+
+        Editor mqttTls(boolean value) {
+            plain.putBoolean(MQTT_TLS, value);
+            return this;
+        }
+
+        /** A fingerprint as CertificatePins prints it, or empty to trust none. */
+        Editor mqttTlsPin(String value) {
+            plain.putString(MQTT_TLS_PIN, value == null ? "" : value);
+            return this;
+        }
+
+        /** The uploaded client certificate's names and end, shown on both surfaces; "" and 0 clear. */
+        Editor mqttClientShown(String names, long untilMs) {
+            plain.putString(MQTT_CLIENT_NAME, names).putLong(MQTT_CLIENT_UNTIL, untilMs);
+            return this;
+        }
+
         Editor httpPort(int value) {
             plain.putInt(HTTP_PORT, value);
             return this;
@@ -411,6 +453,53 @@ final class KioskConfig {
             return this;
         }
 
+        /**
+         * One value from a settings file, already checked by SettingsImport: only a
+         * key the file may carry, stored with its own type.
+         */
+        Editor imported(String key, Object value) {
+            Character type = SettingsTransfer.typeOf(key);
+            if (type == null) {
+                return this;
+            }
+            switch (type) {
+                case 'b': plain.putBoolean(key, (Boolean) value); break;
+                case 'i': plain.putInt(key, (Integer) value); break;
+                case 'l': plain.putLong(key, ((Number) value).longValue()); break;
+                default: plain.putString(key, (String) value); break;
+            }
+            return this;
+        }
+
+        /** One password from a settings file, a key the file may carry only. */
+        Editor importedSecret(String key, String value) {
+            if (java.util.Arrays.asList(SettingsTransfer.SECRETS).contains(key)
+                    && !value.isEmpty()) {
+                secrets.put(key, value);
+            }
+            return this;
+        }
+
+        Editor popupCameras(java.util.List<PopupCameras.Camera> cameras) {
+            plain.putString(POPUP_CAMERAS, PopupCameras.format(cameras));
+            return this;
+        }
+
+        Editor certificatePins(java.util.Map<String, String> pins) {
+            plain.putString(CERTIFICATE_PINS, CertificatePins.format(pins));
+            return this;
+        }
+
+        Editor browserPageCamera(boolean value) {
+            plain.putBoolean(BROWSER_PAGE_CAMERA, value);
+            return this;
+        }
+
+        Editor browserPageMicrophone(boolean value) {
+            plain.putBoolean(BROWSER_PAGE_MICROPHONE, value);
+            return this;
+        }
+
         /** The sign-in name; an empty one clears the password with it. */
         Editor browserUser(String value) {
             secrets.put(BROWSER_USER, value);
@@ -464,10 +553,10 @@ final class KioskConfig {
         }
 
         /**
-         * The fleet document this panel took or wrote (block 12a), already checked and merged
+         * The fleet document this panel took or wrote, already checked and merged
          * with the one held: it names the fleet, its members' keys are the ones this panel
          * trusts, and its revoked keys the ones it refuses. The first one written here also
-         * founds the fleet. The profile's secrets (block 12d) go to the SecretStore and the
+         * founds the fleet. The profile's secrets go to the SecretStore and the
          * stored copy has them blanked; fleetDocumentText puts them back for the wire.
          */
         Editor fleetDocument(Context context, String text) {
@@ -491,7 +580,7 @@ final class KioskConfig {
             }
             String stored = FleetDocument.canonical(document);
             plain.putString(FLEET_DOCUMENT, stored);
-            // History (block 15): the last versions held, newest first, the stored copy of
+            // History: the last versions held, newest first, the stored copy of
             // each (secrets blanked like the list itself); the same text twice is kept once.
             java.util.List<String> history = fleetHistory(storageContext);
             if (history.isEmpty() || !history.get(0).equals(stored)) {
@@ -506,21 +595,6 @@ final class KioskConfig {
 
         Editor volumeButtonsDisabled(boolean value) {
             plain.putBoolean(VOLUME_BUTTONS_DISABLED, value);
-            return this;
-        }
-
-        /** The look, checked first by checkAppearance; see Palettes. */
-        Editor appearanceColour(String value) {
-            plain.putString(APPEARANCE_COLOUR, value);
-            // Written through, not cleared: cleared here and read back before apply(), the
-            // cache took the old value and kept it (review, 2026-10-04). Checked by the caller.
-            appearanceColourCache = value;
-            return this;
-        }
-
-        Editor separators(String value) {
-            plain.putString(SEPARATORS, value);
-            separatorsCache = value;
             return this;
         }
 
@@ -744,7 +818,7 @@ final class KioskConfig {
     }
 
     /**
-     * The screensaver's settings alone, without the secrets a full load decrypts: the activity's
+     * Ambient's settings alone, without the secrets a full load decrypts: the activity's
      * clock reads them every second, and a stored value this build does not know reads as the
      * default rather than being refused, the same rule as {@link #displayOffMethodOf}.
      */
@@ -1132,7 +1206,7 @@ final class KioskConfig {
         return text.isEmpty() ? null : FleetDocument.parse(text);
     }
 
-    /** How many versions of the fleet's list a member keeps (block 15). */
+    /** How many versions of the fleet's list a member keeps. */
     static final int FLEET_HISTORY_SIZE = 20;
     /** Beside the list, in device-protected storage: one stored document per line, newest first. */
     private static final String FLEET_HISTORY_FILE = "fleet_history.jsonl";
@@ -1268,7 +1342,7 @@ final class KioskConfig {
      * its default place. Measured from the edges it was dropped nearest to, as shares of the
      * screen, not of the room left over: the block's own size changes with every line it
      * draws, and a place that depended on it moved a few pixels every second (the flicker
-     * Juri saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
+     * The owner saw, 2026-10-04). This panel's alone: a place on one screen means nothing on another.
      */
     static OverlayPlace statsOverlayPlace(Context context) {
         android.content.SharedPreferences prefs = storageContext(context)
@@ -1280,86 +1354,6 @@ final class KioskConfig {
         String anchor = prefs.getString(STATS_OVERLAY_ANCHOR, "tl");
         return new OverlayPlace(anchor.endsWith("r"), anchor.startsWith("b"),
                 prefs.getFloat(STATS_OVERLAY_X, 0f), prefs.getFloat(STATS_OVERLAY_Y, 0f));
-    }
-
-    /**
-     * The look a person chose on the Appearance page under This panel (Juri, 2026-10-04; a page
-     * of its own since 2026-10-07): a seed colour, which names a scheme of Palettes, and how
-     * the rows of a list are kept apart. A second axis went twice the same day (Material's
-     * variants, then its contrast levels): other apps offer a colour and day or night, nothing
-     * more. This panel's alone, like the light theme of the settings: a look is a thing of the
-     * screen in front of someone. Purple with lines is Muralis's own look and the default; a
-     * stored value nothing offers reads as the default.
-     */
-    static String appearanceColourOf(Context context) {
-        String cached = appearanceColourCache;
-        if (cached != null) {
-            return cached;
-        }
-        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(APPEARANCE_COLOUR, null);
-        String colour = checkAppearance("appearance_colour", stored) == null ? stored
-                : Palettes.COLOURS[0];
-        appearanceColourCache = colour;
-        return colour;
-    }
-
-    static String separatorsOf(Context context) {
-        String cached = separatorsCache;
-        if (cached != null) {
-            return cached;
-        }
-        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(SEPARATORS, null);
-        String separators = checkAppearance("separators", stored) == null ? stored
-                : SEPARATORS_LINES;
-        separatorsCache = separators;
-        return separators;
-    }
-
-    /**
-     * The two look settings as last read: every row of a list asked for them, and each ask was a
-     * storage context and a preferences lookup on the UI thread (review, 2026-10-04). The Editor
-     * is the only writer and writes them through.
-     */
-    private static volatile String appearanceColourCache;
-    private static volatile String separatorsCache;
-
-    /** A colour's name, "Purple", on both surfaces' radios and in the Appearance summary. */
-    static String colourLabel(String colour) {
-        return colour == null || colour.isEmpty() ? ""
-                : Character.toUpperCase(colour.charAt(0)) + colour.substring(1);
-    }
-
-    /** A separators choice's name, "Lines", "Segments" or "None", wherever it is shown. */
-    static String separatorsLabel(String separators) {
-        return SEPARATORS_SEGMENTS.equals(separators) ? "Segments"
-                : SEPARATORS_NONE.equals(separators) ? "None" : "Lines";
-    }
-
-    /** The Appearance row's summary on both surfaces, "Purple · Lines", from the two labels. */
-    static String appearanceSummary(String colour, String separators) {
-        return colourLabel(colour) + " \u00b7 " + separatorsLabel(separators);
-    }
-
-    /** Why a value for one of the two look settings is refused, or null when it is offered. */
-    static String checkAppearance(String key, String value) {
-        String[] offered;
-        switch (key) {
-            case "appearance_colour": offered = Palettes.COLOURS; break;
-            case "separators": offered = SEPARATOR_CHOICES; break;
-            default: return "no setting is called " + key;
-        }
-        if (value != null) {
-            for (String one : offered) {
-                if (one.equals(value)) {
-                    return null;
-                }
-            }
-        }
-        return key.replace('_', ' ') + " must be " + String.join(", ",
-                java.util.Arrays.copyOf(offered, offered.length - 1)) + " or "
-                + offered[offered.length - 1];
     }
 
     /** Narrow reader for Disable volume buttons, asked on every press of one. */
@@ -1397,7 +1391,106 @@ final class KioskConfig {
                         ? zoom : BrowserOptions.AUTO_ZOOM,
                 prefs.getBoolean(BROWSER_DARK, false),
                 BrowserOptions.parseBackAfter(String.valueOf(back)) != null ? back : 0,
-                user == null ? "" : user);
+                user == null ? "" : user,
+                prefs.getBoolean(BROWSER_PAGE_CAMERA, false),
+                prefs.getBoolean(BROWSER_PAGE_MICROPHONE, false));
+    }
+
+    /** The settings a setup QR carried, kept until the service applies them once. */
+    private static final String PROVISIONED_SETTINGS = "provisioned_settings";
+    private static final String PROVISIONED_SETTINGS_KEPT = "provisioned_settings_kept";
+
+    /**
+     * Keeps the settings file a setup QR carried in its admin extras for the service
+     * to apply at its start, and asks a service already running to apply them now; nothing when
+     * the QR carried none.
+     */
+    static void keepProvisionedSettings(Context context, android.content.Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        android.os.PersistableBundle extras = intent.getParcelableExtra(
+                android.app.admin.DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE);
+        String packed = extras == null ? null : extras.getString("muralis_settings_z");
+        String text = packed == null ? null : SettingsTransfer.unpacked(packed);
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // Kept once: the setup may hand the extras both to the compliance screen and to the
+        // receiver, and a second copy taken after the service applied the first would put the
+        // QR's settings back over the person's changes at the next start.
+        if (text != null && !text.isEmpty() && !prefs.getBoolean(PROVISIONED_SETTINGS_KEPT, false)) {
+            prefs.edit().putString(PROVISIONED_SETTINGS, text)
+                    .putBoolean(PROVISIONED_SETTINGS_KEPT, true).commit();
+            KioskService.reloadConfiguration(context);
+        }
+    }
+
+    /** The kept settings file, removed as it is read, or null. */
+    static String takeProvisionedSettings(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String text = prefs.getString(PROVISIONED_SETTINGS, null);
+        if (text != null) {
+            prefs.edit().remove(PROVISIONED_SETTINGS).commit();
+        }
+        return text;
+    }
+
+    /** Every stored setting as Android gives it back, for the settings file to pick from. */
+    static java.util.Map<String, ?> storedSettings(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getAll();
+    }
+
+    /**
+     * The stored settings as a settings file carries them: a value stored under a name from
+     * before 0.7 in today's form, and without the calibrations a sensor keeps for its own
+     * hardware (they need a hand at the panel), which another panel's import would refuse.
+     */
+    static java.util.Map<String, Object> transferableSettings(Context context) {
+        java.util.Map<String, Object> settings = new java.util.HashMap<>(storedSettings(context));
+        Object wake = settings.get(SCREENSAVER_ON_WAKE);
+        if (wake != null && !ScreensaverPolicy.isOnWake(String.valueOf(wake))) {
+            settings.put(SCREENSAVER_ON_WAKE, ScreensaverPolicy.WAKE_SCREENSAVER);
+        }
+        Object oldSensor = settings.remove("sensor_screensaver");
+        if (oldSensor != null && !settings.containsKey("sensor_" + Sensors.SCREENSAVER.id)) {
+            settings.put("sensor_" + Sensors.SCREENSAVER.id, oldSensor);
+        }
+        for (String key : new java.util.ArrayList<>(settings.keySet())) {
+            if (key.startsWith("sensor_option_") && !key.startsWith("sensor_option_beacon_")
+                    && String.valueOf(Sensors.checkOption(key.substring("sensor_option_".length()),
+                            String.valueOf(settings.get(key)))).startsWith("no sensor setting")) {
+                settings.remove(key);
+            }
+        }
+        return settings;
+    }
+
+    /** The passwords a settings file may carry, read only when the person asks for them. */
+    static java.util.Map<String, String> transferableSecrets(Context context) {
+        SecretStore store = new SecretStore(storageContext(context));
+        java.util.Map<String, String> secrets = new java.util.LinkedHashMap<>();
+        for (String key : SettingsTransfer.SECRETS) {
+            String value = store.getOrNull(key);
+            if (value != null && !value.isEmpty()) {
+                secrets.put(key, value);
+            }
+        }
+        return secrets;
+    }
+
+    static java.util.List<PopupCameras.Camera> popupCamerasOf(Context context) {
+        return PopupCameras.parse(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(POPUP_CAMERAS, ""));
+    }
+
+    /** The trusted certificates, read for every certificate Android refuses. */
+    static java.util.Map<String, String> certificatePinsOf(Context context) {
+        return CertificatePins.parse(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CERTIFICATE_PINS, ""));
     }
 
     /** Just the time before going back, read every second while the page is away. */
@@ -1414,6 +1507,20 @@ final class KioskConfig {
     }
 
     /** The status light as stored, for the frame, the status document and both surfaces. */
+    /** App lock's chosen package, empty when off; a plain read, cheap enough for a layout pass. */
+    static String appLockOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(APP_LOCK, "");
+    }
+
+    /** What App lock's app was called when it was chosen; its package when that was not known. */
+    static String appLockLabelOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String label = prefs.getString(APP_LOCK_LABEL, "");
+        return label.isEmpty() ? prefs.getString(APP_LOCK, "") : label;
+    }
+
     static StatusLight.State statusLightOf(Context context) {
         SharedPreferences prefs = storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -1506,10 +1613,10 @@ final class KioskConfig {
     }
 
     /**
-     * The boot in which the screensaver was put on the glass, or -1: the same shape as the
+     * The boot in which Ambient was put on the glass, or -1: the same shape as the
      * visual-off record and for the same reason, so the nightly restart and the WebView rebuilds
-     * bring the screensaver back rather than lighting the page for the idle time at four in
-     * the morning. Ends with the screensaver (a touch, a command, the settings screen) or with
+     * bring Ambient back rather than lighting the page for the idle time at four in
+     * the morning. Ends with Ambient (a touch, a command, the settings screen) or with
      * the display going dark, never with a rebuild.
      */
     static void recordScreensaverBootCount(Context context, int bootCount) {

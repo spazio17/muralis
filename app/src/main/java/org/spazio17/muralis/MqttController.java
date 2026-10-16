@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -141,6 +141,54 @@ final class MqttController implements MqttCallbackExtended {
         hasBattery = KioskService.hasBattery(context);
     }
 
+    /** One client certificate change at a time, as the web admin's own certificate. */
+    private static final Object CLIENT_STORE = new Object();
+
+    /** The uploaded client certificate, or null when none is kept or it cannot be read. */
+    static CertificateUpload clientCertificate(Context context) {
+        SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+        return CertificateUpload.restore(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN),
+                secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY));
+    }
+
+    /**
+     * Keeps a client certificate and its key for the broker, once {@link CertificateUpload} has
+     * read them; null when kept, else why not, a fragment to follow "Not uploaded: ".
+     */
+    static String keepClientCertificate(Context context, String certificateText, String keyText) {
+        CertificateUpload.Result read = CertificateUpload.parseClient(certificateText, keyText);
+        if (read.problem != null) {
+            return read.problem;
+        }
+        String chain = read.upload.chainText();
+        String key = read.upload.keyText();
+        java.security.cert.X509Certificate first = read.upload.chain[0];
+        synchronized (CLIENT_STORE) {
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            secrets.put(KioskConfig.MQTT_CLIENT_CHAIN, chain);
+            secrets.put(KioskConfig.MQTT_CLIENT_KEY, key);
+            // Read back: SecretStore leaves the old value when it cannot encrypt.
+            if (!chain.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN))
+                    || !key.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY))) {
+                forgetClientCertificate(context);
+                return "this panel could not keep it; upload it again";
+            }
+            KioskConfig.edit(context).mqttClientShown(CertificateUpload.names(first),
+                    first.getNotAfter().getTime()).apply();
+        }
+        return null;
+    }
+
+    /** Forgets the client certificate; the broker is then reached without one. */
+    static void forgetClientCertificate(Context context) {
+        synchronized (CLIENT_STORE) {
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            secrets.clear(KioskConfig.MQTT_CLIENT_CHAIN);
+            secrets.clear(KioskConfig.MQTT_CLIENT_KEY);
+            KioskConfig.edit(context).mqttClientShown("", 0).apply();
+        }
+    }
+
     void start() {
         if (config.mqttHost.isEmpty()) {
             Log.i(TAG, "MQTT is not configured");
@@ -156,25 +204,21 @@ final class MqttController implements MqttCallbackExtended {
             return;
         }
 
-        // Plain TCP only. TLS was offered as a checkbox and removed on 2026-08-19, because it was
-        // never actually implemented: the whole of it was "ssl" instead of "tcp" here, with no trust
-        // store, no SSLSocketFactory and no way anywhere in the app to supply a certificate. Paho
-        // therefore fell back to Android's system trust store with hostname verification on, so it
-        // could only ever work against a publicly-trusted CA certificate on a matching public
-        // hostname. Every ordinary home broker uses a self-signed or private-CA certificate, so for
-        // the actual audience the option could not work at all, and it was ON by default, which made
-        // a fresh install fail its first connection.
-        //
-        // That is the same mistake this project already corrected once, when the per-command HMAC was
-        // removed for advertising protection nobody could hold the key to.
-        //
-        // The reference implementations agree with dropping it: WLED supports no MQTT TLS at all and
-        // tells users to stay on a local broker, and Tasmota's TLS is a compile-time option, off in
-        // default builds, which needs CA-certificate or public-key-fingerprint pinning to work with a
-        // self-signed broker. Adding TLS properly here means adding that same machinery: a
-        // certificate or fingerprint field, storage for it, and an SSLSocketFactory built from it.
-        // Until that exists, this stays plain TCP and the documentation says so plainly.
-        String uri = "tcp://" + config.mqttHost + ":" + config.mqttPort;
+        // TLS when the person switched it on (optional: a broker on the home network is often
+        // plain). The broker is trusted when Android trusts its certificate for its name, or when
+        // its certificate is the one a person trusted here (MqttTls); a client certificate is
+        // presented when one was uploaded, as zigbee2mqtt's ca, cert and key.
+        MqttTls.Connection tls = null;
+        if (config.mqttTls) {
+            try {
+                tls = MqttTls.connection(config.mqttHost, config.mqttTlsPin,
+                        clientCertificate(appContext));
+            } catch (java.security.GeneralSecurityException failed) {
+                Log.e(TAG, "MQTT over TLS could not be set up", failed);
+                return;
+            }
+        }
+        String uri = (tls == null ? "tcp://" : "ssl://") + config.mqttHost + ":" + config.mqttPort;
         try {
             client = new MqttAsyncClient(uri, config.deviceId, new MemoryPersistence());
             client.setCallback(this);
@@ -185,7 +229,13 @@ final class MqttController implements MqttCallbackExtended {
             options.setCleanSession(true);
             options.setConnectionTimeout(15);
             options.setKeepAliveInterval(30);
-            options.setHttpsHostnameVerificationEnabled(true);
+            if (tls != null) {
+                // The name is checked by MqttTls's verifier, which also accepts the trusted
+                // certificate; Paho calls it only with its own check off.
+                options.setSocketFactory(tls.socketFactory);
+                options.setHttpsHostnameVerificationEnabled(false);
+                options.setSSLHostnameVerifier(tls.hostnameVerifier);
+            }
             options.setWill(topicPrefix + "availability",
                     "offline".getBytes(StandardCharsets.UTF_8), 1, true);
             if (!config.mqttUsername.isEmpty()) {
@@ -331,12 +381,24 @@ final class MqttController implements MqttCallbackExtended {
                 if (discoveryStale
                         || (names != null && !names.equals(announcedPlaylists))
                         || !sensorsKey(KioskRuntimeState.sensors(),
-                                KioskRuntimeState.automations()).equals(announcedSensors)) {
+                                KioskRuntimeState.automations()).equals(announcedSensors)
+                        || !camerasKey().equals(announcedCameras)) {
                     runDiscovery();
                 }
             });
             publish(topicPrefix + "state", state.toString(), 0, true);
         });
+    }
+
+    /** The pop-up cameras' names discovery last announced, one button each. */
+    private volatile String announcedCameras = null;
+
+    private String camerasKey() {
+        StringBuilder key = new StringBuilder();
+        for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+            key.append(camera.name).append(',');
+        }
+        return key.toString();
     }
 
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
@@ -637,7 +699,7 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * A fleet alert on the plain topic the person set (block 15), on this panel's broker: not
+     * A fleet alert on the plain topic the person set, on this panel's broker: not
      * retained, so a subscriber that comes later is not told of a state long gone. False when
      * not connected.
      */
@@ -872,6 +934,10 @@ final class MqttController implements MqttCallbackExtended {
                     "{{ value_json.app_version }}");
             appVersionSensor.put("entity_category", "diagnostic");
             components.put("app_version", appVersionSensor);
+            // App lock: the app shown instead of the page, "Off" when there is none.
+            components.put("app_lock", sensor("App lock", null, null, null,
+                    "{{ value_json.app_lock.app if value_json.app_lock is defined"
+                            + " and value_json.app_lock.app else 'Off' }}"));
 
             // Controls, not just readings. Discovery published sensors only, so a Home Assistant
             // user could see the panel but not touch it without hand-writing mqtt.publish calls in
@@ -937,23 +1003,29 @@ final class MqttController implements MqttCallbackExtended {
                     "display.off_method",
                     displayOffOptions,
                     "{{ value_json.config.display_off_method }}"));
-            // The switch reflects the operator's flag, not whether a socket is bound: with no
-            // admin password stored, "on" is an honest description of intent while the bind
-            // stays refused, and the runtime state carries the difference.
-            // The screensaver (2026-09-09): the mode as a select, and one switch that is both its
-            // state and its control, start on ON and stop on OFF. No separate start/stop buttons:
-            // they would be the switch twice over, and every entity is a row in somebody's device
-            // page. The idle times are settings, set from the web admin or the tablet.
             // The status light as a Home Assistant light: on or off, a colour and a brightness,
             // through the template schema so its commands are the panel's own light.on and
             // light.off. Home Assistant's brightness is 0 to 255, the panel's 1 to 100.
             components.put("status_light", statusLight());
+            // A pop-up on the panel from Home Assistant's notify.send_message.
+            JSONObject popup = new JSONObject();
+            popup.put("p", "notify");
+            popup.put("name", "Pop-up");
+            popup.put("unique_id", uniqueId("Pop-up"));
+            popup.put("command_topic", topicPrefix + "command");
+            popup.put("command_template",
+                    "{\"command\":\"panel.notify\",\"args\":{\"value\":{{ value | tojson }}}}");
+            components.put("pop_up", popup);
             org.json.JSONArray screensaverModes = new org.json.JSONArray();
             screensaverModes.put(ScreensaverPolicy.OFF);
             screensaverModes.put(ScreensaverPolicy.DIM);
             screensaverModes.put(ScreensaverPolicy.FILM);
             screensaverModes.put(ScreensaverPolicy.URL);
             screensaverModes.put(ScreensaverPolicy.PICTURES);
+            // Ambient: the mode as a select, and one switch that is both its state and its
+            // control, start on ON and stop on OFF. No separate start/stop buttons: they would be
+            // the switch twice over, and every entity is a row in somebody's device page. The
+            // times are numbers of their own.
             components.put("ambient_mode", select(
                     "Ambient mode",
                     "ambient.mode",
@@ -980,8 +1052,8 @@ final class MqttController implements MqttCallbackExtended {
                     "{\"command\":\"ambient.start\"}",
                     "{\"command\":\"ambient.stop\"}",
                     screensaverBooleanTemplate("active")));
-            // Every screensaver setting, not a chosen few: "everything must be controllable
-            // remotely" (Juri, 2026-09-09). They are all commands as well, so a caller that
+            // Every Ambient setting, not a chosen few: "everything must be controllable
+            // remotely" (2026-09-09). They are all commands as well, so a caller that
             // would rather publish a command than use an entity can.
             components.put("ambient_idle", number(
                     "Ambient idle time",
@@ -1140,11 +1212,21 @@ final class MqttController implements MqttCallbackExtended {
                 clearPicture();
             }
             // The screen as the wall shows it: a button that asks for a picture and an image
-            // entity that shows the last one; the admin password is the gate, as Fully and
-            // FreeKiosk have it, so both are announced whenever MQTT runs. Key, id and name say
+            // entity that shows the last one, retained on the screenshot topic; on MQTT the
+            // broker's credentials are the gate, as for every command, so both are announced
+            // whenever MQTT runs. Key, id and name say
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
+            // One button per pop-up camera, "Show <name>"; a doorbell's automation in
+            // Home Assistant sends camera.trigger itself.
+            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+                String name = "Show " + camera.name;
+                JSONObject show = button(name, new JSONObject().put("command", "camera.show")
+                        .put("args", new JSONObject().put("value", camera.name)).toString());
+                components.put(uniqueId(name).substring(config.deviceId.length() + 1)
+                        .replaceAll("[^a-z0-9_]", "_"), show);
+            }
             JSONObject screen = new JSONObject();
             screen.put("p", "image");
             screen.put("name", "Screenshot");
@@ -1174,6 +1256,10 @@ final class MqttController implements MqttCallbackExtended {
                 components.put("automation_" + id, ruleSwitch);
             }
             announcedSensors = sensorsKey(sensorBlock, rules);
+            announcedCameras = camerasKey();
+            // The Web admin switch reflects the operator's flag, not whether a socket is bound:
+            // with no admin password stored, "on" is an honest description of intent while the
+            // bind stays refused, and the runtime state carries the difference.
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
@@ -1224,8 +1310,8 @@ final class MqttController implements MqttCallbackExtended {
             // entity a new build renamed or dropped), the way zigbee2mqtt does: what it announced
             // is what this process published and, after a restart or an update, the payload the
             // broker kept (readRetainedDiscovery). A new panel finds nothing and sends no removal
-            // at all, so Muralis starts on MQTT as if it were used for the first time (Juri,
-            // 2026-10-06). A removal that Home Assistant misses because it is offline at that
+            // at all, so Muralis starts on MQTT as if it were used for the first time
+            // (2026-10-06). A removal that Home Assistant misses because it is offline at that
             // moment leaves the entity unavailable until a person deletes it, which Tasmota,
             // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: Home
             // Assistant acts on an empty config only for a component it has discovered since it
@@ -1496,7 +1582,7 @@ final class MqttController implements MqttCallbackExtended {
         return box;
     }
 
-    /** A text box whose command takes {@code value}, as the screensaver's settings do. */
+    /** A text box whose command takes {@code value}, as Ambient's settings do. */
     private JSONObject valueText(String name, String command, String valueTemplate)
             throws JSONException {
         JSONObject box = text(name, command, valueTemplate);
