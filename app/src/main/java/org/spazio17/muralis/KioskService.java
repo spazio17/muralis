@@ -746,13 +746,23 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * The member endpoint, on every panel, whatever the web admin does. It needs nothing from the
-     * settings, so it starts once; a fleet key that could not be read yet (before the first unlock
-     * on a device whose Keystore waits for it) is tried again at the unlock.
+     * The member endpoint, on every panel, whatever the web admin does, on the member port. A
+     * fleet key that could not be read yet (before the first unlock on a device whose Keystore
+     * waits for it) is tried again at the unlock, and a port that was taken at every reload of
+     * the settings ({@link #restartControllers}).
      */
     private void startFleetServer() {
         if (fleetServer == null) {
             fleetServer = FleetServer.start(this);
+        }
+    }
+
+    /** Lets go of an old member port; {@link #restartControllers} starts the endpoint again. */
+    private void releaseMovedFleetServer(int memberPort) {
+        if (fleetServer != null && fleetServer.port() != memberPort) {
+            fleetServer.stop();
+            fleetServer = null;
+            Log.i(TAG, "Member port changed, member endpoint restarted");
         }
     }
 
@@ -829,6 +839,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             Log.i(TAG, "MQTT configuration changed, client restarted");
         }
 
+        // The old member port is let go before the web admin restarts, and the endpoint starts
+        // after it, so a web admin moving onto that port finds it free.
+        releaseMovedFleetServer(config.fleetPort);
         if (!httpNow.equals(httpInputs) || httpAdminServer == null) {
             if (httpAdminServer != null) {
                 httpAdminServer.stop();
@@ -838,6 +851,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             httpAdminServer.start();
             Log.i(TAG, "Web admin configuration changed, server restarted");
         }
+        startFleetServer();
     }
 
     private void stopControllers() {
@@ -1099,6 +1113,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             if (includeAdminDetail) {
                 applied.put("http_port", config.httpPort);
+                // The Fleet section's line: whether the member endpoint listens, and why not.
+                applied.put("fleet_port", config.fleetPort);
+                applied.put("fleet_listening", KioskRuntimeState.fleetListening());
+                applied.put("fleet_state", FleetServer.stateLine());
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());

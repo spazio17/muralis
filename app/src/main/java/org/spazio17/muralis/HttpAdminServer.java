@@ -50,7 +50,8 @@ final class HttpAdminServer {
      */
     private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
             new java.util.HashSet<>(java.util.Arrays.asList(
-                    "dashboard", "mqtt", "webadmin", "sequences", "panel", "certificate")));
+                    "dashboard", "mqtt", "webadmin", "fleet", "sequences", "panel",
+                    "certificate")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
 
     /**
@@ -1322,7 +1323,7 @@ final class HttpAdminServer {
                 // to save the admin into a bind failure. Saving the port it already serves on is
                 // not a conflict, the holder is us.
                 String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort,
-                        fresh.httpPort);
+                        fresh.httpPort, fresh.fleetPort);
                 if (portProblem != null) {
                     return "Not saved: " + portProblem + ".";
                 }
@@ -1342,6 +1343,29 @@ final class HttpAdminServer {
                     editor.httpAdminPassword(adminPassword);
                 }
                 editor.apply();
+                return null;
+            }
+            case "fleet": {
+                // The member port, by the web admin port's rules: a number, 1024-65535, never
+                // the web admin's port, and free when it changes (Juri, 2026-10-08).
+                String stale = staleFormRefusal(form, Integer.toString(fresh.fleetPort));
+                if (stale != null) {
+                    return stale;
+                }
+                Integer memberPort = parsePortDigits(form.get("fleet_port"), fresh.fleetPort);
+                if (memberPort == null) {
+                    return "Not saved: the member port must be a number.";
+                }
+                String portProblem = KioskCommandDispatcher.validateMemberPort(memberPort,
+                        fresh.fleetPort, fresh.httpPort);
+                if (portProblem != null) {
+                    return "Not saved: " + portProblem + ".";
+                }
+                if (memberPort != fresh.fleetPort && !SettingProbe.portFree(memberPort)) {
+                    return "Not saved: port " + memberPort
+                            + " is already in use by another service on this device.";
+                }
+                KioskConfig.edit(context).fleetPort(memberPort).apply();
                 return null;
             }
             // Named after a box that no longer exists, and kept anyway: it is the wire name
@@ -1504,7 +1528,12 @@ final class HttpAdminServer {
         SettingProbe.Verdict verdict;
         switch (kind) {
             case "http_port":
-                verdict = SettingProbe.adminPort(value, boundPort);
+                verdict = SettingProbe.adminPort(value, boundPort,
+                        KioskConfig.fleetPortOf(context));
+                break;
+            case "fleet_port":
+                verdict = SettingProbe.memberPort(value, KioskRuntimeState.fleetListening()
+                        ? KioskRuntimeState.fleetPort() : -1, boundPort);
                 break;
             case "dashboard_url":
                 verdict = SettingProbe.dashboardUrl(value);
@@ -1775,6 +1804,10 @@ final class HttpAdminServer {
                 + "<path d=\"M9.9 9.9L6.2 6.2M14.1 9.9l3.7-3.7M9.9 14.1l-3.7 3.7M14.1 14.1l3.7 3.7\"/>");
         paths.put("web", "<circle cx=\"12\" cy=\"12\" r=\"9\"/>"
                 + "<path d=\"M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18\"/>");
+        // Three panels that know each other, the panel's ic_fleet.
+        paths.put("fleet", "<circle cx=\"5\" cy=\"7\" r=\"2.5\"/><circle cx=\"19\" cy=\"7\" r=\"2.5\"/>"
+                + "<circle cx=\"12\" cy=\"18\" r=\"2.5\"/>"
+                + "<path d=\"M7.5 7h9M6.3 9.2l4.5 6.6M17.7 9.2l-4.5 6.6\"/>");
         paths.put("esc", "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/>"
                 + "<path d=\"M7 7h.01M17 7h.01M7 17h.01M17 17h.01\"/>");
         paths.put("disp", "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M2 12h2"
@@ -1865,6 +1898,8 @@ final class HttpAdminServer {
                 "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
                         + (config.webAdminEnabled ? "" : " · off"),
                 webAdminBody(config, notice, noticeSection)});
+        sections.add(new String[] {"fleet", "fleet", "Fleet", FleetServer.summaryOf(config.fleetPort),
+                fleetBody(config, notice, noticeSection)});
         sections.add(new String[] {"sequences", "esc", "Escape sequences",
                 sequencesSummary(config), sequencesBody(config, notice, noticeSection)});
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody()});
@@ -3283,6 +3318,19 @@ final class HttpAdminServer {
                 + field("number", "mqtt_port", "Broker port", Integer.toString(config.mqttPort))
                 + field("text", "mqtt_username", "Username", config.mqttUsername)
                 + field("password", "mqtt_password", "Password", "", "", BLANK_KEEPS)
+                + sectionFormEnd("Save");
+    }
+
+    /**
+     * The Fleet box: the member port (block 11a), saved by its own button like the web admin's
+     * port, and whether the member endpoint listens on it.
+     */
+    private String fleetBody(KioskConfig config, String notice, String noticeSection) {
+        return sectionFormStart("fleet", notice, noticeSection)
+                + baselineField(Integer.toString(config.fleetPort))
+                + field("number", "fleet_port", "Member port", Integer.toString(config.fleetPort))
+                + "<p class=\"hint" + (KioskRuntimeState.fleetListening() ? "" : " bad")
+                + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
                 + sectionFormEnd("Save");
     }
 

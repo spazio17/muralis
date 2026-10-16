@@ -117,6 +117,9 @@ follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
 // The look chosen on the panel: its radios and the page's own colours and rows follow.
 followLook('appearance_colour',cfg.appearance_colour,'data-palette');followLook('separators',cfg.separators,'data-separators');
+// The Fleet box's line: whether the member endpoint listens, in the panel's words.
+var fst=document.getElementById('fleet-state');
+if(fst&&cfg.fleet_state!=null){if(fst.textContent!==cfg.fleet_state){fst.textContent=cfg.fleet_state;}fst.classList.toggle('bad',!cfg.fleet_listening);}
 // The settings page's Appearance row says the same in words.
 var sap=document.getElementById('sum-appearance');
 if(sap&&cfg.appearance_summary!=null&&sap.textContent!==cfg.appearance_summary){sap.textContent=cfg.appearance_summary;}

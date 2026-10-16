@@ -83,6 +83,9 @@ final class KioskConfig {
     private static final String LAUNCHER_SEQUENCE = "launcher_sequence";
 
     static final int DEFAULT_HTTP_PORT = 8080;
+    /** The member endpoint's port until a person sets another (fleet design, 2026-09-24). */
+    static final int DEFAULT_FLEET_PORT = 8081;
+    private static final String FLEET_PORT = "fleet_port";
 
     /** Follow the accelerometer around all four ways up, until the operator fixes one. */
     static final String ORIENTATION_AUTO = "auto";
@@ -107,6 +110,8 @@ final class KioskConfig {
     String mqttUsername = "";
     String mqttPassword = "";
     int httpPort = DEFAULT_HTTP_PORT;
+    /** The member endpoint's port, a setting like the web admin's (Juri, 2026-10-08). */
+    int fleetPort = DEFAULT_FLEET_PORT;
     String httpAdminPassword = "";
     /**
      * Draws the live system-stats block over the dashboard. On by default because it exists to be
@@ -200,6 +205,7 @@ final class KioskConfig {
         String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
+        config.fleetPort = preferences.getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
@@ -304,6 +310,11 @@ final class KioskConfig {
 
         Editor httpPort(int value) {
             plain.putInt(HTTP_PORT, value);
+            return this;
+        }
+
+        Editor fleetPort(int value) {
+            plain.putInt(FLEET_PORT, value);
             return this;
         }
 
@@ -1229,6 +1240,18 @@ final class KioskConfig {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(DEVICE_ID, "").trim();
+    }
+
+    /** The member port alone, without load()'s decryption of every secret. */
+    static int fleetPortOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
+    }
+
+    /** The web admin's stored port alone, for the member endpoint's start. */
+    static int httpPortOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
     }
 
 

@@ -32,7 +32,8 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 /**
- * The member endpoint (fleet design, section 7): port 8081 on every panel, free, mutual TLS,
+ * The member endpoint (fleet design, section 7): the member port (8081 until a person sets
+ * another, {@link KioskConfig#fleetPortOf}) on every panel, free, mutual TLS,
  * independent of the web admin, which may be off. A caller is admitted only if the public key it
  * presents is one this panel trusts and has not revoked ({@link FleetTls}); nothing else
  * authenticates a fleet call, and plain HTTP is dropped, not redirected.
@@ -44,8 +45,6 @@ import javax.net.ssl.SSLSocketFactory;
  */
 final class FleetServer {
     private static final String TAG = "MuralisFleet";
-    /** Decided 2026-09-24; the web admin may not newly take it (KioskCommandDispatcher.validateAdminPort). */
-    static final int PORT = KioskCommandDispatcher.FLEET_PORT;
     private static final int WORKERS = 2;
     private static final int QUEUE = 4;
     /**
@@ -62,6 +61,7 @@ final class FleetServer {
     private final FleetIdentity identity;
     private final SSLSocketFactory tls;
     private final ServerSocket serverSocket;
+    private final int port;
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(WORKERS, WORKERS, 0L,
             TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(QUEUE));
     private final ScheduledExecutorService deadlines =
@@ -73,6 +73,7 @@ final class FleetServer {
         this.context = context.getApplicationContext();
         this.identity = identity;
         this.serverSocket = serverSocket;
+        this.port = serverSocket.getLocalPort();
         this.tls = FleetTls.context(identity.key, identity.certificate, this::admits)
                 .getSocketFactory();
     }
@@ -84,21 +85,40 @@ final class FleetServer {
     }
 
     /**
-     * Listening on {@link #PORT}, or null when the fleet key cannot be read yet or used, or the
-     * port is taken.
+     * Listening on the member port, or null when the fleet key cannot be read yet or used, or the
+     * port is taken. Either way the outcome is published for the Fleet section of both surfaces
+     * ({@link KioskRuntimeState#publishFleetState}).
      */
     static FleetServer start(Context context) {
-        FleetIdentity identity = FleetIdentity.load(context);
-        if (identity == null) {
+        int port = KioskConfig.fleetPortOf(context);
+        // A web admin that already holds this port keeps it, whether it is listening right now or
+        // not (switched off, waiting for the unlock): decided by the stored ports, never by which
+        // server happens to bind first.
+        if (port == KioskConfig.httpPortOf(context)) {
+            KioskRuntimeState.publishFleetState(false, port, "the web admin uses port " + port);
             return null;
         }
         ServerSocket socket;
         try {
             socket = new ServerSocket();
             socket.setReuseAddress(true);
-            socket.bind(new InetSocketAddress(PORT));
-        } catch (IOException taken) {
-            Log.e(TAG, "The member endpoint cannot listen on port " + PORT, taken);
+            socket.bind(new InetSocketAddress(port));
+        } catch (IOException | IllegalArgumentException taken) {
+            // IllegalArgumentException for a stored port no check let through: no endpoint, never
+            // a crash at every start.
+            Log.e(TAG, "The member endpoint cannot listen on port " + port, taken);
+            KioskRuntimeState.publishFleetState(false, port,
+                    "port " + port + " is in use on this device");
+            return null;
+        }
+        FleetIdentity identity = FleetIdentity.load(context);
+        if (identity == null) {
+            KioskRuntimeState.publishFleetState(false, port, "the fleet key cannot be read");
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+                // Closing a socket nothing has used yet.
+            }
             return null;
         }
         FleetServer server;
@@ -108,6 +128,7 @@ final class FleetServer {
             // A key TLS will not take must not crash the service at every start: no endpoint,
             // and the port let go.
             Log.e(TAG, "The member endpoint cannot use the fleet key", refused);
+            KioskRuntimeState.publishFleetState(false, port, "the fleet key cannot be used");
             try {
                 socket.close();
             } catch (IOException ignored) {
@@ -117,9 +138,28 @@ final class FleetServer {
         }
         Thread accept = new Thread(server::acceptLoop, "MuralisFleetAccept");
         accept.start();
-        Log.i(TAG, "Member endpoint listening on port " + PORT + ", fleet key "
+        Log.i(TAG, "Member endpoint listening on port " + port + ", fleet key "
                 + FleetTls.shortForm(identity.spki));
+        KioskRuntimeState.publishFleetState(true, port, "");
         return server;
+    }
+
+    /** The Fleet section's summary on both surfaces, stored values only like every summary. */
+    static String summaryOf(int memberPort) {
+        return "Port " + memberPort;
+    }
+
+    /** The line under the member port on both surfaces, worded once; the web page's poll copies it. */
+    static String stateLine() {
+        return KioskRuntimeState.fleetListening()
+                ? "Listening on port " + KioskRuntimeState.fleetPort()
+                : "Not listening: " + (KioskRuntimeState.fleetDownReason().isEmpty()
+                        ? "not started yet" : KioskRuntimeState.fleetDownReason());
+    }
+
+    /** The port this endpoint listens on. */
+    int port() {
+        return port;
     }
 
     void stop() {

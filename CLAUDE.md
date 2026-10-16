@@ -258,12 +258,18 @@ the playlist page was the case that set the rule.
   web admin's key so an uploaded browser certificate never changes who the panel is. The identity
   is the SHA-256 of the public key (`FleetTls.spkiOf`), the pin OkHttp and Android's network
   security config use, so a certificate made again over the same key changes nothing; a key that
-  cannot be read yet is never replaced. `FleetServer` listens on 8081
-  (`KioskCommandDispatcher.FLEET_PORT`, which the web admin may not take as a new port; a panel
-  already serving its web admin there keeps it, and its member endpoint stays off until the web
-  admin moves) on every panel, free,
-  whatever the web admin does, started with the controllers and again at the first unlock when
-  the key could not be read before. Mutual TLS with the client's certificate required:
+  cannot be read yet is never replaced. `FleetServer` listens on the member port on every panel,
+  free, whatever the web admin does, started with the controllers, again at the first unlock when
+  the key could not be read before, and again at every reload of the settings when it is down or
+  its port changed. **The member port is a setting like the web admin's** (block 11a, Juri
+  2026-10-08: no hardcoded port): `fleet_port`, 8081 by default, in a Fleet section of the
+  settings on both surfaces, saved with the connection fields on the panel and by the Fleet box's
+  Save on the web, by the web admin port's rules (`validateMemberPort`, the pre-check
+  `SettingProbe.memberPort`, free to bind when it changes) and **never the same as the web admin's
+  port**: each refuses the other's as a new choice, and a pair that already collides (a web admin
+  on 8081 before the member port existed) still saves unchanged, the web admin keeping the port
+  and the member endpoint off. Under the port both surfaces say whether the member endpoint
+  listens and why not (`FleetServer.stateLine`, `config.fleet_state`), worded once. Mutual TLS with the client's certificate required:
   `FleetTls` admits a peer by its key hash alone, in `fleet_trusted` and not in `fleet_revoked`
   (read at every handshake), exactly one certificate, no chain, dates or names checked, the way
   KDE Connect and Syncthing pin devices; the hash is judged again after the handshake, because a

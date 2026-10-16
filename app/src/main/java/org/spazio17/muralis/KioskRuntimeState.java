@@ -204,6 +204,32 @@ final class KioskRuntimeState {
         }
     }
 
+    private static volatile boolean fleetListening;
+    private static volatile int fleetPort;
+    private static volatile String fleetDownReason = "";
+
+    /**
+     * Whether the member endpoint listens, on which port, and why not; for the Fleet section of
+     * both surfaces, which say it rather than leave a dead member unexplained (review of #80).
+     */
+    static void publishFleetState(boolean listening, int port, String downReason) {
+        fleetListening = listening;
+        fleetPort = port;
+        fleetDownReason = listening || downReason == null ? "" : downReason;
+    }
+
+    static boolean fleetListening() {
+        return fleetListening;
+    }
+
+    static int fleetPort() {
+        return fleetPort;
+    }
+
+    static String fleetDownReason() {
+        return fleetDownReason;
+    }
+
     private static volatile boolean httpAdminSecure;
     private static volatile String httpAdminFingerprint = "";
     private static volatile String httpAdminCertificate = "";

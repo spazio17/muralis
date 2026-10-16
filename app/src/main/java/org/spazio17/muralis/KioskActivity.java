@@ -2321,14 +2321,14 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The seven connection fields joined on NUL (which none of them can contain, same trick as the
+     * The eight connection fields joined on NUL (which none of them can contain, same trick as the
      * service's controller fingerprints), so the Save button can tell whether any of them changed
      * on another surface while the screen sat open.
      */
     private static String connectionBaselineOf(KioskConfig config) {
         return config.dashboardUrl + '\u0000' + config.deviceId + '\u0000' + config.mqttHost
                 + '\u0000' + config.mqttPort + '\u0000' + config.mqttUsername + '\u0000'
-                + config.mqttPassword + '\u0000' + config.httpPort;
+                + config.mqttPassword + '\u0000' + config.httpPort + '\u0000' + config.fleetPort;
     }
 
     private void showConfiguration(KioskConfig config) {
@@ -2525,13 +2525,15 @@ public final class KioskActivity extends Activity {
                 checkBroker.run();
             }
         });
+        int memberPortNow = KioskConfig.fleetPortOf(this);
         httpPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(httpPortInput, theme);
             String typed = httpPortInput.getText().toString().trim();
             int bound = KioskRuntimeState.httpAdminListening()
                     ? KioskRuntimeState.httpAdminPort() : -1;
             if (!hasFocus && !typed.isEmpty()) {
-                runPrecheck(httpPortInput, theme, () -> SettingProbe.adminPort(typed, bound));
+                runPrecheck(httpPortInput, theme,
+                        () -> SettingProbe.adminPort(typed, bound, memberPortNow));
             }
         });
         // Rendered blank, never prefilled, same reasoning as the broker password above, and the
@@ -3099,6 +3101,33 @@ public final class KioskActivity extends Activity {
         aboutCard.addView(listRow(theme, "Version and device details", this::showAbout),
                 matchWrapClose());
 
+        // The fleet's own port on this panel (block 11a, Juri 2026-10-08: a setting like the web
+        // admin's, never the same port), saved with the other connection fields by the foot
+        // button, and whether the member endpoint listens on it, with the reason when it does not.
+        LinearLayout fleetCard = sectionBody(theme);
+        EditText memberPortInput = themedInput(theme, Integer.toString(config.fleetPort), false);
+        memberPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(fleetCard, theme, "Member port", memberPortInput);
+        TextView fleetState = new FlushText(this);
+        fleetState.setTextSize(13);
+        boolean fleetListening = KioskRuntimeState.fleetListening();
+        fleetState.setTextColor(fleetListening ? theme.subtext : theme.bad);
+        fleetState.setText(FleetServer.stateLine());
+        LinearLayout.LayoutParams fleetStateParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        fleetStateParams.topMargin = dp(10);
+        fleetCard.addView(fleetState, fleetStateParams);
+        int adminPortNow = config.httpPort;
+        memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
+            clearPrecheck(memberPortInput, theme);
+            String typed = memberPortInput.getText().toString().trim();
+            int bound = KioskRuntimeState.fleetListening() ? KioskRuntimeState.fleetPort() : -1;
+            if (!hasFocus && !typed.isEmpty()) {
+                runPrecheck(memberPortInput, theme,
+                        () -> SettingProbe.memberPort(typed, bound, adminPortNow));
+            }
+        });
+
         // One list of sections, each a glyph, its name and a line of what is stored, opening in
         // place, one at a time (Juri's drawing of 2026-09-23); from 840 dp the list stands at the
         // left and the open section at the right. Same order as the web page, which has one more
@@ -3110,6 +3139,8 @@ public final class KioskActivity extends Activity {
                 new Section(R.drawable.ic_mqtt, "MQTT", config.mqttHost.isEmpty()
                         ? "Not configured" : config.mqttHost + ":" + config.mqttPort, mqttCard),
                 new Section(R.drawable.ic_web, "Local web admin", webAdminSummary(config), httpCard),
+                new Section(R.drawable.ic_fleet, "Fleet", FleetServer.summaryOf(config.fleetPort),
+                        fleetCard),
                 new Section(R.drawable.ic_escape, "Escape sequences", sequencesSummary(config),
                         escapeCard),
                 new Section(R.drawable.ic_display, "Display", displaySummary(), displayCard),
@@ -3173,9 +3204,21 @@ public final class KioskActivity extends Activity {
                 return;
             }
             int adminPort = typedAdminPort;
+            Integer typedMemberPort = parsePortStrict(memberPortInput.getText().toString());
+            if (typedMemberPort == null) {
+                Toast.makeText(this, "Not saved: the member port must be a number "
+                        + "between 1 and 65535", Toast.LENGTH_LONG).show();
+                return;
+            }
+            int memberPort = typedMemberPort;
             KioskConfig storedNow = KioskConfig.load(this);
+            // Each checked against the other as typed here, so the two can never be saved equal.
             String portProblem = KioskCommandDispatcher.validateAdminPort(adminPort,
-                    storedNow.httpPort);
+                    storedNow.httpPort, memberPort);
+            if (portProblem == null) {
+                portProblem = KioskCommandDispatcher.validateMemberPort(memberPort,
+                        storedNow.fleetPort, adminPort);
+            }
             if (portProblem != null) {
                 Toast.makeText(this, "Not saved: " + portProblem + ".",
                         Toast.LENGTH_LONG).show();
@@ -3185,6 +3228,11 @@ public final class KioskActivity extends Activity {
                 // Same gate as the web save: the advisory border is a warning, this is the
                 // refusal, so a save cannot put the admin into a bind failure.
                 Toast.makeText(this, "Not saved: port " + adminPort + " is already in use on "
+                        + "this device", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (memberPort != storedNow.fleetPort && !SettingProbe.portFree(memberPort)) {
+                Toast.makeText(this, "Not saved: port " + memberPort + " is already in use on "
                         + "this device", Toast.LENGTH_LONG).show();
                 return;
             }
@@ -3203,7 +3251,8 @@ public final class KioskActivity extends Activity {
                     .mqttHost(brokerInput.getText().toString())
                     .mqttPort(typedBrokerPort)
                     .mqttUsername(usernameInput.getText().toString())
-                    .httpPort(adminPort);
+                    .httpPort(adminPort)
+                    .fleetPort(memberPort);
             String mqttPassword = passwordInput.getText().toString();
             if (!mqttPassword.isEmpty()) {
                 // The box renders blank and blank means "keep", exactly like the web admin's
@@ -3255,6 +3304,7 @@ public final class KioskActivity extends Activity {
             // The password deliberately does not ride across a rotation: the box renders blank by
             // design, and carrying a half-typed secret in the display model would re-render it.
             pending.httpPort = parsePort(httpPortInput.getText().toString(), pending.httpPort);
+            pending.fleetPort = parsePort(memberPortInput.getText().toString(), pending.fleetPort);
             showConfiguration(pending);
         };
     }
