@@ -191,6 +191,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 refreshSensors();
                 hub.poll();
             }
+            // The announcement says whether a join code is open (block 11e); refreshed when
+            // that changes, a no-op otherwise.
+            mainHandler.post(KioskService.this::refreshAnnouncement);
             telemetryHandler.postDelayed(this, STATS_SAMPLE_INTERVAL_MS);
         }
     };
@@ -1003,17 +1006,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * Announces this panel as {@code _muralis._tcp} on the local network (mDNS, Android's own
-     * service discovery) whenever its member endpoint listens, with no switch, as Matter devices
-     * and printers do, with its id, name, member port, key hash and the protocol version, so a
-     * console can find it. Announced again when any of them changes, and a minute after Android
+     * service discovery) while it is in a fleet or shows its Join code, with no switch, as Matter
+     * devices and printers do, with its id, name, member port, key hash, the protocol version
+     * and whether it is ready to be joined (with its code's first two digits as a tag), so a
+     * console can find it; a panel in no fleet with
+     * its Join code closed announces nothing. Announced again when any of them changes, and a minute after Android
      * reports a failed announcement (its discovery daemon can fail while the device boots);
      * withdrawn when the endpoint stops. Main thread.
      */
     private void refreshAnnouncement() {
         FleetServer server = fleetServer;
-        boolean on = server != null;
+        String state = joinState(this);
+        // Only for the fleet (Juri, 2026-10-14): a panel in none, its Join code closed, says
+        // nothing on the network.
+        boolean on = server != null && !"alone".equals(state);
         String id = KioskConfig.deviceIdOf(this);
-        String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() : "";
+        // The open code's first two digits, so a typed code is tried only on its panel.
+        String tag = FleetJoin.shared.tag(FleetServer.joinClock());
+        String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() + '\u0000'
+                + state + '\u0000' + tag : "";
         if (key.equals(announcedKey)) {
             return;
         }
@@ -1076,12 +1087,31 @@ public final class KioskService extends Service implements KioskCommandDispatche
             info.setAttribute("port", Integer.toString(server.port()));
             info.setAttribute("spki", server.spki());
             info.setAttribute("v", "1");
+            info.setAttribute("state", state);
+            if (!tag.isEmpty()) {
+                info.setAttribute("tag", tag);
+            }
             nsd.registerService(info, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, listener);
             announcement = listener;
             announcedKey = key;
         } catch (RuntimeException refused) {
+            // Not tried again until something in it changes: the two-second tick would
+            // otherwise repeat the refusal, and this warning, for as long as the panel runs.
+            announcedKey = key;
             Log.w(TAG, "The network announcement was refused", refused);
         }
+    }
+
+    /**
+     * What the announcement says of this panel (block 11e): "joining" while it shows a join
+     * code, "member" in a fleet, "alone" otherwise, which is not announced at all; a panel
+     * adopting by a typed code asks only the ones ready to be joined.
+     */
+    static String joinState(Context context) {
+        if (!KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "member";
+        }
+        return FleetJoin.shared.isOpen(FleetServer.joinClock()) ? "joining" : "alone";
     }
 
     private void stopAnnouncement() {

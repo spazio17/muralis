@@ -3574,6 +3574,11 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams fleetMemberParams = matchWrap();
         fleetMemberParams.topMargin = dp(14);
         fleetCard.addView(fleetMember, fleetMemberParams);
+        // Add by its code (block 11e): for a panel without a camera, or a QR out of its reach.
+        Button fleetCodeButton = textButton(theme, "Add by code");
+        fleetCodeButton.setOnClickListener(view -> showAddByCode());
+        fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening());
+        fleetCard.addView(fittingButtonRow(fleetCodeButton), matchWrapClose());
         fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetLeaveButton, fleetAddButton),
                 matchWrapClose());
         // Whether this panel follows what the whole fleet shares, the groups it is in, and the
@@ -7379,14 +7384,7 @@ public final class KioskActivity extends Activity {
 
     /** A new fleet's id: random, so two fleets founded apart never share one. */
     private static String newFleetId() {
-        byte[] bytes = new byte[8];
-        new java.security.SecureRandom().nextBytes(bytes);
-        StringBuilder id = new StringBuilder("fleet-");
-        for (byte b : bytes) {
-            id.append(Character.forDigit((b >> 4) & 0xF, 16))
-                    .append(Character.forDigit(b & 0xF, 16));
-        }
-        return id.toString();
+        return FleetServer.newFleetId();
     }
 
     /**
@@ -7397,93 +7395,94 @@ public final class KioskActivity extends Activity {
     private void addPanel(FleetJoin.Invitation invitation, String fleetId, String fleetName,
             String name, View form, java.util.function.Consumer<String> refused) {
         new Thread(() -> {
-            String problem;
-            problem = FleetServer.addRefusal(this);
-            if (problem != null) {
-                String reason = problem;
-                mainHandler.post(() -> refused.accept(reason));
+            FleetServer.Adopted adopted = FleetServer.adopt(this, invitation, fleetId, fleetName,
+                    name);
+            if (adopted.refusal != null) {
+                mainHandler.post(() -> refused.accept(adopted.refusal));
                 return;
             }
-            try {
-                org.json.JSONObject request = new org.json.JSONObject()
-                        .put("code", invitation.code)
-                        .put("fleet", new org.json.JSONObject().put("id", fleetId)
-                                .put("name", fleetName));
-                FleetServer.Reply joined = FleetServer.call(this, invitation.address,
-                        invitation.port, invitation.spki, "POST", "/fleet/join", request);
-                if (joined.status != 200) {
-                    problem = joined.reason();
-                } else {
-                    // A panel at its welcome screen asked for the way out: this panel's
-                    // combinations and PIN, once, at setup (the Esper idea, 2026-10-13), sent
-                    // only now that it is a member and asked, never with the code alone.
-                    if (joined.body.optBoolean("needs_setup", false)) {
-                        KioskConfig own = KioskConfig.load(this);
-                        org.json.JSONObject setup = new org.json.JSONObject()
-                                .put("settings_sequence", own.settingsSequence)
-                                .put("launcher_sequence", own.launcherSequence);
-                        String pinHash = KioskConfig.escapePinHash(this);
-                        if (pinHash != null) {
-                            setup.put("escape_pin_hash", pinHash);
-                        }
-                        FleetServer.Reply given = FleetServer.call(this, invitation.address,
-                                invitation.port, invitation.spki, "POST", "/fleet/setup", setup);
-                        Log.i(TAG, given.status == 200 ? "Gave the new panel the combinations"
-                                : "The new panel did not take the combinations: " + given.reason());
-                    }
-                    java.util.Map<String, Object> member = new java.util.LinkedHashMap<>();
-                    // The id from the QR, checked when it was read; the reply's is not checked.
-                    member.put(FleetDocument.ID, invitation.id);
-                    member.put(FleetDocument.NAME, name);
-                    member.put(FleetDocument.SPKI, invitation.spki);
-                    member.put(FleetDocument.MANAGER, true);
-                    member.put("addresses",
-                            java.util.Collections.singletonList(invitation.address));
-                    member.put("port", (long) invitation.port);
-                    // Added whatever the delivery says: the other panel already took this one's
-                    // key, and the fleet document now lists it.
-                    String unconfirmed = FleetServer.addMember(this, fleetId, fleetName, member);
-                    String check = unconfirmed;
-                    Log.i(TAG, "Added " + name + " (" + FleetTls.shortForm(invitation.spki)
-                            + ") to the fleet " + fleetName + (check == null ? ", confirmed"
-                            : ", not confirmed: " + check));
-                    mainHandler.post(() -> {
-                        if (form.isAttachedToWindow()) {
-                            showAddPanelResult(name + " joined the fleet " + fleetName + "."
-                                    + (check == null ? ""
-                                    : " It did not confirm afterwards: " + check + "."));
-                        }
-                    });
-                    return;
+            mainHandler.post(() -> {
+                if (form.isAttachedToWindow()) {
+                    showAddPanelResult(name + " joined the fleet " + fleetName + "."
+                            + (adopted.unconfirmed == null ? ""
+                            : " It did not confirm afterwards: " + adopted.unconfirmed + "."));
                 }
-            } catch (javax.net.ssl.SSLException refusedKey) {
-                // The other panel let no stranger in: its code is no longer open, or the QR was
-                // another panel's (its key did not match).
-                problem = "the other panel did not let this one in; its code may have expired or"
-                        + " been closed. Make a new code there and scan it again";
-            } catch (java.io.IOException failed) {
-                problem = plainNetworkReason(failed);
-            } catch (org.json.JSONException impossible) {
-                problem = "the request could not be made";
-            }
-            String reason = problem;
-            Log.w(TAG, "Adding " + name + " refused: " + reason);
-            mainHandler.post(() -> refused.accept(reason));
+            });
         }, "MuralisAddPanel").start();
     }
 
-    /** A failed call to another panel, in words for the person at this one. */
-    private static String plainNetworkReason(java.io.IOException failed) {
-        if (failed instanceof java.net.SocketTimeoutException) {
-            return "the other panel did not answer in time";
+    /**
+     * Add a panel by the code under its Join QR (block 11e): the code, and the new fleet's name
+     * when this panel founds one; the panels announced as ready to be joined are asked for 30
+     * seconds, and the one that takes the code is added.
+     */
+    private void showAddByCode() {
+        currentScreen = this::showAddByCode;
+        LinearLayout page = subPage(addPanelTitle(), this::showSettings);
+        KioskTheme theme = currentTheme();
+        LinearLayout box = card(theme, null);
+        boolean founding = KioskConfig.fleetIdOf(this).isEmpty();
+        String suggested = "Muralis-" + (1000 + new java.security.SecureRandom().nextInt(9000));
+        String foundingId = newFleetId();
+        EditText codeInput = themedInput(theme, "", false);
+        codeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(box, theme, "Code under the other panel's Join QR", codeInput);
+        EditText fleetName = proseInput(theme, "");
+        fleetName.setHint(suggested);
+        if (founding) {
+            addField(box, theme, "Name of the new fleet", fleetName);
         }
-        if (failed instanceof java.net.ConnectException
-                || failed instanceof java.net.NoRouteToHostException
-                || failed instanceof java.net.UnknownHostException) {
-            return "the other panel could not be reached; both must be on networks that reach"
-                    + " each other";
-        }
-        return "the connection to the other panel broke off";
+        TextView state = new FlushText(this);
+        state.setTextSize(14);
+        state.setTextColor(theme.subtext);
+        box.addView(state, matchWrap());
+        Button cancel = textButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> showSettings());
+        Button add = primaryButton(theme, "Add");
+        add.setOnClickListener(view -> {
+            String joined = KioskConfig.fleetIdOf(this);
+            String fleet = joined.isEmpty() ? fleetName.getText().toString().trim()
+                    : KioskConfig.fleetNameOf(this);
+            if (fleet.isEmpty()) {
+                fleet = suggested;
+            }
+            String invalid = FleetJoin.validateName("the fleet name", fleet);
+            if (invalid != null) {
+                state.setText("Not added: " + invalid + ".");
+                state.setTextColor(theme.bad);
+                return;
+            }
+            add.setEnabled(false);
+            state.setTextColor(theme.subtext);
+            state.setText("Looking for the panel on this network, up to 30 seconds...");
+            String code = codeInput.getText().toString();
+            String fleetId = joined.isEmpty() ? foundingId : joined;
+            String fleetLabel = fleet;
+            new Thread(() -> {
+                String[] added = new String[1];
+                FleetServer.Adopted adopted = FleetServer.adoptByCode(this, code, fleetId,
+                        fleetLabel, added);
+                mainHandler.post(() -> {
+                    if (adopted.refusal == null) {
+                        if (page.isAttachedToWindow()) {
+                            showAddPanelResult(added[0] + " joined the fleet " + fleetLabel + "."
+                                    + (adopted.unconfirmed == null ? "" : " It did not confirm"
+                                    + " afterwards: " + adopted.unconfirmed + "."));
+                        }
+                        return;
+                    }
+                    add.setEnabled(true);
+                    state.setTextColor(theme.bad);
+                    state.setText("Not added: " + adopted.refusal + ".");
+                });
+            }, "MuralisAddByCode").start();
+        });
+        box.addView(buttonRow(cancel, add), matchWrapClose());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, matchWrap());
+        page.addView(column, singlePanelParams());
+        setContentView(scrollPage(theme, page));
     }
 
     /** What Add a panel came to, with Add another and Done. */

@@ -55,9 +55,12 @@ on purpose.
   a call to an address (a charger's smart plug at 20 and 80 percent needs nothing else).
 - **Fleet (being built).** Panels on one network will trust each other by their own keys, and any
   panel's web admin will manage all of them. No server, no cloud. So far each panel has its fleet
-  key and a member endpoint, announces itself on the local network (mDNS), joins a fleet with a
-  single-use code shown on its Join screen, or leaves it, and creates a fleet or adds another
-  panel by reading that code with its camera; every member holds the fleet's signed list of
+  key and a member endpoint, announces itself on the local network (mDNS) while it is in a fleet
+  or shows its Join code, joins a fleet with a single-use code shown on its Join screen (proven
+  by both sides with SPAKE2, never sent), or
+  leaves it, and creates a fleet or adds another
+  panel by reading that code with its camera, or by typing it on a device with none (the panels
+  announce whether they are ready to be joined); every member holds the fleet's signed list of
   panels, the members tell each other every few minutes that they are there and which
   version they hold, so one that fell behind fetches the list, and sections of settings (the
   dashboard, MQTT, the web admin, the display, Ambient) can be shared in a group of
@@ -119,7 +122,7 @@ on purpose.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
   password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
   endpoint is the one exception: it listens on every panel and admits only keys the panel trusts,
-  plus, while a person keeps a join code open, an unknown key on the join route alone, and a
+  plus, while a person keeps a join code open, an unknown key on the join routes alone, and a
   removed key on the check-in route alone, to be told it was removed.
   Request sizes are bounded. A refusal is always answered with a reason (the one silence is an
   empty MQTT payload, which is how a retained command is cleared), and a command never claims a

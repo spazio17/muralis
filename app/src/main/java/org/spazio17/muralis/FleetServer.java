@@ -39,8 +39,8 @@ import javax.net.ssl.SSLSocketFactory;
  * authenticates a fleet call, and plain HTTP is dropped, not redirected.
  *
  * <p>It answers {@code GET /fleet} (this panel's id, its fleet key and the fleet it is in),
- * {@code POST /fleet/join} (the one route an unknown key reaches, while a join code is open:
- * {@link FleetJoin}), {@code POST /fleet/leave}, {@code GET /fleet/screenshot} (this panel's
+ * {@code POST /fleet/exchange} and {@code POST /fleet/join} (the two routes an unknown key
+ * reaches, while a join code is open: {@link FleetJoin}), {@code POST /fleet/leave}, {@code GET /fleet/screenshot} (this panel's
  * screen as a JPEG, for the Fleet page's thumbnails) and {@code POST /fleet/identify} (the
  * panel's name shown and said on it). One request per connection, small and bounded: a fleet
  * call is a few hundred bytes between panels, never a browser's burst, the picture being the
@@ -192,6 +192,272 @@ final class FleetServer {
                 && FleetJoin.shared.code(now) == null) {
             FleetJoin.shared.open(now);
         }
+    }
+
+    /** What adopting a panel came to: a refusal, or added with perhaps no confirmation. */
+    static final class Adopted {
+        final String refusal;
+        final String unconfirmed;
+
+        Adopted(String refusal, String unconfirmed) {
+            this.refusal = refusal;
+            this.unconfirmed = unconfirmed;
+        }
+    }
+
+    /**
+     * Adds another panel to this one's fleet (founding it when this panel has none): the code
+     * to its join route, pinned to the key it showed, then this panel's combinations when it
+     * asks at its welcome screen, then the member in the fleet's list. The camera's Add a panel
+     * and the typed code (block 11e) both end here. Off the main thread.
+     */
+    static Adopted adopt(Context context, FleetJoin.Invitation invitation, String fleetId,
+            String fleetName, String name) {
+        String problem = addRefusal(context);
+        if (problem != null) {
+            return new Adopted(problem, null);
+        }
+        FleetIdentity self = FleetIdentity.load(context);
+        if (self == null) {
+            return new Adopted("this panel's fleet key is not ready yet; try again in a moment",
+                    null);
+        }
+        try {
+            // The code proven, never sent (Spake2): a device that only claims to be the panel
+            // learns nothing, and is not the panel this code belongs to.
+            Spake2 exchange = new Spake2(true, invitation.code, new java.security.SecureRandom());
+            Reply answered = call(context, invitation.address, invitation.port, invitation.spki,
+                    "POST", "/fleet/exchange",
+                    new org.json.JSONObject().put("share", exchange.share()));
+            if (answered.status != 200) {
+                return new Adopted(answered.reason(), null);
+            }
+            Spake2.Confirmations confirmations = exchange.finish(
+                    answered.body.optString("share", ""), self.spki, invitation.spki);
+            if (confirmations == null || !Spake2.matches(confirmations.panel,
+                    answered.body.optString("confirmation", ""))) {
+                return new Adopted(OTHER_CODE, null);
+            }
+            org.json.JSONObject request = new org.json.JSONObject()
+                    .put("confirmation", Spake2.hex(confirmations.adopter))
+                    .put("fleet", new org.json.JSONObject().put("id", fleetId)
+                            .put("name", fleetName));
+            Reply joined = call(context, invitation.address, invitation.port, invitation.spki,
+                    "POST", "/fleet/join", request);
+            if (joined.status != 200) {
+                return new Adopted(joined.reason(), null);
+            }
+            // A panel at its welcome screen asked for the way out: this panel's combinations
+            // and PIN, once, at setup (the Esper idea, 2026-10-13), sent only now that it is a
+            // member and asked, never with the code alone.
+            if (joined.body.optBoolean("needs_setup", false)) {
+                KioskConfig own = KioskConfig.load(context);
+                org.json.JSONObject setup = new org.json.JSONObject()
+                        .put("settings_sequence", own.settingsSequence)
+                        .put("launcher_sequence", own.launcherSequence);
+                String pinHash = KioskConfig.escapePinHash(context);
+                if (pinHash != null) {
+                    setup.put("escape_pin_hash", pinHash);
+                }
+                Reply given = call(context, invitation.address, invitation.port,
+                        invitation.spki, "POST", "/fleet/setup", setup);
+                Log.i(TAG, given.status == 200 ? "Gave the new panel the combinations"
+                        : "The new panel did not take the combinations: " + given.reason());
+            }
+            java.util.Map<String, Object> member = new java.util.LinkedHashMap<>();
+            // The id the invitation carried, checked when it was read; the reply's is not.
+            member.put(FleetDocument.ID, invitation.id);
+            member.put(FleetDocument.NAME, name);
+            member.put(FleetDocument.SPKI, invitation.spki);
+            member.put(FleetDocument.MANAGER, true);
+            member.put("addresses", java.util.Collections.singletonList(invitation.address));
+            member.put("port", (long) invitation.port);
+            // Added whatever the delivery says: the other panel already took this one's key,
+            // and the fleet document now lists it.
+            String unconfirmed = addMember(context, fleetId, fleetName, member);
+            Log.i(TAG, "Added " + name + " (" + FleetTls.shortForm(invitation.spki)
+                    + ") to the fleet " + fleetName + (unconfirmed == null ? ", confirmed"
+                    : ", not confirmed: " + unconfirmed));
+            return new Adopted(null, unconfirmed);
+        } catch (javax.net.ssl.SSLException refusedKey) {
+            // The other panel let no stranger in: its code is no longer open, or the key was
+            // another panel's.
+            problem = "the other panel did not let this one in; its code may have expired or"
+                    + " been closed. Make a new code there and try again";
+        } catch (java.io.IOException failed) {
+            problem = plainNetworkReason(failed);
+        } catch (org.json.JSONException impossible) {
+            problem = "the request could not be made";
+        }
+        Log.w(TAG, "Adding " + name + " refused: " + problem);
+        return new Adopted(problem, null);
+    }
+
+    /** A failed call to another panel, in words for the person at this one. */
+    static String plainNetworkReason(java.io.IOException failed) {
+        if (failed instanceof java.net.SocketTimeoutException) {
+            return "the other panel did not answer in time";
+        }
+        if (failed instanceof java.net.ConnectException
+                || failed instanceof java.net.NoRouteToHostException
+                || failed instanceof java.net.UnknownHostException) {
+            return "the other panel could not be reached; both must be on networks that reach"
+                    + " each other";
+        }
+        return "the connection to the other panel broke off";
+    }
+
+    /** A new fleet's id, for the panel that founds one by adding the first other panel. */
+    static String newFleetId() {
+        byte[] bytes = new byte[8];
+        new java.security.SecureRandom().nextBytes(bytes);
+        StringBuilder id = new StringBuilder("fleet-");
+        for (byte b : bytes) {
+            id.append(Character.forDigit((b >> 4) & 0xF, 16))
+                    .append(Character.forDigit(b & 0xF, 16));
+        }
+        return id.toString();
+    }
+
+    /** A panel that proved a different code than the one typed or read. */
+    private static final String OTHER_CODE = "that panel shows another code";
+
+    /** How long a typed code looks for its panel on the network (Juri, 2026-10-14: 30 s). */
+    static final long CODE_SEARCH_MS = 30_000L;
+
+    /**
+     * Adopts the panel that shows {@code code}, for a device without a camera (block 11e): the
+     * panels announced on this network as ready to be joined with the code's first two digits
+     * as their tag are asked, each once, pinned to the key their announcement carries, until one
+     * proves the same code or the time runs out. The code is what proves the person sees that
+     * panel, and it never travels (Spake2). Blocks for up to {@link #CODE_SEARCH_MS};
+     * off the main thread. Returns the panel's id as the name it was added with in
+     * {@code added[0]}.
+     */
+    static Adopted adoptByCode(Context context, String code, String fleetId, String fleetName,
+            String[] added) {
+        String digits = code == null ? "" : code.replaceAll("\\s", "");
+        if (!digits.matches("\\d{8}")) {
+            return new Adopted("the code is the eight digits under the panel's Join QR", null);
+        }
+        android.net.nsd.NsdManager nsd =
+                context.getApplicationContext().getSystemService(android.net.nsd.NsdManager.class);
+        if (nsd == null) {
+            return new Adopted("this device cannot look for panels on the network", null);
+        }
+        java.util.concurrent.LinkedBlockingQueue<android.net.nsd.NsdServiceInfo> found =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        android.net.nsd.NsdManager.DiscoveryListener listener =
+                new android.net.nsd.NsdManager.DiscoveryListener() {
+                    @Override public void onStartDiscoveryFailed(String type, int error) { }
+                    @Override public void onStopDiscoveryFailed(String type, int error) { }
+                    @Override public void onDiscoveryStarted(String type) { }
+                    @Override public void onDiscoveryStopped(String type) { }
+                    @Override public void onServiceLost(android.net.nsd.NsdServiceInfo info) { }
+
+                    @Override
+                    public void onServiceFound(android.net.nsd.NsdServiceInfo info) {
+                        found.add(info);
+                    }
+                };
+        String self = KioskConfig.deviceIdOf(context);
+        java.util.Set<String> tried = new java.util.HashSet<>();
+        String lastProblem = null;
+        long deadline = android.os.SystemClock.elapsedRealtime() + CODE_SEARCH_MS;
+        try {
+            nsd.discoverServices("_muralis._tcp", android.net.nsd.NsdManager.PROTOCOL_DNS_SD,
+                    listener);
+            while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                android.net.nsd.NsdServiceInfo seen = found.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (seen == null || !tried.add(seen.getServiceName())) {
+                    continue;
+                }
+                android.net.nsd.NsdServiceInfo resolved = resolve(nsd, seen);
+                if (resolved == null || resolved.getHost() == null) {
+                    // Android 13 and older resolve one service at a time and refuse a second
+                    // while the first runs, and nothing reports the service again: asked again
+                    // after a pause, while the time lasts.
+                    tried.remove(seen.getServiceName());
+                    Thread.sleep(500);
+                    found.add(seen);
+                    continue;
+                }
+                java.util.Map<String, byte[]> txt = resolved.getAttributes();
+                String id = text(txt, "id");
+                String spki = text(txt, "spki");
+                if (id.isEmpty() || spki.isEmpty() || id.equals(self)) {
+                    continue;
+                }
+                if (!"joining".equals(text(txt, "state"))
+                        || !digits.substring(0, 2).equals(text(txt, "tag"))) {
+                    // Not showing this code yet: when it opens one it announces itself again,
+                    // and is asked then.
+                    tried.remove(seen.getServiceName());
+                    continue;
+                }
+                String address = resolved.getHost().getHostAddress();
+                FleetJoin.Invitation invitation = new FleetJoin.Invitation(id, address,
+                        resolved.getPort(), spki, digits);
+                Adopted adopted = adopt(context, invitation, fleetId, fleetName, id);
+                if (adopted.refusal == null) {
+                    added[0] = id;
+                    return adopted;
+                }
+                lastProblem = adopted.refusal;
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Looking for panels on the network failed", refused);
+        } finally {
+            try {
+                nsd.stopServiceDiscovery(listener);
+            } catch (RuntimeException alreadyStopped) {
+                Log.d(TAG, "Discovery already stopped");
+            }
+        }
+        // A panel whose tag matched but which proved another code says more than the search.
+        return new Adopted(lastProblem != null ? lastProblem
+                + (lastProblem.equals(OTHER_CODE) ? "; check the numbers" : "")
+                : "no panel answered with that code in time: check that it shows its Join code"
+                + " and is on this network", null);
+    }
+
+    private static String text(java.util.Map<String, byte[]> txt, String key) {
+        byte[] value = txt == null ? null : txt.get(key);
+        return value == null ? "" : new String(value, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** One service resolved, or null within five seconds; Android resolves one at a time. */
+    private static android.net.nsd.NsdServiceInfo resolve(android.net.nsd.NsdManager nsd,
+            android.net.nsd.NsdServiceInfo info) throws InterruptedException {
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        android.net.nsd.NsdServiceInfo[] out = new android.net.nsd.NsdServiceInfo[1];
+        android.net.nsd.NsdManager.ResolveListener listener =
+                new android.net.nsd.NsdManager.ResolveListener() {
+            @Override
+            public void onResolveFailed(android.net.nsd.NsdServiceInfo failed, int error) {
+                done.countDown();
+            }
+
+            @Override
+            public void onServiceResolved(android.net.nsd.NsdServiceInfo resolved) {
+                out[0] = resolved;
+                done.countDown();
+            }
+        };
+        nsd.resolveService(info, listener);
+        if (!done.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                && android.os.Build.VERSION.SDK_INT >= 34) {
+            // A resolve left running holds the slot the next one needs; Android 14 can stop it,
+            // older ones end it themselves and the panel is asked again after a pause.
+            try {
+                nsd.stopServiceResolution(listener);
+            } catch (RuntimeException alreadyEnded) {
+                Log.d(TAG, "The resolve had already ended");
+            }
+        }
+        return out[0];
     }
 
     /** The Fleet section's membership line on both surfaces, with the other panels listed. */
@@ -533,7 +799,8 @@ final class FleetServer {
                 respond(output, 400, error("not an HTTP/1.1 request"));
                 return;
             }
-            boolean joinRoute = "/fleet/join".equals(parts[1]);
+            boolean joinRoute = "/fleet/join".equals(parts[1])
+                    || "/fleet/exchange".equals(parts[1]);
             // A removed panel's heartbeat is answered with the fact, so it can say so on its
             // screen and the person taps Leave there; it gets nothing else.
             if ("/fleet/checkin".equals(parts[1])
@@ -578,7 +845,9 @@ final class FleetServer {
                     respond(output, 405, error("only GET"));
                 }
             } else if (joinRoute) {
-                if ("POST".equals(parts[0])) {
+                if ("POST".equals(parts[0]) && "/fleet/exchange".equals(parts[1])) {
+                    exchange(caller, body, output);
+                } else if ("POST".equals(parts[0])) {
                     join(caller, body, output);
                 } else {
                     respond(output, 405, error("only POST"));
@@ -666,11 +935,43 @@ final class FleetServer {
     }
 
     /**
-     * {@code POST /fleet/join} with {@code {"code": "12345678", "fleet": {"id", "name"}}}: the
-     * caller, whose key this panel does not know yet, proves with the code on this panel's Join
-     * screen that a person here agreed, and becomes the first manager this panel trusts. A panel
-     * already in a fleet refuses, naming it. The code is checked last, so a malformed request
-     * never costs one of the five tries.
+     * {@code POST /fleet/exchange} with {@code {"share": "<hex>"}}: the first half of proving the
+     * code on this panel's Join screen (Spake2), answered with this panel's share and its
+     * confirmation, which shows the caller this panel holds the same code. Each exchange is one
+     * of the five tries until a join confirms it.
+     */
+    private void exchange(String caller, byte[] body, OutputStream output) throws IOException {
+        if (!KioskConfig.fleetIdOf(context).isEmpty()) {
+            respond(output, 409, error("this panel is already in the fleet "
+                    + KioskConfig.fleetNameOf(context) + "; it must leave that fleet first"));
+            return;
+        }
+        JSONObject request;
+        try {
+            request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException notJson) {
+            respond(output, 400, error("the body must be a JSON object"));
+            return;
+        }
+        FleetJoin.Answer answer = FleetJoin.shared.exchange(request.optString("share", ""),
+                caller, identity.spki, joinClock());
+        if (answer.refused == null) {
+            try {
+                respond(output, 200, new JSONObject().put("share", answer.share)
+                        .put("confirmation", answer.confirmation));
+            } catch (JSONException impossible) {
+                throw new IllegalStateException(impossible);
+            }
+            return;
+        }
+        joinRefused(answer.refused, caller, output);
+    }
+
+    /**
+     * {@code POST /fleet/join} with {@code {"confirmation": "<hex>", "fleet": {"id", "name"}}}:
+     * the caller, whose key this panel does not know yet, finishes proving the code on this
+     * panel's Join screen (the exchange before), so a person here agreed, and becomes the first
+     * manager this panel trusts. A panel already in a fleet refuses, naming it.
      */
     private void join(String caller, byte[] body, OutputStream output) throws IOException {
         String joined = KioskConfig.fleetNameOf(context);
@@ -694,17 +995,26 @@ final class FleetServer {
             respond(output, 400, error(invalid));
             return;
         }
-        switch (FleetJoin.shared.attempt(request.optString("code", ""), joinClock())) {
-            case ADMITTED:
-                synchronized (DOCUMENT_LOCK) {
-                    KioskConfig.edit(context).joinFleet(fleetId, fleetName, caller).apply();
-                }
-                // Applied outside the dispatcher, so the web admin is told at once.
-                KioskService.publishTelemetrySoon(context);
-                Log.i(TAG, "Joined the fleet " + fleetName.trim() + ", manager key "
-                        + FleetTls.shortForm(caller));
-                respond(output, 200, fleetState());
-                return;
+        FleetJoin.Outcome outcome = FleetJoin.shared.confirm(
+                request.optString("confirmation", ""), caller, joinClock());
+        if (outcome == FleetJoin.Outcome.ADMITTED) {
+            synchronized (DOCUMENT_LOCK) {
+                KioskConfig.edit(context).joinFleet(fleetId, fleetName, caller).apply();
+            }
+            // Applied outside the dispatcher, so the web admin is told at once.
+            KioskService.publishTelemetrySoon(context);
+            Log.i(TAG, "Joined the fleet " + fleetName.trim() + ", manager key "
+                    + FleetTls.shortForm(caller));
+            respond(output, 200, fleetState());
+            return;
+        }
+        joinRefused(outcome, caller, output);
+    }
+
+    /** A refused exchange or join, with the reason. */
+    private void joinRefused(FleetJoin.Outcome outcome, String caller, OutputStream output)
+            throws IOException {
+        switch (outcome) {
             case WRONG:
                 Log.w(TAG, "Join refused: wrong code from key " + FleetTls.shortForm(caller));
                 respond(output, 403, error("wrong code; after five, this panel takes no code for"

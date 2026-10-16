@@ -12,9 +12,12 @@ import java.util.Locale;
 /**
  * The join code a panel shows on its Join screen (the fleet design, section 5): eight digits,
  * single use, ten minutes, opened from the Fleet section of either surface. While a code is open
- * the member endpoint lets an unknown key through the handshake, for the join route only, and the
- * code is what authenticates that caller; five wrong codes close it and refuse a new one for ten
- * minutes.
+ * the member endpoint lets an unknown key through the handshake, for the join routes only. The
+ * code never travels: the caller proves it with a {@link Spake2} exchange, as Matter's setup code
+ * and Android's pairing code are proven, and its first two digits are announced on the network
+ * as a tag (Matter's discriminator), so a typed code is tried only on the panel that shows it.
+ * Every exchange counts as a try until a join confirms it; after five, the code closes and no new
+ * one opens for ten minutes.
  *
  * <p>Times are on a clock that a change of the device's date cannot move (FleetServer.joinClock).
  *
@@ -31,7 +34,7 @@ final class FleetJoin {
     /** The one the panel, the web admin and the member endpoint share. */
     static final FleetJoin shared = new FleetJoin(new SecureRandom());
 
-    /** What a join attempt came to. */
+    /** What a join confirmation came to. */
     enum Outcome {
         ADMITTED,
         WRONG,
@@ -46,6 +49,9 @@ final class FleetJoin {
     private long expiresAt;
     private int wrong;
     private long lockedUntil;
+    /** The exchange under way: the caller's key and the confirmation it must send. */
+    private String pendingCaller;
+    private byte[] pendingConfirmation;
 
     FleetJoin(SecureRandom random) {
         this.random = random;
@@ -59,12 +65,20 @@ final class FleetJoin {
         code = String.format(Locale.ROOT, "%08d", random.nextInt(100_000_000));
         expiresAt = now + CODE_LIFETIME_MS;
         wrong = 0;
+        pendingCaller = null;
         return code;
     }
 
     /** Ends the open code, as closing the Join screen does. */
     synchronized void close() {
         code = null;
+        pendingCaller = null;
+    }
+
+    /** The open code's first two digits, announced so a typed code finds its panel; or "". */
+    synchronized String tag(long now) {
+        String current = code(now);
+        return current == null ? "" : current.substring(0, 2);
     }
 
     /** The open code, or null; an expired one is closed here. */
@@ -89,35 +103,76 @@ final class FleetJoin {
         return now < lockedUntil ? lockedUntil : 0;
     }
 
-    /** Wrong codes tried against the open code so far, for the Join screen's sentence. */
+    /** Tries against the open code not confirmed by a join, for the Join screen's sentence. */
     synchronized int wrongCodes() {
         return wrong;
     }
 
-    /** Checks an offered code in constant time; a right one is used up. */
-    synchronized Outcome attempt(String offered, long now) {
+    /** The panel's answer to an exchange: its share and its confirmation, or why there is none. */
+    static final class Answer {
+        /** Null when the exchange runs; otherwise WRONG (a share not in the group), LOCKED or CLOSED. */
+        final Outcome refused;
+        final String share;
+        final String confirmation;
+
+        Answer(Outcome refused, String share, String confirmation) {
+            this.refused = refused;
+            this.share = share;
+            this.confirmation = confirmation;
+        }
+    }
+
+    /**
+     * The panel's side of an exchange with {@code caller}, whose share is {@code offered}: it
+     * counts as a try at once, since it lets the caller test one guess, and the sixth before a
+     * join confirms one locks. The panel's key hash is {@code own}.
+     */
+    synchronized Answer exchange(String offered, String caller, String own, long now) {
         if (now < lockedUntil) {
-            return Outcome.LOCKED;
+            return new Answer(Outcome.LOCKED, null, null);
         }
         String current = code(now);
         if (current == null) {
-            return Outcome.CLOSED;
+            return new Answer(Outcome.CLOSED, null, null);
         }
-        byte[] expected = current.getBytes(StandardCharsets.US_ASCII);
-        byte[] given = (offered == null ? "" : offered).getBytes(StandardCharsets.UTF_8);
-        if (MessageDigest.isEqual(expected, given)) {
-            code = null;
-            wrong = 0;
-            return Outcome.ADMITTED;
-        }
+        pendingCaller = null;
         wrong++;
-        if (wrong >= MAX_WRONG_CODES) {
+        if (wrong > MAX_WRONG_CODES) {
             code = null;
             wrong = 0;
             lockedUntil = now + LOCKOUT_MS;
+            return new Answer(Outcome.LOCKED, null, null);
+        }
+        Spake2 panel = new Spake2(false, current, random);
+        Spake2.Confirmations confirmations = panel.finish(offered, caller, own);
+        if (confirmations == null) {
+            return new Answer(Outcome.WRONG, null, null);
+        }
+        pendingCaller = caller;
+        pendingConfirmation = confirmations.adopter;
+        return new Answer(null, panel.share(), Spake2.hex(confirmations.panel));
+    }
+
+    /**
+     * The caller's confirmation of the exchange it just ran: right, and the code is used up;
+     * wrong, and the exchange ends, its try already counted.
+     */
+    synchronized Outcome confirm(String offered, String caller, long now) {
+        if (now < lockedUntil) {
             return Outcome.LOCKED;
         }
-        return Outcome.WRONG;
+        if (code(now) == null) {
+            return Outcome.CLOSED;
+        }
+        boolean right = pendingCaller != null && pendingCaller.equals(caller)
+                && Spake2.matches(pendingConfirmation, offered);
+        pendingCaller = null;
+        if (!right) {
+            return Outcome.WRONG;
+        }
+        code = null;
+        wrong = 0;
+        return Outcome.ADMITTED;
     }
 
     /** "1234 5678", as the Join screen shows it under the QR. */

@@ -318,10 +318,11 @@ javac -d "${test_dir}/fleettls" \
     "${host_test_dir}/FleetTlsTest.java"
 java -cp "${test_dir}/fleettls" org.spazio17.muralis.FleetTlsTest
 
-# The join code: eight digits, single use, ten minutes, five wrong codes, a lockout.
+# The join code: eight digits, single use, ten minutes, proven by SPAKE2, five tries, a lockout.
 mkdir -p "${test_dir}/fleetjoin"
 javac -d "${test_dir}/fleetjoin" \
     "${pure_java_dir}/FleetJoin.java" \
+    "${pure_java_dir}/Spake2.java" \
     "${host_test_dir}/FleetJoinTest.java"
 java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
 

@@ -51,7 +51,7 @@ final class HttpAdminServer {
     private static final java.util.Set<String> BOXED_SECTIONS = Collections.unmodifiableSet(
             new java.util.HashSet<>(java.util.Arrays.asList(
                     "dashboard", "mqtt", "webadmin", "fleet", "sequences", "panel",
-                    "certificate")));
+                    "certificate", "adopt")));
     private static final int SOCKET_TIMEOUT_MS = 10_000;
 
     /**
@@ -59,7 +59,8 @@ final class HttpAdminServer {
      * box, which opens with them (review, 2026-10-05: a refusal sat in a closed box).
      */
     private static String boxOf(String noticeSection) {
-        return "certificate".equals(noticeSection) ? "webadmin" : noticeSection;
+        return "certificate".equals(noticeSection) ? "webadmin"
+                : "adopt".equals(noticeSection) ? "fleet" : noticeSection;
     }
     /**
      * From the accept to the request line, TLS handshake included. Two seconds cut off one
@@ -108,6 +109,11 @@ final class HttpAdminServer {
      * is reported as such in the reply, rather than this connection being closed first.
      */
     private static final int FLEET_PROXY_DEADLINE_MS = 20_000;
+    /**
+     * Add a panel by its code (block 11e) looks for the panel for up to thirty seconds, then
+     * joins it with calls of their own: the answer must still find the browser connected.
+     */
+    private static final int ADOPT_DEADLINE_MS = (int) FleetServer.CODE_SEARCH_MS + 20_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
     private static final int WORKER_THREADS = 16;
     private static final int PER_HOST_CONNECTIONS = 12;
@@ -732,6 +738,12 @@ final class HttpAdminServer {
                     deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
                             UPLOAD_DEADLINE_MS, TimeUnit.MILLISECONDS);
                 }
+                if (method.equals("POST") && requestPath.equals("/adopt")) {
+                    input.extend(ADOPT_DEADLINE_MS);
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            ADOPT_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                }
                 if (requestPath.equals("/api/fleet/screenshot")
                         || requestPath.equals("/api/fleet/identify")) {
                     input.extend(FLEET_PROXY_DEADLINE_MS);
@@ -947,6 +959,8 @@ final class HttpAdminServer {
             serveStream(output, socket);
         } else if (path.equals("/cameras") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
+        } else if (path.equals("/adopt") && method.equals("POST")) {
+            adoptByCode(parseFormBody(headers, body), output);
         } else if (path.equals("/cameras") && method.equals("POST")) {
             String refused = saveCamera(parseFormBody(headers, body));
             writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
@@ -3847,6 +3861,7 @@ final class HttpAdminServer {
                 + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
                 + sectionFormEnd("Save")
                 + fleetMembership()
+                + addByCodeForm(notice, noticeSection)
                 + sharedSwitches();
     }
 
@@ -3918,6 +3933,61 @@ final class HttpAdminServer {
                 + "<button type=\"button\" class=\"text\" id=\"fleet-join-close\">Close</button>"
                 + "<button type=\"button\" class=\"tonal\" id=\"fleet-join-new\" hidden>New"
                 + " code</button></div></div></div>";
+    }
+
+    /**
+     * The Add by code form's post (block 11e), on a path of its own so the connection is given
+     * the search's time ({@link #ADOPT_DEADLINE_MS}): the page with who joined, or 400 with why
+     * not.
+     */
+    private void adoptByCode(Map<String, String> form, OutputStream output) throws IOException {
+        String joined = KioskConfig.fleetIdOf(context);
+        String fleet = joined.isEmpty() ? form.getOrDefault("fleet_name", "").trim()
+                : KioskConfig.fleetNameOf(context);
+        if (fleet.isEmpty()) {
+            fleet = "Muralis-" + (1000 + new java.security.SecureRandom().nextInt(9000));
+        }
+        String answer;
+        boolean added = false;
+        String invalid = FleetJoin.validateName("the fleet name", fleet);
+        if (invalid != null) {
+            answer = "Not added: " + invalid + ".";
+        } else {
+            String[] panel = new String[1];
+            FleetServer.Adopted adopted = FleetServer.adoptByCode(context,
+                    form.getOrDefault("join_code", ""),
+                    joined.isEmpty() ? FleetServer.newFleetId() : joined, fleet, panel);
+            added = adopted.refusal == null;
+            answer = !added ? "Not added: " + adopted.refusal + "."
+                    : panel[0] + " joined the fleet " + fleet + "."
+                            + (adopted.unconfirmed == null ? "" : " It did not confirm"
+                            + " afterwards: " + adopted.unconfirmed + ".");
+        }
+        writeResponse(output, added ? 200 : 400, "text/html; charset=utf-8",
+                bytes(buildSettingsPage(answer, "adopt")));
+    }
+
+    /**
+     * Add a panel by the code under its Join QR (block 11e), for this browser that has no
+     * camera: the code, the new fleet's name when this panel founds one, and Add, which looks
+     * for the panel on the network for up to 30 seconds before it answers.
+     */
+    private String addByCodeForm(String notice, String noticeSection) {
+        if (!KioskRuntimeState.fleetListening()) {
+            return "";
+        }
+        boolean founding = KioskConfig.fleetIdOf(context).isEmpty();
+        return "<p class=\"hint\">" + (founding ? "Create a fleet" : "Add a panel")
+                + " by its code</p>"
+                + sectionFormStart("adopt", notice, noticeSection)
+                        .replace(settingsAt("adopt"), "/adopt")
+                + field("text", "join_code", "Code under the other panel's Join QR", "",
+                        " inputmode=\"numeric\" autocomplete=\"off\"", null)
+                + (founding ? fieldWithId("f-fleet_name", "text", "fleet_name",
+                        "Name of the new fleet", "", "", null).replace(MACHINE_TEXT, "") : "")
+                + "<p class=\"hint\">Add looks for the panel on this network for up to 30"
+                + " seconds.</p>"
+                + sectionFormEnd("Add");
     }
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */
