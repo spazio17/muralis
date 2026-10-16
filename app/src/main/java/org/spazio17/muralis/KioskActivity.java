@@ -6386,6 +6386,8 @@ public final class KioskActivity extends Activity {
             }
             sensorMenu.add(def.name, def.id);
         }
+        // The clock, which every panel has (block 5).
+        sensorMenu.add(Automations.TIME_NAME, Automations.TIME);
         if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
             // A rule on a sensor this device lacks keeps it: opening and saving the rule for
             // its name must not move it to the first sensor in the menu (review, 2026-10-01).
@@ -6414,8 +6416,9 @@ public final class KioskActivity extends Activity {
         onlyEvent.setGravity(Gravity.CENTER_VERTICAL);
         onlyEvent.setVisibility(View.GONE);
         whenCard.addView(onlyEvent, matchWrapClose());
-        EditText levelInput = themedInput(theme,
-                Double.isNaN(draft.level) ? "" : Automations.number(draft.level), false);
+        EditText levelInput = themedInput(theme, Double.isNaN(draft.level) ? ""
+                : Automations.TIME.equals(draft.sensor) ? Automations.clock((int) draft.level)
+                : Automations.number(draft.level), false);
         levelInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         TextView levelCaption = addField(whenCard, theme, "Level", levelInput);
         View levelBox = (View) levelInput.getParent();
@@ -6445,8 +6448,16 @@ public final class KioskActivity extends Activity {
                     : Automations.event(sensor, (String) checked.getTag());
             boolean level = event != null && event.levelUnit != null;
             levelBox.setVisibility(level ? View.VISIBLE : View.GONE);
-            if (level) {
+            boolean time = level && Automations.TIME_UNIT.equals(event.levelUnit);
+            if (time) {
+                // A time of day in the same box, typed as 22:00 (block 5).
+                levelCaption.setText("At (hours:minutes)");
+                levelInput.setInputType(InputType.TYPE_CLASS_DATETIME
+                        | InputType.TYPE_DATETIME_VARIATION_TIME);
+            } else if (level) {
                 levelCaption.setText("Level (" + event.levelUnit + ")");
+                levelInput.setInputType(InputType.TYPE_CLASS_NUMBER
+                        | InputType.TYPE_NUMBER_FLAG_DECIMAL);
             }
             minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
             boolean tag = event != null && event.tag;
@@ -6549,6 +6560,10 @@ public final class KioskActivity extends Activity {
             View event = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
             draft.event = event == null ? "" : (String) event.getTag();
             String level = levelInput.getText().toString().trim();
+            if (Automations.TIME.equals(draft.sensor)) {
+                int at = Automations.minutesOf(level);
+                level = at < 0 || at >= 24 * 60 ? "" : Integer.toString(at);
+            }
             try {
                 // A German keyboard offers the comma on a number box.
                 draft.level = level.isEmpty() ? Double.NaN

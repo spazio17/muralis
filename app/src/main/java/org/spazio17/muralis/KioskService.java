@@ -394,6 +394,43 @@ public final class KioskService extends Service implements KioskCommandDispatche
         manager.notify(ALERT_NOTIFICATION_TAG, id, builder.build());
     }
 
+    private static String refusalOf(KioskCommandDispatcher.Result result) {
+        return "accepted".equals(result.status) ? null : result.detail;
+    }
+
+    /**
+     * A rule's "Call an address" (block 5): one GET with the alerts' deadline, the answer read
+     * and dropped, no retry; what came back is logged.
+     */
+    private void callAddress(String rule, String address) {
+        java.net.HttpURLConnection connection = null;
+        try {
+            connection = (java.net.HttpURLConnection) new java.net.URL(address).openConnection();
+            connection.setConnectTimeout(WEBHOOK_TIMEOUT_MS);
+            connection.setReadTimeout(WEBHOOK_TIMEOUT_MS);
+            int status = connection.getResponseCode();
+            try (java.io.InputStream in = status < 400 ? connection.getInputStream()
+                    : connection.getErrorStream()) {
+                if (in != null) {
+                    byte[] buffer = new byte[4096];
+                    int total = 0;
+                    int read;
+                    while (total < 65_536 && (read = in.read(buffer)) != -1) {
+                        total += read;
+                    }
+                }
+            }
+            Log.i(TAG, "Automation \"" + rule + "\": the address answered " + status);
+        } catch (java.io.IOException | RuntimeException failed) {
+            Log.w(TAG, "Automation \"" + rule + "\": the address could not be reached: "
+                    + failed.getMessage());
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
     /** One POST of the alert, with a deadline and no retry; a failure is logged once. */
     private void postAlert(String url, String json) {
         java.net.HttpURLConnection connection = null;
@@ -2601,6 +2638,33 @@ public final class KioskService extends Service implements KioskCommandDispatche
             case "light_off":
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);
                 break;
+            case "open_page":
+                problem = refusalOf(dispatch("kiosk.open_url",
+                        new KioskCommandDispatcher.CommandArgs(-1, rule.argument)));
+                break;
+            case "brightness":
+                problem = refusalOf(dispatch("display.brightness",
+                        new KioskCommandDispatcher.CommandArgs(
+                                Integer.parseInt(rule.argument), null)));
+                break;
+            case "ambient_mode":
+                problem = refusalOf(dispatch("ambient.mode",
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+                break;
+            case "mqtt_publish": {
+                int space = rule.argument.indexOf(' ');
+                MqttController mqtt = mqttController;
+                if (mqtt == null || !mqtt.publishAlert(rule.argument.substring(0, space),
+                        rule.argument.substring(space + 1))) {
+                    problem = "MQTT is not connected";
+                }
+                break;
+            }
+            case "call_url": {
+                String address = rule.argument;
+                new Thread(() -> callAddress(rule.name, address), "MuralisRuleCall").start();
+                break;
+            }
             default: problem = "no action is called " + rule.action;
         }
         if (problem != null) {

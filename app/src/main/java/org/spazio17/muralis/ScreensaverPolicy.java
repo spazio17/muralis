@@ -40,7 +40,7 @@ final class ScreensaverPolicy {
     static final String FILM = "film";
     /** Another web page, shown over the dashboard, which stays loaded underneath. */
     static final String URL = "url";
-    /** Pictures from a {@link PictureSources} source, full screen, with the credit line. */
+    /** Pictures from the playlist in use, full screen, with the credit line. */
     static final String PICTURES = "pictures";
 
     /** How one picture gives way to the next. */

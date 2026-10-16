@@ -163,6 +163,7 @@ java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTes
 javac -d "${test_dir}/automations" \
     "${pure_java_dir}/Automations.java" \
     "${pure_java_dir}/StatusLight.java" \
+    "${pure_java_dir}/ScreensaverPolicy.java" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/HostJson.java" \
     "${host_test_dir}/../../json/JSONException.java" \

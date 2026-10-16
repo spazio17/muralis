@@ -2935,6 +2935,15 @@ final class HttpAdminServer {
             }
             events.append("</div>");
         }
+        // The clock, which every panel has (block 5): "At" a time of day.
+        offered |= Automations.TIME.equals(chosenSensor);
+        sensorOptions.append(selectOption(Automations.TIME, Automations.TIME_NAME, chosenSensor));
+        events.append("<div class=\"radios events\" data-sensor=\"").append(Automations.TIME)
+                .append("\" role=\"radiogroup\" aria-label=\"").append(Automations.TIME_NAME)
+                .append(" events\"><label class=\"radio one\"><input type=\"radio\" name=\"event_")
+                .append(Automations.TIME).append("\" value=\"at\" checked data-level=\"")
+                .append(Automations.TIME_UNIT).append("\" data-holds=\"\" data-tag=\"\">At</label>")
+                .append("</div>");
         if (!offered && !rule.sensor.isEmpty()) {
             // A rule on a sensor this device lacks keeps it: saving the rule for its name must
             // not move it to the first sensor of the menu (review, 2026-10-01).
@@ -2977,6 +2986,9 @@ final class HttpAdminServer {
                 + fieldWithId("a-level" + sfx, "number", "level", "Level",
                         Double.isNaN(rule.level) ? "" : Automations.number(rule.level),
                         " step=\"any\" min=\"0\"", null)
+                + fieldWithId("a-at" + sfx, "time", "at", "At",
+                        Automations.TIME.equals(rule.sensor) && !Double.isNaN(rule.level)
+                                ? Automations.clock((int) rule.level) : "07:00", "", null)
                 + fieldWithId("a-minutes" + sfx, "number", "minutes", "For (minutes)",
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
@@ -3010,6 +3022,12 @@ final class HttpAdminServer {
                         + " data-confirm=\"" + escapeHtml(deleteQuestion(
                                 stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
+    }
+
+    /** A "Time of day" rule's time box to its level, the minute of the day; NaN when it is none. */
+    private static double timeLevel(String typed) {
+        int minutes = Automations.minutesOf(typed);
+        return minutes < 0 || minutes >= 24 * 60 ? Double.NaN : minutes;
     }
 
     /** The first sensor the editor offers, for a new rule on a panel with no proximity sensor. */
@@ -3282,7 +3300,8 @@ final class HttpAdminServer {
         rule.name = form.getOrDefault("name", "");
         rule.sensor = form.getOrDefault("sensor", "");
         rule.event = form.getOrDefault("event_" + rule.sensor, "");
-        rule.level = parseLevel(form.get("level"));
+        rule.level = Automations.TIME.equals(rule.sensor)
+                ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
         rule.tag = form.getOrDefault("tag", "").trim();
         rule.action = form.getOrDefault("action", "");

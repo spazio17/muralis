@@ -30,6 +30,8 @@ public final class AutomationsTest {
         testEngineSeedLetsTheFirstEventFire();
         testIdShape();
         testTagEvents();
+        testTimeOfDay();
+        testBatteryAboveAndNewActions();
         System.out.println("AutomationsTest passed");
     }
 
@@ -39,6 +41,7 @@ public final class AutomationsTest {
         names.put("light", "Light");
         names.put("nfc", "NFC");
         names.put("battery", "Battery");
+        names.put(Automations.TIME, Automations.TIME_NAME);
         return names;
     }
 
@@ -50,6 +53,64 @@ public final class AutomationsTest {
         rule.event = event;
         rule.action = action;
         return rule;
+    }
+
+    /** The clock's rules (block 5): once a day, late ticks, a seed after the time, the clock back. */
+    private static void testTimeOfDay() {
+        List<String> fired = new java.util.ArrayList<>();
+        Automations.Engine engine = new Automations.Engine(rule -> fired.add(rule.id));
+        Automations.Rule night = rule(Automations.TIME, "at", "display_off");
+        night.level = 22 * 60;
+        require(Automations.validate(night.copy(), names()) == null, "22:00 is a time");
+        Automations.Rule bad = rule(Automations.TIME, "at", "display_off");
+        bad.level = 24 * 60;
+        require(Automations.validate(bad, names()) != null, "24:00 is not a time");
+        require(Automations.sentence(night).startsWith("At 22:00"), Automations.sentence(night));
+        engine.rules(java.util.Collections.singletonList(night));
+        long day = 20_000;
+        engine.clock(day, 21 * 60);          // the seed, before the time
+        engine.clock(day, 21 * 60 + 59);
+        require(fired.isEmpty(), "not before the time");
+        engine.clock(day, 22 * 60 + 7);      // a tick that comes late still fires
+        require(fired.size() == 1, "fires once at the time, however late the tick");
+        engine.clock(day, 23 * 60);
+        require(fired.size() == 1, "once a day");
+        engine.clock(day + 1, 5);            // across midnight, not yet
+        require(fired.size() == 1, "after midnight it waits for 22:00 again");
+        engine.clock(day + 1, 22 * 60);
+        require(fired.size() == 2, "the next day at the time");
+        engine.clock(day, 22 * 60 + 30);     // the clock set back a day
+        require(fired.size() == 2, "the clock moved back does not run a day twice");
+        // A restart after the time: the seed counts today as run.
+        Automations.Engine after = new Automations.Engine(rule -> fired.add("after"));
+        after.rules(java.util.Collections.singletonList(night));
+        after.clock(day + 5, 23 * 60);
+        after.clock(day + 5, 23 * 60 + 30);
+        require(!fired.contains("after"), "a restart after the time does not repeat it");
+        after.clock(day + 6, 22 * 60);
+        require(fired.contains("after"), "and runs the next day");
+    }
+
+    private static void testBatteryAboveAndNewActions() {
+        Automations.Rule above = rule("battery", "above", "call_url");
+        above.level = 80;
+        above.argument = "http://plug.local/off";
+        require(Automations.validate(above, names()) == null, "battery above with an address");
+        require(Boolean.TRUE.equals(Automations.holds(above, Automations.Sample.of(81.0)))
+                && Boolean.FALSE.equals(Automations.holds(above, Automations.Sample.of(80.0))),
+                "above means more than the level");
+        String[][] cases = {
+                {"open_page", "https://ha.local/night", null}, {"open_page", "ha.local", "x"},
+                {"call_url", "ftp://x", "x"}, {"brightness", "0", null}, {"brightness", "100", null},
+                {"brightness", "101", "x"}, {"brightness", "half", "x"},
+                {"ambient_mode", "dim", null}, {"ambient_mode", "disco", "x"},
+                {"mqtt_publish", "home/plug off", null}, {"mqtt_publish", "home/#", "x"},
+                {"mqtt_publish", "home/+/x on", "x"}, {"mqtt_publish", "nospace", "x"},
+        };
+        for (String[] c : cases) {
+            String problem = Automations.checkArgument(c[0], c[1]);
+            require((problem == null) == (c[2] == null), c[0] + " " + c[1] + ": " + problem);
+        }
     }
 
     private static void testStoreRoundTrip() {

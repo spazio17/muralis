@@ -103,6 +103,7 @@ final class Automations {
                 new Event("ended", "Ambient ended", null, false, false)));
         map.put("battery", Arrays.asList(
                 new Event("below", "Battery below", "%", false, false),
+                new Event("above", "Battery above", "%", false, false),
                 new Event("plugged", "Charger plugged in", null, false, false),
                 new Event("unplugged", "Charger unplugged", null, false, false)));
         map.put("network", Arrays.asList(
@@ -110,6 +111,10 @@ final class Automations {
                 new Event("lost", "Network lost", null, false, false)));
         map.put("processor", Collections.singletonList(
                 new Event("hotter", "Hotter than", "°C", false, false)));
+        // Not a sensor: the panel's clock (block 5). The level is the minute of the day, and
+        // the engine's day tick fires it, not a reading; see Engine.clock.
+        map.put(TIME, Collections.singletonList(
+                new Event("at", "At", TIME_UNIT, false, false)));
         return Collections.unmodifiableMap(map);
     }
 
@@ -122,7 +127,17 @@ final class Automations {
             new Action("say", "Say a sentence", "Sentence"),
             new Action("reload", "Reload the page", null),
             new Action("light_on", "Status light on", "Colour (r,g,b)"),
-            new Action("light_off", "Status light off", null)));
+            new Action("light_off", "Status light off", null),
+            new Action("open_page", "Open a page", "Address"),
+            new Action("brightness", "Set brightness", "Percent"),
+            new Action("ambient_mode", "Ambient mode", "Mode"),
+            new Action("mqtt_publish", "Publish an MQTT message", "Topic and message"),
+            new Action("call_url", "Call an address", "Address")));
+
+    /** The When choice that is the clock, not a sensor, and its "level", a time of day. */
+    static final String TIME = "time";
+    static final String TIME_NAME = "Time of day";
+    static final String TIME_UNIT = "time";
 
     static Event event(String sensor, String id) {
         List<Event> list = EVENTS.get(sensor);
@@ -325,7 +340,12 @@ final class Automations {
         if (event == null) {
             return "choose what the sensor should notice";
         }
-        if (event.levelUnit != null && (Double.isNaN(rule.level) || rule.level < 0
+        if (TIME_UNIT.equals(event.levelUnit)) {
+            if (Double.isNaN(rule.level) || rule.level < 0 || rule.level >= 24 * 60
+                    || rule.level != Math.rint(rule.level)) {
+                return "the time must be a time of day, 00:00 to 23:59";
+            }
+        } else if (event.levelUnit != null && (Double.isNaN(rule.level) || rule.level < 0
                 || rule.level > 1_000_000)) {
             return "the level must be a number";
         }
@@ -369,6 +389,10 @@ final class Automations {
                     && !rule.argument.startsWith("https://")) {
                 return "the sound address must start with http:// or https://";
             }
+            String problem = checkArgument(action.id, rule.argument);
+            if (problem != null) {
+                return problem;
+            }
             if (action.id.equals("light_on") && !rule.argument.isEmpty()) {
                 Integer color = StatusLight.parseColor(rule.argument);
                 if (color == null) {
@@ -399,6 +423,35 @@ final class Automations {
         return null;
     }
 
+    /**
+     * The new actions' arguments (block 5), checked when the rule is saved so a rule cannot
+     * wait all night to fail: null when it can run.
+     */
+    static String checkArgument(String action, String argument) {
+        switch (action) {
+            case "open_page":
+            case "call_url":
+                return argument.startsWith("http://") || argument.startsWith("https://")
+                        ? null : "the address must start with http:// or https://";
+            case "brightness":
+                return argument.matches("\\d{1,3}") && Integer.parseInt(argument) <= 100
+                        ? null : "the brightness must be a whole number from 0 to 100";
+            case "ambient_mode":
+                return ScreensaverPolicy.isMode(argument)
+                        ? null : "the mode must be off, dim, film, url or pictures";
+            case "mqtt_publish": {
+                int space = argument.indexOf(' ');
+                String topic = space < 0 ? argument : argument.substring(0, space);
+                return topic.isEmpty() || topic.contains("#") || topic.contains("+")
+                        || topic.startsWith("$") || space < 0
+                        ? "the message must be a topic without wildcards, a space, then the text"
+                        : null;
+            }
+            default:
+                return null;
+        }
+    }
+
     /** "Near, then Display on": the row under a rule's name. */
     static String sentence(Rule rule) {
         return sentence(rule, Collections.<String, String>emptyMap());
@@ -413,7 +466,9 @@ final class Automations {
                     : rule.sensor);
         } else {
             text.append(event.label);
-            if (event.levelUnit != null && !Double.isNaN(rule.level)) {
+            if (TIME_UNIT.equals(event.levelUnit) && !Double.isNaN(rule.level)) {
+                text.append(' ').append(clock((int) rule.level));
+            } else if (event.levelUnit != null && !Double.isNaN(rule.level)) {
                 text.append(' ').append(number(rule.level)).append(' ').append(event.levelUnit);
             }
             if (event.holds && rule.minutes > 0) {
@@ -538,7 +593,7 @@ final class Automations {
                 return hasFlag ? !flag : null;
             case "darker": case "below":
                 return hasNumber ? sample.number < rule.level : null;
-            case "brighter": case "louder":
+            case "brighter": case "louder": case "above":
                 return hasNumber ? sample.number > rule.level : null;
             case "in_reach":
                 return hasNumber ? sample.number > 0 : null;
@@ -567,6 +622,8 @@ final class Automations {
             boolean was;
             boolean fired;
             long trueSinceMs;
+            /** A "Time of day" rule: the day it last ran, or would have. */
+            long lastDay;
         }
 
         private final Runner runner;
@@ -720,6 +777,45 @@ final class Automations {
                 state.fired = true;
                 if (rule.enabled && inWindow(rule, minuteOfDay)) {
                     due.add(rule);
+                }
+            }
+            return due;
+        }
+
+        /**
+         * The clock's day tick (block 5): a "Time of day" rule fires once on a day when the
+         * minute of the day has reached its time, however late the tick that sees it. The first
+         * tick after a start seeds it as already run today when its time has passed, so a
+         * restart never repeats a morning's run and a rule made at noon for 07:00 waits for
+         * tomorrow; a day number that went back (the clock set right) seeds it again, so the
+         * same day never runs twice.
+         */
+        void clock(long epochDay, int minuteOfDay) {
+            for (Rule rule : dueAt(epochDay, minuteOfDay)) {
+                runner.run(rule);
+            }
+        }
+
+        private synchronized List<Rule> dueAt(long epochDay, int minuteOfDay) {
+            List<Rule> due = new ArrayList<>();
+            for (Rule rule : rules) {
+                if (!TIME.equals(rule.sensor) || Double.isNaN(rule.level)) {
+                    continue;
+                }
+                int at = (int) rule.level;
+                State state = states.get(rule.id);
+                if (state == null || !state.seeded || epochDay < state.lastDay) {
+                    state = new State();
+                    state.seeded = true;
+                    state.lastDay = minuteOfDay >= at ? epochDay : epochDay - 1;
+                    states.put(rule.id, state);
+                    continue;
+                }
+                if (epochDay > state.lastDay && minuteOfDay >= at) {
+                    state.lastDay = epochDay;
+                    if (rule.enabled && inWindow(rule, minuteOfDay)) {
+                        due.add(rule);
+                    }
                 }
             }
             return due;

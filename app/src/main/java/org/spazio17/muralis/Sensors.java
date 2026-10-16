@@ -458,6 +458,8 @@ final class Sensors implements SensorEventListener {
         for (Def def : ALL) {
             names.put(def.id, def.name);
         }
+        // Not a sensor, but a When choice of its own (block 5).
+        names.put(Automations.TIME, Automations.TIME_NAME);
         return names;
     }
 
@@ -1014,6 +1016,8 @@ final class Sensors implements SensorEventListener {
             }
         }
         engine.tick(now, minuteOfDay());
+        // The "Time of day" rules: the panel's own clock, the day and the minute (block 5).
+        engine.clock(java.time.LocalDate.now().toEpochDay(), minuteOfDay());
     }
 
     private Automations.Sample sampleOf(Def def) {
