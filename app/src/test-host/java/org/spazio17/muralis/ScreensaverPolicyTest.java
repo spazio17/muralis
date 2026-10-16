@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -49,10 +49,7 @@ public final class ScreensaverPolicyTest {
         require(ScreensaverPolicy.isFit("fit") && ScreensaverPolicy.isFit("fill")
                 && ScreensaverPolicy.isFit("stretch") && ScreensaverPolicy.isFit("actual")
                 && !ScreensaverPolicy.isFit("zoom"), "four ways to lay a picture on the glass");
-        require(PictureSources.isSource("local") && PictureSources.isSource("bing")
-                && PictureSources.isSource("wikimedia") && !PictureSources.isSource("nasa"),
-                "three sources in this step");
-        require(ScreensaverPolicy.isOnWake("screensaver")
+        require(ScreensaverPolicy.isOnWake("ambient")
                 && ScreensaverPolicy.isOnWake("dashboard")
                 && !ScreensaverPolicy.isOnWake("page"), "two on-wake choices, no third");
     }
@@ -91,7 +88,7 @@ public final class ScreensaverPolicyTest {
                 && ScreensaverPolicy.modeProblem("film", "") == null
                 && ScreensaverPolicy.modeProblem("off", "") == null,
                 "the other modes need nothing");
-        Settings urlWithoutAddress = new Settings("url", 120, 900, "", 20, "screensaver");
+        Settings urlWithoutAddress = new Settings("url", 120, 900, "", 20, "ambient");
         require(!ScreensaverPolicy.runnable(urlWithoutAddress), "not runnable without the address");
         require(ScreensaverPolicy.next(urlWithoutAddress, Stage.DASHBOARD, false, T0,
                 T0 + 3_600_000L) == Step.NONE, "an unrunnable mode never starts by itself");
@@ -108,7 +105,7 @@ public final class ScreensaverPolicyTest {
         require(ScreensaverPolicy.next(dim, Stage.DASHBOARD, false, T0, T0 + 119_999L) == Step.NONE,
                 "a millisecond short of the idle time is not idle enough");
         require(ScreensaverPolicy.next(dim, Stage.DASHBOARD, false, T0, T0 + 120_000L) == Step.START,
-                "exactly the idle time starts the screensaver");
+                "exactly the idle time starts Ambient");
         require(ScreensaverPolicy.next(dim, Stage.DASHBOARD, false, T0, T0 + 999_000L) == Step.START,
                 "long past it, still START and never DISPLAY_OFF from the dashboard");
     }
@@ -124,7 +121,7 @@ public final class ScreensaverPolicyTest {
     private static void testScreensaverHandsOverToDisplayOff() {
         Settings url = settings("url", 120, 900);
         require(ScreensaverPolicy.next(url, Stage.SCREENSAVER, false, T0, T0 + 899_999L) == Step.NONE,
-                "the second timer counts from the screensaver's start");
+                "the second timer counts from Ambient's start");
         require(ScreensaverPolicy.next(url, Stage.SCREENSAVER, false, T0, T0 + 900_000L)
                 == Step.DISPLAY_OFF, "and hands over to display off when it runs out");
     }
@@ -147,7 +144,7 @@ public final class ScreensaverPolicyTest {
 
     private static void testScreensaverFirst() {
         require(ScreensaverPolicy.screensaverFirst(settings("url", 120, 900)),
-                "URL mode with the screensaver-first choice shows the screensaver on wake");
+                "URL mode with the ambient-first choice shows Ambient on wake");
         require(!ScreensaverPolicy.screensaverFirst(new Settings("url", 120, 900,
                 "https://example.com/", 20, ScreensaverPolicy.WAKE_DASHBOARD)),
                 "the dashboard-first choice is honoured");
@@ -171,24 +168,21 @@ public final class ScreensaverPolicyTest {
         require(ScreensaverPolicy.describeDuration(5400).equals("1 h 30 min"), "hours and minutes");
         require(ScreensaverPolicy.describeDuration(3600).equals("1 h"), "a whole hour");
         require(ScreensaverPolicy.describe(settings("off", 120, 900), false)
-                .equals("Screensaver off."), "off reads as off");
+                .equals("Ambient off."), "off reads as off");
         String dim = ScreensaverPolicy.describe(settings("dim", 120, 900), false);
         require(dim.equals("Dimmed page after 2 min without a touch, display off 15 min later."),
                 "the whole rule in one sentence: " + dim);
         String showing = ScreensaverPolicy.describe(settings("url", 0, 0), true);
         require(showing.equals("Web page, only when asked for, the display stays on. Showing now."),
                 "idle 0, off 0 and active: " + showing);
-        Settings pictures = new Settings("pictures", 120, 0, "", 20, "screensaver", "bing", 20,
+        Settings pictures = new Settings("pictures", 120, 0, "", 20, "ambient", 20,
                 "fade", false, false, false, "bottom_left", "fit");
         require(ScreensaverPolicy.describe(pictures, false).equals(
-                "Pictures from Bing image of the day after 2 min without a touch, the display stays on."),
-                "the source is named: " + ScreensaverPolicy.describe(pictures, false));
-        require(pictures.creditShown(), "an online source shows the credit whatever the switch says");
-        require(!new Settings("pictures", 120, 0, "", 20, "screensaver", "local", 20, "fade", false,
-                false, false, "bottom_left", "fit").creditShown(), "the local folder may switch it off");
+                "Pictures after 2 min without a touch, the display stays on."),
+                "the pictures in one sentence: " + ScreensaverPolicy.describe(pictures, false));
         String broken = ScreensaverPolicy.describe(new Settings("url", 120, 900, "", 20,
-                "screensaver"), false);
-        require(broken.equals("Web page: the web-page screensaver needs a page address."),
+                "ambient"), false);
+        require(broken.equals("Web page: the web page mode needs a page address."),
                 "the problem is the sentence: " + broken);
     }
 
