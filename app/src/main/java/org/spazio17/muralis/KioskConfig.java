@@ -367,12 +367,6 @@ final class KioskConfig {
             }
         }
 
-        /** The ids discovery last announced as automation switches, for the withdrawals. */
-        Editor announcedAutomations(String ids) {
-            plain.putString(AUTOMATIONS_ANNOUNCED, ids);
-            return this;
-        }
-
         Editor orientation(String value) {
             plain.putString(ORIENTATION, value);
             // Completes the 2026-08-29 migration: the retired boolean stays readable until the
@@ -596,7 +590,6 @@ final class KioskConfig {
     }
 
     private static final String AUTOMATIONS = "automations";
-    private static final String AUTOMATIONS_ANNOUNCED = "automations_announced";
     /** The markers of the rules deleted lately; see Automations.deleted. */
     private static final String AUTOMATIONS_DELETED = "automations_deleted";
 
@@ -709,22 +702,27 @@ final class KioskConfig {
      * Drops the settings of the beacon transmitter, which was removed on 2026-10-01, and the
      * one-number beacon correction the per-beacon calibration replaced: a panel that ever
      * stored them kept them, and the sensor settings document then carried keys a
-     * post back is refused for. Run at every start; it does nothing once they are gone.
+     * post back is refused for. Also {@code automations_announced}, the automation switches
+     * discovery had announced: since 2026-10-06 the broker's own retained payload is the record
+     * of what was announced. Run at every start; it does nothing once they are gone.
      */
     static void dropRetiredSettings(Context context) {
+        java.util.Set<String> retired = new java.util.HashSet<>();
+        retired.add("automations_announced");
+        for (String option : new String[] {"beacons_transmit", "beacons_uuid", "beacons_major",
+                "beacons_minor", "beacons_correction_db"}) {
+            retired.add("sensor_option_" + option);
+            retired.add("changed_sensor_option_" + option);
+        }
         android.content.SharedPreferences prefs = storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         android.content.SharedPreferences.Editor editor = null;
         for (String key : prefs.getAll().keySet()) {
-            for (String retired : new String[] {"beacons_transmit", "beacons_uuid",
-                    "beacons_major", "beacons_minor", "beacons_correction_db"}) {
-                if (key.equals("sensor_option_" + retired)
-                        || key.equals("changed_sensor_option_" + retired)) {
-                    if (editor == null) {
-                        editor = prefs.edit();
-                    }
-                    editor.remove(key);
+            if (retired.contains(key)) {
+                if (editor == null) {
+                    editor = prefs.edit();
                 }
+                editor.remove(key);
             }
         }
         if (editor != null) {
@@ -833,12 +831,6 @@ final class KioskConfig {
         return Automations.parse(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(AUTOMATIONS, null));
-    }
-
-    static String announcedAutomations(Context context) {
-        return storageContext(context)
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(AUTOMATIONS_ANNOUNCED, "");
     }
 
     /** Where the stats overlay was dragged to; see {@link #statsOverlayPlace}. */

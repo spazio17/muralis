@@ -216,39 +216,38 @@ the playlist page was the case that set the rule.
   alone, the address in the certificate matching; Android 8's TLS stack sends the intermediate
   twice (the Huawei tablet; the Android 9 phone sends it once), which clients accept. On the Pixel (Android 17) an uploaded RSA certificate signs TLS 1.3 with
   RSA-PSS and an EC one with ECDSA, the chain sent once; both Huaweis speak TLS 1.2 only. MQTT is unchanged: plain TCP, trusted network.
-- **The remote surfaces are the paid tier, gated in exactly two places.** Muralis Pro (Play
-  product `muralis_pro`, one-time, account-wide) unlocks MQTT and the web admin together; the
-  kiosk, recovery, the stats overlay and the local `TelemetryCollector` feeding it stay free and
-  ungated forever (DDA 3.7: what ships free must stay free, which is why the gate had to exist
-  before the first public release). The gate is `ProEntitlement.isActive` consulted at the top of
-  `KioskService.startControllersNow` and `restartControllers`, the only two places a controller is
-  ever built; do not add a third gate site or a third construction site. The entitlement is Play's
-  signed purchase document, verified on-device by `PurchaseSignature` (pure, host-tested; see its
-  javadoc for why there is deliberately no verification server) and cached in `SecretStore` as a
-  bridge, not as a right: Google Play's answer is the truth. **The rule since 2026-09-03, absolute:
-  Muralis works with or without a Google account, Muralis Pro only with one, and a refund ends it.**
-  So `ProBilling` calls `ProEntitlement.drop` at once on a full-account `queryPurchasesAsync` that
-  answers `OK` without the purchase, and on `BILLING_UNAVAILABLE` from setup or query, which is
-  what a signed-out device gets; every other refusal (service unavailable, disconnected, network,
-  timeout) is about the moment and leaves the gate alone, so a panel with its account signed in
-  and its internet down keeps Pro. Reversible by Play's next answer alone. The gate closing tears
-  the controllers down in `restartControllers`; that direction is real now, do not reintroduce the
-  assumption that it cannot happen. Do not add an `AccountManager` check (deprecated broadcast, a
-  "Contacts" permission on the listing, visibility rules that changed at API 26) or a grace period:
-  both were built on 2026-09-03 and removed the same day because Play already answers the question
-  and that is how client-only apps behave. **Play is not asked anything until the first-start
-  wizard has recorded both escape combinations** (`KioskActivity.startProBilling`, which the
-  wizard's exit calls): Muralis is free without a Google account, so a panel nobody has finished
-  setting up has no business talking to Play, and somebody who cannot leave Muralis yet must not be
-  shown a Google screen on the way in. `ProBilling` also asks for the *price* only while the
-  configuration screen is attached as a `StatusListener`; a panel sitting on its dashboard queries
-  purchases alone. A free panel is never nagged: the surfaces
-  simply do not come up, and the configuration screen's dimmed MQTT and web-admin cards (visible,
-  inert, one line and a Buy button each) are the whole story. A purchase completing at the panel
-  starts the surfaces immediately via `reloadConfiguration`, no restart needed. Debug builds accept
-  `MURALIS_PRO_OVERRIDE=on|off` to force either path (R8-stripped from release); a signed release
-  refuses to build without `MURALIS_LICENSE_KEY`, or with one that does not parse. This app runs across a much wider spread of Android versions and device
-  policies than a build for one fixed piece of hardware would, so this matters more here, not less.
+- **Everything on one panel is free; Muralis Pro is the fleet (decided 2026-10-06).** Until that
+  day Pro (Play product `muralis_pro`, one-time, account-wide) unlocked MQTT and the web admin,
+  gated in `KioskService.startControllersNow` and `restartControllers`; the gate was removed the same
+  day and both surfaces come up on every panel. Pro now gates only the fleet console and
+  what makes sense across panels (alerts, log shipping, remote-only lock, picture sync, screenshots
+  on the fleet page, manager-fed updates), 39.99 EUR once per Google account, no device limit; the
+  design is `../muralis-fleet-design.md`. The entitlement is still Play's signed purchase document,
+  verified on-device by `PurchaseSignature` (pure, host-tested; see its javadoc for why there is
+  deliberately no verification server) and cached in `SecretStore` as a bridge, not as a right:
+  Google Play's answer is the truth. `ProBilling` calls `ProEntitlement.drop` on a full-account
+  `queryPurchasesAsync` that answers `OK` without the purchase, so a refund ends Pro the next time
+  a signed-in account is asked; a panel kept away from Play (the Store disabled, the account
+  removed) keeps what it holds, even after a refund, which is the price of carrying Pro to panels
+  without Google and how apps that keep a purchase offline behave. Every refusal about the
+  moment (service unavailable, disconnected, network, timeout) leaves it alone, **and since
+  2026-10-06 so does `BILLING_UNAVAILABLE`**, no account or no Play on this device, because the
+  fleet carries Pro to panels that never see Google on a lease (design, section 12), so "Play
+  cannot be asked here" must not erase a purchase. Reversible by Play's next answer alone. Do not
+  add an `AccountManager` check (deprecated broadcast, a "Contacts" permission on the listing,
+  visibility rules that changed at API 26) or a grace period: both were built on 2026-09-03 and
+  removed the same day because Play already answers the question and that is how client-only apps
+  behave. **Play is not asked anything until the first-start wizard has recorded both escape
+  combinations** (`KioskActivity.startProBilling`, which the wizard's exit calls): Muralis is free
+  without a Google account, so a panel nobody has finished setting up has no business talking to
+  Play, and somebody who cannot leave Muralis yet must not be shown a Google screen on the way in.
+  **Nothing is for sale until the fleet exists**: `ProBilling` only reads what the account owns
+  and acknowledges what Play delivers; the price query and the purchase sheet went with the Buy
+  button and come back with the fleet, from this file's history. The This panel section says what Pro is and whether the account has it, and where
+  Play cannot be asked it says only that, never "sign in to Google". A free panel is never
+  nagged. Debug builds accept `MURALIS_PRO_OVERRIDE=on|off` to force either
+  answer (R8-stripped from release); a signed release refuses to build without
+  `MURALIS_LICENSE_KEY`, or with one that does not parse.
 - **A broker that is down when the client is built is retried, not abandoned.** Paho's automatic
   reconnect covers a connection that was established and then lost, nothing else: a first connect
   that fails left the client silent for good (Lenovo, 2026-09-09: broker reachable, three minutes,
@@ -445,15 +444,13 @@ the playlist page was the case that set the rule.
   are whatever the kernel measures at the device's own DC input, 5 V USB to 24 V DC or PoE,
   never the 230 V on the wall; the same numbers are `power.volts`/`power.watts`), the web admin
   chip says "mains", and
-  discovery announces no battery entity, withdrawing the three on every connect because an older
-  build announced them. `plugged` stays true: it is what makes a real screen-off trustworthy there.
+  discovery announces no battery entity. `plugged` stays true: it is what makes a real screen-off trustworthy there.
   What every panel does report is `power.source`: `battery`, `wireless` (an induction pad) or
   `mains`, which is a charger, PoE and a DC adapter alike, one word on purpose, Android cannot
   tell them apart and whether the cell is filling is the battery object's business. A "Power
   source" enum sensor carries it in discovery. Same day: the "Wake
-  display" button became "Display on" to pair with "Display off" (new key `display_on`, `wake`
-  withdrawn for good), and the "Reboot tablet" button is announced only to a device owner, withdrawn
-  elsewhere, because a button that can only answer `unsupported` is the thermal-status case again.
+  display" button became "Display on" to pair with "Display off" (new key `display_on`), and the
+  "Reboot tablet" button is announced only to a device owner, because a button that can only answer `unsupported` is the thermal-status case again.
 - **The stats overlay moves with a finger** (Juri, 2026-10-04): pressed and held for four fifths of
   the long-press time it is picked up (a haptic tick, lifted a little), before the page's own
   long press would select text under it, follows the finger anywhere on the
@@ -794,17 +791,34 @@ the playlist page was the case that set the rule.
   that conversation again, and note the reconnect still publishes telemetry early, now simply
   because the retained snapshot is as stale as the outage was long. Entity naming rule:
   discovery key, `unique_id` and name all say the same thing, so a rename changes the entity id
-  too. Renames and removals are done by withdrawing the old key (an empty component config
-  holding only its platform, one payload per platform the key ever had, QoS 1 for ordering) and
-  then publishing the configuration without it, never by aliasing a new name onto an old
-  `unique_id` and never by mere omission, which strands the entity. **Withdrawals are bridging
-  code with a retention rule**: they stay until every installation that ever saw the old key has
-  processed one. Pre-publication that meant the maintainer's own Home Assistant, so the standing stale-keys
-  block that had accumulated (recycle controls, network/charging, both `network_state` spellings,
-  `last_mqtt_outage_cause`) was retired on 2026-08-25 once that installation was confirmed clean; an entity
-  removed after the app is public needs its withdrawal kept indefinitely, because the last
-  stranger's panel never announces its upgrade. The mechanics live in a comment above the
-  discovery publish in `MqttController`.
+  too. Renames and removals are withdrawals (an empty component config holding only its
+  platform, then the payload without it, QoS 1), never an alias of a new name onto an old
+  `unique_id` and never mere omission, which strands the entity. **Since 2026-10-06 the panel
+  withdraws by itself exactly what it announced, zigbee2mqtt's way** (`DiscoveryWithdrawals`,
+  pure and host-tested): a sensor switched off, the camera's controls, a deleted rule, and an
+  entity a new build renamed or dropped. What it announced is what the running process published
+  and, on every connect, the broker's own retained device payload, read back before anything is
+  announced (`readRetainedDiscovery`, five seconds from the broker's acknowledgement, zigbee2mqtt's
+  wait; a broker whose access list refuses the read gets the announcement without it), which
+  covers a panel updated from a build that kept no record and a publish that never arrived; a new panel (or a new broker)
+  finds nothing and sends no removal at all. Discovery and the state publish run on one worker
+  thread, in order, and discovery goes again on Home Assistant's birth message, as its
+  documentation recommends. **A removal Home Assistant misses while it is offline is accepted as
+  a leftover**: Home Assistant acts on an empty config only for a component it has discovered
+  since it started (measured 2026-10-06), so the entity stays unavailable until a person deletes
+  it, as with Tasmota, ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk; a scheme
+  that carried removals and announced them again at the birth message was built and tested the
+  same day and dropped, since no project does it (Juri: look at how others do it). Only the
+  device payload is covered: the MQTT state entity and the tag config have topics of their own.
+  **Before every release the discovery code is checked to carry no hand-written withdrawal**
+  (Juri, 2026-10-06: Muralis starts on MQTT as if it were used for the first time, with no
+  message about an old entity). History: hand-written withdrawal blocks lived in
+  `MqttController` until 2026-08-25 (recycle controls, network/charging, both `network_state`
+  spellings, `last_mqtt_outage_cause`) and until 2026-10-06 (the portrait switch, the wake
+  button, the battery sensors on a panel without a battery, the reboot button on an ordinary
+  install, the old connected sensor), and until that day every sensor that was off or missing
+  went out as an empty entry on every connect, the fixed-list way Tasmota and FreeKiosk work.
+  The mechanics live in a comment above the discovery publish in `MqttController`.
 - **The escape hatch** is a user-recorded corner-tap sequence, three to twelve taps across the four
   screen corners, tail-matched with a maximum gap between taps, and recorded separately for "open
   settings" and "exit to the system launcher". It is recordable rather than fixed because a gesture

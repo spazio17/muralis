@@ -730,17 +730,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void startControllersNow() {
-        // The Pro gate, and the only two places it exists in this service (here and in
-        // restartControllers, the only two places a controller is ever built). MQTT and the web
-        // admin are the paid surfaces; everything else, the kiosk itself, recovery, the stats
-        // overlay, the local TelemetryCollector feeding it, stays free and untouched. A free panel
-        // is a finished product, not a nagged one: nothing here retries, warns or phones anywhere,
-        // the surfaces simply do not come up, and the configuration screen is where that is
-        // explained and where the purchase lives.
-        if (!ProEntitlement.isActive(this)) {
-            Log.i(TAG, "MQTT and the web admin stay off: Muralis Pro is not on this panel");
-            return;
-        }
+        // MQTT and the web admin are free on every panel since 2026-10-06; the gate that stood
+        // here until then (Pro unlocking the two) is history in CLAUDE.md. Pro gates the fleet,
+        // and only there.
         KioskConfig config = KioskConfig.load(this);
         mqttInputs = mqttInputsOf(config);
         httpInputs = httpInputsOf(config);
@@ -807,36 +799,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // gate, because whenOnline never returns null and fires inline when already online, a
         // non-null gate is the normal running state, not evidence that anything is pending.
         if (startupGate != null && startupGate.isPending()) {
-            return;
-        }
-        // The other half of the Pro gate (see startControllersNow). Checked before the
-        // input-fingerprint logic because a purchase completing is itself a "reload configuration"
-        // event (ProBilling sends one), and on that reload both controllers are null and must
-        // start.
-        //
-        // The reverse transition is real as of 2026-09-03 and this block used to deny it: Pro now
-        // follows Google Play's answer, so a refund, a signed-out Google account or a device Play
-        // will not serve all close the gate (see ProEntitlement), and ProBilling sends the same
-        // reload for that. Left as a bare return, a panel that had just lost Pro kept serving MQTT
-        // and the web admin until something else restarted the process.
-        if (!ProEntitlement.isActive(this)) {
-            if (mqttController == null && httpAdminServer == null) {
-                Log.i(TAG, "MQTT and the web admin stay off: Muralis Pro is not on this panel");
-                return;
-            }
-            Log.i(TAG, "Muralis Pro is no longer on this panel; stopping MQTT and the web admin");
-            if (mqttController != null) {
-                mqttController.stop();
-                mqttController = null;
-            }
-            if (httpAdminServer != null) {
-                httpAdminServer.stop();
-                httpAdminServer = null;
-            }
-            // The fingerprints go with them. Kept, they would match on a later purchase and the
-            // restart above would decide nothing had changed and start nothing.
-            mqttInputs = null;
-            httpInputs = null;
             return;
         }
         KioskConfig config = KioskConfig.load(this);

@@ -310,8 +310,7 @@ public final class KioskActivity extends Activity {
      * The Play Billing client, created at startup in {@link #initializeUserInterface} and kept for
      * the activity's life: the client holds a service binding, and rebuilding it on every screen
      * rebuild would churn connections for nothing. Asked at startup rather than when the
-     * configuration screen opens, because what it finds is stored by {@link ProEntitlement} and
-     * that is what gates MQTT and the web admin, which start with nobody looking at a screen.
+     * configuration screen opens; see {@link #startProBilling} for why.
      */
     private ProBilling proBilling;
     /**
@@ -765,11 +764,11 @@ public final class KioskActivity extends Activity {
      * than a once-per-boot one. Deliberately after the user-unlock gate in
      * {@link #initializeUserInterface}, because Play cannot answer for a locked user.
      *
-     * <p>Not deferred to the configuration screen: the entitlement gates MQTT and the web admin,
-     * and both start at boot without anybody opening a screen, so an answer that only arrives when
-     * somebody taps their way into settings arrives too late to gate anything. It also means a
-     * purchase made on another device is picked up by the next nightly restart on its own. Decided
-     * 2026-08-27.
+     * <p>Not deferred to the configuration screen: the entitlement was read at boot by MQTT and the
+     * web admin until 2026-10-06 and is read by the fleet without anybody opening a screen, so an
+     * answer that only arrived when somebody taps their way into settings would arrive too late. It
+     * also means a purchase made on another device is picked up by the next nightly restart on its
+     * own. Decided 2026-08-27.
      *
      * <p><b>Never before the first-start wizard has recorded both escape combinations.</b> Muralis
      * is free with or without a Google account, so a panel nobody has set up yet has no business
@@ -837,9 +836,9 @@ public final class KioskActivity extends Activity {
             webView.onResume();
         }
         // Google's guide asks for a purchases re-query in onResume, and on this app the case that
-        // makes it matter is concrete: closing the Play purchase sheet resumes this activity, so
-        // this is what confirms a purchase the moment the sheet closes, including one that
-        // completed while onPurchasesUpdated was not delivered. At startup this runs right after
+        // makes it matter is concrete: closing the Play purchase sheet (back with the fleet)
+        // resumes this activity, so this is what confirms a purchase the moment the sheet closes,
+        // including one that completed while onPurchasesUpdated was not delivered. At startup this runs right after
         // onCreate while the first connection is still being made, and the connecting guard in
         // refresh() deduplicates that for free. Null while a direct-boot start waits for unlock.
         if (proBilling != null) {
@@ -1131,14 +1130,6 @@ public final class KioskActivity extends Activity {
             LinearLayout.LayoutParams deleteParams = matchWrap();
             deleteParams.topMargin = dp(8);
             delete.addView(buttonRow(remove), deleteParams);
-        }
-        // Drawn again on the tick, so the Pro gate's inert card stays inert (review, 2026-10-05:
-        // lockCardForPro greys what the card held when it was built, and these are new views).
-        if (!ProEntitlement.isActive(this)) {
-            for (View part : new View[] {choice, delete}) {
-                setEnabledDeeply(part, false);
-                part.setAlpha(0.45f);
-            }
         }
     }
 
@@ -2963,17 +2954,9 @@ public final class KioskActivity extends Activity {
         // redraw is the one a switch flipped here uses, which keeps what the boxes hold.
         watchLists("home", page, this::redrawSettingsSoon);
 
-        // The Pro gate's face. The shape decided on 2026-08-27: the paid cards stay visible and
-        // complete but inert, each carrying one line and its own Buy button, because a feature
-        // nobody can see is a feature nobody buys, and a hidden card would also make a bought
-        // panel and a free one different screens. Evaluated once per build; the ProBilling
-        // listener below rebuilds this screen when the answer changes, so a purchase made at the
-        // panel unlocks the cards while the buyer is still standing there.
-        boolean proActive = ProEntitlement.isActive(this);
-        if (!proActive) {
-            lockCardForPro(theme, mqttCard);
-            lockCardForPro(theme, httpCard);
-        }
+        // MQTT and the web admin are free on every panel (2026-10-06); the Pro line below only
+        // says what Pro is and whether this account has it, and the ProBilling listener sets
+        // that line in place when the answer changes. Nothing else on this screen depends on Pro.
 
         LinearLayout escapeCard = sectionBody(theme);
         TextView escapeSummary = new FlushText(this);
@@ -2990,12 +2973,8 @@ public final class KioskActivity extends Activity {
         escapeCard.addView(buttonRow(manageSequences), matchWrap());
 
         // The Pro state lives in This panel (About until 2026-09-27; moved here 2026-08-29, by
-        // decision of that day): it is a fact about this
-        // installation, like the version line beside it, not a card-sized feature of its own.
-        // The purchase still lives where the features it unlocks are: the locked MQTT and web
-        // admin cards stay visible, complete and inert, each with its own Buy button. The button
-        // here only appears while Play says the product is buyable, so a bought panel shows one
-        // quiet status line.
+        // decision of that day): it is a fact about this installation, like the version line
+        // beside it, not a card-sized feature of its own.
         // This panel (Juri, 2026-09-27): the panel's name first, what Home Assistant and MQTT
         // call it, then the stats and the log behind a chevron, the version and the Pro state,
         // and the two legal pages.
@@ -3073,15 +3052,20 @@ public final class KioskActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         proCaptionParams.topMargin = dp(14);
         aboutCard.addView(proCaption, proCaptionParams);
+        // What Pro is, in one line: the fleet, every panel of this account managed from one
+        // page, which 0.7 brings. Nothing is for sale on this card until the fleet exists (Juri,
+        // 2026-10-06: nothing is sold that gates nothing); the Buy button returns with it.
+        TextView proWhat = new FlushText(this);
+        proWhat.setTextColor(theme.subtext);
+        proWhat.setTextSize(14);
+        proWhat.setText("The fleet: every panel of this account managed from one page, once "
+                + "0.7 brings it. One panel has everything without it.");
+        aboutCard.addView(proWhat, matchWrapClose());
         TextView proState = new FlushText(this);
         proState.setTextColor(theme.subtext);
         proState.setTextSize(14);
         proState.setText("Checking Google Play…");
         aboutCard.addView(proState, matchWrapClose());
-        Button buyPro = secondaryButton(theme, "Buy Muralis Pro");
-        buyPro.setVisibility(View.GONE);
-        buyPro.setOnClickListener(view -> proBilling.buy(this));
-        aboutCard.addView(buyPro, matchWrapClose());
         // Created at startup, not here: this screen only attaches its row to it. setListener
         // publishes what is already known, synchronously, before re-asking, so the card shows the
         // last answer immediately rather than flashing "Checking Google Play…" on every rebuild.
@@ -3090,27 +3074,17 @@ public final class KioskActivity extends Activity {
         // attachment test alone would silently eat exactly the paint the synchronous publish
         // exists to deliver (and did, before the flag).
         final boolean[] proCardBuilt = {false};
-        proBilling.setListener((proDetail, owned, buyable) -> {
+        proBilling.setListener(proDetail -> {
             // This screen is rebuilt wholesale on rotation and after every save; a result that
             // arrives later for a replaced view tree must not touch it. Same attachment rule as
             // the live-settings sync above, skipped only for the build-time paint.
             if (proCardBuilt[0] && !page.isAttachedToWindow()) {
                 return;
             }
-            // The entitlement changed while this screen was up, which outside a debug override
-            // means the purchase just completed: rebuild so the locked cards open. Only on a real
-            // transition, because a rebuild re-registers this listener and re-publishes, and a
-            // rebuild on every publish would loop.
-            if (proCardBuilt[0] && ProEntitlement.isActive(KioskActivity.this) != proActive) {
-                redrawInPlace(() ->
-                        showConfiguration(KioskConfig.load(KioskActivity.this)));
-                return;
-            }
             // A compiled-in override is the honest answer on this panel; Play's own detail is
             // not, because it was never consulted.
             String override = ProEntitlement.overrideDetail();
             proState.setText(override != null ? override : proDetail);
-            buyPro.setVisibility(buyable && override == null ? View.VISIBLE : View.GONE);
         });
         proCardBuilt[0] = true;
 
@@ -11558,7 +11532,7 @@ public final class KioskActivity extends Activity {
         clearStatusChip();
         destroyWebView();
         configurationVisible = false;
-        // The dashboard draws no price, so Play stops being asked for one. See ProBilling.askPlay.
+        // The dashboard shows no Pro line, so results stop going to a card that is gone.
         if (proBilling != null) {
             proBilling.detachListener();
         }
@@ -11888,45 +11862,6 @@ public final class KioskActivity extends Activity {
         CharSequence rendered = Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY);
         return rendered == null || rendered.length() == 0
                 ? KioskRuntimeState.overlayText() : rendered;
-    }
-
-    /**
-     * Makes a paid card inert without hiding what it is: every control it holds so far is
-     * disabled and dimmed, and one plain line plus a Buy button is appended at full strength.
-     * The fields keep their stored values on purpose, since a broker configured before the gate
-     * landed (or on another panel) is a real state the operator should see, not a secret.
-     *
-     * <p>Appending the button after the disable pass is what keeps it tappable; order matters.
-     */
-    private void lockCardForPro(KioskTheme theme, LinearLayout cardView) {
-        for (int i = 0; i < cardView.getChildCount(); i++) {
-            View child = cardView.getChildAt(i);
-            setEnabledDeeply(child, false);
-            // Dimmed, not recolored: alpha grays whatever a control draws, including the themed
-            // field backgrounds and the card title, without a second palette to maintain.
-            child.setAlpha(0.45f);
-        }
-        TextView needs = new FlushText(this);
-        needs.setTextColor(theme.subtext);
-        needs.setTextSize(14);
-        needs.setText("Needs Muralis Pro.");
-        LinearLayout.LayoutParams needsParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        needsParams.topMargin = dp(10);
-        cardView.addView(needs, needsParams);
-        Button unlock = secondaryButton(theme, "Buy Muralis Pro");
-        unlock.setOnClickListener(view -> proBilling.buy(this));
-        cardView.addView(buttonRow(unlock), matchWrap());
-    }
-
-    private static void setEnabledDeeply(View view, boolean enabled) {
-        view.setEnabled(enabled);
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                setEnabledDeeply(group.getChildAt(i), enabled);
-            }
-        }
     }
 
     /**

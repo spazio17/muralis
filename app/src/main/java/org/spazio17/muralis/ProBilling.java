@@ -1,6 +1,5 @@
 package org.spazio17.muralis;
 
-import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -9,29 +8,28 @@ import android.util.Log;
 import com.android.billingclient.api.AcknowledgePurchaseParams;
 import com.android.billingclient.api.BillingClient;
 import com.android.billingclient.api.BillingClientStateListener;
-import com.android.billingclient.api.BillingFlowParams;
 import com.android.billingclient.api.BillingResult;
 import com.android.billingclient.api.PendingPurchasesParams;
-import com.android.billingclient.api.ProductDetails;
 import com.android.billingclient.api.Purchase;
 import com.android.billingclient.api.PurchasesUpdatedListener;
-import com.android.billingclient.api.QueryProductDetailsParams;
-import com.android.billingclient.api.QueryProductDetailsResult;
 import com.android.billingclient.api.QueryPurchasesParams;
-import com.android.billingclient.api.UnfetchedProduct;
 
-import java.util.Collections;
 import java.util.List;
 
 /**
- * The Play Billing client: sees the Pro product, runs a purchase, and reads back what the
- * signed-in Google account owns.
+ * The Play Billing client: reads back what the signed-in Google account owns, and acknowledges a
+ * purchase Play delivers.
+ *
+ * <p><b>Nothing is sold here until the fleet exists</b> (Juri, 2026-10-06: nothing is sold that
+ * gates nothing). The price query and the purchase sheet went with the Buy button when MQTT and
+ * the web admin became free, and come back with the fleet; this file's history has them as they
+ * were, offer token and Play's per-product reasons included.
  *
  * <p><b>It decides nothing itself.</b> Every purchase it sees in the {@code PURCHASED} state goes
  * to {@link ProEntitlement#record}, which verifies Play's signature over the document and caches
- * what survives; that cached answer, not anything here, is what gates MQTT and the web admin in
- * {@link KioskService}. This class asks Play and reports, which is why it can be wrong, offline or
- * absent without a panel changing behaviour.
+ * what survives; that cached answer, not anything here, is what the fleet reads (0.7; until
+ * 2026-10-06 it gated MQTT and the web admin in {@link KioskService}). This class asks Play and
+ * reports, which is why it can be wrong, offline or absent without a panel changing behaviour.
  *
  * <p><b>What a signature does and does not gate, measured rather than assumed 2026-08-27.</b> This
  * class used to claim that only a Play-signed install could get any answer but "unavailable",
@@ -65,7 +63,7 @@ import java.util.List;
  *
  * <p><b>Asked at startup, as Google's guide recommends</b>, from
  * {@code KioskActivity.startProBilling}, again in {@code onResume} (Google's
- * recommendation too, and on this app it is what re-asks after the Play purchase sheet closes,
+ * recommendation too; with the fleet it is what re-asks after the Play purchase sheet closes,
  * since coming back from the sheet is exactly a resume), and whenever the configuration screen is
  * built. <b>Startup means after the first-start wizard, never before it</b>: a panel with no
  * recorded way out is a panel nobody can leave, and until it has one, Muralis asks Google nothing.
@@ -78,8 +76,8 @@ import java.util.List;
  *
  * <p>Two things follow from asking at startup, and both are the point rather than side effects: a
  * purchase made on another device on the same account is picked up by the next nightly restart with
- * nobody touching the panel, and the entitlement will be known before MQTT and the web admin decide
- * whether to come up, which is a thing the gate cannot work without.
+ * nobody touching the panel, and the entitlement is known before anything that reads it (the
+ * fleet's anchor, the Pro card) asks.
  */
 final class ProBilling implements PurchasesUpdatedListener {
 
@@ -90,13 +88,8 @@ final class ProBilling implements PurchasesUpdatedListener {
 
     /** What the configuration screen renders. Always called on the main thread. */
     interface StatusListener {
-        /**
-         * @param detail one plain sentence fit to show an operator
-         * @param owned  a purchase of the product in the PURCHASED state exists for the signed-in
-         *               account, acknowledged or not; never true for a merely PENDING one
-         * @param buyable product details are in hand and a purchase could be launched now
-         */
-        void onProStatus(String detail, boolean owned, boolean buyable);
+        /** @param detail one plain sentence fit to show an operator */
+        void onProStatus(String detail);
     }
 
     private final Context context;
@@ -104,30 +97,11 @@ final class ProBilling implements PurchasesUpdatedListener {
     private final BillingClient client;
 
     /**
-     * The last details seen, kept ONLY to render the price on the card. Never passed to
-     * {@link #buy}: Google's guidance is that a cached {@code ProductDetails} goes stale and makes
-     * {@code launchBillingFlow} fail, so the purchase path re-queries and uses the fresh object.
+     * A purchase of the product in the PURCHASED state exists for the signed-in account,
+     * acknowledged or not; never true for a merely PENDING one. Play's raw answer, which
+     * {@link #statusSentence} weighs against the verified one in {@link ProEntitlement}.
      */
-    private ProductDetails productForDisplay;
-    /**
-     * Why there are no details to show, as a full sentence, or null while details are in hand:
-     * either Play's own per-product reason (see {@link #unfetchedStatus}) or the refusal the
-     * details query got. Kept so the purchases result, which lands after the details result and
-     * also repaints the card, cannot overwrite the explanation with a generic "not offered yet".
-     */
-    private String productProblem;
-    /**
-     * Whether Play has ever answered a product-details query on this client, with details or with a
-     * refusal. False is not a problem to report, it is the ordinary state of a running panel: the
-     * price is only fetched while a screen is showing it, so {@link #statusSentence} must not read
-     * an absent {@link #productForDisplay} as Play refusing to offer the product. Set when the
-     * answer lands, not when the question goes out: the purchases answer usually arrives first, and
-     * a flag set on asking made that first repaint say "not offered" for the half second before the
-     * price came in.
-     */
-    private boolean productAnswered;
     private boolean owned;
-    private boolean buyable;
     private String detail = "Checking Google Play…";
     private StatusListener listener;
     private boolean connecting;
@@ -173,10 +147,10 @@ final class ProBilling implements PurchasesUpdatedListener {
         refresh();
     }
 
-    /** Re-asks Play for the product and the account's purchases. Main thread; safe to repeat. */
+    /** Re-asks Play for the account's purchases. Main thread; safe to repeat. */
     void refresh() {
         if (client.isReady()) {
-            askPlay();
+            queryPurchases();
             return;
         }
         if (connecting) {
@@ -189,14 +163,14 @@ final class ProBilling implements PurchasesUpdatedListener {
                 mainHandler.post(() -> {
                     connecting = false;
                     if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
-                        askPlay();
+                        queryPurchases();
                     } else {
                         // owned stays: a setup failure is knowledge about the moment, not about
-                        // the purchase, and wiping the gate here would drop the remote surfaces
-                        // on a network blip. The one exception is the code that is about this
-                        // device or account rather than the moment; see the helper.
-                        closeGateIfPlayWillNotServe(result);
-                        report(unavailableSentence(result), owned, false);
+                        // the purchase, and dropping it here would end Pro on a network blip.
+                        // "Play cannot be asked here" (BILLING_UNAVAILABLE: no account, no Play)
+                        // drops nothing either since 2026-10-06: a panel keeps the purchase it
+                        // holds, and only Play's own "not owned" from a signed-in account ends it.
+                        report(unavailableSentence(result));
                     }
                 });
             }
@@ -211,64 +185,8 @@ final class ProBilling implements PurchasesUpdatedListener {
     }
 
     /**
-     * Starts the Play purchase sheet, on details fetched for this attempt rather than on whatever
-     * the card happens to be displaying. Google's guidance is explicit that a cached
-     * {@code ProductDetails} can be stale and fail {@code launchBillingFlow}, and on a wall panel
-     * the gap between "the screen was opened" and "somebody pressed Buy" can be very long indeed.
-     *
-     * <p>The purchase result arrives at {@link #onPurchasesUpdated}, not here.
-     */
-    void buy(Activity activity) {
-        client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
-                mainHandler.post(() -> {
-                    if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                        // Not an answer about the product, so productAnswered stays as it was: a
-                        // Buy that failed on transport must not leave statusSentence with the
-                        // flag set and neither details nor a problem to show for it.
-                        report(unavailableSentence(result), owned, buyable);
-                        return;
-                    }
-                    productAnswered = true;
-                    List<ProductDetails> found = detailsResult.getProductDetailsList();
-                    if (found.isEmpty()) {
-                        productForDisplay = null;
-                        productProblem = unfetchedSentence(detailsResult);
-                        report(productProblem, owned, false);
-                        return;
-                    }
-                    ProductDetails fresh = found.get(0);
-                    productForDisplay = fresh;
-                    productProblem = null;
-                    BillingFlowParams.ProductDetailsParams.Builder line =
-                            BillingFlowParams.ProductDetailsParams.newBuilder()
-                                    .setProductDetails(fresh);
-                    // Google's billing-8 flow takes the offer token from the one-time offer list,
-                    // the same as it always has for subscriptions. This app sells one product with
-                    // its default purchase option, so the first offer is the offer; a product page
-                    // configured with several offers would need a chooser, not a different token.
-                    // Only set when present and non-empty: billing 8 throws on an empty token, and
-                    // a details object with no offer list launches on the product alone.
-                    String offerToken = offerTokenOf(fresh);
-                    if (offerToken != null) {
-                        line.setOfferToken(offerToken);
-                    }
-                    BillingFlowParams params = BillingFlowParams.newBuilder()
-                            .setProductDetailsParamsList(
-                                    Collections.singletonList(line.build()))
-                            .build();
-                    // Already on the main thread, which launchBillingFlow requires.
-                    BillingResult launch = client.launchBillingFlow(activity, params);
-                    if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                        report(unavailableSentence(launch), owned, buyable);
-                    }
-                }));
-    }
-
-    /**
-     * The configuration screen has been left for the dashboard. Nothing is drawing the price now,
-     * so {@link #askPlay} stops asking for it; the entitlement query is unaffected. Without this the
-     * listener outlived its screen, and every refresh after the first visit to settings, nightly
-     * included, fetched a price for a card that no longer existed.
+     * The configuration screen has been left for the dashboard, so results stop going to a card
+     * that no longer exists; the purchases query is unaffected.
      */
     void detachListener() {
         listener = null;
@@ -280,142 +198,6 @@ final class ProBilling implements PurchasesUpdatedListener {
         client.endConnection();
     }
 
-    /** The one product this app sells. Rebuilt per call rather than held, like the details. */
-    private QueryProductDetailsParams productQuery() {
-        return QueryProductDetailsParams.newBuilder()
-                .setProductList(Collections.singletonList(
-                        QueryProductDetailsParams.Product.newBuilder()
-                                .setProductId(PRODUCT_ID)
-                                .setProductType(BillingClient.ProductType.INAPP)
-                                .build()))
-                .build();
-    }
-
-    /**
-     * The two questions, and the rule for which of them to ask.
-     *
-     * <p>What the account owns is asked every time, because that is the entitlement and it gates
-     * MQTT and the web admin whether or not anybody is looking at a screen.
-     *
-     * <p>What the product costs is asked only while a {@link StatusListener} is attached, which
-     * means only while the configuration screen is up to show a price. A panel spends its life on
-     * the dashboard, where the price is drawn nowhere and asked by nobody, so asking anyway was one
-     * needless conversation with Play per launch on every panel in the world. {@link #buy} does not
-     * depend on this either way: it re-queries for itself, deliberately, because Google's guidance
-     * is that a cached {@code ProductDetails} goes stale.
-     */
-    private void askPlay() {
-        if (listener != null) {
-            queryProductForDisplay();
-        }
-        queryPurchases();
-    }
-
-    /** The price, for the card that shows it. Reports on its own; see {@link #askPlay}. */
-    private void queryProductForDisplay() {
-        client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
-                mainHandler.post(() -> {
-                    productAnswered = true;
-                    List<ProductDetails> found = detailsResult.getProductDetailsList();
-                    if (result.getResponseCode() == BillingClient.BillingResponseCode.OK
-                            && !found.isEmpty()) {
-                        productForDisplay = found.get(0);
-                        productProblem = null;
-                    } else if (result.getResponseCode()
-                            != BillingClient.BillingResponseCode.OK) {
-                        productForDisplay = null;
-                        productProblem = unavailableSentence(result);
-                        Log.w(TAG, "Product details refused: " + result.getResponseCode()
-                                + " " + result.getDebugMessage());
-                    } else {
-                        productForDisplay = null;
-                        // The v8 API that says WHY a product came back empty, rather than leaving
-                        // "not offered yet" as the only thing anyone can report. This is the
-                        // difference between "the Play Console product does not exist" and "this
-                        // install cannot be matched to the listing", which look identical
-                        // without it.
-                        productProblem = unfetchedSentence(detailsResult);
-                        Log.w(TAG, "Product " + PRODUCT_ID + " unfetched: " + productProblem);
-                    }
-                    // Used to fall through to queryPurchases and let that one line report for both.
-                    // The two are independent now, so this one says what it found rather than
-                    // leaving the card on whatever the purchases answer happened to paint.
-                    report(statusSentence(), owned, productForDisplay != null && !owned);
-                }));
-    }
-
-    /** The per-product reason Play gives for not returning details, or null if it gave none. */
-    private String unfetchedStatus(QueryProductDetailsResult detailsResult) {
-        List<UnfetchedProduct> unfetched = detailsResult.getUnfetchedProductList();
-        if (unfetched == null || unfetched.isEmpty()) {
-            return null;
-        }
-        StringBuilder reasons = new StringBuilder();
-        for (UnfetchedProduct entry : unfetched) {
-            if (reasons.length() > 0) {
-                reasons.append("; ");
-            }
-            reasons.append(entry.getProductId())
-                    .append(": ")
-                    .append(statusName(entry.getStatusCode()));
-        }
-        return reasons.toString();
-    }
-
-    /**
-     * Words rather than a number. These are {@link UnfetchedProduct.StatusCode} values, which are
-     * their own set and are NOT {@code BillingResponseCode} values however similar the numbers
-     * look; read off the 8.3.0 artifact rather than assumed. The distinction matters because the
-     * one this panel actually reports, 3, is BILLING_UNAVAILABLE under the other set, which would
-     * send somebody debugging the device instead of creating the product.
-     */
-    private static String statusName(int statusCode) {
-        switch (statusCode) {
-            case UnfetchedProduct.StatusCode.PRODUCT_NOT_FOUND:
-                return "no such product on this Play listing yet";
-            case UnfetchedProduct.StatusCode.INVALID_PRODUCT_ID_FORMAT:
-                return "the product id is not a valid one";
-            case UnfetchedProduct.StatusCode.NO_ELIGIBLE_OFFER:
-                return "no offer this account is eligible for";
-            case UnfetchedProduct.StatusCode.UNKNOWN:
-                return "Google Play gave no reason";
-            default:
-                return "status " + statusCode;
-        }
-    }
-
-    /** One sentence for an empty product list, carrying Play's reason when it gave one. */
-    private String unfetchedSentence(QueryProductDetailsResult detailsResult) {
-        String status = unfetchedStatus(detailsResult);
-        return status == null
-                ? "Google Play does not offer Muralis Pro to this device yet."
-                : "Google Play did not return the product (" + status + ").";
-    }
-
-    /**
-     * The offer this app sells, from the billing-8 offer list with the legacy single-offer shape
-     * as the fallback. Null when the details carry neither, which is a details object this app has
-     * never actually seen but must not crash on.
-     */
-    private static ProductDetails.OneTimePurchaseOfferDetails offerOf(ProductDetails details) {
-        List<ProductDetails.OneTimePurchaseOfferDetails> offers =
-                details.getOneTimePurchaseOfferDetailsList();
-        if (offers != null && !offers.isEmpty()) {
-            return offers.get(0);
-        }
-        return details.getOneTimePurchaseOfferDetails();
-    }
-
-    /** The token of {@link #offerOf}'s offer, or null when there is no token to pass. */
-    private static String offerTokenOf(ProductDetails details) {
-        ProductDetails.OneTimePurchaseOfferDetails offer = offerOf(details);
-        if (offer == null) {
-            return null;
-        }
-        String token = offer.getOfferToken();
-        return token == null || token.isEmpty() ? null : token;
-    }
-
     private void queryPurchases() {
         client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder()
@@ -424,10 +206,8 @@ final class ProBilling implements PurchasesUpdatedListener {
                 (result, purchases) -> mainHandler.post(() -> {
                     if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
                         // owned stays, same reasoning as the setup failure above: a query that
-                        // could not run says nothing about the purchase, with the same exception.
-                        closeGateIfPlayWillNotServe(result);
-                        report(unavailableSentence(result), owned,
-                                productForDisplay != null && !owned);
+                        // could not run says nothing about the purchase.
+                        report(unavailableSentence(result));
                         return;
                     }
                     // The one caller that speaks for the whole account, and so the only one that
@@ -437,44 +217,14 @@ final class ProBilling implements PurchasesUpdatedListener {
     }
 
     /**
-     * {@code BILLING_UNAVAILABLE} is the one refusal that is about this device or account rather
-     * than about the moment. Google lists an out-of-date Store, an unsupported country, an
-     * enterprise that disabled purchases and a blocked Store; in practice it is also what a device
-     * with no Google account signed in gets, which under the rule of 2026-09-03 is the case that matters. Play
-     * will not vouch for anything here until the operator changes something, so Pro is off until
-     * it does, and comes back by itself when Play answers again. Every other refusal, service
-     * unavailable, disconnected, network, timeout, is about the moment and leaves the gate alone,
-     * which is what keeps a panel with its account signed in and its internet down on Pro.
+     * Logs the moment Pro arrives or goes. Nothing restarts for it any more: until 2026-10-06 this
+     * reloaded the service so MQTT and the web admin came up or went down with Pro; both are free
+     * now, and the configuration screen follows the change through its own listener.
      */
-    private void closeGateIfPlayWillNotServe(BillingResult result) {
-        if (result.getResponseCode() != BillingClient.BillingResponseCode.BILLING_UNAVAILABLE) {
-            return;
-        }
-        boolean activeBefore = ProEntitlement.isActive(context);
-        ProEntitlement.drop(context, "Google Play billing is unavailable on this device or "
-                + "account (" + result.getDebugMessage() + ")");
-        // Play's raw answer is "no" too: the callers report this state, and a stale "owned" from
-        // before the account went away would otherwise read as Pro being on the account.
-        owned = false;
-        applyGate(activeBefore);
-    }
-
-    /**
-     * Runs the service's rebuild when the gate has just moved, in either direction.
-     *
-     * <p>Opening: the paid surfaces come up without waiting for a restart, because buying at the
-     * panel should visibly work while the buyer is still standing there; the reload takes the
-     * path a settings save takes (restartControllers), which finds both controllers null and
-     * starts them. Closing: the same call tears them down, which it did not do before Pro could
-     * end.
-     */
-    private void applyGate(boolean activeBefore) {
+    private void logChange(boolean activeBefore) {
         boolean activeAfter = ProEntitlement.isActive(context);
         if (activeBefore != activeAfter) {
-            Log.i(TAG, activeAfter
-                    ? "Muralis Pro arrived; starting the remote surfaces"
-                    : "Muralis Pro is gone; stopping the remote surfaces");
-            KioskService.reloadConfiguration(context);
+            Log.i(TAG, activeAfter ? "Muralis Pro arrived" : "Muralis Pro is gone");
         }
     }
 
@@ -493,13 +243,11 @@ final class ProBilling implements PurchasesUpdatedListener {
                     // here would print a failure sentence over a success code.
                     queryPurchases();
                 }
-            } else if (code == BillingClient.BillingResponseCode.USER_CANCELED) {
-                report(statusSentence(), owned, buyable);
             } else if (code == BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED) {
                 // Play's cache and ours disagree; the query is the tiebreaker.
                 queryPurchases();
             } else {
-                report(unavailableSentence(result), owned, buyable);
+                report(unavailableSentence(result));
             }
         });
     }
@@ -554,20 +302,19 @@ final class ProBilling implements PurchasesUpdatedListener {
             }
         }
         owned = nowOwned;
-        buyable = productForDisplay != null && !nowOwned;
         // Play has spoken for the whole account and the purchase was not in it: a refund, or an
         // account that never bought Pro. At once, not after a grace, which is how client-only apps
         // on Play behave in general and what was decided on 2026-09-03; a wrong empty answer from Play, which
-        // does happen right after a boot before the Store has synced, costs a brief outage of the
-        // paid surfaces and is corrected by the next query.
+        // does happen right after a boot before the Store has synced, costs Pro for a moment and is
+        // corrected by the next query.
         if (fullAccountQuery && !nowOwned) {
             ProEntitlement.drop(context, "Google Play says this account does not own it");
         }
-        applyGate(activeBefore);
+        logChange(activeBefore);
         if (pending && !nowOwned) {
-            report("A Pro purchase is pending; Google Play will complete it.", false, false);
+            report("A Pro purchase is pending; Google Play will complete it.");
         } else {
-            report(statusSentence(), owned, buyable);
+            report(statusSentence());
         }
     }
 
@@ -576,36 +323,21 @@ final class ProBilling implements PurchasesUpdatedListener {
         if (owned) {
             // Two different questions, and this line used to answer only the first. "owned" is
             // Play's raw answer: a PURCHASED purchase exists for the signed-in account, and
-            // reading that needs no signature. Whether the paid surfaces actually run is the
-            // stricter question ProEntitlement answers, by verifying Play's signature over the
+            // reading that needs no signature. Whether this panel has Pro is the stricter
+            // question ProEntitlement answers, by verifying Play's signature over the
             // purchase against this build's licensing key. They agree on any correctly built
             // release. They diverge when the purchase cannot be verified here, and then the About
             // line claimed Pro was on the account while the MQTT and web-admin cards beside it
             // stayed locked and their Buy buttons answered ITEM_ALREADY_OWNED, which is an
             // operator being told everything is fine by the one surface that should have said
             // what was wrong (seen 2026-09-03 on a locally built panel whose build carried no
-            // licensing key). The gate is right and stays; this sentence now reports it.
+            // licensing key). The check is right and stays; this sentence reports it.
             return ProEntitlement.isActive(context)
                     ? "Muralis Pro is on this Google account."
                     : "Muralis Pro is on this Google account, but this panel could not verify the "
-                            + "purchase, so the paid features stay locked.";
+                            + "purchase.";
         }
-        ProductDetails details = productForDisplay;
-        if (details != null) {
-            ProductDetails.OneTimePurchaseOfferDetails offer = offerOf(details);
-            return offer == null
-                    ? "Muralis Pro is available."
-                    : "Muralis Pro is available: " + offer.getFormattedPrice() + ", one time.";
-        }
-        if (!productAnswered) {
-            // No answer about the product yet, either because nothing is showing a price or because
-            // the question is still in flight. Saying "not offered yet" here would be inventing a
-            // refusal Play never gave; this is the one thing the panel does know.
-            return "Muralis Pro is not on this Google account.";
-        }
-        return productProblem == null
-                ? "Google Play does not offer Muralis Pro to this device yet."
-                : productProblem;
+        return "Muralis Pro is not on this Google account.";
     }
 
     /**
@@ -615,13 +347,26 @@ final class ProBilling implements PurchasesUpdatedListener {
     private String unavailableSentence(BillingResult result) {
         switch (result.getResponseCode()) {
             case BillingClient.BillingResponseCode.BILLING_UNAVAILABLE:
-                return "Google Play billing is not available on this device or account: sign in "
-                        + "to a Google account, or update Google Play.";
+                // No account or no Play here, which keeps a stored purchase (2026-10-06), so the
+                // line says so rather than reading as Pro being gone. Nothing is for sale, so it
+                // does not send anybody to sign in to Google either: a free panel is not nagged.
+                return ProEntitlement.isActive(context)
+                        ? "Muralis Pro stays on this panel. Google Play is not available here to "
+                                + "check it."
+                        : "Google Play is not available here.";
+            case BillingClient.BillingResponseCode.SERVICE_DISCONNECTED:
             case BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE:
             case BillingClient.BillingResponseCode.NETWORK_ERROR:
-                return "Google Play could not be reached; check the network and try again.";
+                // About the moment, not the device: a Play that dropped its connection on an idle
+                // panel answers the same as one that cannot bill at all (the API 26 tablet with no
+                // account ends here once the client's own reconnection gives up, 2026-10-06), so
+                // the words claim neither; "Google Play refused (-1)" was printed before.
+                return ProEntitlement.isActive(context)
+                        ? "Muralis Pro stays on this panel. Google Play could not be reached to "
+                                + "check it."
+                        : "Google Play could not be reached.";
             case BillingClient.BillingResponseCode.FEATURE_NOT_SUPPORTED:
-                return "This device's Google Play version cannot handle purchases.";
+                return "Google Play on this device is too old to be asked.";
             default:
                 return "Google Play refused (" + result.getResponseCode() + "): "
                         + result.getDebugMessage();
@@ -629,9 +374,7 @@ final class ProBilling implements PurchasesUpdatedListener {
     }
 
     /** Main thread only: every caller is either a main-thread entry point or a hopped callback. */
-    private void report(String sentence, boolean nowOwned, boolean nowBuyable) {
-        owned = nowOwned;
-        buyable = nowBuyable;
+    private void report(String sentence) {
         detail = sentence;
         publish();
     }
@@ -639,7 +382,7 @@ final class ProBilling implements PurchasesUpdatedListener {
     private void publish() {
         StatusListener current = listener;
         if (current != null) {
-            current.onProStatus(detail, owned, buyable);
+            current.onProStatus(detail);
         }
     }
 }

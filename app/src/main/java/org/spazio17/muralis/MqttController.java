@@ -78,7 +78,7 @@ final class MqttController implements MqttCallbackExtended {
      */
     private static final long FAREWELL_TIMEOUT_MS = 1_000L;
 
-    /** Real hardware identity for Home Assistant discovery. See {@link #publishDiscovery()}. */
+    /** Real hardware identity for Home Assistant discovery. See {@link #runDiscovery}. */
     private final String deviceManufacturer;
     private final String deviceModel;
     private final String appVersion;
@@ -89,7 +89,6 @@ final class MqttController implements MqttCallbackExtended {
     private final boolean hasLightSensor;
     /** Same rule as the light sensor: a panel with no battery is never offered battery entities. */
     private final boolean hasBattery;
-    private static final String[] BATTERY_ENTITIES = {"battery", "battery_temperature", "battery_state"};
     /**
      * Volatile because Paho's callback thread reads it ({@code connectComplete}, {@code publish})
      * while the main thread replaces it in {@link #start}/{@link #stop}. Without it a reader can
@@ -104,6 +103,29 @@ final class MqttController implements MqttCallbackExtended {
      * one, so a configuration reload can never leave a retry firing for a client already closed.
      */
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    /**
+     * Discovery and the state publish run here, one at a time and in order: Paho's thread (a
+     * connect, Home Assistant's birth message), the telemetry tick and a command may all ask at
+     * once, and none of them should wait while the payload is built from storage. Everything
+     * below it is touched only on this thread. Shut down by {@link #stop}.
+     */
+    private final java.util.concurrent.ScheduledExecutorService discoveryWorker =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(
+                    work -> new Thread(work, "MuralisDiscovery"));
+    /** False from a connect until the broker's copy of the payload was read, or the wait ran out. */
+    private boolean discoveryReady;
+    /** The last run did not go out whole, so the next state publish runs it again. */
+    private boolean discoveryStale;
+    private java.util.concurrent.ScheduledFuture<?> retainedWait;
+    /** Every component this panel's payload announced last, key to platform. */
+    private final java.util.Map<String, String> announced = new java.util.LinkedHashMap<>();
+    /**
+     * How long a connect waits, from the broker's acknowledgement of the subscription, for the
+     * panel's own retained payload; zigbee2mqtt waits five seconds for its retained configs. The
+     * broker sends a retained message straight after the acknowledgement, so this runs out only
+     * where there is none: a new panel, or a broker that keeps nothing.
+     */
+    private static final long RETAINED_WAIT_MS = 5_000L;
     private MqttConnectOptions connectOptions;
     private final AtomicInteger connectFailures = new AtomicInteger();
 
@@ -216,6 +238,7 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     void stop() {
+        discoveryWorker.shutdownNow();
         MqttAsyncClient stopping = client;
         if (stopping == null) {
             return;
@@ -265,20 +288,55 @@ final class MqttController implements MqttCallbackExtended {
         }
     }
 
-    void publishState(JSONObject state) {
-        // The playlist select's options are part of discovery, and a playlist made, renamed or
-        // deleted since the last discovery is one Home Assistant cannot choose or shows as
-        // unknown (review of 2026-09-19). Discovery goes again before the state when they differ.
-        String names = PictureLibrary.get(appContext).playlists().namesKey();
-        if (names != null && !names.equals(announcedPlaylists)) {
-            publishDiscovery();
-        } else if (!sensorsKey().equals(announcedSensors)) {
-            // Same rule for the sensors, the camera and the automations: a sensor switched on
-            // has its entity at once, one switched off loses it, and a rule added, renamed or
-            // deleted is announced or withdrawn before the state that mentions it.
-            publishDiscovery();
+    /**
+     * Runs {@code task} on the discovery worker and logs what it throws: a task the executor runs
+     * keeps its exception in a future nobody reads, so without this a failure would be silent.
+     * Nothing happens once {@link #stop} has shut the worker down.
+     */
+    private void onWorker(Runnable task) {
+        try {
+            discoveryWorker.execute(() -> guarded(task));
+        } catch (java.util.concurrent.RejectedExecutionException stopped) {
+            // stop() has run; nothing is connected to publish to.
         }
-        publish(topicPrefix + "state", state.toString(), 0, true);
+    }
+
+    private static void guarded(Runnable task) {
+        try {
+            task.run();
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "MQTT discovery work failed", failure);
+        }
+    }
+
+    void publishState(JSONObject state) {
+        if (client == null) {
+            // Not configured, or stopped: nothing to publish to, and no reason to start the worker.
+            return;
+        }
+        onWorker(() -> {
+            // The playlist select's options are part of discovery, and a playlist made, renamed
+            // or deleted since the last discovery is one Home Assistant cannot choose or shows as
+            // unknown (review of 2026-09-19). Discovery goes again before the state when they
+            // differ. Same rule for the sensors, the camera and the automations: a sensor switched
+            // on has its entity at once, one switched off loses it, and a rule added, renamed or
+            // deleted is announced or withdrawn before the state that mentions it. Not before the
+            // broker's copy was read on a connect, and again after a run that did not go out whole.
+            // The state goes out whatever discovery did.
+            guarded(() -> {
+                if (!discoveryReady) {
+                    return;
+                }
+                String names = PictureLibrary.get(appContext).playlists().namesKey();
+                if (discoveryStale
+                        || (names != null && !names.equals(announcedPlaylists))
+                        || !sensorsKey(KioskRuntimeState.sensors(),
+                                KioskRuntimeState.automations()).equals(announcedSensors)) {
+                    runDiscovery();
+                }
+            });
+            publish(topicPrefix + "state", state.toString(), 0, true);
+        });
     }
 
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
@@ -287,10 +345,13 @@ final class MqttController implements MqttCallbackExtended {
     /** The sensors, camera and automations discovery last announced; see {@link #sensorsKey}. */
     private volatile String announcedSensors = null;
 
-    /** What discovery would announce right now for the sensors and the rules, as one string. */
-    private static String sensorsKey() {
+    /**
+     * What discovery announces for these sensors and rules, as one string. Given the very block
+     * and rules a payload was built from, so the key stored after a publish describes that
+     * payload and not a newer reading that arrived while it was being built.
+     */
+    private static String sensorsKey(org.json.JSONObject sensorBlock, org.json.JSONArray rules) {
         StringBuilder key = new StringBuilder();
-        org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
         for (Sensors.Def def : Sensors.ALL) {
             org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
             if (one != null && one.optBoolean("active")) {
@@ -304,7 +365,6 @@ final class MqttController implements MqttCallbackExtended {
         if (cameraAttributes != null && cameraAttributes.optBoolean("pictures")) {
             key.append("pictures,");
         }
-        org.json.JSONArray rules = KioskRuntimeState.automations();
         for (int index = 0; index < rules.length(); index++) {
             JSONObject rule = rules.optJSONObject(index);
             if (rule != null) {
@@ -395,7 +455,7 @@ final class MqttController implements MqttCallbackExtended {
             publish(topicPrefix + "availability", "online", 1, true);
             active.subscribe(topicPrefix + "command", 1);
             active.subscribe("homeassistant/status", 0);
-            publishDiscovery();
+            readRetainedDiscovery(active);
         } catch (MqttException exception) {
             Log.e(TAG, "Unable to initialize MQTT session", exception);
         }
@@ -411,7 +471,18 @@ final class MqttController implements MqttCallbackExtended {
         if (topic.equals("homeassistant/status")) {
             String status = new String(message.getPayload(), StandardCharsets.UTF_8);
             if (status.equals("online")) {
-                publishDiscovery();
+                requestDiscovery();
+            }
+            return;
+        }
+        if (topic.equals(discoveryTopic())) {
+            // The broker's copy of this panel's payload, asked for on connect. Only the retained
+            // replay counts: our own publishes echo back live (not retained) until the
+            // unsubscribe lands.
+            if (message.isRetained()) {
+                String payload = new String(message.getPayload(), StandardCharsets.UTF_8);
+                stopReadingRetained();
+                onWorker(() -> retainedArrived(payload));
             }
             return;
         }
@@ -549,20 +620,135 @@ final class MqttController implements MqttCallbackExtended {
         return null;
     }
 
-    private void publish(String topic, String payload, int qos, boolean retained) {
+    /** @return whether the message was handed to the client; false when not connected or refused */
+    private boolean publish(String topic, String payload, int qos, boolean retained) {
         MqttAsyncClient activeClient = client;
         if (activeClient == null || !activeClient.isConnected()) {
-            return;
+            return false;
         }
         try {
             activeClient.publish(topic, payload.getBytes(StandardCharsets.UTF_8), qos, retained);
+            return true;
         } catch (MqttException exception) {
             Log.w(TAG, "MQTT publish failed", exception);
+            return false;
         }
     }
 
-    private void publishDiscovery() {
+    private String discoveryTopic() {
+        return "homeassistant/device/" + config.deviceId + "/config";
+    }
+
+    /**
+     * On every connect: ask the broker for this panel's own retained payload before announcing
+     * anything, because that payload is what Home Assistant was told, kept where it reads it.
+     * zigbee2mqtt does the same at its start (it reads its own retained configs for five seconds
+     * and clears what it would not publish now), and it covers what a copy on the panel cannot:
+     * a panel updated from a build that kept no record, and a publish that never arrived.
+     */
+    private void readRetainedDiscovery(MqttAsyncClient active) throws MqttException {
+        onWorker(() -> {
+            discoveryReady = false;
+            if (retainedWait != null) {
+                retainedWait.cancel(false);
+                retainedWait = null;
+            }
+        });
+        active.subscribe(discoveryTopic(), 1, null, new IMqttActionListener() {
+            @Override
+            public void onSuccess(IMqttToken token) {
+                onWorker(() -> {
+                    if (discoveryReady) {
+                        return;
+                    }
+                    retainedWait = discoveryWorker.schedule(() -> guarded(() -> {
+                        if (!discoveryReady) {
+                            // A new panel, or a broker that keeps nothing: nothing was announced.
+                            stopReadingRetained();
+                            finishReadingRetained();
+                        }
+                    }), RETAINED_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                });
+            }
+
+            @Override
+            public void onFailure(IMqttToken token, Throwable failure) {
+                // A broker whose access list refuses this panel reading its own topic: announce
+                // with what this process remembers, as a new panel would.
+                Log.w(TAG, "Could not read back this panel's discovery from the broker", failure);
+                onWorker(() -> {
+                    if (!discoveryReady) {
+                        finishReadingRetained();
+                    }
+                });
+            }
+        });
+    }
+
+    private void stopReadingRetained() {
+        MqttAsyncClient active = client;
+        if (active == null) {
+            return;
+        }
         try {
+            active.unsubscribe(discoveryTopic());
+        } catch (MqttException exception) {
+            Log.w(TAG, "Could not stop reading the panel's own discovery topic", exception);
+        }
+    }
+
+    /**
+     * Worker thread: what the broker held, folded into what this process remembers. The broker's
+     * platform wins over the one in memory: it is what Home Assistant reads, and a publish handed
+     * to the client can still have been lost with the connection.
+     */
+    private void retainedArrived(String payload) {
+        if (discoveryReady) {
+            Log.w(TAG, "This panel's discovery came back from the broker after the wait; "
+                    + "anything only it recorded will not be removed");
+            return;
+        }
+        try {
+            JSONObject components = payload.isEmpty() ? null
+                    : new JSONObject(payload).optJSONObject("cmps");
+            if (components != null) {
+                // An entry holding only its platform is an old build's removal, done long since.
+                announced.putAll(announcedIn(components));
+            }
+        } catch (JSONException unreadable) {
+            Log.w(TAG, "The broker's copy of this panel's discovery could not be read", unreadable);
+        }
+        finishReadingRetained();
+    }
+
+    /** Worker thread. */
+    private void finishReadingRetained() {
+        if (retainedWait != null) {
+            retainedWait.cancel(false);
+            retainedWait = null;
+        }
+        discoveryReady = true;
+        runDiscovery();
+    }
+
+    /**
+     * From any thread: announce again, on the worker. Home Assistant's birth message asks for it,
+     * as its documentation recommends; before the broker's copy was read on a connect it is
+     * already on its way.
+     */
+    private void requestDiscovery() {
+        onWorker(() -> {
+            if (discoveryReady) {
+                runDiscovery();
+            }
+        });
+    }
+
+    /** Worker thread only. */
+    private void runDiscovery() {
+        try {
+            org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+            org.json.JSONArray rules = KioskRuntimeState.automations();
             JSONObject discovery = new JSONObject();
             JSONObject device = new JSONObject();
             device.put("ids", new JSONArray().put(config.deviceId));
@@ -631,7 +817,7 @@ final class MqttController implements MqttCallbackExtended {
             // dropped and for how long is the MQTT state entity's own history, and knowing WHY
             // turned out not to be worth an entity. Its withdrawal was published, confirmed
             // processed on the only installation that ever saw it, and then retired with the
-            // rest of the stale-keys block; see the removal note above the discovery publish.
+            // rest of the stale-keys block; the history is in CLAUDE.md's entity naming rule.
             // Four values, not two, so this one stays a text sensor: charging, discharging,
             // charged, on hold. Straight from battery.charge_state, which is
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
@@ -690,7 +876,7 @@ final class MqttController implements MqttCallbackExtended {
             // "Recycle time" clock; both are gone, along with the commands behind them, because
             // recycling is a recovery mechanism rather than a preference and its schedule is now
             // derived per device. Their withdrawals ran until 2026-08-25 and were then retired as
-            // confirmed processed; see the removal note above the discovery publish. The stats
+            // confirmed processed; the history is in CLAUDE.md's entity naming rule. The stats
             // overlay is deliberately absent for a different reason: it changes what is drawn on
             // the panel's own glass, which is a decision for whoever is standing at it or holding
             // the admin page, not something a broker subscriber needs.
@@ -858,10 +1044,9 @@ final class MqttController implements MqttCallbackExtended {
                     "{{ value_json.screensaver.picture.title | default('', true) }}"));
             // The panel's sensors (see Sensors): one entity each, under the panel's device, named
             // as the companion app names its own. A sensor that is off, or that this device does
-            // not have, is announced as a withdrawal, so switching one off in the settings takes
-            // its entity away rather than stranding it, and a panel without the hardware never
-            // shows a row for it.
-            org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
+            // not have, is left out; one this panel announced before is withdrawn at the publish
+            // below, so switching it off takes its entity away, and a panel without the hardware
+            // never mentions it.
             for (Sensors.Def def : Sensors.ALL) {
                 if (def.kind == Sensors.Kind.PANEL) {
                     // Battery, power, network and the rest have had their entities since
@@ -872,7 +1057,6 @@ final class MqttController implements MqttCallbackExtended {
                 org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
                 String key = "sensor_" + def.id;
                 if (one == null || !one.optBoolean("active")) {
-                    components.put(key, new JSONObject().put("p", def.platform));
                     continue;
                 }
                 JSONObject entity = new JSONObject();
@@ -923,8 +1107,6 @@ final class MqttController implements MqttCallbackExtended {
                         "{\"command\":\"camera.motion\",\"args\":{\"enabled\":true}}",
                         "{\"command\":\"camera.motion\",\"args\":{\"enabled\":false}}",
                         "{{ 'ON' if value_json.sensors.camera.attributes.detecting else 'OFF' }}"));
-            } else {
-                components.put("camera_motion", new JSONObject().put("p", "switch"));
             }
             if (pictures) {
                 components.put("camera_snapshot", button("Camera snapshot", "camera.snapshot"));
@@ -934,24 +1116,17 @@ final class MqttController implements MqttCallbackExtended {
                 picture.put("unique_id", uniqueId("Camera picture"));
                 picture.put("topic", topicPrefix + "camera");
                 components.put("camera_picture", picture);
-            } else {
-                components.put("camera_snapshot", new JSONObject().put("p", "button"));
-                components.put("camera_picture", new JSONObject().put("p", "camera"));
-                if (!cameraOn) {
-                    clearPicture();
-                }
+            } else if (!cameraOn) {
+                clearPicture();
             }
             // One switch per automation, so a rule can be paused from Home Assistant; a rule
-            // that was deleted is withdrawn by the id discovery last announced.
-            org.json.JSONArray rules = KioskRuntimeState.automations();
-            java.util.Set<String> current = new java.util.TreeSet<>();
+            // that was deleted is withdrawn at the publish below, like a sensor switched off.
             for (int index = 0; index < rules.length(); index++) {
                 JSONObject rule = rules.optJSONObject(index);
                 if (rule == null) {
                     continue;
                 }
                 String id = rule.optString("id", "");
-                current.add(id);
                 JSONObject ruleSwitch = toggle(
                         rule.optString("name", id),
                         "{\"command\":\"automation.enabled\",\"args\":{\"enabled\":true,\"value\":\""
@@ -965,14 +1140,7 @@ final class MqttController implements MqttCallbackExtended {
                 ruleSwitch.put("unique_id", uniqueId("automation " + id));
                 components.put("automation_" + id, ruleSwitch);
             }
-            for (String old : KioskConfig.announcedAutomations(appContext).split(",")) {
-                if (!old.isEmpty() && !current.contains(old)) {
-                    components.put("automation_" + old, new JSONObject().put("p", "switch"));
-                }
-            }
-            KioskConfig.edit(appContext).announcedAutomations(
-                    android.text.TextUtils.join(",", current)).apply();
-            announcedSensors = sensorsKey();
+            announcedSensors = sensorsKey(sensorBlock, rules);
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
@@ -996,12 +1164,12 @@ final class MqttController implements MqttCallbackExtended {
             components.put("reload", button("Reload dashboard", "kiosk.reload"));
             components.put("restart", button("Restart kiosk", "kiosk.restart"));
             // "Display on" since 2026-09-09, to pair with "Display off"; the key changed with the
-            // name, per the naming rule, and the old "wake" key is withdrawn below for good.
+            // name, per the naming rule.
             components.put("display_on", button("Display on", "display.wake"));
             components.put("display_off", button("Display off", "display.visual_off"));
             // Only where it can work: the command answers "unsupported" with a provisioning hint on
-            // an ordinary install, and a button that can only fail is withdrawn there since
-            // 2026-09-09, the same rule as the light sensor and the battery. No shutdown button
+            // an ordinary install, and a button that can only fail is not announced there, the
+            // same rule as the light sensor and the battery. No shutdown button
             // exists at all: nothing can power off an Android device, which is why that command
             // was deleted outright.
             boolean deviceOwner = KioskService.isDeviceOwner(appContext);
@@ -1010,58 +1178,84 @@ final class MqttController implements MqttCallbackExtended {
             }
             discovery.put("cmps", components);
 
-            // The "Portrait mode" switch became the "Orientation" select on 2026-08-29, and per
-            // the removal rule below, leaving it out of the payload would strand it as
-            // "unavailable" forever: it must be withdrawn once as an empty config holding only
-            // its platform, then the full configuration published without it. Keep this until no
-            // panel can still be announcing the switch; today that is only the maintainer's installation.
-            components.put("portrait", new JSONObject().put("p", "switch"));
-            java.util.List<String> withdrawn = new java.util.ArrayList<>();
-            withdrawn.add("portrait");
-            // "Wake display" became "Display on" on 2026-09-09; the app was public by then, so
-            // this withdrawal stays for good.
-            components.put("wake", new JSONObject().put("p", "button"));
-            withdrawn.add("wake");
-            if (!deviceOwner) {
-                components.put("reboot", new JSONObject().put("p", "button"));
-                withdrawn.add("reboot");
-            }
-            // A panel with no battery announced the three battery sensors under every build before
-            // 2026-09-09, so on such a panel they are withdrawn the same way, on every connect,
-            // because the panel cannot know which build the installation last saw.
-            if (!hasBattery) {
-                for (String key : BATTERY_ENTITIES) {
-                    components.put(key, new JSONObject().put("p", "sensor"));
-                    withdrawn.add(key);
-                }
-            }
-
             publishMqttStateEntity(device, origin);
             publishTagDiscovery(device);
 
-            String topic = "homeassistant/device/" + config.deviceId + "/config";
+            String topic = discoveryTopic();
 
-            // If an entity is ever REMOVED from this payload, know this before shipping the
-            // removal: simply leaving a component out does NOT remove an entity Home Assistant
-            // already discovered, it strands it as "unavailable" forever. A removal must publish
-            // the component once more as an empty config holding only the platform key ("p"),
-            // then publish the full configuration without it; a component is identified by
-            // platform AND key, so a key that changed platform needs one such withdrawal per
-            // platform, in its own payload, and QoS 1 keeps their order. A standing block of
-            // those withdrawals lived here until 2026-08-25 covering every entity this app had
-            // retired (recycle controls, network/charging, both network_state spellings,
-            // last_mqtt_outage_cause); it was deleted, pre-publication, once the maintainer's
-            // Home Assistant, the only installation that ever saw those keys, was confirmed to
-            // hold no trace of them. Any entity removed after the app is public needs its withdrawal kept
-            // indefinitely, because the last stranger's panel never announces its upgrade.
-            publish(topic, discovery.toString(), 1, true);
-            for (String key : withdrawn) {
-                components.remove(key);
+            // Simply leaving a component out does NOT remove an entity Home Assistant already
+            // discovered, it strands it as "unavailable" forever. The documented removal is the
+            // component once more as an empty config holding only its platform ("p"), then an
+            // update without it. This panel removes exactly what it announced before and does not
+            // announce now (a sensor switched off, the camera's controls, a deleted rule, an
+            // entity a new build renamed or dropped), the way zigbee2mqtt does: what it announced
+            // is what this process published and, after a restart or an update, the payload the
+            // broker kept (readRetainedDiscovery). A new panel finds nothing and sends no removal
+            // at all, so Muralis starts on MQTT as if it were used for the first time (Juri,
+            // 2026-10-06). A removal that Home Assistant misses because it is offline at that
+            // moment leaves the entity unavailable until a person deletes it, which Tasmota,
+            // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: Home
+            // Assistant acts on an empty config only for a component it has discovered since it
+            // started (measured on the test instance, 2026-10-06). A key whose platform changed
+            // gets the old platform's empty config, since both cannot stand under one key. A run
+            // that did not go out whole is not remembered, and the next state publish runs it
+            // again.
+            java.util.Map<String, String> now = announcedIn(components);
+            DiscoveryWithdrawals.Plan plan = DiscoveryWithdrawals.plan(announced, now);
+            boolean handedOver = plan.stubs.isEmpty()
+                    || publish(topic, withStubs(discovery, plan.stubs), 1, true);
+            // Not without the removals: the plain payload would replace the broker's record of
+            // what was announced, and a controller rebuilt before the retry could not remove it.
+            handedOver = handedOver && publish(topic, discovery.toString(), 1, true);
+            discoveryStale = !handedOver;
+            if (handedOver) {
+                for (String key : plan.removed.keySet()) {
+                    Log.i(TAG, "Removed from Home Assistant: " + key);
+                }
+                announced.clear();
+                announced.putAll(now);
             }
-            publish(topic, discovery.toString(), 1, true);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /** The payload with an empty config, its platform alone, for each of these keys. */
+    private static String withStubs(JSONObject discovery, java.util.Map<String, String> stubs)
+            throws JSONException {
+        JSONObject copy = new JSONObject();
+        for (java.util.Iterator<String> keys = discovery.keys(); keys.hasNext(); ) {
+            String key = keys.next();
+            copy.put(key, discovery.get(key));
+        }
+        JSONObject components = new JSONObject();
+        JSONObject announcedComponents = discovery.getJSONObject("cmps");
+        for (java.util.Iterator<String> keys = announcedComponents.keys(); keys.hasNext(); ) {
+            String key = keys.next();
+            components.put(key, announcedComponents.get(key));
+        }
+        for (java.util.Map.Entry<String, String> entry : stubs.entrySet()) {
+            components.put(entry.getKey(), new JSONObject().put("p", entry.getValue()));
+        }
+        copy.put("cmps", components);
+        return copy.toString();
+    }
+
+    /**
+     * Each announced component's key and platform, the pair Home Assistant identifies a component
+     * by. An entry holding only its platform is a removal, not an announcement, and is left out.
+     */
+    private static java.util.Map<String, String> announcedIn(JSONObject components) {
+        java.util.Map<String, String> platforms = new java.util.LinkedHashMap<>();
+        for (java.util.Iterator<String> keys = components.keys(); keys.hasNext(); ) {
+            String key = keys.next();
+            JSONObject component = components.optJSONObject(key);
+            String platform = component == null ? "" : component.optString("p", "");
+            if (!platform.isEmpty() && component.length() > 1) {
+                platforms.put(key, platform);
+            }
+        }
+        return platforms;
     }
 
     /**
@@ -1128,12 +1322,6 @@ final class MqttController implements MqttCallbackExtended {
         publish("homeassistant/binary_sensor/" + config.deviceId + "_mqtt_state/config",
                 state.toString(), 1, true);
 
-        // The same entity under its two earlier names, deleted rather than left to rot. Classic
-        // discovery removes an entity by publishing an empty retained payload to its config topic,
-        // which also clears the retained config so a fresh Home Assistant never sees it. Both were
-        // sensors on the sensor/ topic tree, so neither is reachable from the binary_sensor topic
-        // above and neither would ever go away on its own.
-        publish("homeassistant/sensor/" + config.deviceId + "_connected/config", "", 1, true);
     }
 
     /**

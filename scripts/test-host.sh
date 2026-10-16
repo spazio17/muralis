@@ -15,7 +15,7 @@
 # bar overlap, display-off policy, auth throttle, purchase signature, MQTT connect
 # retry, system stats, recycle policy, recovery policy, server probe policy,
 # escape sequence, relaunch policy, the self-signed certificate, the uploaded
-# certificate and the automations.
+# certificate, the automations and the discovery withdrawals.
 
 set -euo pipefail
 
@@ -130,7 +130,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
-            SelfSignedCertificate CertificateUpload; do
+            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -302,6 +302,13 @@ javac -d "${test_dir}/certificate" \
     "${pure_java_dir}/SelfSignedCertificate.java" \
     "${host_test_dir}/SelfSignedCertificateTest.java"
 java -cp "${test_dir}/certificate" org.spazio17.muralis.SelfSignedCertificateTest
+
+# What a panel withdraws from Home Assistant: only what it announced itself (2026-10-06).
+mkdir -p "${test_dir}/withdrawals"
+javac -d "${test_dir}/withdrawals" \
+    "${pure_java_dir}/DiscoveryWithdrawals.java" \
+    "${host_test_dir}/DiscoveryWithdrawalsTest.java"
+java -cp "${test_dir}/withdrawals" org.spazio17.muralis.DiscoveryWithdrawalsTest
 
 # A certificate and key a person uploads for the web admin: every shape, every refusal.
 mkdir -p "${test_dir}/upload"
