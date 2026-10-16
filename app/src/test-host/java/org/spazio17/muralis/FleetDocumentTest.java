@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -245,6 +245,12 @@ public final class FleetDocumentTest {
         // Groups: made with a name, a member put in one, a section shared in it, two groups
         // sharing the same section told apart, a removed group gone for good, and the later
         // edit of a member's groups winning a merge.
+        require(FleetDocument.validateGroupName("Whole fleet") != null
+                && FleetDocument.followsFleet(FleetDocument.memberByKey(read, memberSpki))
+                && !FleetDocument.followsFleet(FleetDocument.memberByKey(
+                        FleetDocument.withMemberFollowsFleet(read, "kiosk-a", memberSpki, false,
+                                "2026-10-12T21:04:30Z"), memberSpki)),
+                "the follow flag is wrong");
         require(FleetDocument.validateGroupName("Everyone") != null
                 && FleetDocument.validateGroupName(" ") != null
                 && FleetDocument.validateGroupName("Lobby") == null, "the group name rule");
@@ -289,6 +295,120 @@ public final class FleetDocumentTest {
                 .equals(java.util.Arrays.asList(all, "group-1", "group-2"))
                 && "Offices".equals(FleetDocument.groups(edits).get("group-2")),
                 "the later edit of a member's groups lost, or a group made apart was lost");
+
+        // A member that left, or was removed: off the list, its key revoked, and an older list
+        // merged in does not bring it back.
+        Map<String, Object> gone = FleetDocument.withoutMember(inLobby, "kiosk-a", memberSpki,
+                "2026-10-12T21:11:00Z");
+        require(FleetDocument.memberByKey(gone, memberSpki) == null
+                && FleetDocument.revoked(gone).contains(memberSpki)
+                && !FleetDocument.trustedKeys(gone).contains(memberSpki)
+                && FleetDocument.memberByKey(gone, managerSpki) != null
+                && FleetDocument.memberByKey(FleetDocument.merge(gone, inLobby), memberSpki) == null
+                && FleetDocument.memberByKey(FleetDocument.merge(inLobby, gone), memberSpki) == null,
+                "a member taken off the list stayed, or came back in a merge");
+
+        // Placeholders in a page address: plain or percent-encoded, values encoded, none left.
+        require("https://x/rooms/Meeting%20room%202?g=Lobby&f=New%20Home".equals(
+                FleetDocument.fillPlaceholders("https://x/rooms/{panel.name}?g={panel.group}&f={fleet.name}",
+                        "Meeting room 2", "Lobby", "New Home")), "the placeholders were not filled");
+        require("https://x/?room=Hall".equals(FleetDocument.fillPlaceholders(
+                "https://x/?room=%7Bpanel.name%7D", "Hall", "", "")),
+                "a percent-encoded placeholder was not filled");
+        require("https://x/?g=".equals(FleetDocument.fillPlaceholders("https://x/?g={panel.group}",
+                "Hall", "", "")) && "https://x/plain".equals(FleetDocument.fillPlaceholders(
+                "https://x/plain", "Hall", "Lobby", "F")), "an empty fact or a plain address is wrong");
+
+        // History: what a version changed against the one before, in words.
+        Map<String, Object> h1 = document("fleet-1", 1, "kiosk-a", managerSpki, memberSpki,
+                secondSpki);
+        require(FleetDocument.describeChange(null, h1).size() == 3
+                && FleetDocument.describeChange(null, h1).get(0).equals("panel Phone added"),
+                "the first version's change is wrong: " + FleetDocument.describeChange(null, h1));
+        require(FleetDocument.describeChange(h1, h1).isEmpty(), "no change read as one");
+        Map<String, Object> h2 = FleetDocument.withGroup(h1, "kiosk-a", "group-1", "Lobby", "t");
+        require(FleetDocument.describeChange(h1, h2).equals(
+                java.util.Collections.singletonList("group Lobby made")),
+                "a group made is wrong: " + FleetDocument.describeChange(h1, h2));
+        Map<String, Object> h3 = FleetDocument.withSection(h2, "kiosk-a", "group-1", "dashboard",
+                java.util.Collections.<String, Object>singletonMap("dashboard_url", "https://a/"), "t");
+        require(FleetDocument.describeChange(h2, h3).equals(
+                java.util.Collections.singletonList("dashboard shared with the group Lobby")),
+                "a section shared is wrong: " + FleetDocument.describeChange(h2, h3));
+        Map<String, Object> h4 = FleetDocument.withSection(h3, "kiosk-a", "group-1", "dashboard",
+                java.util.Collections.<String, Object>singletonMap("dashboard_url", "https://b/"), "t");
+        require(FleetDocument.describeChange(h3, h4).equals(
+                java.util.Collections.singletonList("dashboard changed for the group Lobby")),
+                "a section changed is wrong: " + FleetDocument.describeChange(h3, h4));
+        Map<String, Object> h5 = FleetDocument.withSection(h4, "kiosk-a", "group-1", "dashboard",
+                null, "t");
+        require(FleetDocument.describeChange(h4, h5).equals(
+                java.util.Collections.singletonList("dashboard no longer shared with the group Lobby")),
+                "a section unshared is wrong: " + FleetDocument.describeChange(h4, h5));
+        Map<String, Object> h6 = FleetDocument.withoutGroup(h5, "kiosk-a", "group-1", "t");
+        require(FleetDocument.describeChange(h5, h6).equals(
+                java.util.Collections.singletonList("group Lobby removed")),
+                "a group removed is wrong: " + FleetDocument.describeChange(h5, h6));
+        Map<String, Object> h7 = FleetDocument.withSection(h6, "kiosk-a", "everyone", "alerts",
+                java.util.Collections.<String, Object>singletonMap("alert_page_error", true), "t");
+        require(FleetDocument.describeChange(h6, h7).equals(
+                java.util.Collections.singletonList("alerts shared with the whole fleet")),
+                "the whole fleet's share is wrong: " + FleetDocument.describeChange(h6, h7));
+        Map<String, Object> h8 = FleetDocument.withMember(h7, "fleet-1", "Test home",
+                member("kiosk-a", "Phone", managerSpki, true), member("kiosk-d", "Bar",
+                        repeat('d', 64), false), "t");
+        require(FleetDocument.describeChange(h7, h8).equals(
+                java.util.Collections.singletonList("panel Bar added")),
+                "a panel added is wrong: " + FleetDocument.describeChange(h7, h8));
+
+        // Restore as new: the old version's name, groups and shared settings at a new, higher
+        // version; the members and revoked keys held now, so a panel added since stays in.
+        Map<String, Object> restoredBack = FleetDocument.restored(h4, h8, "kiosk-b", "t2");
+        require(FleetDocument.version(restoredBack) == 9 && "kiosk-b".equals(FleetDocument.author(restoredBack))
+                && FleetDocument.version(h8) == 8, "the restored version is not the next one");
+        require(FleetDocument.members(restoredBack).size() == 4
+                && FleetDocument.memberByKey(restoredBack, repeat('d', 64)) != null,
+                "a panel added after the old version was dropped by the restore");
+        require("Lobby".equals(FleetDocument.groups(restoredBack).get("group-1"))
+                && "https://b/".equals(FleetDocument.sectionValues(restoredBack, "group-1", "dashboard")
+                        .get("dashboard_url")), "the old group and its share did not come restoredBack");
+        require(FleetDocument.sectionValues(restoredBack, "everyone", "alerts") == null
+                && FleetDocument.sectionAt(restoredBack, "everyone", "alerts") == 9,
+                "a section shared after the old version was not unshared at the new version");
+        require(FleetDocument.sectionAt(restoredBack, "group-1", "dashboard") == 9,
+                "the restored share is not stamped with the new version");
+        // Merged on another panel that holds h8: the restored state wins everywhere.
+        Map<String, Object> onOther = FleetDocument.merge(h8, restoredBack);
+        require("Lobby".equals(FleetDocument.groups(onOther).get("group-1"))
+                && FleetDocument.sectionValues(onOther, "everyone", "alerts") == null
+                && FleetDocument.sameContent(onOther, restoredBack),
+                "the restore did not win the merge on another panel");
+        // The other way: a group removed since is removed again by a restore of a version
+        // without it, so every panel ends the same.
+        Map<String, Object> toV6 = FleetDocument.restored(h6, h8, "kiosk-b", "t3");
+        require(FleetDocument.groups(toV6).isEmpty()
+                && FleetDocument.sameContent(FleetDocument.merge(h8, toV6), toV6),
+                "restoring a version without the group did not remove it everywhere");
+        // A section unshared since (an entry without values) is carried, stamped anew, so the
+        // merge on a panel that held the stub takes the restored document as it is.
+        Map<String, Object> h9 = FleetDocument.withSection(h8, "kiosk-a", "everyone", "alerts",
+                null, "t");
+        Map<String, Object> overStub = FleetDocument.restored(h4, h9, "kiosk-b", "t5");
+        require(FleetDocument.sectionValues(overStub, "everyone", "alerts") == null
+                && FleetDocument.sectionAt(overStub, "everyone", "alerts") == 10
+                && FleetDocument.sameContent(FleetDocument.merge(h9, overStub), overStub),
+                "a restore over an unshared section is rewritten by the merge on another panel");
+        // A secret the old version carries blank is taken from the list held now.
+        Map<String, Object> mqttValues = new LinkedHashMap<>();
+        mqttValues.put("mqtt_host", "broker");
+        mqttValues.put("mqtt_password", "secret");
+        Map<String, Object> withMqtt = FleetDocument.withSection(h8, "kiosk-a", "everyone", "mqtt",
+                mqttValues, "t");
+        Map<String, Object> blanked = FleetDocument.parse(FleetDocument.canonical(withMqtt));
+        FleetDocument.stripSecrets(blanked);
+        Map<String, Object> fromBlank = FleetDocument.restored(blanked, withMqtt, "kiosk-a", "t4");
+        require("secret".equals(FleetDocument.sectionValues(fromBlank, "everyone", "mqtt")
+                .get("mqtt_password")), "the blank secret was not taken from the list held");
 
         System.out.println("FleetDocumentTest passed");
     }

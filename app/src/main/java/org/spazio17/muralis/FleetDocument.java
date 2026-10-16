@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -21,7 +21,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * The fleet document (fleet design, section 6; block 12a): one JSON every member holds, naming the
+ * The fleet document: one JSON every member holds, naming the
  * fleet, its members and the keys revoked, at a version, signed by the manager who wrote it.
  *
  * <p>Signed with ECDSA P-256 over the document's canonical form (keys sorted at every level, no
@@ -31,8 +31,9 @@ import java.util.TreeMap;
  * already knows, at a higher version; two managers' edits of the same version are settled without
  * the clock: one that revokes a key wins, otherwise the lower author id.
  *
- * <p>Pure, with no Android imports, so the rules are covered by host tests. The profile, the
- * overrides and the tier block are carried but not yet applied (blocks 12d and 14).
+ * <p>Pure, with no Android imports, so the rules are covered by host tests. The profile holds
+ * what the fleet and its groups share; the tier block is how Pro reaches the members
+ * ({@link FleetTier}).
  */
 final class FleetDocument {
     /** A member entry's fields, as the design names them. */
@@ -172,19 +173,21 @@ final class FleetDocument {
     static final String SINCE = "since";
     static final String AT = "at";
     /**
-     * The profile's sections (block 12d): the groups of settings a fleet can share, each either
+     * The profile's sections: the groups of settings a fleet can share, each either
      * shared, with the values every member applies, or not. Never shared: a panel's name, member
      * port, escape combinations and PIN, calibrations and what belongs to its hardware.
      */
-    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "screensaver"};
+    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "ambient",
+            "alerts"};
     /** A section's words on both surfaces. */
     static String sectionLabel(String section) {
         switch (section) {
             case "dashboard": return "Dashboard";
             case "mqtt": return "MQTT";
-            case "web_admin": return "Local web admin";
+            case "web_admin": return "Web admin";
             case "display": return "Display";
-            default: return "Screensaver";
+            case "alerts": return "Alerts";
+            default: return "Ambient";
         }
     }
 
@@ -192,15 +195,43 @@ final class FleetDocument {
     static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password"};
 
     /**
-     * The group every panel is in and nobody removes; the others are made by a person, with a
-     * name (fleet design, groups of 2026-10-13, like WLED's sync groups). A shared section is
-     * shared in one group; a panel applies it only from the groups it is in.
+     * The scope of the whole fleet, which is no group a person sees; the groups are made by a
+     * person, with a name, as the device groups of the fleet products (settled 2026-10-13). A
+     * shared section is shared in one scope; a panel applies it from its groups, a group winning
+     * over the whole fleet, and from the whole fleet while it follows it.
      */
     static final String EVERYONE = "everyone";
-    static final String EVERYONE_NAME = "Everyone";
-    /** Offered when a group is made, generic, since a fleet may be a home, a shop or a fair. */
-    static final String[] GROUP_SUGGESTIONS = {"Entrance", "Reception", "Hallway", "Kitchen",
-            "Living room", "Meeting room", "Offices", "Showroom", "Floor 1", "Floor 2"};
+    static final String EVERYONE_NAME = "Whole fleet";
+    /**
+     * Offered when a group is made: jobs panels share, not rooms (nobody has several panels in
+     * one room), generic, since a fleet may be a home, a shop or a fair.
+     */
+    static final String[] GROUP_SUGGESTIONS = {"Meeting rooms", "Lobby screens", "Reception",
+            "Shop floor", "Upstairs", "Downstairs", "Guest house"};
+    /** A member entry's flag: whether it follows what the whole fleet shares; true when absent. */
+    static final String FOLLOWS_FLEET = "follows_fleet";
+
+    /** Whether a member follows the whole fleet's shared settings (its groups it always does). */
+    static boolean followsFleet(Map<String, Object> member) {
+        return member == null || TinyJson.flag(member, FOLLOWS_FLEET, true);
+    }
+
+    /** The next document with the member of key hash {@code spki} following the fleet or not. */
+    static Map<String, Object> withMemberFollowsFleet(Map<String, Object> held, String author,
+            String spki, boolean follows, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (spki.equals(TinyJson.string(member, SPKI, ""))) {
+                member = new LinkedHashMap<>(member);
+                member.put(FOLLOWS_FLEET, follows);
+                member.put(AT, version(next));
+            }
+            members.add(member);
+        }
+        next.put("members", members);
+        return next;
+    }
 
     /** The groups a person made, by id: name and at; removed ones left out. */
     static Map<String, String> groups(Map<String, Object> document) {
@@ -234,8 +265,8 @@ final class FleetDocument {
         if (trimmed.isEmpty() || trimmed.length() > 40 || trimmed.contains("\n")) {
             return "a group's name is one line of 1 to 40 characters";
         }
-        if (trimmed.equalsIgnoreCase(EVERYONE_NAME)) {
-            return "every panel is in " + EVERYONE_NAME + " already";
+        if (trimmed.equalsIgnoreCase(EVERYONE_NAME) || trimmed.equalsIgnoreCase(EVERYONE)) {
+            return "the whole fleet is not a group";
         }
         return null;
     }
@@ -332,6 +363,27 @@ final class FleetDocument {
             members.add(member);
         }
         next.put("members", members);
+        return next;
+    }
+
+    /**
+     * The next document without the member of key hash {@code spki}, its key revoked by this
+     * version: a panel that left, or one removed from the Fleet page. A key revoked so can join
+     * again later; its new entry's {@code since} is past the revocation.
+     */
+    static Map<String, Object> withoutMember(Map<String, Object> held, String author, String spki,
+            String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (!spki.equals(TinyJson.string(member, SPKI, ""))) {
+                members.add(member);
+            }
+        }
+        next.put("members", members);
+        Map<String, Long> revoked = revokedAt(held);
+        revoked.put(spki, version(next));
+        next.put("revoked", revokedList(revoked));
         return next;
     }
 
@@ -474,6 +526,20 @@ final class FleetDocument {
                 : new ArrayList<>();
     }
 
+    /** The fleet's Pro block (FleetTier), or null when there is none. */
+    static Map<String, Object> tierOf(Map<String, Object> document) {
+        Object tier = document == null ? null : document.get("tier");
+        return tier instanceof Map && !((Map<?, ?>) tier).isEmpty() ? TinyJson.object(tier) : null;
+    }
+
+    /** The next document with {@code tier} as the fleet's Pro block. */
+    static Map<String, Object> withTier(Map<String, Object> held, String author,
+            Map<String, Object> tier, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        next.put("tier", new LinkedHashMap<>(tier));
+        return next;
+    }
+
     /** The revoked key hashes. */
     static Set<String> revoked(Map<String, Object> document) {
         return revokedAt(document).keySet();
@@ -567,7 +633,6 @@ final class FleetDocument {
             fleet.put("created", updated);
             next.put("fleet", fleet);
             next.put("profile", new LinkedHashMap<String, Object>());
-            next.put("overrides", new LinkedHashMap<String, Object>());
             next.put("tier", new LinkedHashMap<String, Object>());
         }
         long version = version(held);
@@ -584,12 +649,12 @@ final class FleetDocument {
         for (Map<String, Object> one : members(held)) {
             if (TinyJson.string(one, SPKI, "").equals(TinyJson.string(self, SPKI, ""))) {
                 self.put(SINCE, numberOf(one, SINCE));
-                // Its groups, and the stamp that keeps them through a merge, carry over.
-                if (one.containsKey("groups")) {
-                    self.put("groups", one.get("groups"));
-                }
-                if (one.containsKey(AT)) {
-                    self.put(AT, one.get(AT));
+                // Everything else the entry says of this panel (its groups, whether it follows
+                // the fleet, the stamp that keeps them through a merge) carries over.
+                for (Map.Entry<String, Object> field : one.entrySet()) {
+                    if (!self.containsKey(field.getKey())) {
+                        self.put(field.getKey(), field.getValue());
+                    }
                 }
             }
             if (replaces(self, one, revoked, version + 1)
@@ -679,7 +744,8 @@ final class FleetDocument {
      * lists, under the entry of the newer document where both have it; every key either revokes,
      * at the later of the two versions, unless a member entry joined after that (a fresh join
      * after the removal); each shared section of the profile from the document that changed it
-     * last; the fleet, the overrides and the tier of the newer document. Version, author and
+     * last; the fleet of the newer document, the tier confirmed later (whoever
+     * wrote the document). Version, author and
      * signature are the newer document's and must be set anew when the result differs from both
      * inputs. {@code held} may be null.
      */
@@ -733,6 +799,12 @@ final class FleetDocument {
         }
         merged.put("members", members);
         merged.put("revoked", revokedList(revoked));
+        // Pro's lease: the later confirmation, so an anchor's renewal is never lost to a document
+        // that changed something else meanwhile.
+        Map<String, Object> tier = FleetTier.newer(tierOf(newer), tierOf(older));
+        if (tier != null) {
+            merged.put("tier", tier);
+        }
         // Each group on its own: the entry changed last wins, the newer document on a tie; a
         // removed group stays removed.
         Map<String, Object> groups = new LinkedHashMap<>();
@@ -800,5 +872,188 @@ final class FleetDocument {
             content.remove(key);
         }
         return content;
+    }
+
+    /**
+     * What {@code after} changed against {@code before}, one line each, for the History card:
+     * the fleet renamed, panels added or removed, groups made, renamed or removed, sections
+     * shared, changed or unshared in a scope. Empty when nothing of that changed (a version
+     * carrying only a member's stamp, say); {@code before} may be null for the first version.
+     */
+    static List<String> describeChange(Map<String, Object> before, Map<String, Object> after) {
+        List<String> lines = new ArrayList<>();
+        if (before != null && !fleetName(before).equals(fleetName(after))) {
+            lines.add("fleet renamed to " + fleetName(after));
+        }
+        Map<String, String> membersBefore = memberNames(before);
+        Map<String, String> membersAfter = memberNames(after);
+        for (Map.Entry<String, String> member : membersAfter.entrySet()) {
+            if (!membersBefore.containsKey(member.getKey())) {
+                lines.add("panel " + member.getValue() + " added");
+            }
+        }
+        for (Map.Entry<String, String> member : membersBefore.entrySet()) {
+            if (!membersAfter.containsKey(member.getKey())) {
+                lines.add("panel " + member.getValue() + " removed");
+            }
+        }
+        Map<String, String> groupsBefore = groups(before);
+        Map<String, String> groupsAfter = groups(after);
+        for (Map.Entry<String, String> group : groupsAfter.entrySet()) {
+            String was = groupsBefore.get(group.getKey());
+            if (was == null) {
+                lines.add("group " + group.getValue() + " made");
+            } else if (!was.equals(group.getValue())) {
+                lines.add("group " + was + " renamed to " + group.getValue());
+            }
+        }
+        for (Map.Entry<String, String> group : groupsBefore.entrySet()) {
+            if (!groupsAfter.containsKey(group.getKey())) {
+                lines.add("group " + group.getValue() + " removed");
+            }
+        }
+        Set<String> scopes = new java.util.LinkedHashSet<>(profileGroups(after));
+        scopes.addAll(profileGroups(before));
+        for (String scope : scopes) {
+            if (!EVERYONE.equals(scope) && !groupsAfter.containsKey(scope)) {
+                // A group removed, said above, shares nothing any more.
+                continue;
+            }
+            String where = EVERYONE.equals(scope) ? "the whole fleet"
+                    : "the group " + groupsAfter.get(scope);
+            for (String section : SECTIONS) {
+                Map<String, Object> was = sectionValues(before, scope, section);
+                Map<String, Object> now = sectionValues(after, scope, section);
+                String label = sectionLabel(section).toLowerCase(java.util.Locale.ROOT);
+                if (was == null && now != null) {
+                    lines.add(label + " shared with " + where);
+                } else if (was != null && now == null) {
+                    lines.add(label + " no longer shared with " + where);
+                } else if (was != null && !canonical(was).equals(canonical(now))) {
+                    lines.add(label + " changed for " + where);
+                }
+            }
+        }
+        return lines;
+    }
+
+    /** Each member's key hash with the name it is shown by. */
+    private static Map<String, String> memberNames(Map<String, Object> document) {
+        Map<String, String> names = new LinkedHashMap<>();
+        for (Map<String, Object> member : members(document)) {
+            String id = TinyJson.string(member, ID, "");
+            names.put(TinyJson.string(member, SPKI, id), TinyJson.string(member, NAME, id));
+        }
+        return names;
+    }
+
+    /**
+     * Restore as new: the next document after {@code held}, by {@code author}, with the fleet
+     * name, the groups and the shared settings of the older version {@code old}, written as a
+     * new, higher version, never a rollback of the version number. Membership is the present
+     * and is never rolled back: the members and the revoked keys are the ones held now, so a
+     * panel that joined after the old version stays in, and one removed since stays out. A
+     * secret the old version carries blank (every stored copy blanks them) is taken from the
+     * document held, where the same scope still shares it.
+     */
+    static Map<String, Object> restored(Map<String, Object> old, Map<String, Object> held,
+            String author, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        long at = version(next);
+        Map<String, Object> fleet = new LinkedHashMap<>(fleet(held));
+        fleet.put(NAME, fleetName(old));
+        next.put("fleet", fleet);
+        // Every group either version knows, stamped with this version so the merge on every
+        // other panel takes the restored state as the latest: live as the old version had it,
+        // removed where the old version did not have it.
+        Map<String, String> oldGroups = groups(old);
+        Map<String, Object> groups = new LinkedHashMap<>();
+        Set<String> ids = new java.util.LinkedHashSet<>(groupEntries(old).keySet());
+        ids.addAll(groupEntries(held).keySet());
+        for (String id : ids) {
+            Map<String, Object> group = new LinkedHashMap<>();
+            group.put(AT, at);
+            if (oldGroups.containsKey(id)) {
+                group.put(NAME, oldGroups.get(id));
+            } else {
+                group.put("removed", at);
+            }
+            groups.put(id, group);
+        }
+        next.put("groups", groups);
+        // Each section of each scope the same way: shared with the old values, or unshared
+        // where the old version did not share it and the held one does.
+        Map<String, Object> profile = new LinkedHashMap<>();
+        Set<String> scopes = new java.util.LinkedHashSet<>(profileGroups(old));
+        scopes.addAll(profileGroups(held));
+        for (String scope : scopes) {
+            if (!EVERYONE.equals(scope) && !oldGroups.containsKey(scope)) {
+                continue;
+            }
+            Map<String, Object> ofGroup = new LinkedHashMap<>();
+            for (String section : SECTIONS) {
+                Map<String, Object> values = sectionValues(old, scope, section);
+                Map<String, Object> current = sectionValues(held, scope, section);
+                // A section neither version knows in this scope stays absent; one either
+                // knows, shared or unshared (an entry without values), is written here with
+                // the new stamp, so the merge on every other panel takes this document as it
+                // is instead of putting an older entry back and signing its own version.
+                if (profileEntry(old, scope, section) == null
+                        && profileEntry(held, scope, section) == null) {
+                    continue;
+                }
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put(AT, at);
+                if (values != null) {
+                    values = new LinkedHashMap<>(values);
+                    for (String key : SECRET_KEYS) {
+                        if (values.containsKey(key) && String.valueOf(values.get(key)).isEmpty()
+                                && current != null && current.get(key) instanceof String) {
+                            values.put(key, current.get(key));
+                        }
+                    }
+                    entry.put("values", values);
+                }
+                ofGroup.put(section, entry);
+            }
+            if (!ofGroup.isEmpty()) {
+                profile.put(scope, ofGroup);
+            }
+        }
+        next.put("profile", profile);
+        if (old.containsKey("tier")) {
+            next.put("tier", old.get("tier"));
+        }
+        return next;
+    }
+
+    /**
+     * {@code url} with the panel's facts in place of its placeholders, {@code {panel.name}},
+     * {@code {panel.group}} and {@code {fleet.name}}, written plain or percent-encoded (a browser
+     * may encode the braces of a pasted address), each value encoded for an address; an address
+     * without placeholders comes back as it is. Pure, so the rules are host-tested.
+     */
+    static String fillPlaceholders(String url, String panelName, String group, String fleetName) {
+        if (url == null || (url.indexOf('{') < 0 && !url.contains("%7B"))) {
+            return url;
+        }
+        String filled = url;
+        String[][] facts = {{"panel.name", panelName}, {"panel.group", group},
+                {"fleet.name", fleetName}};
+        for (String[] fact : facts) {
+            String value = urlEncoded(fact[1] == null ? "" : fact[1]);
+            filled = filled.replace("{" + fact[0] + "}", value)
+                    .replace("%7B" + fact[0] + "%7D", value)
+                    .replace("%7b" + fact[0] + "%7d", value);
+        }
+        return filled;
+    }
+
+    private static String urlEncoded(String value) {
+        try {
+            return java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20");
+        } catch (java.io.UnsupportedEncodingException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 }
