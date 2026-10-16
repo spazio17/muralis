@@ -361,4 +361,147 @@ final class FleetProfile {
         }
         return FleetDocument.fillPlaceholders(url, now[0].isEmpty() ? own : now[0], now[1], now[2]);
     }
+
+    /** One value of a section as the Fleet page draws and reads it. */
+    static final class Field {
+        final String key;
+        final String label;
+        /** text, url, number, password, switch, or select. */
+        final String type;
+        /** For a select: value, label, value, label, ... */
+        final String[] options;
+
+        Field(String key, String label, String type, String... options) {
+            this.key = key;
+            this.label = label;
+            this.type = type;
+            this.options = options;
+        }
+    }
+
+    /** The values of each section, in the order the Fleet page shows them. */
+    static List<Field> fields(String section) {
+        List<Field> fields = new ArrayList<>();
+        switch (section) {
+            case "dashboard":
+                fields.add(new Field("dashboard_url", "Dashboard URL", "url"));
+                break;
+            case "mqtt":
+                fields.add(new Field("mqtt_host", "Broker host", "text"));
+                fields.add(new Field("mqtt_port", "Broker port", "number"));
+                fields.add(new Field("mqtt_username", "Username", "text"));
+                fields.add(new Field("mqtt_password", "Password", "password"));
+                break;
+            case "web_admin":
+                fields.add(new Field("web_admin_enabled", "Local web admin on", "switch"));
+                fields.add(new Field("http_port", "Port", "number"));
+                fields.add(new Field("http_admin_password", "Admin password", "password"));
+                break;
+            case "display":
+                fields.add(new Field("orientation", "Orientation", "select",
+                        KioskConfig.ORIENTATION_AUTO, "Auto-rotate",
+                        KioskConfig.ORIENTATION_LANDSCAPE, "Landscape",
+                        KioskConfig.ORIENTATION_PORTRAIT, "Portrait"));
+                fields.add(new Field("display_off_method", "Display off", "select",
+                        DisplayOffPolicy.AUTO, "Automatic", DisplayOffPolicy.SLEEP, "Sleep",
+                        DisplayOffPolicy.FILM, "Black overlay"));
+                fields.add(new Field("auto_brightness", "Automatic brightness", "switch"));
+                break;
+            case "screensaver":
+                fields.add(new Field("mode", "Mode", "select", ScreensaverPolicy.OFF, "Off",
+                        ScreensaverPolicy.DIM, "Dimmed page", ScreensaverPolicy.FILM, "Black",
+                        ScreensaverPolicy.URL, "Web page", ScreensaverPolicy.PICTURES, "Pictures"));
+                fields.add(new Field("idle_seconds", "After (seconds)", "number"));
+                fields.add(new Field("off_seconds", "Display off after (seconds, 0 never)",
+                        "number"));
+                fields.add(new Field("url", "Web page address", "url"));
+                fields.add(new Field("dim_percent", "Dim to (percent)", "number"));
+                fields.add(new Field("on_wake", "On a touch", "select",
+                        ScreensaverPolicy.WAKE_SCREENSAVER, "Show the screensaver first",
+                        ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once"));
+                fields.add(new Field("source", "Pictures from", "select", PictureSources.LOCAL,
+                        "This panel's playlist", PictureSources.BING, "Bing image of the day",
+                        PictureSources.WIKIMEDIA, "Wikimedia Commons picture of the day"));
+                fields.add(new Field("picture_seconds", "Seconds per picture", "number"));
+                fields.add(new Field("transition", "Transition", "select",
+                        ScreensaverPolicy.TRANSITION_NONE, "None", ScreensaverPolicy.TRANSITION_FADE,
+                        "Fade", ScreensaverPolicy.TRANSITION_SLIDE, "Slide"));
+                fields.add(new Field("picture_fit", "Picture fit", "select",
+                        ScreensaverPolicy.FIT_WHOLE, "Whole picture", ScreensaverPolicy.FIT_FILL,
+                        "Fill the screen", ScreensaverPolicy.FIT_STRETCH, "Stretch",
+                        ScreensaverPolicy.FIT_ACTUAL, "Actual size"));
+                fields.add(new Field("shuffle", "Shuffle", "switch"));
+                fields.add(new Field("one_per_cycle", "One picture per cycle", "switch"));
+                fields.add(new Field("credit", "Show the credit", "switch"));
+                fields.add(new Field("credit_corner", "Credit corner", "select",
+                        ScreensaverPolicy.CORNER_BOTTOM_LEFT, "Bottom left",
+                        ScreensaverPolicy.CORNER_BOTTOM_RIGHT, "Bottom right",
+                        ScreensaverPolicy.CORNER_TOP_LEFT, "Top left",
+                        ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right"));
+                break;
+            default:
+                break;
+        }
+        return fields;
+    }
+
+    /**
+     * A section's values as a form posted them, typed by {@link #fields}, over {@code current}
+     * (a blank password keeps the current one); the first refusal, or null, in {@code refused}.
+     */
+    static Map<String, Object> fromForm(String section, Map<String, String> form,
+            Map<String, Object> current, String[] refused) {
+        Map<String, Object> values = new LinkedHashMap<>(current == null
+                ? new LinkedHashMap<String, Object>() : current);
+        for (Field field : fields(section)) {
+            String posted = form.get(field.key);
+            switch (field.type) {
+                case "switch":
+                    values.put(field.key, posted != null && ("1".equals(posted)
+                            || "on".equals(posted) || "true".equals(posted)));
+                    break;
+                case "number":
+                    if (posted == null || posted.trim().isEmpty()) {
+                        break;
+                    }
+                    try {
+                        values.put(field.key, Long.parseLong(posted.trim()));
+                    } catch (NumberFormatException notANumber) {
+                        refused[0] = field.label + " must be a number";
+                        return null;
+                    }
+                    break;
+                case "password":
+                    if (posted != null && !posted.isEmpty()) {
+                        values.put(field.key, posted);
+                    } else if (!values.containsKey(field.key)) {
+                        values.put(field.key, "");
+                    }
+                    break;
+                case "url":
+                    if (posted != null) {
+                        String url = posted.trim();
+                        String problem = url.isEmpty() && !"dashboard_url".equals(field.key) ? null
+                                : KioskCommandDispatcher.validateDashboardUrl(url);
+                        if (problem != null) {
+                            refused[0] = field.label + ": " + problem;
+                            return null;
+                        }
+                        values.put(field.key, url);
+                    }
+                    break;
+                default:
+                    if (posted != null) {
+                        values.put(field.key, posted.trim());
+                    }
+            }
+        }
+        for (Field field : fields(section)) {
+            if (!values.containsKey(field.key) && !"password".equals(field.type)) {
+                refused[0] = field.label + " is missing";
+                return null;
+            }
+        }
+        return values;
+    }
 }

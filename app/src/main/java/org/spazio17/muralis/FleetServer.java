@@ -1225,13 +1225,11 @@ final class FleetServer {
      * version of the list, signed here and handed to every member. Off the main thread.
      */
     static String shareSection(Context context, String group, String section, boolean on) {
+        // From this panel's own values: only into a scope whose values it takes itself, or
+        // it would share what it does not follow.
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         if (held == null) {
             return "this panel holds no fleet list yet";
-        }
-        if (!FleetDocument.EVERYONE.equals(group)
-                && !FleetDocument.groups(held).containsKey(group)) {
-            return "no such group";
         }
         java.util.Map<String, Object> me = FleetDocument.memberByKey(held,
                 KioskRuntimeState.fleetKey());
@@ -1242,11 +1240,28 @@ final class FleetServer {
             return "this panel does not follow the fleet's shared settings, so it cannot share"
                     + " into them";
         }
+        return shareSection(context, group, section,
+                on ? FleetProfile.read(context, section) : null);
+    }
+
+    /**
+     * The same with the values given (the Fleet page's form), or null to stop sharing: from any
+     * panel into any scope, as every panel manages the fleet.
+     */
+    static String shareSection(Context context, String group, String section,
+            java.util.Map<String, Object> values) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        if (!FleetDocument.EVERYONE.equals(group)
+                && !FleetDocument.groups(held).containsKey(group)) {
+            return "no such group";
+        }
         return writeList(context, group, section, (identity, list) -> FleetDocument.withSection(list,
-                KioskConfig.deviceIdOf(context), group, section,
-                on ? FleetProfile.read(context, section) : null,
+                KioskConfig.deviceIdOf(context), group, section, values,
                 java.time.Instant.now().toString()),
-                (on ? "Shared " : "Stopped sharing ") + section + " in the group "
+                (values != null ? "Shared " : "Stopped sharing ") + section + " in the group "
                         + FleetDocument.groupName(held, group));
     }
 
@@ -1291,9 +1306,17 @@ final class FleetServer {
 
     /** This panel in exactly {@code groups} (Everyone aside). */
     static String setMyGroups(Context context, java.util.List<String> groups) {
+        return setMemberGroups(context, KioskRuntimeState.fleetKey(), groups);
+    }
+
+    /** The member of key hash {@code spki} in exactly {@code groups}, from any panel. */
+    static String setMemberGroups(Context context, String spki, java.util.List<String> groups) {
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         if (held == null) {
             return "this panel holds no fleet list yet";
+        }
+        if (FleetDocument.memberByKey(held, spki) == null) {
+            return "no such panel";
         }
         for (String group : groups) {
             if (!FleetDocument.EVERYONE.equals(group)
@@ -1302,8 +1325,8 @@ final class FleetServer {
             }
         }
         return writeList(context, null, null, (identity, list) -> FleetDocument.withMemberGroups(list,
-                KioskConfig.deviceIdOf(context), identity.spki, groups,
-                java.time.Instant.now().toString()), "This panel's groups set");
+                KioskConfig.deviceIdOf(context), spki, groups,
+                java.time.Instant.now().toString()), "A panel's groups set");
     }
 
     /** Whether this panel follows what the whole fleet shares. */

@@ -64,42 +64,12 @@ document.getElementById('fleet-join-close').addEventListener('click',function(){
 document.getElementById('fleet-leave').addEventListener('click',function(){
 if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps its own settings. It can join again with a new code.')){return;}
 fleetJoinPost('/api/fleet/leave');});}
-// The groups: which ones this panel is in follow the poll; the five sharing switches stand for
-// the group chosen in the menu, their setting key named after it, and follow what it shares. A
-// group made or removed changes the rows, so the page is loaded again on the Fleet section.
-var fleetProfile=null;
+// The fleet's groups this panel is in, and whether it follows the whole fleet, follow the poll;
+// the groups themselves and what each scope shares are the Fleet page.
 function fleetGroupsPaint(prof){
 if(!prof||!prof.groups){return;}
-fleetProfile=prof;
 prof.groups.forEach(function(g){follow('fleet-group-'+g.id,g['in']);});
-follow('fleet-follows',prof.follows_fleet);
-var select=document.getElementById('fleet-share-group');if(!select){return;}
-// The menu lists this panel's groups: put in one or taken out, here or elsewhere, the page is
-// loaded again on the Fleet section, as after a group made or removed.
-var mine=['everyone'].concat(prof.groups.filter(function(g){return g['in'];}).map(function(g){return g.id;}));
-var listed=Array.prototype.map.call(select.options,function(o){return o.value;});
-if(mine.join()!==listed.join()&&!document.querySelector('[data-pending]')){window.location.replace('/?open=fleet');return;}
-var group=select.value||'everyone';
-Array.prototype.forEach.call(document.querySelectorAll('[data-section]'),function(sw){
-var section=sw.dataset.section,key='fleet_share_'+group+'_'+section;
-if(sw.dataset.setting!==key){sw.dataset.setting=key;delete sw.dataset.pending;}
-var shared=prof.sections&&prof.sections[section]&&prof.sections[section].shared_by.indexOf(group)>=0;
-follow(sw.id,shared);});}
-function fleetGroupPost(body){
-var error=document.getElementById('fleet-error');error.hidden=true;
-fetch('/api/fleet/group',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:body})
-.then(function(r){return r.json();})
-.then(function(parsed){if(parsed.status==='accepted'){window.location.replace('/?open=fleet');}
-else{error.textContent='Not done: '+parsed.detail+'.';error.hidden=false;}})
-.catch(function(){error.textContent='The panel did not answer. It may be rebooting or off the network.';error.hidden=false;});}
-if(document.getElementById('fleet-share-group')){
-document.getElementById('fleet-share-group').addEventListener('change',function(){fleetGroupsPaint(fleetProfile);});
-document.getElementById('fleet-group-add').addEventListener('click',function(){
-fleetGroupPost('name='+encodeURIComponent(document.getElementById('fleet-group-name').value));});
-Array.prototype.forEach.call(document.querySelectorAll('.fleet-group-remove'),function(b){
-b.addEventListener('click',function(){
-if(!window.confirm('Remove the group '+b.dataset.name+'?\n\nWhat it shares is shared no more; the panels in it keep their settings.')){return;}
-fleetGroupPost('remove=1&id='+encodeURIComponent(b.dataset.group));});});}
+follow('fleet-follows',prof.follows_fleet);}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};
 // The same eight rows, in the same order, as the tablet's own overlay; see
