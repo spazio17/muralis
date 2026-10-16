@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -41,7 +41,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The camera of Add a panel (block 11d): reads the QR of another panel's Join screen. Camera2,
+ * The camera of Add a panel: reads the QR of another panel's Join screen. Camera2,
  * as the Camera sensor uses it, one lens at a time; each frame's brightness plane is decoded with
  * ZXing and drawn, grey and upright, as the preview, so no preview surface has to be turned to
  * match the sensor. The Camera sensor lets go of the camera meanwhile
@@ -73,6 +73,8 @@ final class JoinScanner {
     private CameraCaptureSession session;
     private ImageReader reader;
     private volatile boolean running;
+    /** Camera thread: an open asked of the system and not answered yet; see stop. */
+    private boolean opening;
     private boolean front;
     private int sensorOrientation;
 
@@ -153,11 +155,14 @@ final class JoinScanner {
             reader = ImageReader.newInstance(size.getWidth(), size.getHeight(),
                     ImageFormat.YUV_420_888, 2);
             reader.setOnImageAvailableListener(this::frame, handler);
+            opening = true;
             manager.openCamera(id, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(CameraDevice opened) {
+                    opening = false;
                     if (!running) {
                         opened.close();
+                        thread.quitSafely();
                         return;
                     }
                     device = opened;
@@ -166,13 +171,23 @@ final class JoinScanner {
 
                 @Override
                 public void onDisconnected(CameraDevice gone) {
+                    opening = false;
                     gone.close();
+                    if (!running) {
+                        thread.quitSafely();
+                        return;
+                    }
                     fail("The camera was taken by another app.");
                 }
 
                 @Override
                 public void onError(CameraDevice failed, int error) {
+                    opening = false;
                     failed.close();
+                    if (!running) {
+                        thread.quitSafely();
+                        return;
+                    }
                     boolean busy = error == ERROR_CAMERA_IN_USE
                             || error == ERROR_MAX_CAMERAS_IN_USE;
                     if (busy && tried + 1 < OPEN_TRIES && running) {
@@ -187,6 +202,7 @@ final class JoinScanner {
                 }
             }, handler);
         } catch (CameraAccessException refused) {
+            opening = false;
             // A busy camera can be refused here as well as in onError; both are asked again.
             int reason = refused.getReason();
             if ((reason == CameraAccessException.CAMERA_IN_USE
@@ -200,6 +216,7 @@ final class JoinScanner {
                     ? "The camera is switched off on this device."
                     : "The camera could not be opened.");
         } catch (RuntimeException refused) {
+            opening = false;
             Log.w(TAG, "The camera would not open", refused);
             fail("The camera could not be opened.");
         }
@@ -221,7 +238,11 @@ final class JoinScanner {
                     reader.close();
                     reader = null;
                 }
-                thread.quitSafely();
+                // An open still unanswered keeps the thread: its answer closes the camera and
+                // ends the thread then, rather than arriving at a thread already gone.
+                if (!opening) {
+                    thread.quitSafely();
+                }
             });
         }
         PanelCamera.heldByScanner = false;

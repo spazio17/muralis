@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -12,8 +12,8 @@ import android.view.View;
 
 /**
  * A countdown as Material 3's determinate circular progress indicator, the seconds left in its
- * centre: the indicator empties clockwise from the top, a gap between it and the track (Juri,
- * 2026-10-04, sketch A of media/drafts/beacon-countdown). Drawn here rather than taken from a
+ * centre: the indicator empties clockwise from the top, a gap between it and the track
+ * (2026-10-04, sketch A of media/drafts/beacon-countdown). Drawn here rather than taken from a
  * library: two arcs and a number. Read from across a room, so it is drawn as large as it is
  * laid out.
  */

@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -28,7 +28,7 @@ import java.util.UUID;
 /**
  * Bluetooth beacons, the companion app's Beacon Monitor: the panel listens for iBeacons around
  * it and reports how many are in reach, each with its distance. It only listens and never sends
- * a beacon of its own (Juri, 2026-10-01: "Only listen for beacons, never send a beacon").
+ * a beacon of its own (2026-10-01: "Only listen for beacons, never send a beacon").
  *
  * <p>A beacon is in reach while it has been heard within the "out of reach after" time; the
  * automations see the count. Beacons are named on the sensor's page, by their
@@ -226,7 +226,7 @@ final class Beacons implements Sensors.Reading {
     /**
      * A beacon's state in words, the one wording both surfaces show: "in reach, 1.2 m,
      * -63 dBm" or "out of reach"; the signal beside the distance, so the estimate can be
-     * checked against the raw number (Juri, 2026-09-30).
+     * checked against the raw number (2026-09-30).
      */
     String describe(Seen one, boolean inReach) {
         if (!inReach) {
@@ -420,7 +420,7 @@ final class Beacons implements Sensors.Reading {
 
     /**
      * The scan mode wanted now: all the time during a calibration, else as the person chose,
-     * low (Android's low-power scan, short bursts) unless high (Juri, 2026-10-04).
+     * low (Android's low-power scan, short bursts) unless high (2026-10-04).
      */
     private int wantedMode() {
         if (SystemClock.elapsedRealtime() < closeUntilMs
@@ -669,7 +669,7 @@ final class Beacons implements Sensors.Reading {
     /**
      * The beacons the page lists, to be named: every one heard since the scan began, then
      * every calibrated one not heard lately, so a calibrated beacon can always be renamed
-     * (Juri, 2026-10-04); those read out of reach.
+     * (2026-10-04); those read out of reach.
      */
     List<Seen> listed() {
         List<Seen> list;
