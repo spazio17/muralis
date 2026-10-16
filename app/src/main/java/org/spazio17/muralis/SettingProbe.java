@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -50,23 +50,55 @@ final class SettingProbe {
     }
 
     /**
-     * @param boundPort the port the running admin server actually holds, or -1 when it is down;
-     *                  asking about that one is not a conflict, the holder is us.
+     * @param boundPort  the port the running admin server actually holds, or -1 when it is down;
+     *                   asking about that one is not a conflict, the holder is us.
+     * @param memberPort the member port stored now, which the web admin may not newly take
      */
-    static Verdict adminPort(String value, int boundPort) {
-        int port;
-        try {
-            port = Integer.parseInt(value.trim());
-        } catch (NumberFormatException invalid) {
+    static Verdict adminPort(String value, int boundPort, int memberPort) {
+        Integer port = portNumber(value);
+        if (port == null) {
             return new Verdict(false, "not a port number");
         }
-        String problem = KioskCommandDispatcher.validateAdminPort(port, boundPort);
+        String problem = KioskCommandDispatcher.validateAdminPort(port, boundPort, memberPort);
         if (problem != null) {
             return new Verdict(false, problem);
         }
         if (port == boundPort) {
             return new Verdict(true, "the web admin is serving on it right now");
         }
+        return freeVerdict(port);
+    }
+
+    /**
+     * The member port, by the same rules as {@link #adminPort}.
+     *
+     * @param boundPort the port the member endpoint holds, or -1 when it is not listening
+     * @param adminPort the web admin's port stored now
+     */
+    static Verdict memberPort(String value, int boundPort, int adminPort) {
+        Integer port = portNumber(value);
+        if (port == null) {
+            return new Verdict(false, "not a port number");
+        }
+        String problem = KioskCommandDispatcher.validateMemberPort(port, boundPort, adminPort);
+        if (problem != null) {
+            return new Verdict(false, problem);
+        }
+        if (port == boundPort) {
+            return new Verdict(true, "the member endpoint is listening on it right now");
+        }
+        return freeVerdict(port);
+    }
+
+    private static Integer portNumber(String value) {
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
+    }
+
+    private static Verdict freeVerdict(int port) {
         if (portFree(port)) {
             return new Verdict(true, "port " + port + " is free");
         }

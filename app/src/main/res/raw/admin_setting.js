@@ -44,14 +44,10 @@ row.parentNode.insertBefore(why,row.nextSibling);setTimeout(function(){if(why.pa
 if(!rejected){
 // Stored: every other control of the same setting on the page (a sensor's row in the list and
 // in its detail) shows it at once, and the poll leaves this setting alone until the panel's
-// document has caught up, however slow the path to it is (Juri, 2026-09-27: ten seconds on a
+// document has caught up, however slow the path to it is (2026-09-27: ten seconds on a
 // tablet behind a slow link, the two rows disagreeing meanwhile).
 window.muralisLocal=window.muralisLocal||{};
 window.muralisLocal[el.dataset.setting]={value:value,at:Date.now()};
-// The look applies to this page at once, the way the panel redraws itself: the scheme from the
-// colour, the rows from the separators.
-if(el.dataset.setting==='appearance_colour'){document.documentElement.setAttribute('data-palette',value);}
-if(el.dataset.setting==='separators'){document.documentElement.setAttribute('data-separators',value);}
 // The web admin serves the other certificate from its next connection, so the page goes onto it,
 // fetched afresh: a reload of a page that answered an upload would offer to post the files again.
 // Back in the Local web admin section, named in the query: an address that differs from this
@@ -81,27 +77,26 @@ form.addEventListener('submit',function(e){e.preventDefault();var a=document.act
 // The mode is the settings card's menu, the one place it is chosen since 2026-09-28; the
 // screensaver page has no chooser and carries the mode on its shell, which admin_stats.js keeps
 // current, with the options panel's title for every mode rendered beside it.
-function modeValue(){var el=document.getElementById('screensaver-mode');
+function modeValue(){var el=document.getElementById('ambient-mode');
 if(el){return el.value;}
-var page=document.getElementById('screensaver-page');
+var page=document.getElementById('ambient-page');
 return page?page.dataset.mode:null;}
-function optionsTitle(mode){var page=document.getElementById('screensaver-page');
+function optionsTitle(mode){var page=document.getElementById('ambient-page');
 var titles=page&&page.dataset.titles?JSON.parse(page.dataset.titles):{};
 return titles[mode]||'';}
 function screensaverFields(){var mode=modeValue();
 if(mode===null){return;}
-var url=document.getElementById('screensaver-url-field'),dim=document.getElementById('screensaver-dim-field'),wake=document.getElementById('screensaver-wake-field');
-var pictures=document.getElementById('screensaver-pictures'),source=document.getElementById('screensaver-source');
-// The library box holds the playlists, the browser and the upload. It is a box of its own since
-// 2026-09-10, and it belongs to the mode AND the source: there is nothing to browse when the
-// pictures come from Bing.
-var library=document.getElementById('screensaver-library'),online=document.getElementById('screensaver-online'),credit=document.getElementById('screensaver-credit');
+var url=document.getElementById('ambient-url-field'),dim=document.getElementById('ambient-dim-field'),wake=document.getElementById('ambient-wake-field');
+var pictures=document.getElementById('ambient-pictures');
+// The library box holds the playlists, the browser and the upload, a box of its own since
+// 2026-09-10 that belongs to the Pictures mode.
+var library=document.getElementById('ambient-library');
 // The second panel is named after the mode it belongs to and is not there at all for Off: a
-// screensaver that is off has no settings (Juri, 2026-09-11). The name comes from the titles
+// screensaver that is off has no settings (2026-09-11). The name comes from the titles
 // the server rendered on the page's shell, so the two surfaces cannot drift apart over a word.
-var options=document.getElementById('screensaver-options'),
-    title=document.getElementById('screensaver-options-title'),
-    more=document.getElementById('screensaver-more');
+var options=document.getElementById('ambient-options'),
+    title=document.getElementById('ambient-options-title'),
+    more=document.getElementById('ambient-more');
 if(options){options.classList.toggle('gone',mode==='off');}
 if(title){title.textContent=optionsTitle(mode);}
 // Off has no page: the way to it leaves with the options.
@@ -111,16 +106,12 @@ if(dim){dim.classList.toggle('gone',mode!=='dim');}
 if(pictures){pictures.classList.toggle('gone',mode!=='pictures');}
 // Gone, not greyed out: a control that can never be enabled is clutter.
 if(wake){wake.classList.toggle('gone',!(mode==='url'||mode==='dim'||mode==='pictures'));}
-if(source){var isLocal=source.value==='local';
-if(library){library.classList.toggle('gone',!isLocal||mode!=='pictures');
+if(library){library.classList.toggle('gone',mode!=='pictures');
 // Without the playlists the options are the page's only panel, centred like the legal pages.
-var page=document.getElementById('screensaver-page');if(page){page.classList.toggle('one',library.classList.contains('gone'));}}
-if(online){online.classList.toggle('gone',isLocal);}
-if(credit){credit.disabled=!isLocal;if(!isLocal){credit.checked=true;}credit.title=isLocal?'':'The online sources require their credit line.';}}}
+var page=document.getElementById('ambient-page');if(page){page.classList.toggle('one',library.classList.contains('gone'));}}}
 window.muralisScreensaverFields=screensaverFields;
-var saverMode=document.getElementById('screensaver-mode'),saverSource=document.getElementById('screensaver-source');
+var saverMode=document.getElementById('ambient-mode');
 if(saverMode){saverMode.addEventListener('change',screensaverFields);}
-if(saverSource){saverSource.addEventListener('change',screensaverFields);}
 screensaverFields();
 })();
 // A file input is off screen with Browse as its label, so the name chosen is said beside it: the

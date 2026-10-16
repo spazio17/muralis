@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -56,7 +56,7 @@ final class MqttController implements MqttCallbackExtended {
 
     /** Missing or non-boolean telemetry resets an MQTT switch to unknown, never confidently off. */
     private static String screensaverBooleanTemplate(String field) {
-        return "{% set s = value_json.get('screensaver', {}) %}{% if s is mapping %}"
+        return "{% set s = value_json.get('ambient', {}) %}{% if s is mapping %}"
                 + "{{ 'ON' if s.get('" + field + "') is sameas true else 'OFF' if s.get('"
                 + field + "') is sameas false else 'None' }}{% else %}None{% endif %}";
     }
@@ -141,6 +141,54 @@ final class MqttController implements MqttCallbackExtended {
         hasBattery = KioskService.hasBattery(context);
     }
 
+    /** One client certificate change at a time, as the web admin's own certificate. */
+    private static final Object CLIENT_STORE = new Object();
+
+    /** The uploaded client certificate, or null when none is kept or it cannot be read. */
+    static CertificateUpload clientCertificate(Context context) {
+        SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+        return CertificateUpload.restore(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN),
+                secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY));
+    }
+
+    /**
+     * Keeps a client certificate and its key for the broker, once {@link CertificateUpload} has
+     * read them; null when kept, else why not, a fragment to follow "Not uploaded: ".
+     */
+    static String keepClientCertificate(Context context, String certificateText, String keyText) {
+        CertificateUpload.Result read = CertificateUpload.parseClient(certificateText, keyText);
+        if (read.problem != null) {
+            return read.problem;
+        }
+        String chain = read.upload.chainText();
+        String key = read.upload.keyText();
+        java.security.cert.X509Certificate first = read.upload.chain[0];
+        synchronized (CLIENT_STORE) {
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            secrets.put(KioskConfig.MQTT_CLIENT_CHAIN, chain);
+            secrets.put(KioskConfig.MQTT_CLIENT_KEY, key);
+            // Read back: SecretStore leaves the old value when it cannot encrypt.
+            if (!chain.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_CHAIN))
+                    || !key.equals(secrets.getOrNull(KioskConfig.MQTT_CLIENT_KEY))) {
+                forgetClientCertificate(context);
+                return "this panel could not keep it; upload it again";
+            }
+            KioskConfig.edit(context).mqttClientShown(CertificateUpload.names(first),
+                    first.getNotAfter().getTime()).apply();
+        }
+        return null;
+    }
+
+    /** Forgets the client certificate; the broker is then reached without one. */
+    static void forgetClientCertificate(Context context) {
+        synchronized (CLIENT_STORE) {
+            SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
+            secrets.clear(KioskConfig.MQTT_CLIENT_CHAIN);
+            secrets.clear(KioskConfig.MQTT_CLIENT_KEY);
+            KioskConfig.edit(context).mqttClientShown("", 0).apply();
+        }
+    }
+
     void start() {
         if (config.mqttHost.isEmpty()) {
             Log.i(TAG, "MQTT is not configured");
@@ -156,25 +204,21 @@ final class MqttController implements MqttCallbackExtended {
             return;
         }
 
-        // Plain TCP only. TLS was offered as a checkbox and removed on 2026-08-19, because it was
-        // never actually implemented: the whole of it was "ssl" instead of "tcp" here, with no trust
-        // store, no SSLSocketFactory and no way anywhere in the app to supply a certificate. Paho
-        // therefore fell back to Android's system trust store with hostname verification on, so it
-        // could only ever work against a publicly-trusted CA certificate on a matching public
-        // hostname. Every ordinary home broker uses a self-signed or private-CA certificate, so for
-        // the actual audience the option could not work at all, and it was ON by default, which made
-        // a fresh install fail its first connection.
-        //
-        // That is the same mistake this project already corrected once, when the per-command HMAC was
-        // removed for advertising protection nobody could hold the key to.
-        //
-        // The reference implementations agree with dropping it: WLED supports no MQTT TLS at all and
-        // tells users to stay on a local broker, and Tasmota's TLS is a compile-time option, off in
-        // default builds, which needs CA-certificate or public-key-fingerprint pinning to work with a
-        // self-signed broker. Adding TLS properly here means adding that same machinery: a
-        // certificate or fingerprint field, storage for it, and an SSLSocketFactory built from it.
-        // Until that exists, this stays plain TCP and the documentation says so plainly.
-        String uri = "tcp://" + config.mqttHost + ":" + config.mqttPort;
+        // TLS when the person switched it on (optional: a broker on the home network is often
+        // plain). The broker is trusted when Android trusts its certificate for its name, or when
+        // its certificate is the one a person trusted here (MqttTls); a client certificate is
+        // presented when one was uploaded, as zigbee2mqtt's ca, cert and key.
+        MqttTls.Connection tls = null;
+        if (config.mqttTls) {
+            try {
+                tls = MqttTls.connection(config.mqttHost, config.mqttTlsPin,
+                        clientCertificate(appContext));
+            } catch (java.security.GeneralSecurityException failed) {
+                Log.e(TAG, "MQTT over TLS could not be set up", failed);
+                return;
+            }
+        }
+        String uri = (tls == null ? "tcp://" : "ssl://") + config.mqttHost + ":" + config.mqttPort;
         try {
             client = new MqttAsyncClient(uri, config.deviceId, new MemoryPersistence());
             client.setCallback(this);
@@ -185,7 +229,13 @@ final class MqttController implements MqttCallbackExtended {
             options.setCleanSession(true);
             options.setConnectionTimeout(15);
             options.setKeepAliveInterval(30);
-            options.setHttpsHostnameVerificationEnabled(true);
+            if (tls != null) {
+                // The name is checked by MqttTls's verifier, which also accepts the trusted
+                // certificate; Paho calls it only with its own check off.
+                options.setSocketFactory(tls.socketFactory);
+                options.setHttpsHostnameVerificationEnabled(false);
+                options.setSSLHostnameVerifier(tls.hostnameVerifier);
+            }
             options.setWill(topicPrefix + "availability",
                     "offline".getBytes(StandardCharsets.UTF_8), 1, true);
             if (!config.mqttUsername.isEmpty()) {
@@ -331,12 +381,24 @@ final class MqttController implements MqttCallbackExtended {
                 if (discoveryStale
                         || (names != null && !names.equals(announcedPlaylists))
                         || !sensorsKey(KioskRuntimeState.sensors(),
-                                KioskRuntimeState.automations()).equals(announcedSensors)) {
+                                KioskRuntimeState.automations()).equals(announcedSensors)
+                        || !camerasKey().equals(announcedCameras)) {
                     runDiscovery();
                 }
             });
             publish(topicPrefix + "state", state.toString(), 0, true);
         });
+    }
+
+    /** The pop-up cameras' names discovery last announced, one button each. */
+    private volatile String announcedCameras = null;
+
+    private String camerasKey() {
+        StringBuilder key = new StringBuilder();
+        for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+            key.append(camera.name).append(',');
+        }
+        return key.toString();
     }
 
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
@@ -412,6 +474,22 @@ final class MqttController implements MqttCallbackExtended {
             activeClient.publish(topicPrefix + "camera", new byte[0], 0, true);
         } catch (MqttException exception) {
             Log.w(TAG, "MQTT picture clear failed", exception);
+        }
+    }
+
+    /**
+     * A picture of the screen, JPEG bytes sized for a broker (KioskService.forBroker), what the
+     * Home Assistant image entity shows.
+     */
+    void publishScreenshot(byte[] jpeg) {
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected() || jpeg == null) {
+            return;
+        }
+        try {
+            activeClient.publish(topicPrefix + "screenshot", jpeg, 0, true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "MQTT screenshot publish failed", exception);
         }
     }
 
@@ -620,6 +698,15 @@ final class MqttController implements MqttCallbackExtended {
         return null;
     }
 
+    /**
+     * A fleet alert on the plain topic the person set, on this panel's broker: not
+     * retained, so a subscriber that comes later is not told of a state long gone. False when
+     * not connected.
+     */
+    boolean publishAlert(String topic, String payload) {
+        return publish(topic, payload, 1, false);
+    }
+
     /** @return whether the message was handed to the client; false when not connected or refused */
     private boolean publish(String topic, String payload, int qos, boolean retained) {
         MqttAsyncClient activeClient = client;
@@ -817,7 +904,7 @@ final class MqttController implements MqttCallbackExtended {
             // dropped and for how long is the MQTT state entity's own history, and knowing WHY
             // turned out not to be worth an entity. Its withdrawal was published, confirmed
             // processed on the only installation that ever saw it, and then retired with the
-            // rest of the stale-keys block; the history is in CLAUDE.md's entity naming rule.
+            // rest of the stale-keys block; the history is in git.
             // Four values, not two, so this one stays a text sensor: charging, discharging,
             // charged, on hold. Straight from battery.charge_state, which is
             // SystemStats.chargeStateLabel, the same string the overlay and the web admin print,
@@ -847,6 +934,10 @@ final class MqttController implements MqttCallbackExtended {
                     "{{ value_json.app_version }}");
             appVersionSensor.put("entity_category", "diagnostic");
             components.put("app_version", appVersionSensor);
+            // App lock: the app shown instead of the page, "Off" when there is none.
+            components.put("app_lock", sensor("App lock", null, null, null,
+                    "{{ value_json.app_lock.app if value_json.app_lock is defined"
+                            + " and value_json.app_lock.app else 'Off' }}"));
 
             // Controls, not just readings. Discovery published sensors only, so a Home Assistant
             // user could see the panel but not touch it without hand-writing mqtt.publish calls in
@@ -876,7 +967,7 @@ final class MqttController implements MqttCallbackExtended {
             // "Recycle time" clock; both are gone, along with the commands behind them, because
             // recycling is a recovery mechanism rather than a preference and its schedule is now
             // derived per device. Their withdrawals ran until 2026-08-25 and were then retired as
-            // confirmed processed; the history is in CLAUDE.md's entity naming rule. The stats
+            // confirmed processed; the history is in git. The stats
             // overlay is deliberately absent for a different reason: it changes what is drawn on
             // the panel's own glass, which is a decision for whoever is standing at it or holding
             // the admin page, not something a broker subscriber needs.
@@ -912,24 +1003,34 @@ final class MqttController implements MqttCallbackExtended {
                     "display.off_method",
                     displayOffOptions,
                     "{{ value_json.config.display_off_method }}"));
-            // The switch reflects the operator's flag, not whether a socket is bound: with no
-            // admin password stored, "on" is an honest description of intent while the bind
-            // stays refused, and the runtime state carries the difference.
-            // The screensaver (2026-09-09): the mode as a select, and one switch that is both its
-            // state and its control, start on ON and stop on OFF. No separate start/stop buttons:
-            // they would be the switch twice over, and every entity is a row in somebody's device
-            // page. The idle times are settings, set from the web admin or the tablet.
+            // The status light as a Home Assistant light: on or off, a colour and a brightness,
+            // through the template schema so its commands are the panel's own light.on and
+            // light.off. Home Assistant's brightness is 0 to 255, the panel's 1 to 100.
+            components.put("status_light", statusLight());
+            // A pop-up on the panel from Home Assistant's notify.send_message.
+            JSONObject popup = new JSONObject();
+            popup.put("p", "notify");
+            popup.put("name", "Pop-up");
+            popup.put("unique_id", uniqueId("Pop-up"));
+            popup.put("command_topic", topicPrefix + "command");
+            popup.put("command_template",
+                    "{\"command\":\"panel.notify\",\"args\":{\"value\":{{ value | tojson }}}}");
+            components.put("pop_up", popup);
             org.json.JSONArray screensaverModes = new org.json.JSONArray();
             screensaverModes.put(ScreensaverPolicy.OFF);
             screensaverModes.put(ScreensaverPolicy.DIM);
             screensaverModes.put(ScreensaverPolicy.FILM);
             screensaverModes.put(ScreensaverPolicy.URL);
             screensaverModes.put(ScreensaverPolicy.PICTURES);
-            components.put("screensaver_mode", select(
-                    "Screensaver mode",
-                    "screensaver.mode",
+            // Ambient: the mode as a select, and one switch that is both its state and its
+            // control, start on ON and stop on OFF. No separate start/stop buttons: they would be
+            // the switch twice over, and every entity is a row in somebody's device page. The
+            // times are numbers of their own.
+            components.put("ambient_mode", select(
+                    "Ambient mode",
+                    "ambient.mode",
                     screensaverModes,
-                    "{{ value_json.screensaver.mode }}"));
+                    "{{ value_json.ambient.mode }}"));
             // The playlists by name, so a card can switch a panel's pictures without knowing an
             // id. "None" is a real option because a playlist can be deleted while it is in use,
             // and an entity that cannot express the state it is in reads as broken.
@@ -940,108 +1041,99 @@ final class MqttController implements MqttCallbackExtended {
                 playlistNames.put(playlist.name);
             }
             announcedPlaylists = PicturePlaylists.namesOf(playlists);
-            components.put("screensaver_playlist", select(
-                    "Screensaver playlist",
-                    "screensaver.playlist",
+            components.put("ambient_playlist", select(
+                    "Ambient playlist",
+                    "ambient.playlist",
                     playlistNames,
-                    "{{ value_json.screensaver.playlist if value_json.screensaver is mapping "
-                            + "and value_json.screensaver.playlist else '" + PLAYLIST_NONE + "' }}"));
-            components.put("screensaver", toggle(
-                    "Screensaver",
-                    "{\"command\":\"screensaver.start\"}",
-                    "{\"command\":\"screensaver.stop\"}",
+                    "{{ value_json.ambient.playlist if value_json.ambient is mapping "
+                            + "and value_json.ambient.playlist else '" + PLAYLIST_NONE + "' }}"));
+            components.put("ambient", toggle(
+                    "Ambient",
+                    "{\"command\":\"ambient.start\"}",
+                    "{\"command\":\"ambient.stop\"}",
                     screensaverBooleanTemplate("active")));
-            // Every screensaver setting, not a chosen few: "everything must be controllable
-            // remotely" (Juri, 2026-09-09). They are all commands as well, so a caller that
+            // Every Ambient setting, not a chosen few: "everything must be controllable
+            // remotely" (2026-09-09). They are all commands as well, so a caller that
             // would rather publish a command than use an entity can.
-            org.json.JSONArray pictureSources = new org.json.JSONArray();
-            pictureSources.put(PictureSources.LOCAL);
-            pictureSources.put(PictureSources.BING);
-            pictureSources.put(PictureSources.WIKIMEDIA);
-            components.put("screensaver_source", select(
-                    "Screensaver source",
-                    "screensaver.source",
-                    pictureSources,
-                    "{{ value_json.screensaver.source }}"));
-            components.put("screensaver_idle", number(
-                    "Screensaver idle time",
-                    "screensaver.idle_seconds",
+            components.put("ambient_idle", number(
+                    "Ambient idle time",
+                    "ambient.idle_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.screensaver.idle_s }}"));
-            components.put("screensaver_display_off", number(
-                    "Screensaver to display off",
-                    "screensaver.off_seconds",
+                    "{{ value_json.ambient.idle_s }}"));
+            components.put("ambient_display_off", number(
+                    "Ambient to display off",
+                    "ambient.off_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.screensaver.off_s }}"));
-            components.put("screensaver_picture_time", number(
-                    "Screensaver picture time",
-                    "screensaver.picture_seconds",
+                    "{{ value_json.ambient.off_s }}"));
+            components.put("ambient_picture_time", number(
+                    "Ambient picture time",
+                    "ambient.picture_seconds",
                     1, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.screensaver.picture_s }}"));
-            components.put("screensaver_dim", number(
-                    "Screensaver dim brightness",
-                    "screensaver.dim_percent",
+                    "{{ value_json.ambient.picture_s }}"));
+            components.put("ambient_dim", number(
+                    "Ambient dim brightness",
+                    "ambient.dim_percent",
                     1, 100, "%",
-                    "{{ value_json.screensaver.dim_percent }}"));
+                    "{{ value_json.ambient.dim_percent }}"));
             org.json.JSONArray transitions = new org.json.JSONArray();
             transitions.put(ScreensaverPolicy.TRANSITION_NONE);
             transitions.put(ScreensaverPolicy.TRANSITION_FADE);
             transitions.put(ScreensaverPolicy.TRANSITION_SLIDE);
-            components.put("screensaver_transition", select(
-                    "Screensaver transition",
-                    "screensaver.transition",
+            components.put("ambient_transition", select(
+                    "Ambient transition",
+                    "ambient.transition",
                     transitions,
-                    "{{ value_json.screensaver.transition }}"));
+                    "{{ value_json.ambient.transition }}"));
             org.json.JSONArray fits = new org.json.JSONArray();
             fits.put(ScreensaverPolicy.FIT_WHOLE);
             fits.put(ScreensaverPolicy.FIT_FILL);
             fits.put(ScreensaverPolicy.FIT_STRETCH);
             fits.put(ScreensaverPolicy.FIT_ACTUAL);
-            components.put("screensaver_picture_fit", select(
-                    "Screensaver picture fit",
-                    "screensaver.picture_fit",
+            components.put("ambient_picture_fit", select(
+                    "Ambient picture fit",
+                    "ambient.picture_fit",
                     fits,
-                    "{{ value_json.screensaver.picture_fit }}"));
+                    "{{ value_json.ambient.picture_fit }}"));
             org.json.JSONArray corners = new org.json.JSONArray();
             corners.put(ScreensaverPolicy.CORNER_BOTTOM_LEFT);
             corners.put(ScreensaverPolicy.CORNER_BOTTOM_RIGHT);
             corners.put(ScreensaverPolicy.CORNER_TOP_LEFT);
             corners.put(ScreensaverPolicy.CORNER_TOP_RIGHT);
-            components.put("screensaver_credit_corner", select(
-                    "Screensaver credit corner",
-                    "screensaver.credit_corner",
+            components.put("ambient_credit_corner", select(
+                    "Ambient credit corner",
+                    "ambient.credit_corner",
                     corners,
-                    "{{ value_json.screensaver.credit_corner }}"));
+                    "{{ value_json.ambient.credit_corner }}"));
             org.json.JSONArray wakeChoices = new org.json.JSONArray();
             wakeChoices.put(ScreensaverPolicy.WAKE_SCREENSAVER);
             wakeChoices.put(ScreensaverPolicy.WAKE_DASHBOARD);
-            components.put("screensaver_on_wake", select(
-                    "Screensaver after a wake",
-                    "screensaver.on_wake",
+            components.put("ambient_on_wake", select(
+                    "Ambient after a wake",
+                    "ambient.on_wake",
                     wakeChoices,
-                    "{{ value_json.screensaver.on_wake }}"));
-            components.put("screensaver_shuffle", toggle(
-                    "Screensaver shuffle",
-                    "{\"command\":\"screensaver.shuffle\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"screensaver.shuffle\",\"args\":{\"enabled\":false}}",
+                    "{{ value_json.ambient.on_wake }}"));
+            components.put("ambient_shuffle", toggle(
+                    "Ambient shuffle",
+                    "{\"command\":\"ambient.shuffle\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.shuffle\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("shuffle")));
-            components.put("screensaver_one_per_cycle", toggle(
-                    "Screensaver one picture per cycle",
-                    "{\"command\":\"screensaver.one_per_cycle\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"screensaver.one_per_cycle\",\"args\":{\"enabled\":false}}",
+            components.put("ambient_one_per_cycle", toggle(
+                    "Ambient one picture per cycle",
+                    "{\"command\":\"ambient.one_per_cycle\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.one_per_cycle\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("one_per_cycle")));
-            components.put("screensaver_credit", toggle(
-                    "Screensaver credit line",
-                    "{\"command\":\"screensaver.credit\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"screensaver.credit\",\"args\":{\"enabled\":false}}",
+            components.put("ambient_credit", toggle(
+                    "Ambient credit line",
+                    "{\"command\":\"ambient.credit\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.credit\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("credit")));
-            components.put("screensaver_url", valueText(
-                    "Screensaver page",
-                    "screensaver.url",
-                    "{{ value_json.screensaver.url }}"));
-            components.put("screensaver_picture", sensor(
-                    "Screensaver picture", null, null, null,
-                    "{{ value_json.screensaver.picture.title | default('', true) }}"));
+            components.put("ambient_url", valueText(
+                    "Ambient page",
+                    "ambient.url",
+                    "{{ value_json.ambient.url }}"));
+            components.put("ambient_picture", sensor(
+                    "Ambient picture", null, null, null,
+                    "{{ value_json.ambient.picture.title | default('', true) }}"));
             // The panel's sensors (see Sensors): one entity each, under the panel's device, named
             // as the companion app names its own. A sensor that is off, or that this device does
             // not have, is left out; one this panel announced before is withdrawn at the publish
@@ -1119,6 +1211,29 @@ final class MqttController implements MqttCallbackExtended {
             } else if (!cameraOn) {
                 clearPicture();
             }
+            // The screen as the wall shows it: a button that asks for a picture and an image
+            // entity that shows the last one, retained on the screenshot topic; on MQTT the
+            // broker's credentials are the gate, as for every command, so both are announced
+            // whenever MQTT runs. Key, id and name say
+            // the same thing, so the button has a name of its own, as the camera's snapshot
+            // button does beside the camera's picture.
+            components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
+            // One button per pop-up camera, "Show <name>"; a doorbell's automation in
+            // Home Assistant sends camera.trigger itself.
+            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+                String name = "Show " + camera.name;
+                JSONObject show = button(name, new JSONObject().put("command", "camera.show")
+                        .put("args", new JSONObject().put("value", camera.name)).toString());
+                components.put(uniqueId(name).substring(config.deviceId.length() + 1)
+                        .replaceAll("[^a-z0-9_]", "_"), show);
+            }
+            JSONObject screen = new JSONObject();
+            screen.put("p", "image");
+            screen.put("name", "Screenshot");
+            screen.put("unique_id", uniqueId("Screenshot"));
+            screen.put("image_topic", topicPrefix + "screenshot");
+            screen.put("content_type", "image/jpeg");
+            components.put("screenshot", screen);
             // One switch per automation, so a rule can be paused from Home Assistant; a rule
             // that was deleted is withdrawn at the publish below, like a sensor switched off.
             for (int index = 0; index < rules.length(); index++) {
@@ -1141,6 +1256,10 @@ final class MqttController implements MqttCallbackExtended {
                 components.put("automation_" + id, ruleSwitch);
             }
             announcedSensors = sensorsKey(sensorBlock, rules);
+            announcedCameras = camerasKey();
+            // The Web admin switch reflects the operator's flag, not whether a socket is bound:
+            // with no admin password stored, "on" is an honest description of intent while the
+            // bind stays refused, and the runtime state carries the difference.
             components.put("web_admin", toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
@@ -1191,8 +1310,8 @@ final class MqttController implements MqttCallbackExtended {
             // entity a new build renamed or dropped), the way zigbee2mqtt does: what it announced
             // is what this process published and, after a restart or an update, the payload the
             // broker kept (readRetainedDiscovery). A new panel finds nothing and sends no removal
-            // at all, so Muralis starts on MQTT as if it were used for the first time (Juri,
-            // 2026-10-06). A removal that Home Assistant misses because it is offline at that
+            // at all, so Muralis starts on MQTT as if it were used for the first time
+            // (2026-10-06). A removal that Home Assistant misses because it is offline at that
             // moment leaves the entity unavailable until a person deletes it, which Tasmota,
             // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: Home
             // Assistant acts on an empty config only for a component it has discovered since it
@@ -1392,6 +1511,30 @@ final class MqttController implements MqttCallbackExtended {
         return number;
     }
 
+    /** The status light entity; see the components list for why the template schema. */
+    private JSONObject statusLight() throws JSONException {
+        JSONObject light = new JSONObject();
+        light.put("p", "light");
+        light.put("name", "Status light");
+        light.put("unique_id", uniqueId("Status light"));
+        light.put("schema", "template");
+        light.put("command_topic", topicPrefix + "command");
+        light.put("command_on_template", "{\"command\":\"light.on\",\"args\":{\"value\":\""
+                + "{% if red is defined %}{{ red }},{{ green }},{{ blue }}{% endif %}\","
+                + "\"percent\":{% if brightness is defined %}"
+                + "{{ [(brightness * 100 / 255) | round(0, 'ceil') | int, 1] | max }}"
+                + "{% else %}-1{% endif %}}}");
+        light.put("command_off_template", "{\"command\":\"light.off\"}");
+        light.put("state_template",
+                "{{ 'on' if value_json.light is defined and value_json.light.on else 'off' }}");
+        light.put("brightness_template",
+                "{{ (value_json.light.brightness * 2.55) | round | int }}");
+        light.put("red_template", "{{ value_json.light.color.split(',')[0] | int }}");
+        light.put("green_template", "{{ value_json.light.color.split(',')[1] | int }}");
+        light.put("blue_template", "{{ value_json.light.color.split(',')[2] | int }}");
+        return light;
+    }
+
     /**
      * A switch. {@code state_on}/{@code state_off} are stated explicitly and must be, because the
      * payloads sent are command envelopes and would never match the state the panel reports back.
@@ -1439,7 +1582,7 @@ final class MqttController implements MqttCallbackExtended {
         return box;
     }
 
-    /** A text box whose command takes {@code value}, as the screensaver's settings do. */
+    /** A text box whose command takes {@code value}, as Ambient's settings do. */
     private JSONObject valueText(String name, String command, String valueTemplate)
             throws JSONException {
         JSONObject box = text(name, command, valueTemplate);

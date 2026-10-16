@@ -4,8 +4,8 @@ A self-recovering Android kiosk launcher that turns a tablet into a wall panel f
 a dashboard, a board or a page on your own network, controllable over MQTT and HTTP.
 
 Targets the public Android SDK only (no platform signature, no privileged permissions), so it
-installs as an ordinary APK on stock Android, from API 26 up. See [`CLAUDE.md`](CLAUDE.md) for the
-architecture and the decisions behind it.
+installs as an ordinary APK on stock Android, from API 26 up. See [`CLAUDE.md`](CLAUDE.md) for an
+overview of the app and the rules its code keeps.
 
 ## Building
 
@@ -26,10 +26,15 @@ inside the same container.
 
 ## Status
 
-Pre-release. Runs on real hardware; release signing is in place, and it is not published yet.
+On Google Play (`org.spazio17.muralis`) and as an APK
+with a setup QR on [muralis.spazio17.org](https://muralis.spazio17.org). Everything a single panel
+does is free; Muralis Pro, one purchase on Google Play, adds the fleet.
 
-## License
+## Licence
 
-All rights reserved for now, see [`LICENSE`](LICENSE); a placeholder pending a final licensing
-decision, not an open-source license. Built on [Eclipse Paho](https://www.eclipse.org/paho/) MQTT
-(`org.eclipse.paho.client.mqttv3`, EPL/EDL), credited on the app's own About screen.
+Muralis is **source available** under the Fair Core License, [`LICENSE.md`](LICENSE.md)
+(FCL-1.0-ALv2). In plain words: you may read the code, use Muralis, change it for yourself and
+contribute; you may not sell Muralis or a product made from it, offer it as a service, or remove or
+work around the Pro lock, not even for your own use. Each version becomes Apache 2.0 two years
+after its release. Contributions come under the agreement in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Third-party code and artwork keep their own licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
