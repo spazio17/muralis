@@ -1749,6 +1749,12 @@ public final class KioskActivity extends Activity {
             List<String> sequence = checkLauncher ? toLauncher : toSettings;
             if (EscapeSequence.matchesTail(escapeTaps, sequence, EscapeSequence.MAX_GAP_MS)) {
                 escapeTaps.clear();
+                // The fleet's alert (block 15), said whether or not a PIN then stops the way out.
+                KioskService alerting = KioskService.liveService();
+                if (alerting != null) {
+                    alerting.alertEvent(FleetAlerts.COMBINATION_USED, true,
+                            checkLauncher ? "to the home screen" : "to the settings");
+                }
                 if (checkLauncher) {
                     gateBehindPin("To leave Muralis for the home screen", true, this::openSystemLauncher);
                 } else {
@@ -1855,6 +1861,18 @@ public final class KioskActivity extends Activity {
             if (pinThrottle.recordFailure(PIN_THROTTLE_KEY, now)) {
                 long locked = pinThrottle.lockedOutFor(PIN_THROTTLE_KEY, now);
                 verdict.setText("Too many wrong PINs. Try again in " + (locked + 999) / 1000 + " s.");
+                // The fleet's alert (block 15): on at the lockout, off when it ends.
+                KioskService alerting = KioskService.liveService();
+                if (alerting != null) {
+                    alerting.alertEvent(FleetAlerts.PIN_LOCKOUT, true,
+                            "wrong PINs, locked for " + (locked + 999) / 1000 + " s");
+                }
+                mainHandler.postDelayed(() -> {
+                    KioskService over = KioskService.liveService();
+                    if (over != null) {
+                        over.alertEvent(FleetAlerts.PIN_LOCKOUT, false, "");
+                    }
+                }, locked);
             } else {
                 verdict.setText("Wrong PIN.");
             }
@@ -3701,8 +3719,15 @@ public final class KioskActivity extends Activity {
                     String[] problem = new String[1];
                     java.util.Map<String, Object> typed = FleetProfile.fromForm(section, form,
                             current != null ? current : FleetProfile.read(app, section), problem);
-                    return typed == null ? problem[0]
+                    String refused = typed == null ? problem[0]
                             : FleetServer.shareSection(app, shownScope, section, typed);
+                    if (refused == null && "alerts".equals(section)) {
+                        // An alert kind switched on here: the notification needs its grant on
+                        // Android 13 and newer, asked at the panel; without it the alert still
+                        // goes to the topic and the web address.
+                        mainHandler.post(this::requestNotificationPermissionIfNeeded);
+                    }
+                    return refused;
                 });
             });
             sharedCard.addView(fittingButtonRow(save), matchWrapClose());
@@ -3713,13 +3738,68 @@ public final class KioskActivity extends Activity {
         rule.setText("Saved with Shared on, the section's values apply on every panel of the"
                 + " scope; off, the panels keep what they have. A group wins over the whole"
                 + " fleet. A page address may carry {panel.name}, {panel.group} and"
-                + " {fleet.name}.");
+                + " {fleet.name}. Alerts are raised while the section is shared with this"
+                + " panel, and said once: on when a condition starts, off when it ends.");
         LinearLayout.LayoutParams ruleParams = matchWrap();
         ruleParams.topMargin = dp(12);
         sharedCard.addView(rule, ruleParams);
         LinearLayout.LayoutParams cardParams = matchWrap();
         cardParams.topMargin = dp(12);
         column.addView(sharedCard, cardParams);
+        // History (block 15): the versions this panel held, newest first, each with what it
+        // changed, and Restore as new for every one but the version held.
+        LinearLayout historyCard = card(theme, "History");
+        java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(this);
+        if (history.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setTextSize(13);
+            none.setTextColor(theme.subtext);
+            none.setText("No versions kept yet.");
+            historyCard.addView(none, matchWrap());
+        }
+        for (FleetServer.HistoryEntry entry : history) {
+            TextView line = new FlushText(this);
+            line.setTextSize(15);
+            line.setTextColor(theme.text);
+            line.setText("Version " + entry.version + (entry.held ? ", held now" : ""));
+            LinearLayout.LayoutParams lineParams = matchWrap();
+            lineParams.topMargin = dp(10);
+            historyCard.addView(line, lineParams);
+            TextView detail = new FlushText(this);
+            detail.setTextSize(13);
+            detail.setTextColor(theme.subtext);
+            detail.setText("By " + entry.author + ", " + entry.updated + ". "
+                    + (entry.changes.isEmpty()
+                            ? "No change to the fleet's name, panels, groups or shared settings."
+                            : String.join("; ", entry.changes) + "."));
+            historyCard.addView(detail, matchWrapClose());
+            if (!entry.held) {
+                Button restore = textButton(theme, "Restore as new");
+                long version = entry.version;
+                restore.setOnClickListener(view -> showConfirm("Restore version " + version
+                        + " as new?", "Its fleet name, groups and shared settings are written as"
+                        + " a new version for every panel; the panels of the fleet stay as they"
+                        + " are now.", "Restore", false, () -> fleetWork(app, () -> {
+                            String refused = FleetServer.restoreVersion(app, version);
+                            mainHandler.post(() -> showFleetPage(scope));
+                            return refused;
+                        }), () -> showFleetPage(scope)));
+                historyCard.addView(fittingButtonRow(restore), matchWrapClose());
+            }
+        }
+        TextView historyRule = new FlushText(this);
+        historyRule.setTextSize(13);
+        historyRule.setTextColor(theme.subtext);
+        historyRule.setText("The last " + KioskConfig.FLEET_HISTORY_SIZE + " versions this panel"
+                + " held. Restore as new writes a version's fleet name, groups and shared"
+                + " settings as a new, higher version; the panels of the fleet stay as they are"
+                + " now.");
+        LinearLayout.LayoutParams historyRuleParams = matchWrap();
+        historyRuleParams.topMargin = dp(12);
+        historyCard.addView(historyRule, historyRuleParams);
+        LinearLayout.LayoutParams historyParams = matchWrap();
+        historyParams.topMargin = dp(12);
+        column.addView(historyCard, historyParams);
         page.addView(column, singlePanelParams());
         setContentView(scrollPage(theme, page));
         // The page follows the fleet while it is up: a list changed elsewhere (a group made or

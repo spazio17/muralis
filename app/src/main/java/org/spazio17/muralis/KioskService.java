@@ -245,9 +245,188 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 FleetServer.heartbeatSoon(KioskService.this, why);
             }
             FleetServer.syncProfileSoon(KioskService.this, "periodic");
+            // The fleet's alerts (block 15), judged once a minute from the facts above.
+            judgeFleetAlerts();
             telemetryHandler.postDelayed(this, TELEMETRY_INTERVAL_MS);
         }
     };
+
+    /** The alerts' state, touched on the telemetry thread only; see FleetAlerts. */
+    private final FleetAlerts fleetAlerts = new FleetAlerts();
+    private static final String ALERT_CHANNEL_ID = "fleet_alerts";
+    private static final String ALERT_NOTIFICATION_TAG = "fleet-alert";
+    private static final int WEBHOOK_TIMEOUT_MS = 8_000;
+    /** A web address that fails is logged once, then silently until it answers again. */
+    private boolean webhookFailureLogged;
+
+    /** An alert setting changed on a surface: the others follow by the next publish. */
+    static void alertsChanged(Context context) {
+        publishTelemetrySoon(context);
+    }
+
+    /**
+     * Whether this panel raises alerts: in a fleet, with the Alerts section shared with it
+     * (by the whole fleet or one of its groups). Outside a fleet, or unshared, nothing is
+     * raised and what was in force is forgotten without a word.
+     */
+    private boolean alertsEnabled() {
+        return !KioskConfig.fleetIdOf(this).isEmpty()
+                && !FleetServer.profileSource("alerts").isEmpty();
+    }
+
+    /** This panel's own conditions and, when it is the one to say so, the peers offline. */
+    private void judgeFleetAlerts() {
+        if (!alertsEnabled()) {
+            forgetFleetAlerts();
+            return;
+        }
+        FleetAlerts.Settings settings = KioskConfig.alertsOf(this);
+        FleetAlerts.Facts facts = new FleetAlerts.Facts();
+        SystemStats.RuntimeFacts runtime = KioskRuntimeState.lastFacts();
+        SystemStats.Sample sample = KioskRuntimeState.lastSample();
+        if (runtime != null) {
+            facts.pageError = SystemStats.pageErrorIsCurrent(runtime);
+            facts.pageErrorDetail = runtime.lastPageError == null ? "" : runtime.lastPageError;
+            facts.batteryPercent = runtime.batteryPresent ? runtime.batteryPercent : -1;
+        }
+        if (sample != null) {
+            facts.temperatureC = sample.cpuTemperatureC;
+        }
+        java.util.List<FleetAlerts.Peer> peers = new java.util.ArrayList<>();
+        org.json.JSONArray known = FleetServer.peersJson(this);
+        for (int i = 0; i < known.length(); i++) {
+            org.json.JSONObject peer = known.optJSONObject(i);
+            if (peer != null) {
+                peers.add(new FleetAlerts.Peer(peer.optString("id"), peer.optString("name"),
+                        peer.optLong("seen_ago_ms", -1)));
+            }
+        }
+        deliverAlerts(fleetAlerts.judge(settings, facts, KioskConfig.deviceIdOf(this),
+                fleetPanelName(), peers, SystemClock.elapsedRealtime() - createdAtMs));
+    }
+
+    /**
+     * An event of this panel, from the activity: a combination used, a PIN lockout on or off.
+     * Judged on the telemetry thread, where the alerts' state lives.
+     */
+    void alertEvent(String kind, boolean on, String detail) {
+        Handler handler = telemetryHandler;
+        if (handler == null) {
+            return;
+        }
+        handler.post(() -> {
+            if (!alertsEnabled()) {
+                return;
+            }
+            deliverAlerts(fleetAlerts.event(KioskConfig.alertsOf(this), kind, on,
+                    KioskConfig.deviceIdOf(this), fleetPanelName(), detail));
+        });
+    }
+
+    /** The name the fleet knows this panel by, its id outside one. */
+    private String fleetPanelName() {
+        java.util.Map<String, Object> member = FleetDocument.memberByKey(
+                KioskConfig.fleetDocumentOf(this), KioskRuntimeState.fleetKey());
+        String id = KioskConfig.deviceIdOf(this);
+        return member == null ? id : TinyJson.string(member, FleetDocument.NAME, id);
+    }
+
+    private void forgetFleetAlerts() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        for (String key : fleetAlerts.activeKeys()) {
+            manager.cancel(ALERT_NOTIFICATION_TAG, key.hashCode());
+        }
+        fleetAlerts.reset();
+    }
+
+    /**
+     * Each alert to all three destinations, when set: a notification on this panel (one per
+     * kind and panel, cleared on "off"), a publish to the MQTT topic, a POST to the web address.
+     */
+    private void deliverAlerts(java.util.List<FleetAlerts.Alert> alerts) {
+        if (alerts.isEmpty()) {
+            return;
+        }
+        FleetAlerts.Settings settings = KioskConfig.alertsOf(this);
+        String fleet = KioskConfig.fleetNameOf(this);
+        for (FleetAlerts.Alert alert : alerts) {
+            String json = FleetAlerts.json(fleet, alert, java.time.Instant.now().toString());
+            Log.i(TAG, "Fleet alert: " + json);
+            notifyAlert(alert);
+            MqttController mqtt = mqttController;
+            if (!settings.mqttTopic.isEmpty()) {
+                if (mqtt == null || !mqtt.publishAlert(settings.mqttTopic, json)) {
+                    Log.w(TAG, "Fleet alert not published: MQTT is not connected");
+                }
+            }
+            if (!settings.webhookUrl.isEmpty()) {
+                new Thread(() -> postAlert(settings.webhookUrl, json), "MuralisAlertPost").start();
+            }
+        }
+    }
+
+    private void notifyAlert(FleetAlerts.Alert alert) {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        int id = alert.key().hashCode();
+        if (!alert.on) {
+            manager.cancel(ALERT_NOTIFICATION_TAG, id);
+            return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
+                android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            // Without the grant the notification is skipped; the other two destinations go.
+            return;
+        }
+        PendingIntent openKiosk = PendingIntent.getActivity(this, 0,
+                new Intent(this, KioskActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = new Notification.Builder(this, ALERT_CHANNEL_ID)
+                .setContentTitle(FleetAlerts.title(alert))
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentIntent(openKiosk)
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_STATUS);
+        if (alert.detail != null && !alert.detail.isEmpty()) {
+            builder.setContentText(alert.detail);
+        }
+        manager.notify(ALERT_NOTIFICATION_TAG, id, builder.build());
+    }
+
+    /** One POST of the alert, with a deadline and no retry; a failure is logged once. */
+    private void postAlert(String url, String json) {
+        java.net.HttpURLConnection connection = null;
+        try {
+            connection = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            connection.setConnectTimeout(WEBHOOK_TIMEOUT_MS);
+            connection.setReadTimeout(WEBHOOK_TIMEOUT_MS);
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            byte[] body = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (java.io.OutputStream out = connection.getOutputStream()) {
+                out.write(body);
+            }
+            int status = connection.getResponseCode();
+            if (status >= 200 && status < 300) {
+                webhookFailureLogged = false;
+            } else if (!webhookFailureLogged) {
+                webhookFailureLogged = true;
+                Log.w(TAG, "The alert web address answered " + status);
+            }
+        } catch (java.io.IOException | RuntimeException failed) {
+            if (!webhookFailureLogged) {
+                webhookFailureLogged = true;
+                Log.w(TAG, "The alert web address could not be reached: " + failed.getMessage());
+            }
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
 
     public static void start(Context context) {
         context.startForegroundService(new Intent(context, KioskService.class));
@@ -495,6 +674,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 NotificationManager.IMPORTANCE_MIN);
         channel.setShowBadge(false);
         manager.createNotificationChannel(channel);
+        // The fleet's alerts (block 15): their own channel, so a person can mute them apart.
+        manager.createNotificationChannel(new NotificationChannel(ALERT_CHANNEL_ID,
+                "Fleet alerts", NotificationManager.IMPORTANCE_DEFAULT));
     }
 
     /**
@@ -1248,6 +1430,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("fleet_join", FleetServer.joinState(this));
                 applied.put("fleet_peers", FleetServer.peersJson(this));
                 applied.put("fleet_profile", FleetProfile.state(this));
+                // The alerts' thresholds and destinations, under the keys /api/setting takes.
+                applied.put("alert_offline_minutes", config.alerts.offlineMinutes);
+                applied.put("alert_page_error", config.alerts.pageError);
+                applied.put("alert_battery_below", config.alerts.batteryBelow);
+                applied.put("alert_temperature_above", config.alerts.temperatureAbove);
+                applied.put("alert_combination_used", config.alerts.combinationUsed);
+                applied.put("alert_pin_lockout", config.alerts.pinLockout);
+                applied.put("alert_mqtt_topic", config.alerts.mqttTopic);
+                applied.put("alert_webhook_url", config.alerts.webhookUrl);
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());

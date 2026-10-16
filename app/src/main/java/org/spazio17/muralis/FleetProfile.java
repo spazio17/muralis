@@ -78,6 +78,16 @@ final class FleetProfile {
                 values.put("credit_corner", saver.creditCorner);
                 break;
             }
+            case "alerts":
+                values.put("alert_offline_minutes", config.alerts.offlineMinutes);
+                values.put("alert_page_error", config.alerts.pageError);
+                values.put("alert_battery_below", config.alerts.batteryBelow);
+                values.put("alert_temperature_above", config.alerts.temperatureAbove);
+                values.put("alert_combination_used", config.alerts.combinationUsed);
+                values.put("alert_pin_lockout", config.alerts.pinLockout);
+                values.put("alert_mqtt_topic", config.alerts.mqttTopic);
+                values.put("alert_webhook_url", config.alerts.webhookUrl);
+                break;
             default:
                 break;
         }
@@ -175,6 +185,21 @@ final class FleetProfile {
                     command(service, "screensaver." + key, null, null, flag(values, key, false),
                             key, now, values, refused);
                 }
+                break;
+            case "alerts":
+                for (Field field : fields(section)) {
+                    if (!values.containsKey(field.key)
+                            || sameValue(now.get(field.key), values.get(field.key))) {
+                        continue;
+                    }
+                    Object value = values.get(field.key);
+                    String problem = KioskConfig.saveAlertSetting(context, field.key,
+                            value instanceof Boolean ? ((Boolean) value ? "1" : "0") : shown(value));
+                    if (problem != null) {
+                        refused.add(field.key + ": " + problem);
+                    }
+                }
+                KioskService.alertsChanged(context);
                 break;
             default:
                 break;
@@ -443,6 +468,19 @@ final class FleetProfile {
                         ScreensaverPolicy.CORNER_TOP_LEFT, "Top left",
                         ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right"));
                 break;
+            case "alerts":
+                fields.add(new Field("alert_offline_minutes",
+                        "Panel offline after (minutes, 0 off)", "number"));
+                fields.add(new Field("alert_page_error", "Page failed to load", "switch"));
+                fields.add(new Field("alert_battery_below", "Battery below (percent, 0 off)",
+                        "number"));
+                fields.add(new Field("alert_temperature_above",
+                        "Temperature above (°C, 0 off)", "number"));
+                fields.add(new Field("alert_combination_used", "Combination used", "switch"));
+                fields.add(new Field("alert_pin_lockout", "PIN locked out", "switch"));
+                fields.add(new Field("alert_mqtt_topic", "MQTT topic (empty off)", "text"));
+                fields.add(new Field("alert_webhook_url", "Web address (empty off)", "url"));
+                break;
             default:
                 break;
         }
@@ -504,6 +542,15 @@ final class FleetProfile {
             if (!values.containsKey(field.key) && !"password".equals(field.type)) {
                 refused[0] = field.label + " is missing";
                 return null;
+            }
+            if ("alerts".equals(section)) {
+                Object value = values.get(field.key);
+                String problem = FleetAlerts.problem(field.key,
+                        value instanceof Boolean ? ((Boolean) value ? "1" : "0") : shown(value));
+                if (problem != null) {
+                    refused[0] = field.label + ": " + problem;
+                    return null;
+                }
             }
         }
         return values;

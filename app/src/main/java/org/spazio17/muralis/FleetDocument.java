@@ -176,7 +176,8 @@ final class FleetDocument {
      * shared, with the values every member applies, or not. Never shared: a panel's name, member
      * port, escape combinations and PIN, calibrations and what belongs to its hardware.
      */
-    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "screensaver"};
+    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "screensaver",
+            "alerts"};
     /** A section's words on both surfaces. */
     static String sectionLabel(String section) {
         switch (section) {
@@ -184,6 +185,7 @@ final class FleetDocument {
             case "mqtt": return "MQTT";
             case "web_admin": return "Local web admin";
             case "display": return "Display";
+            case "alerts": return "Alerts";
             default: return "Screensaver";
         }
     }
@@ -828,6 +830,161 @@ final class FleetDocument {
             content.remove(key);
         }
         return content;
+    }
+
+    /**
+     * What {@code after} changed against {@code before}, one line each, for the History card:
+     * the fleet renamed, panels added or removed, groups made, renamed or removed, sections
+     * shared, changed or unshared in a scope. Empty when nothing of that changed (a version
+     * carrying only a member's stamp, say); {@code before} may be null for the first version.
+     */
+    static List<String> describeChange(Map<String, Object> before, Map<String, Object> after) {
+        List<String> lines = new ArrayList<>();
+        if (before != null && !fleetName(before).equals(fleetName(after))) {
+            lines.add("fleet renamed to " + fleetName(after));
+        }
+        Map<String, String> membersBefore = memberNames(before);
+        Map<String, String> membersAfter = memberNames(after);
+        for (Map.Entry<String, String> member : membersAfter.entrySet()) {
+            if (!membersBefore.containsKey(member.getKey())) {
+                lines.add("panel " + member.getValue() + " added");
+            }
+        }
+        for (Map.Entry<String, String> member : membersBefore.entrySet()) {
+            if (!membersAfter.containsKey(member.getKey())) {
+                lines.add("panel " + member.getValue() + " removed");
+            }
+        }
+        Map<String, String> groupsBefore = groups(before);
+        Map<String, String> groupsAfter = groups(after);
+        for (Map.Entry<String, String> group : groupsAfter.entrySet()) {
+            String was = groupsBefore.get(group.getKey());
+            if (was == null) {
+                lines.add("group " + group.getValue() + " made");
+            } else if (!was.equals(group.getValue())) {
+                lines.add("group " + was + " renamed to " + group.getValue());
+            }
+        }
+        for (Map.Entry<String, String> group : groupsBefore.entrySet()) {
+            if (!groupsAfter.containsKey(group.getKey())) {
+                lines.add("group " + group.getValue() + " removed");
+            }
+        }
+        Set<String> scopes = new java.util.LinkedHashSet<>(profileGroups(after));
+        scopes.addAll(profileGroups(before));
+        for (String scope : scopes) {
+            if (!EVERYONE.equals(scope) && !groupsAfter.containsKey(scope)) {
+                // A group removed, said above, shares nothing any more.
+                continue;
+            }
+            String where = EVERYONE.equals(scope) ? "the whole fleet"
+                    : "the group " + groupsAfter.get(scope);
+            for (String section : SECTIONS) {
+                Map<String, Object> was = sectionValues(before, scope, section);
+                Map<String, Object> now = sectionValues(after, scope, section);
+                String label = sectionLabel(section).toLowerCase(java.util.Locale.ROOT);
+                if (was == null && now != null) {
+                    lines.add(label + " shared with " + where);
+                } else if (was != null && now == null) {
+                    lines.add(label + " no longer shared with " + where);
+                } else if (was != null && !canonical(was).equals(canonical(now))) {
+                    lines.add(label + " changed for " + where);
+                }
+            }
+        }
+        return lines;
+    }
+
+    /** Each member's key hash with the name it is shown by. */
+    private static Map<String, String> memberNames(Map<String, Object> document) {
+        Map<String, String> names = new LinkedHashMap<>();
+        for (Map<String, Object> member : members(document)) {
+            String id = TinyJson.string(member, ID, "");
+            names.put(TinyJson.string(member, SPKI, id), TinyJson.string(member, NAME, id));
+        }
+        return names;
+    }
+
+    /**
+     * Restore as new: the next document after {@code held}, by {@code author}, with the fleet
+     * name, the groups and the shared settings of the older version {@code old}, written as a
+     * new, higher version, never a rollback of the version number. Membership is the present
+     * and is never rolled back: the members and the revoked keys are the ones held now, so a
+     * panel that joined after the old version stays in, and one removed since stays out. A
+     * secret the old version carries blank (every stored copy blanks them) is taken from the
+     * document held, where the same scope still shares it.
+     */
+    static Map<String, Object> restored(Map<String, Object> old, Map<String, Object> held,
+            String author, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        long at = version(next);
+        Map<String, Object> fleet = new LinkedHashMap<>(fleet(held));
+        fleet.put(NAME, fleetName(old));
+        next.put("fleet", fleet);
+        // Every group either version knows, stamped with this version so the merge on every
+        // other panel takes the restored state as the latest: live as the old version had it,
+        // removed where the old version did not have it.
+        Map<String, String> oldGroups = groups(old);
+        Map<String, Object> groups = new LinkedHashMap<>();
+        Set<String> ids = new java.util.LinkedHashSet<>(groupEntries(old).keySet());
+        ids.addAll(groupEntries(held).keySet());
+        for (String id : ids) {
+            Map<String, Object> group = new LinkedHashMap<>();
+            group.put(AT, at);
+            if (oldGroups.containsKey(id)) {
+                group.put(NAME, oldGroups.get(id));
+            } else {
+                group.put("removed", at);
+            }
+            groups.put(id, group);
+        }
+        next.put("groups", groups);
+        // Each section of each scope the same way: shared with the old values, or unshared
+        // where the old version did not share it and the held one does.
+        Map<String, Object> profile = new LinkedHashMap<>();
+        Set<String> scopes = new java.util.LinkedHashSet<>(profileGroups(old));
+        scopes.addAll(profileGroups(held));
+        for (String scope : scopes) {
+            if (!EVERYONE.equals(scope) && !oldGroups.containsKey(scope)) {
+                continue;
+            }
+            Map<String, Object> ofGroup = new LinkedHashMap<>();
+            for (String section : SECTIONS) {
+                Map<String, Object> values = sectionValues(old, scope, section);
+                Map<String, Object> current = sectionValues(held, scope, section);
+                // A section neither version knows in this scope stays absent; one either
+                // knows, shared or unshared (an entry without values), is written here with
+                // the new stamp, so the merge on every other panel takes this document as it
+                // is instead of putting an older entry back and signing its own version.
+                if (profileEntry(old, scope, section) == null
+                        && profileEntry(held, scope, section) == null) {
+                    continue;
+                }
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put(AT, at);
+                if (values != null) {
+                    values = new LinkedHashMap<>(values);
+                    for (String key : SECRET_KEYS) {
+                        if (values.containsKey(key) && String.valueOf(values.get(key)).isEmpty()
+                                && current != null && current.get(key) instanceof String) {
+                            values.put(key, current.get(key));
+                        }
+                    }
+                    entry.put("values", values);
+                }
+                ofGroup.put(section, entry);
+            }
+            if (!ofGroup.isEmpty()) {
+                profile.put(scope, ofGroup);
+            }
+        }
+        next.put("profile", profile);
+        for (String key : new String[] {"overrides", "tier"}) {
+            if (old.containsKey(key)) {
+                next.put(key, old.get(key));
+            }
+        }
+        return next;
     }
 
     /**

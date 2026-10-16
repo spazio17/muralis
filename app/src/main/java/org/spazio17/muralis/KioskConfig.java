@@ -86,6 +86,15 @@ final class KioskConfig {
     /** The member endpoint's port until a person sets another (fleet design, 2026-09-24). */
     static final int DEFAULT_FLEET_PORT = 8081;
     private static final String FLEET_PORT = "fleet_port";
+    /** The fleet's alerts (fleet design, section 10), stored under the keys both surfaces use. */
+    private static final String ALERT_OFFLINE_MINUTES = "alert_offline_minutes";
+    private static final String ALERT_PAGE_ERROR = "alert_page_error";
+    private static final String ALERT_BATTERY_BELOW = "alert_battery_below";
+    private static final String ALERT_TEMPERATURE_ABOVE = "alert_temperature_above";
+    private static final String ALERT_COMBINATION_USED = "alert_combination_used";
+    private static final String ALERT_PIN_LOCKOUT = "alert_pin_lockout";
+    private static final String ALERT_MQTT_TOPIC = "alert_mqtt_topic";
+    private static final String ALERT_WEBHOOK_URL = "alert_webhook_url";
 
     /** Follow the accelerometer around all four ways up, until the operator fixes one. */
     static final String ORIENTATION_AUTO = "auto";
@@ -112,6 +121,8 @@ final class KioskConfig {
     int httpPort = DEFAULT_HTTP_PORT;
     /** The member endpoint's port, a setting like the web admin's (Juri, 2026-10-08). */
     int fleetPort = DEFAULT_FLEET_PORT;
+    /** The fleet's alerts: thresholds and destinations; see FleetAlerts. */
+    FleetAlerts.Settings alerts = new FleetAlerts.Settings();
     String httpAdminPassword = "";
     /**
      * Draws the live system-stats block over the dashboard. On by default because it exists to be
@@ -206,6 +217,7 @@ final class KioskConfig {
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
         config.fleetPort = preferences.getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
+        config.alerts = alertsOf(preferences);
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
         config.webAdminEnabled = preferences.getBoolean(WEB_ADMIN_ENABLED, true);
@@ -318,6 +330,46 @@ final class KioskConfig {
             return this;
         }
 
+        Editor alertOfflineMinutes(long value) {
+            plain.putLong(ALERT_OFFLINE_MINUTES, value);
+            return this;
+        }
+
+        Editor alertPageError(boolean value) {
+            plain.putBoolean(ALERT_PAGE_ERROR, value);
+            return this;
+        }
+
+        Editor alertBatteryBelow(long value) {
+            plain.putLong(ALERT_BATTERY_BELOW, value);
+            return this;
+        }
+
+        Editor alertTemperatureAbove(long value) {
+            plain.putLong(ALERT_TEMPERATURE_ABOVE, value);
+            return this;
+        }
+
+        Editor alertCombinationUsed(boolean value) {
+            plain.putBoolean(ALERT_COMBINATION_USED, value);
+            return this;
+        }
+
+        Editor alertPinLockout(boolean value) {
+            plain.putBoolean(ALERT_PIN_LOCKOUT, value);
+            return this;
+        }
+
+        Editor alertMqttTopic(String value) {
+            plain.putString(ALERT_MQTT_TOPIC, value.trim());
+            return this;
+        }
+
+        Editor alertWebhookUrl(String value) {
+            plain.putString(ALERT_WEBHOOK_URL, value.trim());
+            return this;
+        }
+
         Editor statsOverlay(boolean value) {
             plain.putBoolean(STATS_OVERLAY, value);
             return this;
@@ -330,6 +382,8 @@ final class KioskConfig {
             plain.putString(FLEET_TRUSTED, managerSpki);
             plain.putString(FLEET_REVOKED, "");
             plain.remove(FLEET_DOCUMENT);
+            // The history is one membership's: a new fleet starts with none.
+            writeFleetHistory(storageContext, new java.util.ArrayList<String>());
             return this;
         }
 
@@ -340,6 +394,7 @@ final class KioskConfig {
             plain.remove(FLEET_TRUSTED);
             plain.remove(FLEET_REVOKED);
             plain.remove(FLEET_DOCUMENT);
+            writeFleetHistory(storageContext, new java.util.ArrayList<String>());
             for (String key : FleetDocument.stripSecrets(fleetDocumentOf(context)).keySet()) {
                 secrets.put(FLEET_SECRET + key, "");
             }
@@ -372,7 +427,18 @@ final class KioskConfig {
             for (java.util.Map.Entry<String, String> secret : carried.entrySet()) {
                 secrets.put(FLEET_SECRET + secret.getKey(), secret.getValue());
             }
-            plain.putString(FLEET_DOCUMENT, FleetDocument.canonical(document));
+            String stored = FleetDocument.canonical(document);
+            plain.putString(FLEET_DOCUMENT, stored);
+            // History (block 15): the last versions held, newest first, the stored copy of
+            // each (secrets blanked like the list itself); the same text twice is kept once.
+            java.util.List<String> history = fleetHistory(storageContext);
+            if (history.isEmpty() || !history.get(0).equals(stored)) {
+                history.add(0, stored);
+                while (history.size() > FLEET_HISTORY_SIZE) {
+                    history.remove(history.size() - 1);
+                }
+                writeFleetHistory(storageContext, history);
+            }
             return this;
         }
 
@@ -1003,6 +1069,104 @@ final class KioskConfig {
     static java.util.Map<String, Object> fleetDocumentOf(Context context) {
         String text = fleetDocumentText(context);
         return text.isEmpty() ? null : FleetDocument.parse(text);
+    }
+
+    /** How many versions of the fleet's list a member keeps (block 15). */
+    static final int FLEET_HISTORY_SIZE = 20;
+    /** Beside the list, in device-protected storage: one stored document per line, newest first. */
+    private static final String FLEET_HISTORY_FILE = "fleet_history.jsonl";
+
+    /** The versions of the fleet's list this panel held, newest first, as stored (see history). */
+    static java.util.List<String> fleetHistory(Context context) {
+        java.util.List<String> history = new java.util.ArrayList<>();
+        java.io.File file = new java.io.File(storageContext(context).getFilesDir(),
+                FLEET_HISTORY_FILE);
+        if (!file.exists()) {
+            return history;
+        }
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(new java.io.FileInputStream(file),
+                        java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.trim().isEmpty()) {
+                    history.add(line);
+                }
+            }
+        } catch (java.io.IOException unreadable) {
+            android.util.Log.w("MuralisFleet", "The fleet history could not be read", unreadable);
+        }
+        return history;
+    }
+
+    private static void writeFleetHistory(Context storageContext, java.util.List<String> history) {
+        java.io.File file = new java.io.File(storageContext.getFilesDir(), FLEET_HISTORY_FILE);
+        java.io.File fresh = new java.io.File(storageContext.getFilesDir(),
+                FLEET_HISTORY_FILE + ".tmp");
+        try (java.io.Writer writer = new java.io.OutputStreamWriter(
+                new java.io.FileOutputStream(fresh), java.nio.charset.StandardCharsets.UTF_8)) {
+            for (String text : history) {
+                writer.write(text);
+                writer.write('\n');
+            }
+        } catch (java.io.IOException failed) {
+            android.util.Log.w("MuralisFleet", "The fleet history could not be written", failed);
+            return;
+        }
+        if (!fresh.renameTo(file)) {
+            android.util.Log.w("MuralisFleet", "The fleet history could not be replaced");
+        }
+    }
+
+    /** The alert settings as stored, the defaults where unset; see FleetAlerts.Settings. */
+    static FleetAlerts.Settings alertsOf(Context context) {
+        return alertsOf(storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+    }
+
+    private static FleetAlerts.Settings alertsOf(SharedPreferences preferences) {
+        FleetAlerts.Settings alerts = new FleetAlerts.Settings();
+        alerts.offlineMinutes = preferences.getLong(ALERT_OFFLINE_MINUTES, alerts.offlineMinutes);
+        alerts.pageError = preferences.getBoolean(ALERT_PAGE_ERROR, alerts.pageError);
+        alerts.batteryBelow = preferences.getLong(ALERT_BATTERY_BELOW, alerts.batteryBelow);
+        alerts.temperatureAbove = preferences.getLong(ALERT_TEMPERATURE_ABOVE,
+                alerts.temperatureAbove);
+        alerts.combinationUsed = preferences.getBoolean(ALERT_COMBINATION_USED,
+                alerts.combinationUsed);
+        alerts.pinLockout = preferences.getBoolean(ALERT_PIN_LOCKOUT, alerts.pinLockout);
+        alerts.mqttTopic = preferences.getString(ALERT_MQTT_TOPIC, "");
+        alerts.webhookUrl = preferences.getString(ALERT_WEBHOOK_URL, "");
+        return alerts;
+    }
+
+    /**
+     * One alert setting from a surface's text, checked ({@link FleetAlerts#problem}) and
+     * stored; the refusal, or null when saved.
+     */
+    static String saveAlertSetting(Context context, String key, String value) {
+        String problem = FleetAlerts.problem(key, value);
+        if (problem != null) {
+            return problem;
+        }
+        String text = value == null ? "" : value.trim();
+        Editor editor = edit(context);
+        switch (key) {
+            case ALERT_OFFLINE_MINUTES: editor.alertOfflineMinutes(Long.parseLong(text)); break;
+            case ALERT_BATTERY_BELOW: editor.alertBatteryBelow(Long.parseLong(text)); break;
+            case ALERT_TEMPERATURE_ABOVE:
+                editor.alertTemperatureAbove(Long.parseLong(text));
+                break;
+            case ALERT_PAGE_ERROR: editor.alertPageError(isOn(text)); break;
+            case ALERT_COMBINATION_USED: editor.alertCombinationUsed(isOn(text)); break;
+            case ALERT_PIN_LOCKOUT: editor.alertPinLockout(isOn(text)); break;
+            case ALERT_MQTT_TOPIC: editor.alertMqttTopic(text); break;
+            default: editor.alertWebhookUrl(text);
+        }
+        editor.apply();
+        return null;
+    }
+
+    private static boolean isOn(String text) {
+        return "1".equals(text) || "true".equalsIgnoreCase(text) || "on".equalsIgnoreCase(text);
     }
 
     private static final String FLEET_NAME = "fleet_name";

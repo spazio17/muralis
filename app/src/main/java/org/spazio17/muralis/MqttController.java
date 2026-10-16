@@ -620,6 +620,15 @@ final class MqttController implements MqttCallbackExtended {
         return null;
     }
 
+    /**
+     * A fleet alert on the plain topic the person set (block 15), on this panel's broker: not
+     * retained, so a subscriber that comes later is not told of a state long gone. False when
+     * not connected.
+     */
+    boolean publishAlert(String topic, String payload) {
+        return publish(topic, payload, 1, false);
+    }
+
     /** @return whether the message was handed to the client; false when not connected or refused */
     private boolean publish(String topic, String payload, int qos, boolean retained) {
         MqttAsyncClient activeClient = client;

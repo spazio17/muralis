@@ -56,7 +56,12 @@ on purpose.
   and PIN as its own, once, at that moment, and goes to the dashboard; a panel that has
   combinations keeps them, they are never shared afterwards. A page address may carry
   `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by each panel when it loads the
-  page, so one shared address shows each panel its own page.
+  page, so one shared address shows each panel its own page. Alerts are a shared section too
+  (a panel offline, a page error, battery or temperature past a threshold, a combination used,
+  a PIN lockout): each panel judges itself and one panel judges the fleet's offline, each alert
+  is said once, on and off, as a notification on the panel, on a plain MQTT topic and to a web
+  address; every member keeps the last versions of the fleet's list, with what each changed,
+  and can restore one as a new version, membership kept as it is now.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 

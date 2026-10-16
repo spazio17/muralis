@@ -130,7 +130,8 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             Provisioning RequestOrigin AuthThrottle PurchaseSignature \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
-            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument; do
+            SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
+            FleetAlerts; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -326,6 +327,14 @@ javac -d "${test_dir}/fleetdocument" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/FleetDocumentTest.java"
 java -cp "${test_dir}/fleetdocument" org.spazio17.muralis.FleetDocumentTest
+
+# The fleet's alerts: each said once, offline by one panel, the settings' checks.
+mkdir -p "${test_dir}/fleetalerts"
+javac -d "${test_dir}/fleetalerts" \
+    "${pure_java_dir}/FleetAlerts.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/FleetAlertsTest.java"
+java -cp "${test_dir}/fleetalerts" org.spazio17.muralis.FleetAlertsTest
 
 # What a panel withdraws from Home Assistant: only what it announced itself (2026-10-06).
 mkdir -p "${test_dir}/withdrawals"

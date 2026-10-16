@@ -1265,7 +1265,10 @@ final class FleetServer {
                 && !FleetDocument.groups(held).containsKey(group)) {
             return "no such group";
         }
-        return writeList(context, group, section, (identity, list) -> FleetDocument.withSection(list,
+        // A person's values, not this panel's own: no group and section here, so the next sync
+        // applies them on this panel too (it is in the scope or it is not), through the same
+        // checks as on every other panel, instead of pushing this panel's old values back out.
+        return writeList(context, null, null, (identity, list) -> FleetDocument.withSection(list,
                 KioskConfig.deviceIdOf(context), group, section, values,
                 java.time.Instant.now().toString()),
                 (values != null ? "Shared " : "Stopped sharing ") + section + " in the group "
@@ -1334,6 +1337,91 @@ final class FleetServer {
         return writeList(context, null, null, (identity, list) -> FleetDocument.withMemberGroups(list,
                 KioskConfig.deviceIdOf(context), spki, groups,
                 java.time.Instant.now().toString()), "A panel's groups set");
+    }
+
+    /**
+     * Restore as new (block 15): the version {@code version} of the history, written as a new,
+     * higher version by this panel ({@link FleetDocument#restored}: its fleet name, groups and
+     * shared settings; the members and revoked keys stay as held now) and handed to every
+     * member, which applies it as any change.
+     */
+    static String restoreVersion(Context context, long version) {
+        java.util.Map<String, Object> old = null;
+        for (String text : KioskConfig.fleetHistory(context)) {
+            java.util.Map<String, Object> entry = FleetDocument.parse(text);
+            if (entry != null && FleetDocument.version(entry) == version) {
+                old = entry;
+                break;
+            }
+        }
+        if (old == null) {
+            return "version " + version + " is not in this panel's history";
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        if (version == FleetDocument.version(held)) {
+            return "version " + version + " is the one held now";
+        }
+        java.util.Map<String, Object> restored = old;
+        return writeList(context, null, null, (identity, list) -> FleetDocument.restored(restored,
+                list, KioskConfig.deviceIdOf(context), java.time.Instant.now().toString()),
+                "Restored version " + version + " as a new one");
+    }
+
+    /** One version of the history as both surfaces show it. */
+    static final class HistoryEntry {
+        final long version;
+        /** The authoring panel's name, as the list held now knows it, else its id. */
+        final String author;
+        final String updated;
+        /** What it changed against the version before it, one line each; see describeChange. */
+        final java.util.List<String> changes;
+        final boolean held;
+
+        HistoryEntry(long version, String author, String updated, java.util.List<String> changes,
+                boolean held) {
+            this.version = version;
+            this.author = author;
+            this.updated = updated;
+            this.changes = changes;
+            this.held = held;
+        }
+    }
+
+    /** The History card: the versions this panel held, newest first, each with its changes. */
+    static java.util.List<HistoryEntry> history(Context context) {
+        java.util.List<java.util.Map<String, Object>> versions = new java.util.ArrayList<>();
+        for (String text : KioskConfig.fleetHistory(context)) {
+            java.util.Map<String, Object> entry = FleetDocument.parse(text);
+            if (entry != null) {
+                versions.add(entry);
+            }
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        java.util.Map<String, String> names = new java.util.HashMap<>();
+        for (java.util.Map<String, Object> member : FleetDocument.members(held)) {
+            names.put(TinyJson.string(member, FleetDocument.ID, ""),
+                    TinyJson.string(member, FleetDocument.NAME, ""));
+        }
+        java.util.List<HistoryEntry> history = new java.util.ArrayList<>();
+        for (int i = 0; i < versions.size(); i++) {
+            java.util.Map<String, Object> entry = versions.get(i);
+            java.util.Map<String, Object> before = i + 1 < versions.size() ? versions.get(i + 1)
+                    : null;
+            String author = FleetDocument.author(entry);
+            String name = names.get(author);
+            history.add(new HistoryEntry(FleetDocument.version(entry),
+                    name == null || name.isEmpty() ? author : name,
+                    TinyJson.string(entry, "updated", ""),
+                    FleetDocument.describeChange(before, entry),
+                    // The newest kept is the one held (the store writes it first); two panels
+                    // that changed the fleet apart leave two entries of one version number.
+                    held != null && i == 0
+                            && FleetDocument.version(held) == FleetDocument.version(entry)));
+        }
+        return history;
     }
 
     /** Whether this panel follows what the whole fleet shares. */

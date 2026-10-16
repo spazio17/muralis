@@ -1466,6 +1466,13 @@ final class HttpAdminServer {
                         if (refused != null) {
                             return "Not changed: " + refused + ".";
                         }
+                    } else if (key.startsWith("alert_")) {
+                        // The fleet's alerts (block 15), the same keys the Fleet page shares.
+                        String refused = KioskConfig.saveAlertSetting(context, key, form.get(key));
+                        if (refused != null) {
+                            return "Not saved: " + refused + ".";
+                        }
+                        KioskService.alertsChanged(context);
                     }
                 }
                 if (form.containsKey("volume_buttons_disabled")) {
@@ -4999,7 +5006,36 @@ final class HttpAdminServer {
         html.append("<p class=\"hint\">Saved with the switch on, the section's values apply on"
                 + " every panel of the scope; off, the panels keep what they have. A group wins"
                 + " over the whole fleet. A page address may carry {panel.name}, {panel.group}"
-                + " and {fleet.name}.</p></div>");
+                + " and {fleet.name}. Alerts are raised while the section is shared with this"
+                + " panel, and said once: on when a condition starts, off when it ends.</p></div>");
+        // History (block 15): the versions this panel held, newest first, each with what it
+        // changed, and Restore as new for every one but the version held.
+        html.append("<div class=\"card\"><h2>History</h2>");
+        java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(context);
+        if (history.isEmpty()) {
+            html.append("<p class=\"hint\">No versions kept yet.</p>");
+        }
+        for (FleetServer.HistoryEntry entry : history) {
+            html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
+                    .append("\"><input type=\"hidden\" name=\"what\" value=\"restore\"><input"
+                    + " type=\"hidden\" name=\"version\" value=\"").append(entry.version)
+                    .append("\"><p><b>Version ").append(entry.version).append("</b>")
+                    .append(entry.held ? ", held now" : "").append(" <span class=\"hint\">by ")
+                    .append(escapeHtml(entry.author)).append(", ")
+                    .append(escapeHtml(entry.updated)).append("</span></p>");
+            html.append("<p class=\"hint\">").append(entry.changes.isEmpty()
+                    ? "No change to the fleet's name, panels, groups or shared settings."
+                    : escapeHtml(String.join("; ", entry.changes)) + ".").append("</p>");
+            if (!entry.held) {
+                html.append("<div class=\"actions tight\"><button class=\"text\" type=\"submit\">"
+                        + "Restore as new</button></div>");
+            }
+            html.append("</form>");
+        }
+        html.append("<p class=\"hint\">The last ").append(KioskConfig.FLEET_HISTORY_SIZE)
+                .append(" versions this panel held. Restore as new writes a version's fleet name,"
+                + " groups and shared settings as a new, higher version; the panels of the fleet"
+                + " stay as they are now.</p></div>");
         return html.append(pageEnd()).toString();
     }
 
@@ -5026,6 +5062,17 @@ final class HttpAdminServer {
             case "remove_group":
                 refused = FleetServer.removeGroup(context, form.getOrDefault("id", ""));
                 break;
+            case "restore": {
+                long version;
+                try {
+                    version = Long.parseLong(form.getOrDefault("version", "").trim());
+                } catch (NumberFormatException notANumber) {
+                    refused = "no such version";
+                    break;
+                }
+                refused = FleetServer.restoreVersion(context, version);
+                break;
+            }
             case "share": {
                 String scope = form.getOrDefault("scope", FleetDocument.EVERYONE);
                 String section = form.getOrDefault("section", "");
