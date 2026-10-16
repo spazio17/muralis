@@ -106,7 +106,7 @@ android {
 
     buildFeatures {
         // Off by default since AGP 8, and this project needs it for LICENSE_KEY and PRO_OVERRIDE
-        // below. Nothing else uses BuildConfig.
+        // below, and for the version the diagnostics and the fleet's check-in report.
         buildConfig true
     }
 
@@ -210,6 +210,10 @@ dependencies {
     // Play Billing, for the Pro unlock. The 8.x line is the floor Play enforces for every
     // new app and update from 2026-08-31, which is why this starts on 8 rather than 7.
     implementation 'com.android.billingclient:billing:8.3.0'
+
+    // ZXing's core, pure Java with no Android parts, for the QR codes of the fleet's Join
+    // screen (Apache 2.0).
+    implementation 'com.google.zxing:core:3.5.3'
 
     // Not used by a line of this app, and pulled in three levels down: Play Billing needs
     // play-services-basement, which needs androidx.fragment for the invisible fragment GMS

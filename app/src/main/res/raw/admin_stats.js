@@ -14,6 +14,56 @@ function usedPercent(u,t){return u==null||!t?'--':Math.round(100*u/t)+'%';}
 function dur(ms){if(ms==null||ms<0){return '--';}
 var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
 return d>0?(d+'d'+h+'h'):(h>0?(h+'h'+m+'m'):(m+'m'));}
+// The Fleet box's membership and the Join code, in the panel's words. The code's
+// box shows once Join a fleet was pressed here; Close ends the code on the panel too, and a
+// join made meanwhile turns the box into its sentence. A poll that left before a press here
+// carries the state from before it, so only a poll sent after the press repaints the box.
+var fleetJoinShown=false,fleetName='',fleetJoinAt=0,pollSentAt=0;
+function fleetJoinPaint(j){
+var member=document.getElementById('fleet-member');
+if(!j||!member){return;}
+fleetName=j.fleet||'';
+if(member.textContent!==j.member_line){member.textContent=j.member_line;}
+var join=document.getElementById('fleet-join-open'),leave=document.getElementById('fleet-leave');
+join.hidden=j.member;join.disabled=!j.can_join;leave.hidden=!j.member;
+var box=document.getElementById('fleet-join');box.hidden=!fleetJoinShown;
+if(!fleetJoinShown){return;}
+var code=document.getElementById('fleet-join-code'),qr=document.getElementById('fleet-join-qr');
+if(code.textContent!==j.code){code.textContent=j.code;}code.hidden=!j.code;
+var detail=document.getElementById('fleet-join-detail');detail.textContent=j.code?j.detail:'';detail.hidden=!j.code;
+var line=document.getElementById('fleet-join-line');if(line.textContent!==j.line){line.textContent=j.line;}
+// Fetched again when the address or the port changes too, not only the code.
+var src=j.qr&&j.code?'/api/fleet/code.svg?c='+encodeURIComponent(j.code+' '+j.detail):'';
+if(qr.getAttribute('data-src')!==src){qr.setAttribute('data-src',src);if(src){qr.src=src;}else{qr.removeAttribute('src');}}
+qr.hidden=!src;
+document.getElementById('fleet-join-new').hidden=j.member||!!j.code||j.locked||!j.can_join;
+// Once joined, the box closes by itself as the panel's own page does; Close counts down.
+var close=document.getElementById('fleet-join-close');
+if(j.member&&fleetJoinClosing<0){fleetJoinClosing=5;fleetJoinTick(close);}
+if(!j.member&&fleetJoinClosing>=0){fleetJoinClosing=-1;close.textContent='Close';}}
+var fleetJoinClosing=-1;
+function fleetJoinTick(close){
+if(fleetJoinClosing<0||!fleetJoinShown){fleetJoinClosing=-1;close.textContent='Close';return;}
+if(fleetJoinClosing===0){fleetJoinClosing=-1;close.textContent='Close';fleetJoinShown=false;fleetJoinPost('/api/fleet/code/close');return;}
+close.textContent='Close ('+fleetJoinClosing+')';fleetJoinClosing--;setTimeout(function(){fleetJoinTick(close);},1000);}
+// A refusal is said under the buttons, in the words the status poll uses for the same answers.
+function fleetJoinPost(path){
+var error=document.getElementById('fleet-error');error.hidden=true;fleetJoinAt=Date.now();
+return fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:''})
+.then(function(r){
+if(r.status===401||r.status===403){throw new Error('Not done: this browser was not authorised. Reload the page to sign in again.');}
+if(r.status===429){throw new Error('Not done: the panel is refusing this machine after too many failed sign-ins. Wait a minute, then reload.');}
+if(!r.ok){throw new Error('Not done: the panel answered '+r.status+'.');}
+return r.json();})
+.then(fleetJoinPaint)
+.catch(function(e){error.textContent=e&&e.message&&e.message.indexOf('Not done')===0?e.message:'The panel did not answer. It may be rebooting or off the network.';error.hidden=false;});}
+if(document.getElementById('fleet-join-open')){
+document.getElementById('fleet-join-open').addEventListener('click',function(){fleetJoinShown=true;fleetJoinPost('/api/fleet/code');});
+document.getElementById('fleet-join-new').addEventListener('click',function(){fleetJoinPost('/api/fleet/code');});
+document.getElementById('fleet-join-close').addEventListener('click',function(){fleetJoinShown=false;fleetJoinPost('/api/fleet/code/close');});
+document.getElementById('fleet-leave').addEventListener('click',function(){
+if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps its own settings. It can join again with a new code.')){return;}
+fleetJoinPost('/api/fleet/leave');});}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};
 // The same eight rows, in the same order, as the tablet's own overlay; see
@@ -46,19 +96,6 @@ if(!local){return false;}
 var same=el.type==='checkbox'?((value===true||value==='1'||value==='true')===(local.value==='1')):String(value)===String(local.value);
 if(same){delete window.muralisLocal[el.dataset.setting];return false;}
 return local.at>requestedAt||Date.now()-local.at<20000;}
-// One of the look's radio groups follows the panel by checking the radio whose value is the
-// panel's, and the page's own look (the html attribute the stylesheet reads) follows with it,
-// unless a choice here is still on its way (data-pending on the group) or was made lately
-// (localWins): the radio and the page then stay together either way (review, 2026-10-04).
-function followLook(key,value,attr){if(value==null){return;}
-var radio=document.querySelector('[data-setting="'+key+'"][value="'+value+'"]');
-// A page without the radios (the settings page, Sensors, Screensaver, a playlist) has no local
-// choice to keep: its look simply follows the panel (review, 2026-10-04).
-if(!radio){if(document.documentElement.getAttribute(attr)!==value){document.documentElement.setAttribute(attr,value);}return;}
-var group=radio.closest?radio.closest('.radios'):null;
-if((group&&group.dataset.pending)||localWins(radio,value)){return;}
-radio.checked=true;
-if(document.documentElement.getAttribute(attr)!==value){document.documentElement.setAttribute(attr,value);}}
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.disabled||el.dataset.pending||value==null||localWins(el,value)){return;}
 var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
@@ -75,10 +112,21 @@ if(el.type==='checkbox'){el.checked=value;}else if(el.value!==String(value)){el.
 el.classList.remove('check-bad');el.title='';
 var refused=el.closest&&el.closest('.field')?el.closest('.field').querySelector('.support.refused'):null;
 if(refused){refused.parentNode.removeChild(refused);}}
+// The fleet's groups this panel is in, and whether it follows the whole fleet, follow the poll;
+// the groups themselves and what each scope shares are the Fleet page. A group made or removed
+// there changes the rows, so the page is loaded again on the Fleet section.
+function fleetGroupsPaint(prof){
+if(!prof||!prof.groups||!document.getElementById('fleet-follows')){return;}
+var rows=Array.prototype.map.call(document.querySelectorAll('input[id^="fleet-group-"]'),function(el){return el.id;}).sort().join();
+var groups=prof.groups.map(function(g){return 'fleet-group-'+g.id;}).sort().join();
+if(rows!==groups&&!document.querySelector('[data-pending]')){window.location.replace('/?open=fleet');return;}
+prof.groups.forEach(function(g){follow('fleet-group-'+g.id,g['in']);});
+follow('fleet-follows',prof.follows_fleet);}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('volume-buttons-disabled',cfg.volume_buttons_disabled);
-follow('fleet-announce',cfg.fleet_announce);
+// The fleet's groups and what the chosen one shares.
+fleetGroupsPaint(cfg.fleet_profile);
 // The panel's name, renamed on the panel or over MQTT: the box and the app bar's subtitle.
 follow('f-device_id',cfg.device_id);
 var sub=document.querySelector('header.appbar .sub');
@@ -116,42 +164,40 @@ if(sa){var aon=autos.filter(function(rule){return rule.enabled;}).length;
 sa.textContent=autos.length?aon+' of '+autos.length+' on':'None yet';}
 follow('orientation',cfg.orientation);
 follow('display-off-method',cfg.display_off_method);
-// The look chosen on the panel: its radios and the page's own colours and rows follow.
-followLook('appearance_colour',cfg.appearance_colour,'data-palette');followLook('separators',cfg.separators,'data-separators');
+var light=data.light||{};
+follow('status-light',light.on);
+follow('status-light-color',light.color);
 // The Fleet box's line: whether the member endpoint listens, in the panel's words.
 var fst=document.getElementById('fleet-state');
 if(fst&&cfg.fleet_state!=null){if(fst.textContent!==cfg.fleet_state){fst.textContent=cfg.fleet_state;}fst.classList.toggle('bad',!cfg.fleet_listening);}
-// The settings page's Appearance row says the same in words.
-var sap=document.getElementById('sum-appearance');
-if(sap&&cfg.appearance_summary!=null&&sap.textContent!==cfg.appearance_summary){sap.textContent=cfg.appearance_summary;}
+if(pollSentAt>fleetJoinAt){fleetJoinPaint(cfg.fleet_join);}
 // The sentence under it changes by itself when a sleep ends badly, so it is a fact to follow,
 // not a control, and is never gated on pending.
 var dn=document.getElementById('display-off-note');
 if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_warning?disp.off_method_reason:'';dn.hidden=!disp.off_method_warning;}
-var ss=data.screensaver||{};
-follow('screensaver-mode',ss.mode);
+var ss=data.ambient||{};
+follow('ambient-mode',ss.mode);
 // The screensaver page has no chooser: its shell carries the mode for admin_setting.js.
-var sp=document.getElementById('screensaver-page');
+var sp=document.getElementById('ambient-page');
 if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
-follow('screensaver-idle',ss.idle_s);
-follow('screensaver-off',ss.off_s);
-follow('screensaver-url',ss.url);
-follow('screensaver-dim',ss.dim_percent);
-follow('screensaver-on-wake',ss.on_wake);
-follow('screensaver-source',ss.source);
-follow('screensaver-picture-s',ss.picture_s);
-follow('screensaver-transition',ss.transition);
-follow('screensaver-shuffle',ss.shuffle);
-follow('screensaver-one',ss.one_per_cycle);
-if(ss.source==='local'){follow('screensaver-credit',ss.credit);}
-follow('screensaver-corner',ss.credit_corner);
+follow('ambient-idle',ss.idle_s);
+follow('ambient-off',ss.off_s);
+follow('ambient-url',ss.url);
+follow('ambient-dim',ss.dim_percent);
+follow('ambient-on-wake',ss.on_wake);
+follow('ambient-picture-s',ss.picture_s);
+follow('ambient-transition',ss.transition);
+follow('ambient-shuffle',ss.shuffle);
+follow('ambient-one',ss.one_per_cycle);
+follow('ambient-credit',ss.credit);
+follow('ambient-corner',ss.credit_corner);
 if(window.muralisScreensaverFields){window.muralisScreensaverFields();}
-var sn=document.getElementById('screensaver-note');
+var sn=document.getElementById('ambient-note');
 if(sn&&ss.summary!=null){sn.textContent=ss.summary;sn.classList.toggle('bad',ss.problem!=null);}
-var so=document.getElementById('screensaver-source-note');
-if(so&&ss.source_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
-so.textContent=ss.source_state+pic;so.classList.toggle('bad',ss.source_problem!=null);}
+var so=document.getElementById('ambient-pictures-note');
+if(so&&ss.pictures_state!=null){var pic=ss.picture&&ss.picture.title?' Showing: '+ss.picture.title+(ss.picture.credit?' ('+ss.picture.credit+')':'')+'.':'';
+so.textContent=ss.pictures_state+pic;so.classList.toggle('bad',ss.pictures_problem!=null);}
 // The slider follows the real backlight, except while the operator is actually dragging it,
 // and except while the panel is dark: it reports zero then, below this slider's 1% floor, and
 // the mode label below says "display off" for it.
@@ -164,7 +210,7 @@ if(lbl){lbl.textContent=disp.brightness_percent+'%';}}
 // device, not something the operator is mid-way through editing, and it is exactly the
 // thing that was previously stuck reading "automatic" after auto was switched off.
 var md=document.getElementById('brightness-mode');
-if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':disp.source==='screensaver'?'screensaver':(disp.auto?'automatic':'manual'))+')';}
+if(md&&disp.source){md.textContent='('+(disp.source==='display_off'?'display off':disp.source==='ambient'?'ambient':(disp.auto?'automatic':'manual'))+')';}
 // The slider follows the mode, since a level set while the sensor is in charge is
 // refused rather than applied.
 if(sl&&disp.auto!=null){sl.disabled=!!disp.auto;}
@@ -255,7 +301,7 @@ stale.forEach(function(el){var fresh=doc.getElementById(el.id);if(!fresh||editin
 el.innerHTML=fresh.innerHTML;el.setAttribute('data-lists',fresh.getAttribute('data-lists')||'');});
 if(window.muralisBindEditors){window.muralisBindEditors(document);}})
 .catch(function(){}).then(function(){swapping=false;});}
-function poll(){requestedAt=Date.now();fetch('/api/stats',{credentials:'same-origin'})
+function poll(){requestedAt=Date.now();pollSentAt=requestedAt;fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){
 if(r.status===401||r.status===403){stop('stats unavailable: this browser was not authorised. Reload the page to sign in again.');return null;}
 if(r.status===429){stop('stats unavailable: the panel is refusing this machine after too many failed sign-ins. Wait a minute, then reload.');return null;}

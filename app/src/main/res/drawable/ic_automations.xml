@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The automations: a scroll of paper with its lines, the rules written down, after Material's
-     contract glyph (Juri, 2026-09-30); the web page's glyph map draws the same. White, tinted at
+     contract glyph (2026-09-30); the web page's glyph map draws the same. White, tinted at
      runtime from the palette. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
