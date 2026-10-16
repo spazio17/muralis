@@ -415,6 +415,22 @@ final class MqttController implements MqttCallbackExtended {
         }
     }
 
+    /**
+     * A picture of the screen, JPEG bytes sized for a broker (KioskService.forBroker), what the
+     * Home Assistant image entity shows.
+     */
+    void publishScreenshot(byte[] jpeg) {
+        MqttAsyncClient activeClient = client;
+        if (activeClient == null || !activeClient.isConnected() || jpeg == null) {
+            return;
+        }
+        try {
+            activeClient.publish(topicPrefix + "screenshot", jpeg, 0, true);
+        } catch (MqttException exception) {
+            Log.w(TAG, "MQTT screenshot publish failed", exception);
+        }
+    }
+
     void publishCommandResult(String id, String status, String detail) {
         JSONObject result = new JSONObject();
         try {
@@ -1128,6 +1144,19 @@ final class MqttController implements MqttCallbackExtended {
             } else if (!cameraOn) {
                 clearPicture();
             }
+            // The screen as the wall shows it: a button that asks for a picture and an image
+            // entity that shows the last one; the admin password is the gate, as Fully and
+            // FreeKiosk have it, so both are announced whenever MQTT runs. Key, id and name say
+            // the same thing, so the button has a name of its own, as the camera's snapshot
+            // button does beside the camera's picture.
+            components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
+            JSONObject screen = new JSONObject();
+            screen.put("p", "image");
+            screen.put("name", "Screenshot");
+            screen.put("unique_id", uniqueId("Screenshot"));
+            screen.put("image_topic", topicPrefix + "screenshot");
+            screen.put("content_type", "image/jpeg");
+            components.put("screenshot", screen);
             // One switch per automation, so a rule can be paused from Home Assistant; a rule
             // that was deleted is withdrawn at the publish below, like a sensor switched off.
             for (int index = 0; index < rules.length(); index++) {

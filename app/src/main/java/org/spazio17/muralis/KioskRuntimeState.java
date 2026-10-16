@@ -59,6 +59,26 @@ final class KioskRuntimeState {
 
     static void publishActivityInFront(boolean inFront) { activityInFront = inFront; }
     static boolean activityInFront() { return activityInFront; }
+
+    /**
+     * A capture of the screen the service asked for and the activity answers: the service
+     * leaves the future here and sends its UI_CONTROL broadcast, the activity takes it, copies
+     * its window and completes it with the PNG, or exceptionally with the reason it could not.
+     * The same shape as the broadcasts' other one-way facts above, because the activity owns
+     * the window and the service owns the surfaces that ask.
+     */
+    private static volatile java.util.concurrent.CompletableFuture<byte[]> screenshotRequest;
+
+    static void publishScreenshotRequest(java.util.concurrent.CompletableFuture<byte[]> request) {
+        screenshotRequest = request;
+    }
+
+    /** The open request, once; null when none is open or it was taken already. */
+    static java.util.concurrent.CompletableFuture<byte[]> takeScreenshotRequest() {
+        java.util.concurrent.CompletableFuture<byte[]> request = screenshotRequest;
+        screenshotRequest = null;
+        return request;
+    }
     private static volatile long lastRecycleAtMs = -1;
     private static volatile String lastRecycleReason = "";
     private static final AtomicInteger recycles = new AtomicInteger();

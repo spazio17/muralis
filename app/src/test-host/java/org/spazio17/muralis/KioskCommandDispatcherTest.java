@@ -438,6 +438,16 @@ public final class KioskCommandDispatcherTest {
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(r.status.equals("accepted") && executor.calls.contains("cameraSnapshot"),
                 "camera.snapshot did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("kiosk.screenshot",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("screenshot"),
+                "kiosk.screenshot did not reach the executor");
+        executor.screenshotProblem = "The panel is not showing its screen";
+        r = KioskCommandDispatcher.dispatch("kiosk.screenshot",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("rejected") && r.detail.equals(executor.screenshotProblem),
+                "kiosk.screenshot did not carry the executor's refusal");
+        executor.screenshotProblem = null;
         r = KioskCommandDispatcher.dispatch("proximity.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
@@ -863,6 +873,14 @@ public final class KioskCommandDispatcherTest {
         public String cameraSnapshot() {
             calls.add("cameraSnapshot");
             return null;
+        }
+
+        String screenshotProblem;
+
+        @Override
+        public String screenshot() {
+            calls.add("screenshot");
+            return screenshotProblem;
         }
 
         @Override

@@ -199,6 +199,12 @@ final class KioskCommandDispatcher {
         /** Publishes the camera's last picture over MQTT now; null when done, else why not. */
         String cameraSnapshot();
 
+        /**
+         * Captures the panel's screen as the wall shows it and, when MQTT runs, publishes the
+         * picture retained; null when done, else why not: the panel is not showing its screen.
+         */
+        String screenshot();
+
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
 
@@ -463,6 +469,10 @@ final class KioskCommandDispatcher {
             }
             case "camera.snapshot": {
                 String problem = executor.cameraSnapshot();
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "kiosk.screenshot": {
+                String problem = executor.screenshot();
                 return problem == null ? accepted() : rejected(problem);
             }
             case "proximity.calibrate": {

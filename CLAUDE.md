@@ -35,7 +35,10 @@ on purpose.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
   uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery. The
   panel and the web admin offer the same settings and show the same thing, except what needs a
-  hand at the panel (calibrations) or a file (uploads, web admin only).
+  hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
+  as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
+  image and button), the password being the gate; and a diagnostics file (device, permissions,
+  status, counters, log) downloaded from the web admin, never uploaded.
 - **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
   network and others), the camera as a network camera with motion detection, a sound level from
   the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on

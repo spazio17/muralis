@@ -1074,6 +1074,17 @@ final class HttpAdminServer {
                             AppLog.levelOf(queryValue(query, "level")),
                             KioskCommandDispatcher.parseEnabledFlag(queryValue(query, "own"))
                                     == Boolean.TRUE), queryValue(query, "q")))));
+        } else if (path.equals("/api/screenshot") && method.equals("GET")) {
+            serveScreenshot(output);
+        } else if (path.equals("/api/diagnostics") && method.equals("GET")) {
+            // Plain text as an attachment, so a phone's browser saves it rather than shows it,
+            // under a name that carries the panel and the minute. Built on request, never kept.
+            Map<String, String> extra = new HashMap<>();
+            extra.put("Content-Disposition",
+                    "attachment; filename=\"" + kioskService.diagnosticsFileName() + "\"");
+            extra.put("Cache-Control", "no-store");
+            writeResponse(output, 200, "text/plain; charset=utf-8",
+                    bytes(kioskService.diagnosticsText()), extra);
         } else if (path.equals("/api/check") && method.equals("POST")) {
             // POST, not GET, even though it changes nothing on this device. It makes the panel
             // open TCP connections and HTTP requests to a caller-chosen address, so as a GET it
@@ -2249,6 +2260,14 @@ final class HttpAdminServer {
                 + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
                 + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
                 + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                // The screen as the wall shows it, and the diagnostics file, beside the log, as
+                // the camera's page links its snapshot: the address wraps so it can be copied.
+                + linkRow("/api/screenshot", "open", "Screenshot",
+                        KioskRuntimeState.httpAdminAddress() + "/api/screenshot", null, "")
+                        .replace("<span class=\"s\"", "<span class=\"s wrap\"")
+                + linkRow("/api/diagnostics", "download", "Download diagnostics",
+                        KioskRuntimeState.httpAdminAddress() + "/api/diagnostics", null, "")
+                        .replace("<span class=\"s\"", "<span class=\"s wrap\"")
                 + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
                 + "\" target=\"_blank\" rel=\"noopener\"><span class=\"lead\">" + glyph("info")
                 + "</span><span class=\"text\"><span class=\"h\">"
@@ -3258,6 +3277,21 @@ final class HttpAdminServer {
                 + statsBody(config) + "</section>"
                 + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
                 + pageEnd();
+    }
+
+    /**
+     * The screen as the wall shows it, a PNG, or the refusal in the usual JSON with 409: the
+     * panel's switch is off, or no window of the app is in front. See KioskService.captureScreen.
+     */
+    private void serveScreenshot(OutputStream output) throws IOException {
+        KioskService.Screenshot shot = kioskService.captureScreen();
+        if (shot.png == null) {
+            writeResponse(output, 409, "application/json", bytes("{\"status\":\"rejected\","
+                    + "\"detail\":" + JSONObject.quote(shot.problem) + "}"));
+            return;
+        }
+        writeResponse(output, 200, "image/png", shot.png,
+                Collections.singletonMap("Cache-Control", "no-store"));
     }
 
     private void serveSnapshot(OutputStream output) throws IOException {
@@ -5917,6 +5951,8 @@ final class HttpAdminServer {
                 return "Not Found";
             case 405:
                 return "Method Not Allowed";
+            case 409:
+                return "Conflict";
             case 413:
                 return "Payload Too Large";
             case 429:

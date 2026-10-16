@@ -2778,6 +2778,249 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return null;
     }
 
+    @Override
+    public String screenshot() {
+        Screenshot shot = captureScreen();
+        if (shot.problem != null) {
+            return shot.problem;
+        }
+        // When MQTT runs, the picture goes to the broker retained, like the camera's; without
+        // a broker the capture itself is the whole command, so nothing is refused here.
+        MqttController mqtt = mqttController;
+        if (mqtt != null) {
+            byte[] jpeg = forBroker(shot.png);
+            if (jpeg == null) {
+                return "The panel could not encode its screen for the broker";
+            }
+            mqtt.publishScreenshot(jpeg);
+        }
+        return null;
+    }
+
+    /** The long side of the broker's copy of the screen, in pixels; see {@link #forBroker}. */
+    private static final int BROKER_PICTURE_SIDE = 1280;
+
+    /**
+     * The broker's copy of a capture: a JPEG at the camera's quality, the long side at most
+     * {@link #BROKER_PICTURE_SIDE}, because the full PNG of a photo on the screensaver runs past
+     * 2 MB and Mosquitto since 2.1 drops the connection of a client whose packet exceeds its
+     * default max_packet_size of 2,000,000 bytes (measured: both test panels were cut off and
+     * nothing arrived). The web admin's route keeps the full PNG. Null when the picture could
+     * not be decoded or there was no memory for it.
+     */
+    static byte[] forBroker(byte[] png) {
+        try {
+            android.graphics.Bitmap full =
+                    android.graphics.BitmapFactory.decodeByteArray(png, 0, png.length);
+            if (full == null) {
+                return null;
+            }
+            int longSide = Math.max(full.getWidth(), full.getHeight());
+            android.graphics.Bitmap sized = full;
+            if (longSide > BROKER_PICTURE_SIDE) {
+                float scale = BROKER_PICTURE_SIDE / (float) longSide;
+                sized = android.graphics.Bitmap.createScaledBitmap(full,
+                        Math.max(1, Math.round(full.getWidth() * scale)),
+                        Math.max(1, Math.round(full.getHeight() * scale)), true);
+            }
+            java.io.ByteArrayOutputStream jpeg = new java.io.ByteArrayOutputStream();
+            sized.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, jpeg);
+            if (sized != full) {
+                sized.recycle();
+            }
+            full.recycle();
+            return jpeg.toByteArray();
+        } catch (RuntimeException | OutOfMemoryError failed) {
+            Log.w(TAG, "Screenshot for the broker failed", failed);
+            return null;
+        }
+    }
+
+    /** A capture of the screen: the PNG, or the reason there is none. */
+    static final class Screenshot {
+        final byte[] png;
+        final String problem;
+
+        private Screenshot(byte[] png, String problem) {
+            this.png = png;
+            this.problem = problem;
+        }
+
+        static Screenshot of(byte[] png) {
+            return new Screenshot(png, null);
+        }
+
+        static Screenshot refused(String problem) {
+            return new Screenshot(null, problem);
+        }
+    }
+
+    /** The refusal when no window of this app is on the glass: another app, the launcher. */
+    static final String SCREEN_NOT_SHOWING = "The panel is not showing its screen";
+    /** How long a capture may take before the asker is answered without one. */
+    private static final long SCREENSHOT_TIMEOUT_MS = 5_000L;
+    private final Object screenshotLock = new Object();
+    /** The capture under way, which every request arriving meanwhile shares. */
+    private java.util.concurrent.CompletableFuture<byte[]> screenshotInFlight;
+
+    /**
+     * The panel's window as the wall shows it, whichever layer is up: the page, the screensaver,
+     * the parking screen or the black film. The activity owns the window, so this leaves a
+     * request in {@link KioskRuntimeState} and asks over the UI_CONTROL broadcast, the way every
+     * other order reaches it, then waits for the answer. One capture at a time: a request that
+     * arrives while one runs waits for the same picture rather than starting a second copy.
+     * Never a stale picture: with no activity in front the answer is a refusal.
+     */
+    Screenshot captureScreen() {
+        if (!KioskRuntimeState.activityInFront()) {
+            return Screenshot.refused(SCREEN_NOT_SHOWING);
+        }
+        java.util.concurrent.CompletableFuture<byte[]> capture;
+        synchronized (screenshotLock) {
+            if (screenshotInFlight == null || screenshotInFlight.isDone()) {
+                screenshotInFlight = new java.util.concurrent.CompletableFuture<>();
+                KioskRuntimeState.publishScreenshotRequest(screenshotInFlight);
+                sendUiCommand("kiosk.screenshot", -1, null);
+            }
+            capture = screenshotInFlight;
+        }
+        try {
+            return Screenshot.of(capture.get(SCREENSHOT_TIMEOUT_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS));
+        } catch (java.util.concurrent.ExecutionException refused) {
+            Throwable cause = refused.getCause();
+            return Screenshot.refused(cause == null || cause.getMessage() == null
+                    ? SCREEN_NOT_SHOWING : cause.getMessage());
+        } catch (java.util.concurrent.TimeoutException late) {
+            // Closed here, so the next request starts a capture of its own instead of waiting on
+            // one the activity never answered (it was paused or destroyed between the check above
+            // and the broadcast); an answer arriving later lands on a completed future, harmlessly.
+            KioskRuntimeState.takeScreenshotRequest();
+            capture.completeExceptionally(new IllegalStateException(SCREEN_NOT_SHOWING));
+            return Screenshot.refused(SCREEN_NOT_SHOWING);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return Screenshot.refused(SCREEN_NOT_SHOWING);
+        }
+    }
+
+    /** The name the web admin's download gets, the device id and the minute in it. */
+    String diagnosticsFileName() {
+        String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.ROOT)
+                .format(new java.util.Date());
+        return "muralis-diagnostics-" + KioskConfig.deviceIdOf(this) + "-" + stamp + ".txt";
+    }
+
+    /**
+     * The diagnostics file, plain text, from what the app already knows: the version and the
+     * build, the device, every permission the manifest declares with whether it is granted, the
+     * status document as the web admin has it (passwords are never in it), the counters of
+     * {@link KioskRuntimeState} and the app's own log. Built on request and never stored or sent
+     * anywhere by the app; whoever holds the admin password downloads it.
+     */
+    String diagnosticsText() {
+        StringBuilder text = new StringBuilder();
+        text.append("Muralis diagnostics\n");
+        text.append("Taken: ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z",
+                java.util.Locale.ROOT).format(new java.util.Date())).append('\n');
+        text.append("Panel: ").append(KioskConfig.deviceIdOf(this)).append("\n\n");
+
+        text.append("APP\n");
+        text.append("Version: ").append(BuildConfig.VERSION_NAME).append(" (")
+                .append(BuildConfig.VERSION_CODE).append(")\n");
+        text.append("Build: ").append(BuildConfig.BUILD_TYPE).append("\n\n");
+
+        text.append("DEVICE\n");
+        text.append("Make: ").append(android.os.Build.MANUFACTURER).append('\n');
+        text.append("Model: ").append(android.os.Build.MODEL).append('\n');
+        text.append("Android: ").append(android.os.Build.VERSION.RELEASE).append(" (API ")
+                .append(android.os.Build.VERSION.SDK_INT).append(")\n");
+        text.append("WebView: ").append(webViewProvider()).append('\n');
+        boolean owner = isDeviceOwner();
+        text.append("Device owner: ").append(owner ? "yes" : "no").append('\n');
+        android.app.ActivityManager activity = getSystemService(android.app.ActivityManager.class);
+        boolean lockTask = activity != null && activity.getLockTaskModeState()
+                != android.app.ActivityManager.LOCK_TASK_MODE_NONE;
+        text.append("Lock task: ").append(lockTask ? "yes" : "no").append('\n');
+        // The three kinds of window the app draws into; see CLAUDE.md, Platform.
+        text.append("Window: ").append(owner ? "full screen, device owner"
+                : android.os.Build.VERSION.SDK_INT >= 35 ? "edge to edge under transparent bars"
+                : "ordinary install with system bars").append("\n\n");
+
+        text.append("PERMISSIONS\n");
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(
+                    getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS);
+            String[] names = info.requestedPermissions == null ? new String[0]
+                    : info.requestedPermissions;
+            int[] flags = info.requestedPermissionsFlags == null ? new int[0]
+                    : info.requestedPermissionsFlags;
+            for (int index = 0; index < names.length; index++) {
+                boolean granted = index < flags.length && (flags[index]
+                        & android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0;
+                text.append(names[index]).append(": ").append(granted ? "granted" : "not granted")
+                        .append('\n');
+            }
+        } catch (android.content.pm.PackageManager.NameNotFoundException | RuntimeException gone) {
+            text.append("(could not be read: ").append(gone.getMessage()).append(")\n");
+        }
+        text.append('\n');
+
+        text.append("COUNTERS\n");
+        text.append("Renderer deaths: ").append(KioskRuntimeState.rendererDeaths())
+                .append(ago(KioskRuntimeState.lastRendererDeathAgoMs())).append('\n');
+        text.append("Recycles: ").append(KioskRuntimeState.recycles())
+                .append(ago(KioskRuntimeState.lastRecycleAgoMs()));
+        if (!KioskRuntimeState.lastRecycleReason().isEmpty()) {
+            text.append(", ").append(KioskRuntimeState.lastRecycleReason());
+        }
+        text.append('\n');
+        text.append("Web admin lockouts: ").append(KioskRuntimeState.authLockouts())
+                .append(ago(KioskRuntimeState.lastAuthLockoutAgoMs()));
+        if (!KioskRuntimeState.lastAuthLockoutHost().isEmpty()) {
+            text.append(", ").append(KioskRuntimeState.lastAuthLockoutHost());
+        }
+        text.append('\n');
+        text.append("Last page loaded: ").append(AppLog.withoutSecrets(KioskRuntimeState.lastPageUrl()))
+                .append(ago(KioskRuntimeState.lastPageFinishedAgoMs())).append('\n');
+        text.append("Last page error: ").append(AppLog.secretsCut(KioskRuntimeState.lastPageError()))
+                .append(ago(KioskRuntimeState.lastPageErrorAgoMs())).append("\n\n");
+
+        text.append("STATUS\n");
+        try {
+            text.append(statsJson().toString(2));
+        } catch (org.json.JSONException impossible) {
+            text.append(statsJson());
+        }
+        text.append("\n\n");
+
+        text.append("LOG (last ").append(AppLog.LINES).append(" lines of the app's own)\n");
+        text.append(AppLog.text(AppLog.tail(AppLog.LINES, 'V', true)));
+        return text.toString();
+    }
+
+    /** " (12 min ago)" for an age, or nothing while there is none. */
+    private static String ago(long agoMs) {
+        if (agoMs < 0) {
+            return "";
+        }
+        long minutes = agoMs / 60_000L;
+        return minutes < 1 ? " (" + (agoMs / 1000L) + " s ago)"
+                : minutes < 120 ? " (" + minutes + " min ago)"
+                : " (" + (minutes / 60) + " h ago)";
+    }
+
+    /** The browser engine's package and version, the one fact a strange-looking page needs. */
+    private static String webViewProvider() {
+        try {
+            android.content.pm.PackageInfo provider =
+                    android.webkit.WebView.getCurrentWebViewPackage();
+            return provider == null ? "unknown" : provider.packageName + " " + provider.versionName;
+        } catch (RuntimeException unavailable) {
+            return "unknown";
+        }
+    }
+
     /** The camera, for the web admin's stream and snapshot. */
     PanelCamera camera() {
         return camera;

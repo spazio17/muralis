@@ -13162,6 +13162,56 @@ public final class KioskActivity extends Activity {
         handleUiCommand(command, brightnessPercent, url, null);
     }
 
+    /**
+     * The service asked for a picture of the screen (KioskService.captureScreen): this window
+     * copied as the wall shows it, whichever layer is up, with PixelCopy, which needs no consent
+     * and no MediaProjection, asked on the main thread where the window is; the PNG is encoded
+     * off it. A request taken while this activity is not in front is refused, never answered
+     * with a stale picture.
+     */
+    private void answerScreenshot() {
+        java.util.concurrent.CompletableFuture<byte[]> request =
+                KioskRuntimeState.takeScreenshotRequest();
+        if (request == null) {
+            return;
+        }
+        View decor = getWindow().getDecorView();
+        if (!inFront || decor.getWidth() <= 0 || decor.getHeight() <= 0) {
+            request.completeExceptionally(
+                    new IllegalStateException(KioskService.SCREEN_NOT_SHOWING));
+            return;
+        }
+        try {
+            android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(
+                    decor.getWidth(), decor.getHeight(), android.graphics.Bitmap.Config.ARGB_8888);
+            android.view.PixelCopy.request(getWindow(), bitmap, result -> {
+                if (result != android.view.PixelCopy.SUCCESS) {
+                    bitmap.recycle();
+                    request.completeExceptionally(new IllegalStateException(
+                            "The panel could not capture its screen (PixelCopy error " + result
+                                    + ")"));
+                    return;
+                }
+                // Encoding a whole screen takes a moment: not on the thread that draws it.
+                new Thread(() -> {
+                    try {
+                        java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, png);
+                        request.complete(png.toByteArray());
+                    } catch (RuntimeException failed) {
+                        request.completeExceptionally(new IllegalStateException(
+                                "The panel could not encode its screen: " + failed.getMessage()));
+                    } finally {
+                        bitmap.recycle();
+                    }
+                }, "MuralisScreenshot").start();
+            }, mainHandler);
+        } catch (RuntimeException | OutOfMemoryError failed) {
+            request.completeExceptionally(new IllegalStateException(
+                    "The panel could not capture its screen: " + failed.getMessage()));
+        }
+    }
+
     private void handleUiCommand(String command, int brightnessPercent, String url,
             String displayOffMethod) {
         if (command == null) {
@@ -13187,6 +13237,9 @@ public final class KioskActivity extends Activity {
             case "sensors.nfc":
                 // The NFC switch was flipped on another surface; reader mode is the activity's.
                 applyNfcReader();
+                break;
+            case "kiosk.screenshot":
+                answerScreenshot();
                 break;
             case "kiosk.start":
                 kioskStopped = false;
