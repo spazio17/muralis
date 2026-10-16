@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -23,8 +23,7 @@ import javax.net.ssl.X509ExtendedTrustManager;
 
 /**
  * Mutual TLS between panels with no authority: each side presents its own self-signed fleet
- * certificate and accepts the other only by the SHA-256 of its public key (fleet design, section
- * 4). The shape KDE Connect and Syncthing use: the certificate's chain, dates and names are not
+ * certificate and accepts the other only by the SHA-256 of its public key. The shape KDE Connect and Syncthing use: the certificate's chain, dates and names are not
  * what is trusted, the key is.
  *
  * <p>Pure, with no Android imports, so the handshakes are covered by host tests with real sockets.
@@ -52,16 +51,20 @@ final class FleetTls {
     /** The same hash of an encoded public key, which the fleet document's signatures carry. */
     static String spkiOf(byte[] encodedPublicKey) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(encodedPublicKey);
-            StringBuilder hex = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                hex.append(Character.forDigit((b >> 4) & 0xF, 16))
-                        .append(Character.forDigit(b & 0xF, 16));
-            }
-            return hex.toString();
+            return hex(MessageDigest.getInstance("SHA-256").digest(encodedPublicKey));
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /** Bytes as lowercase hex. */
+    static String hex(byte[] bytes) {
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16))
+                    .append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 
     /** The first eight characters, for logs and screens; never enough to trust on. */

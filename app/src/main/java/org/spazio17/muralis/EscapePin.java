@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -52,6 +52,20 @@ final class EscapePin {
         byte[] salt = new byte[SALT_BYTES];
         new SecureRandom().nextBytes(salt);
         return PREFIX + "$" + ITERATIONS + "$" + hex(salt) + "$" + hex(derive(pin, salt, ITERATIONS));
+    }
+
+    /**
+     * Whether a stored form from elsewhere (a settings file) is one this class could have
+     * written: the four parts, hex, and a sane iteration count, so an imported value can neither
+     * make the PIN unmatchable nor make each try take minutes.
+     */
+    static boolean wellFormed(String stored) {
+        if (stored == null || !stored.matches(java.util.regex.Pattern.quote(PREFIX)
+                + "\\$\\d{1,7}\\$[0-9a-f]{2,128}\\$[0-9a-f]{2,128}")) {
+            return false;
+        }
+        int iterations = Integer.parseInt(stored.split("\\$")[1]);
+        return iterations >= 1_000 && iterations <= 1_000_000;
     }
 
     /** Constant-time; false for anything stored that is not a hash this class wrote. */

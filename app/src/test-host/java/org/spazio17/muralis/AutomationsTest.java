@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -30,6 +30,8 @@ public final class AutomationsTest {
         testEngineSeedLetsTheFirstEventFire();
         testIdShape();
         testTagEvents();
+        testTimeOfDay();
+        testBatteryAboveAndNewActions();
         System.out.println("AutomationsTest passed");
     }
 
@@ -39,6 +41,7 @@ public final class AutomationsTest {
         names.put("light", "Light");
         names.put("nfc", "NFC");
         names.put("battery", "Battery");
+        names.put(Automations.TIME, Automations.TIME_NAME);
         return names;
     }
 
@@ -50,6 +53,73 @@ public final class AutomationsTest {
         rule.event = event;
         rule.action = action;
         return rule;
+    }
+
+    /** The clock's rules: once a day, late ticks, a seed after the time, the clock back. */
+    private static void testTimeOfDay() {
+        List<String> fired = new java.util.ArrayList<>();
+        Automations.Engine engine = new Automations.Engine(rule -> fired.add(rule.id));
+        Automations.Rule night = rule(Automations.TIME, "at", "display_off");
+        night.level = 22 * 60;
+        require(Automations.validate(night.copy(), names()) == null, "22:00 is a time");
+        Automations.Rule bad = rule(Automations.TIME, "at", "display_off");
+        bad.level = 24 * 60;
+        require(Automations.validate(bad, names()) != null, "24:00 is not a time");
+        require(Automations.sentence(night).startsWith("At 22:00"), Automations.sentence(night));
+        engine.rules(java.util.Collections.singletonList(night));
+        long day = 20_000;
+        engine.clock(day, 21 * 60);          // the seed, before the time
+        engine.clock(day, 21 * 60 + 59);
+        require(fired.isEmpty(), "not before the time");
+        engine.clock(day, 22 * 60 + 1);      // a tick a minute late still fires
+        require(fired.size() == 1, "fires once at the time, a tick a minute late included");
+        engine.clock(day, 23 * 60);
+        require(fired.size() == 1, "once a day");
+        engine.clock(day + 1, 5);            // across midnight, not yet
+        require(fired.size() == 1, "after midnight it waits for 22:00 again");
+        engine.clock(day + 1, 22 * 60);
+        require(fired.size() == 2, "the next day at the time");
+        engine.clock(day, 22 * 60 + 30);     // the clock set back a day
+        require(fired.size() == 2, "the clock moved back does not run a day twice");
+        // A restart after the time: the seed counts today as run.
+        Automations.Engine after = new Automations.Engine(rule -> fired.add("after"));
+        after.rules(java.util.Collections.singletonList(night));
+        after.clock(day + 5, 23 * 60);
+        after.clock(day + 5, 23 * 60 + 30);
+        require(!fired.contains("after"), "a restart after the time does not repeat it");
+        after.clock(day + 6, 22 * 60);
+        require(fired.contains("after"), "and runs the next day");
+        // A panel that slept through the time: that run is dropped, never replayed at wake.
+        List<String> slept = new java.util.ArrayList<>();
+        Automations.Engine sleeper = new Automations.Engine(rule -> slept.add(rule.id));
+        sleeper.rules(java.util.Collections.singletonList(night));
+        sleeper.clock(day, 21 * 60);
+        sleeper.clock(day, 22 * 60 + 7);
+        require(slept.isEmpty(), "a run seen seven minutes late is dropped, not replayed");
+        sleeper.clock(day + 1, 22 * 60);
+        require(slept.size() == 1, "the next day it runs at its time again");
+    }
+
+    private static void testBatteryAboveAndNewActions() {
+        Automations.Rule above = rule("battery", "above", "call_url");
+        above.level = 80;
+        above.argument = "http://plug.local/off";
+        require(Automations.validate(above, names()) == null, "battery above with an address");
+        require(Boolean.TRUE.equals(Automations.holds(above, Automations.Sample.of(81.0)))
+                && Boolean.FALSE.equals(Automations.holds(above, Automations.Sample.of(80.0))),
+                "above means more than the level");
+        String[][] cases = {
+                {"open_page", "https://ha.local/night", null}, {"open_page", "ha.local", "x"},
+                {"call_url", "ftp://x", "x"}, {"brightness", "0", null}, {"brightness", "100", null},
+                {"brightness", "101", "x"}, {"brightness", "half", "x"},
+                {"ambient_mode", "dim", null}, {"ambient_mode", "disco", "x"},
+                {"mqtt_publish", "home/plug off", null}, {"mqtt_publish", "home/#", "x"},
+                {"mqtt_publish", "home/+/x on", "x"}, {"mqtt_publish", "nospace", "x"},
+        };
+        for (String[] c : cases) {
+            String problem = Automations.checkArgument(c[0], c[1]);
+            require((problem == null) == (c[2] == null), c[0] + " " + c[1] + ": " + problem);
+        }
     }
 
     private static void testStoreRoundTrip() {
@@ -135,6 +205,14 @@ public final class AutomationsTest {
         require(Automations.validate(minutes, names()) == null, "zero minutes is at once");
         Automations.Rule noLevel = rule("light", "darker", "display_on");
         require(Automations.validate(noLevel, names()) != null, "an event with a level needs one");
+        Automations.Rule light = rule("proximity", "near", "light_on");
+        require(Automations.validate(light, names()) == null && light.argument.isEmpty(),
+                "status light on with no colour keeps the stored one");
+        light.argument = " 0, 0 ,255 ";
+        require(Automations.validate(light, names()) == null && light.argument.equals("0,0,255"),
+                "a colour is stored as r,g,b");
+        light.argument = "0,0,256";
+        require(Automations.validate(light, names()) != null, "a channel over 255 is refused");
         Automations.Rule say = rule("proximity", "near", "say");
         require(Automations.validate(say, names()) != null, "say needs a sentence");
         say.argument = "Hello";
