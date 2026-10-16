@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -16,7 +16,7 @@ import java.util.Set;
  * knows what it may push to every panel. One panel alone: what is measured on a device's
  * hardware (the calibrations, the test while asleep, the tags it read) and what follows the
  * device and how it is mounted (the camera's name, lens, size, orientation, mirror and upside
- * down; Juri: the size can differ between devices). Everything else is shared: the switches, sensitivities and still times, the
+ * down; the owner: the size can differ between devices). Everything else is shared: the switches, sensitivities and still times, the
  * frame rate, the watermark, motion detection and its picture. Pure, for the host tests.
  */
 final class SensorSettings {

@@ -1,81 +1,121 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
 import java.security.SecureRandom;
 
-/** The join code's rules: eight digits, single use, ten minutes, five wrong codes, a lockout. */
+/** The join code's rules: eight digits, single use, ten minutes, proven by SPAKE2, five tries, a lockout. */
 public final class FleetJoinTest {
 
     public static void main(String[] args) {
         long now = 1_000_000L;
 
+        java.math.BigInteger one = java.math.BigInteger.ONE;
+        require(Spake2.G.modPow(Spake2.Q, Spake2.P).equals(one)
+                && Spake2.M.modPow(Spake2.Q, Spake2.P).equals(one)
+                && Spake2.N.modPow(Spake2.Q, Spake2.P).equals(one)
+                && !Spake2.M.equals(one) && !Spake2.N.equals(one) && !Spake2.M.equals(Spake2.N),
+                "the group's elements are not in the subgroup of order q");
         FleetJoin join = new FleetJoin(new SecureRandom());
         require(!join.isOpen(now), "a join was open before anyone opened one");
-        require(join.attempt("12345678", now) == FleetJoin.Outcome.CLOSED,
+        require(tryCode(join, "12345678", now) == FleetJoin.Outcome.CLOSED,
                 "a code was taken with no join open");
+        require(join.tag(now).isEmpty(), "a tag with no code open");
 
         String code = join.open(now);
         require(code != null && code.matches("[0-9]{8}"), "the code is not eight digits: " + code);
         require(join.isOpen(now), "an opened join is not open");
-        require(join.attempt(code, now + 1) == FleetJoin.Outcome.ADMITTED,
+        require(join.tag(now).equals(code.substring(0, 2)), "the tag is not the first two digits");
+        require(tryCode(join, code, now + 1) == FleetJoin.Outcome.ADMITTED,
                 "the right code was refused");
         require(!join.isOpen(now + 2), "a used code stayed open");
-        require(join.attempt(code, now + 3) == FleetJoin.Outcome.CLOSED,
+        require(tryCode(join, code, now + 3) == FleetJoin.Outcome.CLOSED,
                 "a used code was taken twice");
 
         // Ten minutes, then closed.
         code = join.open(now);
         require(join.isOpen(now + FleetJoin.CODE_LIFETIME_MS - 1), "closed before ten minutes");
         require(!join.isOpen(now + FleetJoin.CODE_LIFETIME_MS), "open after ten minutes");
-        require(join.attempt(code, now + FleetJoin.CODE_LIFETIME_MS) == FleetJoin.Outcome.CLOSED,
+        require(tryCode(join, code, now + FleetJoin.CODE_LIFETIME_MS) == FleetJoin.Outcome.CLOSED,
                 "an expired code was taken");
 
         // A new code replaces the open one.
         String first = join.open(now);
         String second = join.open(now + 1);
         if (!first.equals(second)) {
-            require(join.attempt(first, now + 2) == FleetJoin.Outcome.WRONG,
+            require(tryCode(join, first, now + 2) == FleetJoin.Outcome.WRONG,
                     "a replaced code still counted");
         }
         join.close();
         require(!join.isOpen(now + 3), "close() left the join open");
 
-        // Wrong codes: four are told, the fifth locks for ten minutes and ends the code.
-        FleetJoin guessed = new FleetJoin(new SecureRandom());
-        code = guessed.open(now);
+        // The confirmation belongs to the caller that ran the exchange, and to one join.
+        FleetJoin bound = new FleetJoin(new SecureRandom());
+        code = bound.open(now);
+        Spake2 adopter = new Spake2(true, code, new SecureRandom());
+        FleetJoin.Answer answer = bound.exchange(adopter.share(), CALLER, PANEL, now + 1);
+        Spake2.Confirmations mine = adopter.finish(answer.share, CALLER, PANEL);
+        require(mine != null && Spake2.matches(mine.panel, answer.confirmation),
+                "the adopter did not recognise the panel holding the same code");
+        require(bound.confirm(Spake2.hex(mine.adopter), "other", now + 2)
+                == FleetJoin.Outcome.WRONG, "another key used the caller's confirmation");
+        require(bound.confirm(Spake2.hex(mine.adopter), CALLER, now + 3)
+                == FleetJoin.Outcome.WRONG, "a confirmation counted after its exchange ended");
+        require(bound.exchange("1", CALLER, PANEL, now + 4).refused == FleetJoin.Outcome.WRONG,
+                "a share outside the group was taken");
+        require(bound.exchange("zz", CALLER, PANEL, now + 5).refused == FleetJoin.Outcome.WRONG,
+                "a malformed share was taken");
+        require(bound.exchange(Spake2.P.subtract(java.math.BigInteger.ONE).toString(16), CALLER,
+                PANEL, now + 6).refused == FleetJoin.Outcome.WRONG, "p - 1 was taken as a share");
+
+        // A wrong code: the adopter sees the panel's confirmation fail, and the panel never learns
+        // the code; relayed to other key hashes, the confirmations do not match either.
+        FleetJoin other = new FleetJoin(new SecureRandom());
+        code = other.open(now);
+        String wrongCode = code.equals("00000000") ? "00000001" : "00000000";
+        Spake2 guesser = new Spake2(true, wrongCode, new SecureRandom());
+        answer = other.exchange(guesser.share(), CALLER, PANEL, now + 1);
+        Spake2.Confirmations guessed = guesser.finish(answer.share, CALLER, PANEL);
+        require(!Spake2.matches(guessed.panel, answer.confirmation),
+                "a wrong code looked right to the adopter");
+        Spake2 relayed = new Spake2(true, code, new SecureRandom());
+        answer = other.exchange(relayed.share(), CALLER, PANEL, now + 2);
+        require(!Spake2.matches(relayed.finish(answer.share, CALLER, "another panel").panel,
+                answer.confirmation), "an exchange held for another panel's key");
+
+        // Tries: five exchanges are told, the sixth locks for ten minutes and ends the code.
+        FleetJoin locked = new FleetJoin(new SecureRandom());
+        code = locked.open(now);
         String wrong = code.equals("00000000") ? "00000001" : "00000000";
-        for (int i = 1; i < FleetJoin.MAX_WRONG_CODES; i++) {
-            require(guessed.attempt(wrong, now + i) == FleetJoin.Outcome.WRONG,
+        for (int i = 1; i <= FleetJoin.MAX_WRONG_CODES; i++) {
+            require(tryCode(locked, wrong, now + i) == FleetJoin.Outcome.WRONG,
                     "wrong code " + i + " was not just wrong");
-            require(guessed.wrongCodes() == i, "wrong codes miscounted");
+            require(locked.wrongCodes() == i, "wrong codes miscounted");
         }
-        require(guessed.attempt(wrong, now + 10) == FleetJoin.Outcome.LOCKED,
-                "the fifth wrong code did not lock");
-        require(guessed.attempt(code, now + 11) == FleetJoin.Outcome.LOCKED,
+        require(tryCode(locked, wrong, now + 10) == FleetJoin.Outcome.LOCKED,
+                "the sixth try did not lock");
+        require(tryCode(locked, code, now + 11) == FleetJoin.Outcome.LOCKED,
                 "the right code was taken during the lockout");
-        require(guessed.open(now + 12) == null, "a new code opened during the lockout");
-        require(guessed.lockedUntil(now + 12) == now + 10 + FleetJoin.LOCKOUT_MS,
-                "the lockout does not end ten minutes after the fifth wrong code");
-        require(!guessed.isOpen(now + 12), "a locked join admits unknown keys");
+        require(locked.open(now + 12) == null, "a new code opened during the lockout");
+        require(locked.lockedUntil(now + 12) == now + 10 + FleetJoin.LOCKOUT_MS,
+                "the lockout does not end ten minutes after the last try");
+        require(!locked.isOpen(now + 12), "a locked join admits unknown keys");
         long after = now + 10 + FleetJoin.LOCKOUT_MS;
-        require(guessed.lockedUntil(after) == 0, "the lockout did not end");
-        code = guessed.open(after);
+        require(locked.lockedUntil(after) == 0, "the lockout did not end");
+        code = locked.open(after);
         require(code != null, "no new code after the lockout");
-        require(guessed.wrongCodes() == 0, "the count did not start again");
-        require(guessed.attempt(code, after + 1) == FleetJoin.Outcome.ADMITTED,
+        require(locked.wrongCodes() == 0, "the count did not start again");
+        require(tryCode(locked, code, after + 1) == FleetJoin.Outcome.ADMITTED,
                 "the right code was refused after the lockout");
 
-        // Odd offers are wrong codes, never an exception.
-        code = guessed.open(after + 2);
-        require(guessed.attempt(null, after + 3) == FleetJoin.Outcome.WRONG, "null was not wrong");
-        require(guessed.attempt("", after + 4) == FleetJoin.Outcome.WRONG, "empty was not wrong");
-        require(guessed.attempt(code + "0", after + 5) == FleetJoin.Outcome.WRONG,
-                "a longer code was taken");
-        require(guessed.attempt(" " + code, after + 6) == FleetJoin.Outcome.WRONG,
-                "a padded code was taken");
+        // Odd confirmations are wrong, never an exception.
+        code = locked.open(after + 2);
+        require(locked.confirm(null, CALLER, after + 3) == FleetJoin.Outcome.WRONG,
+                "null was not wrong");
+        require(locked.confirm("", CALLER, after + 4) == FleetJoin.Outcome.WRONG,
+                "empty was not wrong");
 
         require(FleetJoin.grouped("12345678").equals("1234 5678"), "grouped wrongly");
         require(FleetJoin.qrContent("kiosk-1", "192.0.2.5", 8081, "ab", "12345678").equals(
@@ -137,6 +177,23 @@ public final class FleetJoinTest {
             text.append(c);
         }
         return text.toString();
+    }
+
+    private static final String CALLER = repeat('c', 64);
+    private static final String PANEL = repeat('b', 64);
+
+    /** One whole try, as an adopter runs it: the exchange, then the confirmation if it holds. */
+    private static FleetJoin.Outcome tryCode(FleetJoin join, String code, long now) {
+        Spake2 adopter = new Spake2(true, code, new SecureRandom());
+        FleetJoin.Answer answer = join.exchange(adopter.share(), CALLER, PANEL, now);
+        if (answer.refused != null) {
+            return answer.refused;
+        }
+        Spake2.Confirmations mine = adopter.finish(answer.share, CALLER, PANEL);
+        if (mine == null || !Spake2.matches(mine.panel, answer.confirmation)) {
+            return FleetJoin.Outcome.WRONG;
+        }
+        return join.confirm(Spake2.hex(mine.adopter), CALLER, now);
     }
 
     private static void require(boolean condition, String message) {
