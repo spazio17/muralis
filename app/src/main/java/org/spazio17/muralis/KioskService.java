@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -111,7 +111,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private volatile MqttController mqttController;
     private volatile HttpAdminServer httpAdminServer;
-    /** The member endpoint (the fleet design); null until the fleet key can be read. */
+    /** The member endpoint; null until the fleet key can be read. */
     private volatile FleetServer fleetServer;
     /** The panel's announcement on the local network while it stands, and what it announced. */
     private android.net.nsd.NsdManager.RegistrationListener announcement;
@@ -191,6 +191,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 refreshSensors();
                 hub.poll();
             }
+            // The announcement says whether a join code is open; refreshed when
+            // that changes, a no-op otherwise.
+            mainHandler.post(KioskService.this::refreshAnnouncement);
             telemetryHandler.postDelayed(this, STATS_SAMPLE_INTERVAL_MS);
         }
     };
@@ -231,7 +234,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // first tick runs the instant the service is up; the policy's settling rule is what
             // stops it judging before the activity queued behind the service has been created.
             ensureDashboardOnScreen("periodic check");
-            // The fleet's heartbeat (block 12b): every few minutes, and at once when this panel's
+            // The fleet's heartbeat: every few minutes, and at once when this panel's
             // address changed, which is also how a network that came back is noticed.
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             String address = facts == null ? "" : facts.ipAddress;
@@ -245,7 +248,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 FleetServer.heartbeatSoon(KioskService.this, why);
             }
             FleetServer.syncProfileSoon(KioskService.this, "periodic");
-            // The fleet's alerts (block 15), judged once a minute from the facts above.
+            // The fleet's alerts, judged once a minute from the facts above.
             judgeFleetAlerts();
             telemetryHandler.postDelayed(this, TELEMETRY_INTERVAL_MS);
         }
@@ -265,14 +268,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * Whether this panel raises alerts: in a fleet, with the Alerts section shared with it
-     * (by the whole fleet or one of its groups). Outside a fleet, or unshared, nothing is
-     * raised and what was in force is forgotten without a word.
+     * Whether this panel raises alerts: in a fleet that has Pro, with the Alerts section shared
+     * with it (by the whole fleet or one of its groups). Outside a fleet, unshared, or once Pro
+     * lapsed, nothing is raised and what was in force is forgotten without a word.
      */
     private boolean alertsEnabled() {
         return !KioskConfig.fleetIdOf(this).isEmpty()
-                && !FleetServer.profileSource("alerts").isEmpty();
+                && !FleetServer.profileSource("alerts").isEmpty()
+                && FleetServer.proStatus(this).pro;
     }
+
+    /** When the alerts were last judged, and since when this panel has listened without a gap. */
+    private long lastAlertJudgeMs;
+    private long alertsListeningSinceMs;
 
     /** This panel's own conditions and, when it is the one to say so, the peers offline. */
     private void judgeFleetAlerts() {
@@ -292,17 +300,27 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (sample != null) {
             facts.temperatureC = sample.cpuTemperatureC;
         }
+        // A gap of several rounds means this panel slept or stalled: it listens afresh from now,
+        // and no peer counts as unheard for longer than that, so a panel back from sleep or
+        // maintenance never says the whole fleet is offline in one go (2026-10-15).
+        long now = SystemClock.elapsedRealtime();
+        if (lastAlertJudgeMs > 0 && now - lastAlertJudgeMs > 3 * TELEMETRY_INTERVAL_MS) {
+            alertsListeningSinceMs = now;
+        }
+        lastAlertJudgeMs = now;
+        long listening = now - Math.max(createdAtMs, alertsListeningSinceMs);
         java.util.List<FleetAlerts.Peer> peers = new java.util.ArrayList<>();
         org.json.JSONArray known = FleetServer.peersJson(this);
         for (int i = 0; i < known.length(); i++) {
             org.json.JSONObject peer = known.optJSONObject(i);
             if (peer != null) {
                 peers.add(new FleetAlerts.Peer(peer.optString("id"), peer.optString("name"),
-                        peer.optLong("seen_ago_ms", -1)));
+                        peer.optLong("seen_ago_ms", -1) < 0 ? -1
+                                : Math.min(peer.optLong("seen_ago_ms", -1), listening)));
             }
         }
         deliverAlerts(fleetAlerts.judge(settings, facts, KioskConfig.deviceIdOf(this),
-                fleetPanelName(), peers, SystemClock.elapsedRealtime() - createdAtMs));
+                fleetPanelName(), peers, listening));
     }
 
     /**
@@ -394,6 +412,43 @@ public final class KioskService extends Service implements KioskCommandDispatche
         manager.notify(ALERT_NOTIFICATION_TAG, id, builder.build());
     }
 
+    private static String refusalOf(KioskCommandDispatcher.Result result) {
+        return "accepted".equals(result.status) ? null : result.detail;
+    }
+
+    /**
+     * A rule's "Call an address": one GET with the alerts' deadline, the answer read
+     * and dropped, no retry; what came back is logged.
+     */
+    private void callAddress(String rule, String address) {
+        java.net.HttpURLConnection connection = null;
+        try {
+            connection = (java.net.HttpURLConnection) new java.net.URL(address).openConnection();
+            connection.setConnectTimeout(WEBHOOK_TIMEOUT_MS);
+            connection.setReadTimeout(WEBHOOK_TIMEOUT_MS);
+            int status = connection.getResponseCode();
+            try (java.io.InputStream in = status < 400 ? connection.getInputStream()
+                    : connection.getErrorStream()) {
+                if (in != null) {
+                    byte[] buffer = new byte[4096];
+                    int total = 0;
+                    int read;
+                    while (total < 65_536 && (read = in.read(buffer)) != -1) {
+                        total += read;
+                    }
+                }
+            }
+            Log.i(TAG, "Automation \"" + rule + "\": the address answered " + status);
+        } catch (java.io.IOException | RuntimeException failed) {
+            Log.w(TAG, "Automation \"" + rule + "\": the address could not be reached: "
+                    + failed.getMessage());
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
     /** One POST of the alert, with a deadline and no retry; a failure is logged once. */
     private void postAlert(String url, String json) {
         java.net.HttpURLConnection connection = null;
@@ -432,6 +487,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
         context.startForegroundService(new Intent(context, KioskService.class));
     }
 
+    /** Applies the settings a setup QR carried, if any are kept; they are kept only once. */
+    private void applyProvisionedSettings() {
+        String provisioned = KioskConfig.takeProvisionedSettings(this);
+        if (provisioned == null) {
+            return;
+        }
+        SettingsTransfer.Contents contents = SettingsTransfer.read(provisioned, null);
+        if (contents.problem != null) {
+            Log.w(TAG, "The setup QR's settings were not applied: " + contents.problem);
+        } else {
+            java.util.List<String> refused = SettingsImport.apply(this, contents);
+            Log.i(TAG, "Applied the setup QR's settings" + (refused.isEmpty() ? ""
+                    : "; refused: " + refused));
+        }
+    }
+
     public static void reloadConfiguration(Context context) {
         context.startForegroundService(new Intent(context, KioskService.class)
                 .setAction(ACTION_RELOAD_CONFIGURATION));
@@ -453,7 +524,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * The screensaver's second timer ran out: darken the panel exactly as "Display off" would,
+     * Ambient's second timer ran out: darken the panel exactly as "Display off" would,
      * sleep or film by {@link DisplayOffPolicy}. The activity asks the service because the
      * dark record, {@code lockNow} and the method choice all live here.
      */
@@ -467,6 +538,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         super.onCreate();
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
+        // The settings a setup QR carried, once, before anything reads them.
+        applyProvisionedSettings();
         // The base type alone, named: the two-argument call asks for every type the manifest
         // lists, and from Android 14 the camera and microphone types throw a SecurityException
         // here unless both permissions are already granted, which a fresh install never has
@@ -558,6 +631,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_RELOAD_CONFIGURATION.equals(intent.getAction())) {
+            // Setup may keep a QR's settings after this service already started.
+            applyProvisionedSettings();
             restartControllers();
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
@@ -572,7 +647,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             tagRead(intent.getStringExtra(EXTRA_TAG_ID), intent.getStringExtra(EXTRA_TAG_CONTENT));
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
             displayVisualOff();
-            // Not a dispatched command, so nothing else republishes: without this the Screensaver
+            // Not a dispatched command, so nothing else republishes: without this the Ambient
             // switch and display.source stay stale in Home Assistant for up to a minute.
             publishStateSoon();
         }
@@ -674,7 +749,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 NotificationManager.IMPORTANCE_MIN);
         channel.setShowBadge(false);
         manager.createNotificationChannel(channel);
-        // The fleet's alerts (block 15): their own channel, so a person can mute them apart.
+        // The fleet's alerts: their own channel, so a person can mute them apart.
         manager.createNotificationChannel(new NotificationChannel(ALERT_CHANNEL_ID,
                 "Fleet alerts", NotificationManager.IMPORTANCE_DEFAULT));
     }
@@ -814,7 +889,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>Scope: the permissions this app declares and needs, which since the sensors (2026-09-27,
      * a product decision) include the camera, the microphone and, for the Bluetooth beacons,
-     * location (Juri, 2026-10-01), granted so a sensor's row shows a switch on a panel nobody
+     * location (2026-10-01), granted so a sensor's row shows a switch on a panel nobody
      * stands at; every sensor stays off until switched on, and neither a position nor the Wi-Fi
      * SSID is ever read. The ROM repo's docs/play-store-viability.md records the earlier,
      * narrower set.
@@ -826,11 +901,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // notification simply posts.
             grantOwnPermission(policy, admin, android.Manifest.permission.POST_NOTIFICATIONS);
         }
-        // The pictures screensaver's folder browser (2026-09-10). Silent, which is the whole
+        // The pictures Ambient's folder browser (2026-09-10). Silent, which is the whole
         // reason it is acceptable on a panel with nobody in front of it, and the reason the
         // browser can stay inside Muralis instead of handing the screen to Android's picker.
         // An ordinary install cannot be granted anything silently; it asks once, with Android's
-        // dialog, from the Screensaver page (KioskActivity.requestPicturePermission).
+        // dialog, from the Ambient page (KioskActivity.requestPicturePermission).
         grantOwnPermission(policy, admin,
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
                         ? android.Manifest.permission.READ_MEDIA_IMAGES
@@ -937,9 +1012,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void startControllersNow() {
-        // MQTT and the web admin are free on every panel since 2026-10-06; the gate that stood
-        // here until then (Pro unlocking the two) is in the git history. Pro will gate the fleet,
-        // and only that.
+        // MQTT and the web admin are free on every panel; Pro is the fleet only.
         KioskConfig config = KioskConfig.load(this);
         mqttInputs = mqttInputsOf(config);
         httpInputs = httpInputsOf(config);
@@ -966,17 +1039,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * Announces this panel as {@code _muralis._tcp} on the local network (mDNS, Android's own
-     * service discovery) whenever its member endpoint listens, with no switch, as Matter devices
-     * and printers do, with its id, name, member port, key hash and the protocol version, so a
-     * console can find it. Announced again when any of them changes, and a minute after Android
+     * service discovery) while it is in a fleet or shows its Join code, with no switch, as Matter
+     * devices and printers do, with its id, name, member port, key hash, the protocol version
+     * and whether it is ready to be joined (with its code's first two digits as a tag), so a
+     * console can find it; a panel in no fleet with
+     * its Join code closed announces nothing. Announced again when any of them changes, and a minute after Android
      * reports a failed announcement (its discovery daemon can fail while the device boots);
      * withdrawn when the endpoint stops. Main thread.
      */
     private void refreshAnnouncement() {
         FleetServer server = fleetServer;
-        boolean on = server != null;
+        String state = joinState(this);
+        // Only for the fleet (2026-10-14): a panel in none, its Join code closed, says
+        // nothing on the network.
+        boolean on = server != null && !"alone".equals(state);
         String id = KioskConfig.deviceIdOf(this);
-        String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() : "";
+        // The open code's first two digits, so a typed code is tried only on its panel.
+        String tag = FleetJoin.shared.tag(FleetServer.joinClock());
+        String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() + '\u0000'
+                + state + '\u0000' + tag : "";
         if (key.equals(announcedKey)) {
             return;
         }
@@ -1039,12 +1120,31 @@ public final class KioskService extends Service implements KioskCommandDispatche
             info.setAttribute("port", Integer.toString(server.port()));
             info.setAttribute("spki", server.spki());
             info.setAttribute("v", "1");
+            info.setAttribute("state", state);
+            if (!tag.isEmpty()) {
+                info.setAttribute("tag", tag);
+            }
             nsd.registerService(info, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, listener);
             announcement = listener;
             announcedKey = key;
         } catch (RuntimeException refused) {
+            // Not tried again until something in it changes: the two-second tick would
+            // otherwise repeat the refusal, and this warning, for as long as the panel runs.
+            announcedKey = key;
             Log.w(TAG, "The network announcement was refused", refused);
         }
+    }
+
+    /**
+     * What the announcement says of this panel: "joining" while it shows a join
+     * code, "member" in a fleet, "alone" otherwise, which is not announced at all; a panel
+     * adopting by a typed code asks only the ones ready to be joined.
+     */
+    static String joinState(Context context) {
+        if (!KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "member";
+        }
+        return FleetJoin.shared.isOpen(FleetServer.joinClock()) ? "joining" : "alone";
     }
 
     private void stopAnnouncement() {
@@ -1096,7 +1196,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private static String mqttInputsOf(KioskConfig config) {
         return config.mqttHost + FIELD_SEPARATOR + config.mqttPort + FIELD_SEPARATOR
                 + config.mqttUsername + FIELD_SEPARATOR + config.mqttPassword + FIELD_SEPARATOR
-                + config.deviceId;
+                + config.deviceId + FIELD_SEPARATOR + config.mqttTls + FIELD_SEPARATOR
+                + config.mqttTlsPin + FIELD_SEPARATOR + config.mqttClientName + FIELD_SEPARATOR
+                + config.mqttClientUntil;
     }
 
     private static String httpInputsOf(KioskConfig config) {
@@ -1371,9 +1473,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("dashboard_url", config.dashboardUrl);
             applied.put("device_id", config.deviceId);
             if (includeAdminDetail) {
-                // The web admin's Appearance row follows the panel by it, in the words worded once.
-                applied.put("appearance_summary",
-                        KioskConfig.appearanceSummary(config.appearanceColour, config.separators));
                 applied.put("settings_sequence", config.settingsSequence);
                 applied.put("launcher_sequence", config.launcherSequence);
                 applied.put("escape_pin_set", KioskConfig.escapePinSet(this));
@@ -1381,9 +1480,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("stats_overlay", config.statsOverlay);
             applied.put("volume_buttons_disabled", config.volumeButtonsDisabled);
             applied.put("orientation", config.orientation);
-            // The look, for the web admin's page to follow a change made on the panel.
-            applied.put("appearance_colour", config.appearanceColour);
-            applied.put("separators", config.separators);
             // What applies, which on an ordinary install is the film whatever is stored.
             applied.put("display_off_method",
                     isDeviceOwner() ? config.displayOffMethod : DisplayOffPolicy.FILM);
@@ -1397,6 +1493,46 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // snapped back on every toggle (reported from HA 2026-08-24). The flag says only
             // whether the surface is allowed to exist; the port and addresses stay admin-only.
             applied.put("web_admin_enabled", config.webAdminEnabled);
+            // The page's browser options; of the sign-in only whether one is stored, since the
+            // name and the password are secrets.
+            BrowserOptions.Settings browser = KioskConfig.browserOf(this);
+            applied.put("browser", new org.json.JSONObject()
+                    .put("user_agent", browser.userAgent)
+                    .put("text_size", browser.textSize)
+                    .put("page_zoom", browser.pageZoom)
+                    .put("dark_look", browser.dark)
+                    .put("back_after_s", browser.backAfterSeconds)
+                    .put("sign_in", !browser.signInUser.isEmpty())
+                    .put("page_camera", browser.pageCamera)
+                    .put("page_microphone", browser.pageMicrophone));
+            // The trusted certificates and the one waiting for an answer: hosts and
+            // fingerprints, which a certificate makes public anyway.
+            org.json.JSONArray pins = new org.json.JSONArray();
+            for (java.util.Map.Entry<String, String> pin
+                    : KioskConfig.certificatePinsOf(this).entrySet()) {
+                pins.put(new org.json.JSONObject().put("host", pin.getKey())
+                        .put("sha256", pin.getValue()));
+            }
+            applied.put("certificate_pins", pins);
+            org.json.JSONArray cameras = new org.json.JSONArray();
+            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(this)) {
+                org.json.JSONObject one = new org.json.JSONObject().put("name", camera.name)
+                        .put("mode", camera.mode)
+                        .put("seconds", camera.seconds).put("cooldown", camera.cooldown);
+                if (includeAdminDetail) {
+                    // A camera's address often carries its user and password or a token, so it
+                    // stays off MQTT, like the escape combinations.
+                    one.put("url", camera.url);
+                }
+                cameras.put(one);
+            }
+            applied.put("cameras", cameras);
+            CertificatePins.Waiting waiting = CertificatePins.waiting;
+            applied.put("certificate_waiting", waiting == null ? org.json.JSONObject.NULL
+                    : new org.json.JSONObject().put("host", waiting.host)
+                            .put("sha256", waiting.fingerprint)
+                            .put("issued_to", waiting.issuedTo)
+                            .put("valid_until", waiting.validUntil));
             stats.put("display", displaySnapshot());
             stats.put("ambient", screensaverSnapshot(includeAdminDetail));
             StatusLight.State light = KioskConfig.statusLightOf(this);
@@ -1404,6 +1540,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .put("on", light.on)
                     .put("color", StatusLight.formatColor(light.color))
                     .put("brightness", light.percent));
+            // App lock: which app the panel shows instead of the page, if any.
+            String locked = KioskConfig.appLockOf(this);
+            stats.put("app_lock", new org.json.JSONObject()
+                    .put("package", locked)
+                    .put("app", locked.isEmpty() ? "" : AppLock.labelOf(this, locked))
+                    .put("showing", AppLock.appUp)
+                    .put("problem", locked.isEmpty() ? ""
+                            : String.valueOf(AppLock.problem(this, locked) == null ? ""
+                                    : AppLock.problem(this, locked))));
             // The sensors the person switched on, with their readings; see Sensors. The block
             // is kept where the panel's rows and discovery can read it without the service.
             publishSensorBlock();
@@ -1463,7 +1608,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * The screensaver as set and as showing. The page address is in the shared block, for the
+     * Ambient as set and as showing. The page address is in the shared block, for the
      * reason at the field: the Home Assistant text entity reads it. The sentence is the one every surface
      * prints, so the web admin's box and the tablet's card cannot describe the rule differently.
      */
@@ -1576,13 +1721,13 @@ public final class KioskService extends Service implements KioskCommandDispatche
             double percent;
             if (!screenOn) {
                 // Judged before the override: a dark screen reads as zero, whatever override the
-                // screensaver's dim floor left behind on the way down. Zero rather than null
-                // (Juri, 2026-09-23): a Home Assistant number showing "unknown" for a panel that
+                // Ambient's dim floor left behind on the way down. Zero rather than null
+                // (2026-09-23): a Home Assistant number showing "unknown" for a panel that
                 // is simply off looked like a fault, and a slider at zero is what a dark screen is.
                 source = "display_off";
                 percent = 0;
             } else if (override >= 0) {
-                // The screensaver's dim floor and its film are window overrides too; naming them
+                // Ambient's dim floor and its film are window overrides too; naming them
                 // "display off" would report a lit, dimmed page as dark. The film itself is the
                 // other dark state and reads zero like a sleeping screen, not the 1% its window
                 // override happens to be.
@@ -1738,6 +1883,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return fallback;
     }
 
+    /** Every argument of an MQTT command by name, as text. */
+    private static java.util.Map<String, String> namedArguments(org.json.JSONObject arguments) {
+        java.util.Map<String, String> named = new java.util.HashMap<>();
+        java.util.Iterator<String> names = arguments.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            if (!arguments.isNull(name)) {
+                named.put(name, String.valueOf(arguments.opt(name)));
+            }
+        }
+        return named;
+    }
+
     private void handleMqttCommand(
             String id, String command, org.json.JSONObject arguments) {
         Log.i(TAG, "MQTT command " + command + " id=" + id);
@@ -1758,7 +1916,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 arguments.optString("url", null),
                 enabled,
                 arguments.has("value") ? arguments.optString("value", null) : null,
-                arguments.isNull("beacon") ? null : arguments.optString("beacon", null));
+                arguments.isNull("beacon") ? null : arguments.optString("beacon", null),
+                namedArguments(arguments));
         KioskCommandDispatcher.Result result = dispatch(command, args);
         mqttController.publishCommandResult(id, result.status, result.detail);
     }
@@ -1827,6 +1986,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         lastDisplayOffMethod = method;
         sendUiCommand("display.visual_off", method);
+        if (!DisplayOffPolicy.SLEEP.equals(method)) {
+            // App lock: the black film is Muralis's own screen, brought over the app.
+            AppLock.bringMuralisForward(this);
+        }
     }
 
     /** What the last Display off did, sleep or film; the test while asleep needs the sleep. */
@@ -2085,10 +2248,117 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return true;
     }
 
+    /** When each camera last showed on this panel, for its cooldown; forgotten on a restart. */
+    private final java.util.Map<String, Long> cameraShownAt = new java.util.HashMap<>();
+
+    @Override
+    public String cameraPopup(String name, boolean trigger) {
+        PopupCameras.Camera camera = PopupCameras.find(KioskConfig.popupCamerasOf(this), name);
+        long now = android.os.SystemClock.elapsedRealtime();
+        String key = name.toLowerCase(java.util.Locale.ROOT);
+        synchronized (cameraShownAt) {
+            Long last = cameraShownAt.get(key);
+            String refused = PopupCameras.refusal(camera, trigger, last == null ? 0 : last, now);
+            if (refused != null) {
+                return refused;
+            }
+            cameraShownAt.put(key, now);
+        }
+        Popup.Request request = PopupCameras.popup(camera, trigger);
+        if (request.wake) {
+            displayWake();
+        }
+        showPopup(request);
+        return null;
+    }
+
+    @Override
+    public void showPopup(Popup.Request request) {
+        Popup.pending = request;
+        sendUiCommand("popup.show", -1, null);
+    }
+
     @Override
     public void setStatusLight(boolean on, Integer color, int percent) {
         KioskConfig.edit(this).statusLight(on, color, percent).apply();
         sendUiCommand("light.changed", -1, null);
+    }
+
+    /**
+     * Trusts the certificate waiting for an answer, from the panel or the web admin:
+     * only that host and that fingerprint, only while it is the one waiting. Returns why not,
+     * or null; the page is loaded again.
+     */
+    static String trustCertificate(Context context, String host, String fingerprint) {
+        CertificatePins.Waiting waiting = CertificatePins.waiting;
+        if (waiting == null || !waiting.host.equalsIgnoreCase(host)
+                || !waiting.fingerprint.equals(fingerprint)) {
+            return "that certificate is not the one waiting for an answer";
+        }
+        java.util.Map<String, String> pins = CertificatePins.with(
+                KioskConfig.certificatePinsOf(context), waiting.host, waiting.fingerprint);
+        if (pins == null) {
+            return "the list is full (" + CertificatePins.MAX_PINS + "): remove one first";
+        }
+        KioskConfig.edit(context).certificatePins(pins).apply();
+        CertificatePins.waiting = null;
+        Log.i(TAG, "Certificate trusted for " + waiting.host);
+        certificatesChanged(context);
+        return null;
+    }
+
+    /** Forgets a trusted certificate: the next load of that host asks again. */
+    static void forgetCertificate(Context context, String host) {
+        java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(context);
+        if (pins.remove(host.toLowerCase(java.util.Locale.ROOT)) != null) {
+            KioskConfig.edit(context).certificatePins(pins).apply();
+            Log.i(TAG, "Certificate forgotten for " + host);
+        }
+        certificatesChanged(context);
+    }
+
+    private static void certificatesChanged(Context context) {
+        context.sendBroadcast(new Intent(KioskActions.UI_CONTROL)
+                .setPackage(context.getPackageName())
+                .putExtra(KioskActions.EXTRA_COMMAND, "certificates.changed"),
+                KioskActions.PERMISSION_UI_CONTROL);
+        publishTelemetrySoon(context);
+    }
+
+    /** The web admin saved the browser box: the page takes it, as after a command. */
+    void browserOptionsSaved() {
+        sendUiCommand("browser.changed", -1, null);
+    }
+
+    @Override
+    public String setBrowserOption(KioskCommandDispatcher.BrowserOption option, String value) {
+        if (option == KioskCommandDispatcher.BrowserOption.DARK && Boolean.parseBoolean(value)
+                && !BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT)) {
+            return BrowserOptions.DARK_RULE;
+        }
+        String permission = option == KioskCommandDispatcher.BrowserOption.PAGE_CAMERA
+                ? android.Manifest.permission.CAMERA
+                : option == KioskCommandDispatcher.BrowserOption.PAGE_MICROPHONE
+                        ? android.Manifest.permission.RECORD_AUDIO : null;
+        if (permission != null && Boolean.parseBoolean(value)
+                && checkSelfPermission(permission)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return BrowserOptions.PERMISSION_RULE;
+        }
+        KioskConfig.Editor editor = KioskConfig.edit(this);
+        switch (option) {
+            case USER_AGENT: editor.browserUserAgent(value); break;
+            case TEXT_SIZE: editor.browserTextSize(Integer.parseInt(value)); break;
+            case PAGE_ZOOM: editor.browserPageZoom(Integer.parseInt(value)); break;
+            case DARK: editor.browserDark(Boolean.parseBoolean(value)); break;
+            case BACK_AFTER: editor.browserBackAfter(Integer.parseInt(value)); break;
+            case PAGE_CAMERA: editor.browserPageCamera(Boolean.parseBoolean(value)); break;
+            case PAGE_MICROPHONE: editor.browserPageMicrophone(Boolean.parseBoolean(value)); break;
+            default: return null;
+        }
+        editor.apply();
+        sendUiCommand("browser.changed", -1, null);
+        return null;
     }
 
     /**
@@ -2179,7 +2449,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Whether a rule on this sensor cannot run while the panel sleeps: its test found it not
      * running, and this panel sleeps rather than darkening with the film, which keeps sensors
      * running. Said on the rule's row and in its editor, where it matters: "Wake by hand" on
-     * such a panel fails without a word otherwise (Juri, 2026-09-28).
+     * such a panel fails without a word otherwise (2026-09-28).
      */
     static boolean stopsWhileAsleep(Context context, String sensorId) {
         Sensors.Def def = Sensors.byId(sensorId == null ? "" : sensorId);
@@ -2329,7 +2599,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * @return why the screensaver cannot show, or null once the activity has been told to show
+     * @return why Ambient cannot show, or null once the activity has been told to show
      *         it; the accepted-no-op shape is refused here the way {@link #publishTelemetry} does
      */
     @Override
@@ -2343,7 +2613,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return problem;
         }
         // The rest is where the activity would have to drop the request on the floor: each is
-        // answered here instead, so no caller hears "accepted" for a screensaver nobody sees.
+        // answered here instead, so no caller hears "accepted" for Ambient nobody sees.
         if (KioskConfig.kioskStopped(this)) {
             return "the kiosk is stopped";
         }
@@ -2354,10 +2624,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return "the first-start wizard is on screen";
         }
         // The settings being open is no longer a refusal (it was "Muralis settings are open on
-        // the panel" until 2026-09-24, Juri: "Preview should work anyway"): the activity shows
-        // the screensaver over the page as a preview, exactly what the settings page's own
+        // the panel" until 2026-09-24, the owner: "Preview should work anyway"): the activity shows
+        // Ambient over the page as a preview, exactly what the settings page's own
         // Preview button does, and a touch brings the settings back. The recorder is different:
-        // it is capturing taps against a clock, and a screensaver would take them.
+        // it is capturing taps against a clock, and Ambient would take them.
         if (KioskRuntimeState.recorderOnScreen()) {
             return "the escape combination recorder is on screen";
         }
@@ -2494,9 +2764,40 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 problem = "accepted".equals(lit.status) ? null : lit.detail;
                 break;
             }
+            case "popup":
+                problem = refusalOf(dispatch("panel.notify",
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+                break;
             case "light_off":
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);
                 break;
+            case "open_page":
+                problem = refusalOf(dispatch("kiosk.open_url",
+                        new KioskCommandDispatcher.CommandArgs(-1, rule.argument)));
+                break;
+            case "brightness":
+                problem = refusalOf(dispatch("display.brightness",
+                        new KioskCommandDispatcher.CommandArgs(
+                                Integer.parseInt(rule.argument), null)));
+                break;
+            case "ambient_mode":
+                problem = refusalOf(dispatch("ambient.mode",
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+                break;
+            case "mqtt_publish": {
+                int space = rule.argument.indexOf(' ');
+                MqttController mqtt = mqttController;
+                if (mqtt == null || !mqtt.publishAlert(rule.argument.substring(0, space),
+                        rule.argument.substring(space + 1))) {
+                    problem = "MQTT is not connected";
+                }
+                break;
+            }
+            case "call_url": {
+                String address = rule.argument;
+                new Thread(() -> callAddress(rule.name, address), "MuralisRuleCall").start();
+                break;
+            }
             default: problem = "no action is called " + rule.action;
         }
         if (problem != null) {
@@ -2818,20 +3119,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * Identify: the panel's name drawn over its screen by the activity (the same broadcast
-     * every other order takes) and said once through {@link #say}, so a person standing in
-     * front of several walls can tell which is which. Refused like a capture when no window of
-     * this app is in front. The name is shown whatever the speech engine answers; its refusal
-     * is reported rather than swallowed, since the command would otherwise claim a success it
-     * did not have.
+     * every other order takes), so a person standing in front of several walls can tell which
+     * is which; shown only, never said (2026-10-14). Refused like a capture when no
+     * window of this app is in front.
      */
     @Override
     public String identify() {
-        if (!KioskRuntimeState.activityInFront()) {
+        if (!KioskRuntimeState.activityInFront() && !AppLock.appUp) {
             return SCREEN_NOT_SHOWING;
         }
         sendUiCommand("kiosk.identify", -1, null);
-        String problem = say(FleetProfile.panelName(this));
-        return problem == null ? null : "the name is shown but not said: " + problem;
+        return null;
     }
 
     /** The long side of the broker's copy of the screen, in pixels; see {@link #forBroker}. */
@@ -2839,7 +3137,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * The broker's copy of a capture: a JPEG at the camera's quality, the long side at most
-     * {@link #BROKER_PICTURE_SIDE}, because the full PNG of a photo on the screensaver runs past
+     * {@link #BROKER_PICTURE_SIDE}, because the full PNG of a photo on Ambient runs past
      * 2 MB and Mosquitto since 2.1 drops the connection of a client whose packet exceeds its
      * default max_packet_size of 2,000,000 bytes (measured: both test panels were cut off and
      * nothing arrived). The web admin's route keeps the full PNG. Null when the picture could
@@ -2901,7 +3199,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private java.util.concurrent.CompletableFuture<byte[]> screenshotInFlight;
 
     /**
-     * The panel's window as the wall shows it, whichever layer is up: the page, the screensaver,
+     * The panel's window as the wall shows it, whichever layer is up: the page, Ambient,
      * the parking screen or the black film. The activity owns the window, so this leaves a
      * request in {@link KioskRuntimeState} and asks over the UI_CONTROL broadcast, the way every
      * other order reaches it, then waits for the answer. One capture at a time: a request that
@@ -2951,7 +3249,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * The diagnostics file, plain text, from what the app already knows: the version and the
      * build, the device, every permission the manifest declares with whether it is granted, the
-     * status document as the web admin has it (passwords are never in it), the counters of
+     * status document as the web admin has it (no password, join code or webhook, and every
+     * address cut to scheme, host and path), the counters of
      * {@link KioskRuntimeState} and the app's own log. Built on request and never stored or sent
      * anywhere by the app; whoever holds the admin password downloads it.
      */
@@ -3024,11 +3323,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 .append(ago(KioskRuntimeState.lastPageErrorAgoMs())).append("\n\n");
 
         text.append("STATUS\n");
-        try {
-            text.append(statsJson().toString(2));
-        } catch (org.json.JSONException impossible) {
-            text.append(statsJson());
+        // The status as the web admin has it, less what is a key in itself (an open join code, a
+        // webhook address) and with every address cut to scheme, host and path, so a camera's or
+        // a page's user, password or token does not leave in a file meant for a support mail.
+        org.json.JSONObject status = statsJson();
+        org.json.JSONObject applied = status.optJSONObject("config");
+        if (applied != null) {
+            applied.remove("fleet_join");
+            applied.remove("alert_webhook_url");
         }
+        String shown;
+        try {
+            shown = status.toString(2);
+        } catch (org.json.JSONException impossible) {
+            shown = status.toString();
+        }
+        text.append(AppLog.secretsCut(shown.replace("\\/", "/")));
         text.append("\n\n");
 
         text.append("LOG (last ").append(AppLog.LINES).append(" lines of the app's own)\n");
@@ -3231,8 +3541,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         if (hub != null && hub.available(Sensors.BLUETOOTH) && hub.on(Sensors.BLUETOOTH)) {
             // The Bluetooth scan counts as location use: with this type held, "while using the
-            // app" location is enough for the scan to run with the display off (Juri,
-            // 2026-10-01, in place of the background location permission).
+            // app" location is enough for the scan to run with the display off
+            // (2026-10-01, in place of the background location permission).
             wanted |= android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
         }
         if (wanted == foregroundTypesNow) {
@@ -3533,6 +3843,34 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // IllegalStateException is documented for an ongoing call. Either way the panel stays up,
             // which is the right failure for a remote command.
             Log.w(TAG, "Device-owner reboot refused", refused);
+        }
+    }
+
+    /**
+     * A settings file was applied: the panel takes every part of it at once, the page, App lock,
+     * the browser options, the trusted certificates and the status light, as it would after a
+     * change on any surface; MQTT, the web admin and the fleet follow reloadConfiguration.
+     */
+    static void settingsImported(Context context) {
+        KioskService service = liveService();
+        if (service == null) {
+            return;
+        }
+        KioskConfig config = KioskConfig.load(service);
+        if (config.escapeSequencesConfigured() && !KioskRuntimeState.wizardOnScreen()) {
+            service.sendUiCommand("kiosk.set_url", -1, config.dashboardUrl);
+        }
+        service.sendUiCommand("applock.changed", -1, null);
+        service.sendUiCommand("browser.changed", -1, null);
+        service.sendUiCommand("light.changed", -1, null);
+        certificatesChanged(context);
+    }
+
+    /** App lock's choice changed outside the panel's own page: the panel follows at once. */
+    static void appLockChanged() {
+        KioskService service = liveService();
+        if (service != null) {
+            service.sendUiCommand("applock.changed", -1, null);
         }
     }
 
