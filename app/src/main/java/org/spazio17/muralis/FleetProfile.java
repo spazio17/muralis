@@ -1,6 +1,6 @@
 /*
  * Copyright 2026 Muralis contributors
- * All rights reserved. See LICENSE at the repository root.
+ * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.
  */
 package org.spazio17.muralis;
 
@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The fleet's shared settings on this panel (block 12d): which sections this panel shares, what
+ * The fleet's shared settings on this panel: which sections this panel shares, what
  * each section's values are here, and how a section the fleet shares is applied, through the
  * same commands and checks a person's own change goes through. The sections are
  * {@link FleetDocument#SECTIONS}; which ones are shared, and their values, live in the fleet
@@ -47,6 +47,8 @@ final class FleetProfile {
                 values.put("mqtt_port", (long) config.mqttPort);
                 values.put("mqtt_username", config.mqttUsername);
                 values.put("mqtt_password", config.mqttPassword);
+                values.put("mqtt_tls", config.mqttTls);
+                values.put("mqtt_tls_pin", config.mqttTlsPin);
                 break;
             case "web_admin":
                 values.put("web_admin_enabled", config.webAdminEnabled);
@@ -60,7 +62,7 @@ final class FleetProfile {
                 // panels would then correct each other forever.
                 values.put("auto_brightness", KioskService.isAutoBrightnessOn(context));
                 break;
-            case "screensaver": {
+            case "ambient": {
                 ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
                 values.put("mode", saver.mode);
                 values.put("idle_seconds", (long) saver.idleSeconds);
@@ -68,7 +70,6 @@ final class FleetProfile {
                 values.put("url", saver.url);
                 values.put("dim_percent", (long) saver.dimPercent);
                 values.put("on_wake", saver.onWake);
-                values.put("source", saver.source);
                 values.put("picture_seconds", (long) saver.pictureSeconds);
                 values.put("transition", saver.transition);
                 values.put("picture_fit", saver.pictureFit);
@@ -106,7 +107,7 @@ final class FleetProfile {
      * Applies the fleet's values of {@code section} on this panel, each through the command or
      * the check a person's own change takes, and returns the refusals, one line each, in the
      * words those checks use. Only what differs is touched. Needs the service running for the
-     * display and screensaver commands; without it those are reported as not applied.
+     * display and Ambient commands; without it those are reported as not applied.
      */
     static List<String> apply(Context context, String section, Map<String, Object> values) {
         List<String> refused = new ArrayList<>();
@@ -124,10 +125,18 @@ final class FleetProfile {
                     refused.add("mqtt_port: the broker port must be between 1 and 65535");
                     break;
                 }
+                String pin = text(values, "mqtt_tls_pin");
+                if (!pin.isEmpty() && !CertificatePins.isFingerprint(pin)) {
+                    refused.add("mqtt_tls_pin: a trusted certificate is its SHA-256, 32 pairs of"
+                            + " hex digits with colons");
+                    break;
+                }
                 KioskConfig.Editor editor = KioskConfig.edit(context)
                         .mqttHost(text(values, "mqtt_host"))
                         .mqttPort((int) port)
-                        .mqttUsername(text(values, "mqtt_username"));
+                        .mqttUsername(text(values, "mqtt_username"))
+                        .mqttTls(flag(values, "mqtt_tls", false))
+                        .mqttTlsPin(pin);
                 String password = text(values, "mqtt_password");
                 if (!password.isEmpty() && !password.equals(text(now, "mqtt_password"))) {
                     editor.mqttPassword(password);
@@ -172,17 +181,17 @@ final class FleetProfile {
                         flag(values, "auto_brightness", false), "auto_brightness", now, values,
                         refused);
                 break;
-            case "screensaver":
-                for (String key : new String[] {"mode", "source", "idle_seconds", "off_seconds",
+            case "ambient":
+                for (String key : new String[] {"mode", "idle_seconds", "off_seconds",
                         "picture_seconds", "dim_percent", "url", "on_wake", "transition",
                         "picture_fit", "credit_corner"}) {
                     Object value = values.get(key);
-                    command(service, "screensaver." + key, null,
+                    command(service, "ambient." + key, null,
                             value instanceof Number ? String.valueOf(((Number) value).longValue())
                                     : text(values, key), null, key, now, values, refused);
                 }
                 for (String key : new String[] {"shuffle", "one_per_cycle", "credit"}) {
-                    command(service, "screensaver." + key, null, null, flag(values, key, false),
+                    command(service, "ambient." + key, null, null, flag(values, key, false),
                             key, now, values, refused);
                 }
                 break;
@@ -292,6 +301,28 @@ final class FleetProfile {
         return state;
     }
 
+    /** Whether a section's values here come from the whole fleet, which a panel may stop following. */
+    static boolean fromWholeFleet(String section) {
+        return FleetDocument.EVERYONE.equals(FleetServer.profileSource(section));
+    }
+
+    /**
+     * The scope the Alerts page edits: the one this panel takes them from, else any that shares
+     * them, else the whole fleet, so a Save never makes a second copy beside a group's.
+     */
+    static String alertsScope(Map<String, Object> document) {
+        String source = FleetServer.profileSource("alerts");
+        if (!source.isEmpty()) {
+            return source;
+        }
+        if (document != null) {
+            for (String scope : FleetDocument.sharedBy(document, "alerts").keySet()) {
+                return scope;
+            }
+        }
+        return FleetDocument.EVERYONE;
+    }
+
     /**
      * A line for a person under a section a group of this panel's shares, or null: which group
      * sets it here, which other groups share it too, and what was not applied.
@@ -309,10 +340,13 @@ final class FleetProfile {
                         : FleetDocument.groupName(document, other));
             }
         }
+        boolean pro = FleetServer.proStatus(context).pro;
         String line = FleetDocument.EVERYONE.equals(group)
-                ? "Set by the whole fleet. A change here changes every panel."
-                : "Set by the group " + FleetDocument.groupName(document, group)
-                        + ". A change here changes every panel of it.";
+                ? "From the whole fleet: " + (pro ? "a change here changes every panel."
+                        : "without Pro, a change here stays on this panel.")
+                : "From the group " + FleetDocument.groupName(document, group) + ": "
+                        + (pro ? "a change here changes every panel of it."
+                                : "without Pro, a change here stays on this panel.");
         if (!others.isEmpty()) {
             line += " Also shared by " + String.join(", ", others) + ".";
         }
@@ -391,6 +425,19 @@ final class FleetProfile {
         return FleetDocument.fillPlaceholders(url, now[0].isEmpty() ? own : now[0], now[1], now[2]);
     }
 
+    /**
+     * This panel's name as the fleet knows it: the name in the fleet's list, or the device id
+     * outside a fleet. What Identify shows, and what {@code {panel.name}} fills in.
+     */
+    static String panelName(Context context) {
+        String own = KioskConfig.deviceIdOf(context);
+        String stored = KioskConfig.fleetDocumentText(context);
+        Map<String, Object> me = stored.isEmpty() ? null : FleetDocument.memberByKey(
+                FleetDocument.parse(stored), KioskConfig.fleetSelfKeyOf(context));
+        String name = me == null ? own : TinyJson.string(me, FleetDocument.NAME, own);
+        return name.isEmpty() ? own : name;
+    }
+
     /** One value of a section as the Fleet page draws and reads it. */
     static final class Field {
         final String key;
@@ -420,9 +467,12 @@ final class FleetProfile {
                 fields.add(new Field("mqtt_port", "Broker port", "number"));
                 fields.add(new Field("mqtt_username", "Username", "text"));
                 fields.add(new Field("mqtt_password", "Password", "password"));
+                fields.add(new Field("mqtt_tls", "Encrypted (TLS)", "switch"));
+                fields.add(new Field("mqtt_tls_pin", "Trusted broker certificate (SHA-256)",
+                        "text"));
                 break;
             case "web_admin":
-                fields.add(new Field("web_admin_enabled", "Local web admin on", "switch"));
+                fields.add(new Field("web_admin_enabled", "Web admin on", "switch"));
                 fields.add(new Field("http_port", "Port", "number"));
                 fields.add(new Field("http_admin_password", "Admin password", "password"));
                 break;
@@ -436,7 +486,7 @@ final class FleetProfile {
                         DisplayOffPolicy.FILM, "Black overlay"));
                 fields.add(new Field("auto_brightness", "Automatic brightness", "switch"));
                 break;
-            case "screensaver":
+            case "ambient":
                 fields.add(new Field("mode", "Mode", "select", ScreensaverPolicy.OFF, "Off",
                         ScreensaverPolicy.DIM, "Dimmed page", ScreensaverPolicy.FILM, "Black",
                         ScreensaverPolicy.URL, "Web page", ScreensaverPolicy.PICTURES, "Pictures"));
@@ -446,11 +496,8 @@ final class FleetProfile {
                 fields.add(new Field("url", "Web page address", "url"));
                 fields.add(new Field("dim_percent", "Dim to (percent)", "number"));
                 fields.add(new Field("on_wake", "On a touch", "select",
-                        ScreensaverPolicy.WAKE_SCREENSAVER, "Show the screensaver first",
+                        ScreensaverPolicy.WAKE_SCREENSAVER, "Show Ambient first",
                         ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once"));
-                fields.add(new Field("source", "Pictures from", "select", PictureSources.LOCAL,
-                        "This panel's playlist", PictureSources.BING, "Bing image of the day",
-                        PictureSources.WIKIMEDIA, "Wikimedia Commons picture of the day"));
                 fields.add(new Field("picture_seconds", "Seconds per picture", "number"));
                 fields.add(new Field("transition", "Transition", "select",
                         ScreensaverPolicy.TRANSITION_NONE, "None", ScreensaverPolicy.TRANSITION_FADE,
