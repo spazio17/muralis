@@ -340,6 +340,9 @@ final class KioskConfig {
             plain.remove(FLEET_TRUSTED);
             plain.remove(FLEET_REVOKED);
             plain.remove(FLEET_DOCUMENT);
+            for (String key : FleetDocument.SECRET_KEYS) {
+                secrets.put(FLEET_SECRET + key, "");
+            }
             return this;
         }
 
@@ -347,7 +350,8 @@ final class KioskConfig {
          * The fleet document this panel took or wrote (block 12a), already checked and merged
          * with the one held: it names the fleet, its members' keys are the ones this panel
          * trusts, and its revoked keys the ones it refuses. The first one written here also
-         * founds the fleet.
+         * founds the fleet. The profile's secrets (block 12d) go to the SecretStore and the
+         * stored copy has them blanked; fleetDocumentText puts them back for the wire.
          */
         Editor fleetDocument(Context context, String text) {
             java.util.Map<String, Object> document = FleetDocument.parse(text);
@@ -359,7 +363,11 @@ final class KioskConfig {
             plain.putString(FLEET_NAME, FleetDocument.fleetName(document));
             plain.putString(FLEET_TRUSTED, String.join(",", FleetDocument.trustedKeys(document)));
             plain.putString(FLEET_REVOKED, String.join(",", revoked));
-            plain.putString(FLEET_DOCUMENT, text);
+            java.util.Map<String, String> carried = FleetDocument.stripSecrets(document);
+            for (String key : FleetDocument.SECRET_KEYS) {
+                secrets.put(FLEET_SECRET + key, carried.containsKey(key) ? carried.get(key) : "");
+            }
+            plain.putString(FLEET_DOCUMENT, FleetDocument.canonical(document));
             return this;
         }
 
@@ -560,7 +568,26 @@ final class KioskConfig {
                 return;
             }
             SecretStore store = new SecretStore(storageContext);
+            try {
+                writeSecrets(store);
+            } finally {
+                // The fleet's list is read with its secrets put back (fleetDocumentText): a copy
+                // cached between the two writes above would carry the old secret for as long as
+                // the list stays the same, so it is dropped once both are in.
+                synchronized (FleetDocument.class) {
+                    fleetDocumentStored = null;
+                }
+            }
+        }
+
+        private void writeSecrets(SecretStore store) {
             for (java.util.Map.Entry<String, String> secret : secrets.entrySet()) {
+                // A fleet secret the new list carries empty is cleared, so what comes back for
+                // the wire is what was signed.
+                if (secret.getKey().startsWith(FLEET_SECRET) && secret.getValue().isEmpty()) {
+                    store.clear(secret.getKey());
+                    continue;
+                }
                 // Writing an empty string is a delete. An empty value arriving while the stored
                 // secret is unreadable is almost certainly the echo of that unreadable read, a
                 // form prefilled blank because the Keystore was briefly unavailable, so it is
@@ -926,17 +953,49 @@ final class KioskConfig {
     private static final String FLEET_ID = "fleet_id";
     private static final String FLEET_DOCUMENT = "fleet_document";
 
-    /** The fleet document held, as it was signed; empty before the first. */
+    /** Secrets of the fleet's profile in the SecretStore, under the key's own name. */
+    private static final String FLEET_SECRET = "fleet_";
+    /** The stored copy last read, with its secrets put back: read and parsed once per change. */
+    private static String fleetDocumentStored = null;
+    private static String fleetDocumentFilled = "";
+
+    /**
+     * The fleet document held, whole, as it was signed: the stored copy with its secrets back
+     * from the SecretStore. Empty before the first. The copy on disk is parsed and the secrets
+     * decrypted only when it changed, since both surfaces ask for the document every second.
+     */
     static String fleetDocumentText(Context context) {
-        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(FLEET_DOCUMENT, "");
+        synchronized (FleetDocument.class) {
+            if (stored.equals(fleetDocumentStored)) {
+                return fleetDocumentFilled;
+            }
+            java.util.Map<String, Object> document = stored.isEmpty() ? null
+                    : FleetDocument.parse(stored);
+            String filled = "";
+            if (document != null) {
+                java.util.Map<String, String> secrets = new java.util.LinkedHashMap<>();
+                SecretStore store = new SecretStore(storageContext(context));
+                for (String key : FleetDocument.SECRET_KEYS) {
+                    String value = store.getOrNull(FLEET_SECRET + key);
+                    if (value != null && !value.isEmpty()) {
+                        secrets.put(key, value);
+                    }
+                }
+                FleetDocument.fillSecrets(document, secrets);
+                filled = FleetDocument.canonical(document);
+            }
+            fleetDocumentStored = stored;
+            fleetDocumentFilled = filled;
+            return filled;
+        }
     }
 
     /** The fleet document held, as maps and lists; null before the first (see fleetDocument). */
     static java.util.Map<String, Object> fleetDocumentOf(Context context) {
-        String stored = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(FLEET_DOCUMENT, "");
-        return stored.isEmpty() ? null : FleetDocument.parse(stored);
+        String text = fleetDocumentText(context);
+        return text.isEmpty() ? null : FleetDocument.parse(text);
     }
 
     private static final String FLEET_NAME = "fleet_name";

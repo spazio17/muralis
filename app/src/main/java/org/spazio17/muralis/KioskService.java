@@ -244,6 +244,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 lastFleetHeartbeatAddress = address;
                 FleetServer.heartbeatSoon(KioskService.this, why);
             }
+            FleetServer.syncProfileSoon(KioskService.this, "periodic");
             telemetryHandler.postDelayed(this, TELEMETRY_INTERVAL_MS);
         }
     };
@@ -382,6 +383,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
             publishStateSoon();
+            // A change was made somewhere: a shared section changed here goes to the fleet.
+            FleetServer.syncProfileSoon(this, "change");
         } else if (intent != null && ACTION_REFRESH_SENSORS.equals(intent.getAction())) {
             automations.rules(KioskConfig.automationsOf(this));
             refreshSensors();
@@ -1244,6 +1247,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 // Membership and the Join code as the panel shows them; admin only, never on MQTT.
                 applied.put("fleet_join", FleetServer.joinState(this));
                 applied.put("fleet_peers", FleetServer.peersJson(this));
+                applied.put("fleet_profile", FleetProfile.state(this));
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());

@@ -128,6 +128,9 @@ if(refused){refused.parentNode.removeChild(refused);}}
 var disp=data.display||{};
 follow('stats-overlay',cfg.stats_overlay);
 follow('volume-buttons-disabled',cfg.volume_buttons_disabled);
+// The fleet's shared groups, switched from any panel (block 12d).
+var prof=cfg.fleet_profile||{};
+['dashboard','mqtt','web_admin','display','screensaver'].forEach(function(s){if(prof[s]){follow('fleet-share-'+s.replace('_','-'),prof[s].shared);}});
 // The panel's name, renamed on the panel or over MQTT: the box and the app bar's subtitle.
 follow('f-device_id',cfg.device_id);
 var sub=document.querySelector('header.appbar .sub');

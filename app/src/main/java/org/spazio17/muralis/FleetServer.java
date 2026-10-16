@@ -782,6 +782,7 @@ final class FleetServer {
                 + FleetTls.shortForm(from));
         // A list just taken may name panels never heard from: greeted now, not in three minutes.
         heartbeatSoon(context, "list taken");
+        syncProfileSoon(context, "list taken");
         return new Taken(null, rewritten);
     }
 
@@ -799,6 +800,11 @@ final class FleetServer {
         }
         removedFrom = "";
         peers.clear();
+        profileApplied.clear();
+        for (String section : FleetDocument.SECTIONS) {
+            KioskRuntimeState.publishFleetProfileRefused(section,
+                    java.util.Collections.emptyList());
+        }
         KioskService.publishTelemetrySoon(context);
         Log.i(TAG, "Left the fleet " + name + " " + how);
     }
@@ -1195,6 +1201,144 @@ final class FleetServer {
             }
         }
         return list;
+    }
+
+    /**
+     * Shares {@code section} with the fleet from this panel's values, or stops sharing it: a new
+     * version of the list, signed here and handed to every member. Off the main thread.
+     */
+    static String shareSection(Context context, String section, boolean on) {
+        FleetIdentity identity = FleetIdentity.load(context);
+        if (identity == null || KioskConfig.fleetDocumentOf(context) == null) {
+            return "this panel holds no fleet list yet";
+        }
+        return writeSection(context, identity, section,
+                on ? FleetProfile.read(context, section) : null);
+    }
+
+    /**
+     * The next list with {@code section} set as given, built on the list held at that moment,
+     * kept here and handed to every member off the caller's thread.
+     */
+    private static String writeSection(Context context, FleetIdentity identity, String section,
+            java.util.Map<String, Object> values) {
+        String text;
+        synchronized (DOCUMENT_LOCK) {
+            java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+            if (held == null) {
+                return "this panel holds no fleet list yet";
+            }
+            java.util.Map<String, Object> next = FleetDocument.withSection(held,
+                    KioskConfig.deviceIdOf(context), section, values,
+                    java.time.Instant.now().toString());
+            try {
+                text = FleetDocument.sign(next, identity.key, identity.certificate.getPublicKey());
+            } catch (java.security.GeneralSecurityException failed) {
+                Log.w(TAG, "The fleet list could not be signed", failed);
+                return "this panel could not sign the fleet's list";
+            }
+            KioskConfig.edit(context).fleetDocument(context, text).apply();
+            // What was just written is what this panel has: nothing to apply back.
+            profileApplied.put(section, FleetDocument.version(next));
+            KioskRuntimeState.publishFleetProfileRefused(section,
+                    java.util.Collections.emptyList());
+        }
+        Log.i(TAG, (values == null ? "Stopped sharing " : "Shared ") + section
+                + " with the fleet, version " + FleetDocument.version(FleetDocument.parse(text)));
+        KioskService.publishTelemetrySoon(context);
+        new Thread(() -> {
+            for (java.util.Map<String, Object> one
+                    : FleetDocument.members(FleetDocument.parse(text))) {
+                String spki = TinyJson.string(one, FleetDocument.SPKI, "");
+                if (!spki.equals(identity.spki)) {
+                    String outcome = deliver(context, one, text);
+                    if (outcome != null) {
+                        Log.w(TAG, "Fleet list not delivered to "
+                                + TinyJson.string(one, FleetDocument.NAME, "") + ": " + outcome
+                                + "; it catches up at its next heartbeat");
+                    }
+                }
+            }
+        }, "MuralisFleetDeliver").start();
+        return null;
+    }
+
+    /** Per section, the version of the list whose values this panel applied last. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Long> profileApplied =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicBoolean syncingProfile =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Brings this panel and the fleet's shared settings in step, off the main thread and one
+     * round at a time: a section the fleet changed since it was last applied here is applied,
+     * through the checks a person's own change takes, and what they refuse is kept for the Fleet
+     * section; a shared section this panel changed since (a save on either surface) is written
+     * into the list and handed to every member, unless something of it was refused here, since
+     * that would push a half-applied section back out.
+     */
+    static void syncProfileSoon(Context context, String why) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()
+                || !syncingProfile.compareAndSet(false, true)) {
+            return;
+        }
+        new Thread(() -> {
+            try {
+                syncProfile(context.getApplicationContext(), why);
+            } catch (RuntimeException failed) {
+                Log.w(TAG, "The fleet's shared settings could not be brought in step", failed);
+            } finally {
+                syncingProfile.set(false);
+            }
+        }, "MuralisFleetProfile").start();
+    }
+
+    private static void syncProfile(Context context, String why) {
+        FleetIdentity identity = FleetIdentity.load(context);
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (identity == null || held == null) {
+            return;
+        }
+        for (String section : FleetDocument.SECTIONS) {
+            java.util.Map<String, Object> shared = FleetDocument.sectionValues(held, section);
+            long at = FleetDocument.sectionAt(held, section);
+            Long applied = profileApplied.get(section);
+            if (shared == null) {
+                profileApplied.put(section, at);
+                KioskRuntimeState.publishFleetProfileRefused(section,
+                        java.util.Collections.emptyList());
+                continue;
+            }
+            if (applied == null || applied < at) {
+                java.util.List<String> refused = FleetProfile.apply(context, section, shared);
+                profileApplied.put(section, at);
+                KioskRuntimeState.publishFleetProfileRefused(section, refused);
+                Log.i(TAG, "Applied the fleet's " + section + " (version " + at + ", " + why + ")"
+                        + (refused.isEmpty() ? "" : ", refused: " + refused));
+                continue;
+            }
+            if (!KioskRuntimeState.fleetProfileRefused(section).isEmpty()) {
+                continue;
+            }
+            java.util.Map<String, Object> mine = FleetProfile.read(context, section);
+            // A secret is a change only when both sides have one and they differ: one this
+            // panel cannot read right now, or one the fleet shares empty (a member keeps its
+            // own then), must not be pushed out as if a person had typed it.
+            for (String key : FleetDocument.SECRET_KEYS) {
+                if (shared.containsKey(key) && (String.valueOf(mine.get(key)).isEmpty()
+                        || String.valueOf(shared.get(key)).isEmpty())) {
+                    mine.put(key, shared.get(key));
+                }
+            }
+            if (!FleetProfile.same(mine, shared)) {
+                Log.i(TAG, "This panel changed the shared " + section + "; told the fleet");
+                writeSection(context, identity, section, mine);
+                held = KioskConfig.fleetDocumentOf(context);
+                if (held == null) {
+                    return;
+                }
+            }
+        }
     }
 
     /** {@code POST /fleet/leave} from a key this panel trusts: forget the fleet. */

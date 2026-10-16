@@ -230,6 +230,19 @@ final class KioskRuntimeState {
         return fleetDownReason;
     }
 
+    /** Per profile section, what this panel could not apply of the fleet's values (block 12d). */
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.List<String>>
+            fleetProfileRefused = new java.util.concurrent.ConcurrentHashMap<>();
+
+    static void publishFleetProfileRefused(String section, java.util.List<String> refused) {
+        fleetProfileRefused.put(section, new java.util.ArrayList<>(refused));
+    }
+
+    static java.util.List<String> fleetProfileRefused(String section) {
+        java.util.List<String> refused = fleetProfileRefused.get(section);
+        return refused == null ? java.util.Collections.emptyList() : refused;
+    }
+
     private static volatile String fleetKey = "";
 
     /** This panel's key hash once the member endpoint has read it, for the Join screen. */

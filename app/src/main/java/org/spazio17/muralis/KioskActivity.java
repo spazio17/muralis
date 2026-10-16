@@ -2387,6 +2387,7 @@ public final class KioskActivity extends Activity {
         }
 
         LinearLayout dashboardCard = sectionBody(theme);
+        addSharedLine(dashboardCard, theme, "dashboard");
         // The box holds what is stored and nothing else; the example is a hint. It used to be
         // prefilled with a Home Assistant address as real text, so a fresh panel saved and loaded
         // it at the first press of Open dashboard and showed an error page for a host that does
@@ -2437,6 +2438,7 @@ public final class KioskActivity extends Activity {
 
 
         LinearLayout mqttCard = sectionBody(theme);
+        addSharedLine(mqttCard, theme, "mqtt");
         EditText brokerInput = themedInput(theme, config.mqttHost, false);
         // The URL keyboard, dot and slash to hand, and no sentence habits: see themedInput.
         brokerInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
@@ -2468,6 +2470,7 @@ public final class KioskActivity extends Activity {
 
 
         LinearLayout httpCard = sectionBody(theme);
+        addSharedLine(httpCard, theme, "web_admin");
         EditText httpPortInput = themedInput(theme, Integer.toString(config.httpPort), false);
         httpPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(httpCard, theme, "Port", httpPortInput);
@@ -2640,6 +2643,7 @@ public final class KioskActivity extends Activity {
 
         // Everything about how the glass looks: the backlight and which way up the panel is.
         LinearLayout displayCard = sectionBody(theme);
+        addSharedLine(displayCard, theme, "display");
         final CompoundButton autoBrightnessInput;
         // Remembered so saving the form can tell an actual change from an unchanged checkbox. Without
         // this, every save re-applied the current value, and on a device without the WRITE_SETTINGS
@@ -2863,6 +2867,7 @@ public final class KioskActivity extends Activity {
         // now", is on its own page, reached by the button (Juri, 2026-09-09: the times were on
         // the card too and were the same boxes twice).
         LinearLayout screensaverCard = sectionBody(theme);
+        addSharedLine(screensaverCard, theme, "screensaver");
         ScreensaverControls screensaverControls =
                 addScreensaverControls(screensaverCard, screensaverCard, null, theme, false);
         Button screensaverMore = textButtonOnward(theme, "More screensaver settings");
@@ -2939,6 +2944,8 @@ public final class KioskActivity extends Activity {
         // Create a fleet or Add a panel (block 11d): this panel's camera reads another panel's Join
         // screen; the first panel added creates the fleet, so the label says which it is.
         Button fleetAddButton = tonalButton(theme, addPanelLabel());
+        // The Fleet section's "Shared with the fleet" switches, filled where that card is built.
+        java.util.Map<String, CompoundButton> shareSwitches = new java.util.LinkedHashMap<>();
         fleetAddButton.setOnClickListener(view -> showAddPanelScanner());
         fleetAddButton.setEnabled(KioskRuntimeState.fleetListening()
                 && !JoinScanner.lenses(this).isEmpty());
@@ -2972,6 +2979,15 @@ public final class KioskActivity extends Activity {
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
                     paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton,
                             fleetAddButton, theme);
+                    if (!shareSwitches.isEmpty()) {
+                        java.util.Map<String, Object> list =
+                                KioskConfig.fleetDocumentOf(KioskActivity.this);
+                        for (java.util.Map.Entry<String, CompoundButton> share
+                                : shareSwitches.entrySet()) {
+                            setCheckedIfChanged(share.getValue(),
+                                    FleetDocument.sectionValues(list, share.getKey()) != null);
+                        }
+                    }
                     checkRadioIfChanged(orientationInput,
                             KioskConfig.orientationOf(KioskActivity.this));
                     checkRadioIfChanged(displayOffInput,
@@ -3161,6 +3177,42 @@ public final class KioskActivity extends Activity {
         fleetCard.addView(fleetMember, fleetMemberParams);
         fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetLeaveButton, fleetAddButton),
                 matchWrapClose());
+        // Which groups of settings the fleet shares (block 12d): switched from any member, from
+        // this panel's values; a shared group then reads "Set by the fleet" on every member.
+        // Followed by the live sync above, as the web admin follows them from its poll.
+        if (!KioskConfig.fleetIdOf(this).isEmpty()) {
+            TextView sharedTitle = new FlushText(this);
+            sharedTitle.setTextSize(14);
+            sharedTitle.setTextColor(theme.text);
+            sharedTitle.setText("Shared with the fleet");
+            LinearLayout.LayoutParams sharedTitleParams = matchWrap();
+            sharedTitleParams.topMargin = dp(18);
+            fleetCard.addView(sharedTitle, sharedTitleParams);
+            java.util.Map<String, Object> fleetList = KioskConfig.fleetDocumentOf(this);
+            Context app = getApplicationContext();
+            for (String section : FleetDocument.SECTIONS) {
+                CompoundButton share = themedSwitch(theme, FleetDocument.sectionLabel(section),
+                        FleetDocument.sectionValues(fleetList, section) != null);
+                share.setOnCheckedChangeListener((button, checked) -> {
+                    if (syncingLiveControls) {
+                        return;
+                    }
+                    new Thread(() -> {
+                        String refused = FleetServer.shareSection(app, section, checked);
+                        if (refused != null) {
+                            mainHandler.post(() -> {
+                                if (!isFinishing()) {
+                                    Toast.makeText(app, "Not changed: " + refused + ".",
+                                            Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        }
+                    }, "MuralisFleetShare").start();
+                });
+                fleetCard.addView(share, matchWrapClose());
+                shareSwitches.put(section, share);
+            }
+        }
         int adminPortNow = config.httpPort;
         memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(memberPortInput, theme);
@@ -3379,6 +3431,21 @@ public final class KioskActivity extends Activity {
     }
 
     /** A section's contents, built like a card's without the card: the menu draws the frame. */
+    /** "Set by the fleet …" at the top of a section the fleet shares (block 12d). */
+    private void addSharedLine(LinearLayout card, KioskTheme theme, String section) {
+        String line = FleetProfile.sharedLine(this, section);
+        if (line == null) {
+            return;
+        }
+        TextView shared = new FlushText(this);
+        shared.setTextSize(13);
+        shared.setTextColor(theme.subtext);
+        shared.setText(line);
+        LinearLayout.LayoutParams params = matchWrap();
+        params.bottomMargin = dp(10);
+        card.addView(shared, params);
+    }
+
     private LinearLayout sectionBody(KioskTheme theme) {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);

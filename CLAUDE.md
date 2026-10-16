@@ -45,8 +45,10 @@ on purpose.
   key and a member endpoint, announces itself on the local network (mDNS), joins a fleet with a
   single-use code shown on its Join screen, or leaves it, and creates a fleet or adds another
   panel by reading that code with its camera; every member holds the fleet's signed list of
-  panels, and the members tell each other every few minutes that they are there and which
-  version they hold, so one that fell behind fetches the list.
+  panels, the members tell each other every few minutes that they are there and which
+  version they hold, so one that fell behind fetches the list, and groups of settings (the
+  dashboard, MQTT, the web admin, the display, the screensaver) can be shared: a shared group is
+  applied on every member and a change to it on any panel reaches all of them.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels.
 
@@ -76,7 +78,8 @@ on purpose.
 - **Fleet.** `FleetIdentity` (each panel's own key and certificate), `FleetTls` (mutual TLS that
   admits a peer by the hash of its public key), `FleetServer` (the member endpoint on its own
   port, separate from the web admin) and `FleetDocument` (the signed list every member holds,
-  and how two lists changed apart merge into one).
+  and how two lists changed apart merge into one) and `FleetProfile` (a shared group's values on
+  this panel, applied through the same commands and checks a person's change takes).
 
 ## Rules the code keeps
 

@@ -1436,6 +1436,15 @@ final class HttpAdminServer {
                         }
                     }
                 }
+                for (String group : FleetDocument.SECTIONS) {
+                    if (form.containsKey("fleet_share_" + group)) {
+                        String refused = FleetServer.shareSection(context, group,
+                                isTrue(form.get("fleet_share_" + group)));
+                        if (refused != null) {
+                            return "Not changed: " + refused + ".";
+                        }
+                    }
+                }
                 if (form.containsKey("volume_buttons_disabled")) {
                     KioskConfig.edit(context)
                             .volumeButtonsDisabled(isTrue(form.get("volume_buttons_disabled")))
@@ -3315,7 +3324,7 @@ final class HttpAdminServer {
     // ---- the bodies, each the section's essentials in the texts the page has always had
 
     private String dashboardBody(KioskConfig config, String notice, String noticeSection) {
-        return sectionFormStart("dashboard", notice, noticeSection)
+        return sharedLine("dashboard") + sectionFormStart("dashboard", notice, noticeSection)
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
@@ -3334,7 +3343,7 @@ final class HttpAdminServer {
     }
 
     private String mqttBody(KioskConfig config, String notice, String noticeSection) {
-        return sectionFormStart("mqtt", notice, noticeSection)
+        return sharedLine("mqtt") + sectionFormStart("mqtt", notice, noticeSection)
                 + baselineField(config.mqttHost + "|" + config.mqttPort + "|" + config.mqttUsername)
                 + urlField("mqtt_host", "Broker host", config.mqttHost)
                 + field("number", "mqtt_port", "Broker port", Integer.toString(config.mqttPort))
@@ -3354,7 +3363,31 @@ final class HttpAdminServer {
                 + "<p class=\"hint" + (KioskRuntimeState.fleetListening() ? "" : " bad")
                 + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
                 + sectionFormEnd("Save")
-                + fleetMembership();
+                + fleetMembership()
+                + sharedSwitches();
+    }
+
+    /** Which groups of settings the fleet shares (block 12d), as instant switches. */
+    private String sharedSwitches() {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "";
+        }
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        StringBuilder rows = new StringBuilder("<p class=\"hint\">Shared with the fleet</p>"
+                + "<div class=\"switches\">");
+        for (String section : FleetDocument.SECTIONS) {
+            rows.append(switchRow("fleet-share-" + section.replace('_', '-'),
+                    FleetDocument.sectionLabel(section),
+                    " data-setting=\"fleet_share_" + section + "\"",
+                    FleetDocument.sectionValues(list, section) != null));
+        }
+        return rows.append("</div>").toString();
+    }
+
+    /** "Set by the fleet …" at the top of a section the fleet shares, or nothing. */
+    private String sharedLine(String section) {
+        String line = FleetProfile.sharedLine(context, section);
+        return line == null ? "" : "<p class=\"hint\">" + escapeHtml(line) + "</p>";
     }
 
     /**
@@ -3388,7 +3421,7 @@ final class HttpAdminServer {
     private static final String BLANK_KEEPS = "Blank keeps the current one.";
 
     private String webAdminBody(KioskConfig config, String notice, String noticeSection) {
-        return sectionFormStart("webadmin", notice, noticeSection)
+        return sharedLine("web_admin") + sectionFormStart("webadmin", notice, noticeSection)
                 + baselineField(Integer.toString(config.httpPort))
                 + field("number", "http_port", "Port", Integer.toString(config.httpPort))
                 + field("password", "http_admin_password", "Admin password", "", "", BLANK_KEEPS)
@@ -3591,7 +3624,7 @@ final class HttpAdminServer {
     private String displayBody() {
         // The theme switch stands beside the section's name (see the menu builder); the app
         // bar's Auto/Light/Dark went (Juri, 2026-09-27).
-        return "<div class=\"actions tight\">"
+        return sharedLine("display") + "<div class=\"actions tight\">"
                 + quickAction("display.wake", "Display on", "tonal", null)
                 + quickAction("display.visual_off", "Display off", "tonal", null)
                 + "</div>"
@@ -3608,7 +3641,8 @@ final class HttpAdminServer {
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
         // A menu here and radios on the screensaver page, deliberately: this is one section among
         // nine, while the page's chooser decides what the rest of that page says.
-        return selectField("screensaver-mode", null, "Mode", "screensaver_mode",
+        return sharedLine("screensaver")
+                + selectField("screensaver-mode", null, "Mode", "screensaver_mode",
                 screensaverModeOptions(saver), null)
                 + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"screensaver-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))

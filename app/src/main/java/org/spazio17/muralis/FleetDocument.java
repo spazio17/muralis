@@ -171,6 +171,106 @@ final class FleetDocument {
     /** A member entry's version of joining, and a revocation's version: what a merge compares. */
     static final String SINCE = "since";
     static final String AT = "at";
+    /**
+     * The profile's sections (block 12d): the groups of settings a fleet can share, each either
+     * shared, with the values every member applies, or not. Never shared: a panel's name, member
+     * port, escape combinations and PIN, calibrations and what belongs to its hardware.
+     */
+    static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "screensaver"};
+    /** A section's words on both surfaces. */
+    static String sectionLabel(String section) {
+        switch (section) {
+            case "dashboard": return "Dashboard";
+            case "mqtt": return "MQTT";
+            case "web_admin": return "Local web admin";
+            case "display": return "Display";
+            default: return "Screensaver";
+        }
+    }
+
+    /** Values that are secrets: carried only on the wire, blanked in every stored copy. */
+    static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password"};
+
+    /** The shared values of {@code section}, or null when the fleet does not share it. */
+    static Map<String, Object> sectionValues(Map<String, Object> document, String section) {
+        Map<String, Object> entry = profileEntry(document, section);
+        Object values = entry == null ? null : entry.get("values");
+        return values instanceof Map ? TinyJson.object(values) : null;
+    }
+
+    private static Map<String, Object> profileEntry(Map<String, Object> document, String section) {
+        Object profile = document == null ? null : document.get("profile");
+        Object entry = profile instanceof Map ? TinyJson.object(profile).get(section) : null;
+        return entry instanceof Map ? TinyJson.object(entry) : null;
+    }
+
+    /** The version at which {@code section} was last shared, changed or unshared; 0 when never. */
+    static long sectionAt(Map<String, Object> document, String section) {
+        Map<String, Object> entry = profileEntry(document, section);
+        return entry == null ? 0 : numberOf(entry, AT);
+    }
+
+    /**
+     * The next document with {@code section} shared with {@code values}, or unshared when they
+     * are null, by {@code author}: one version higher, the section stamped with it, everything
+     * else carried over. The entry stays when unsharing, without values, so the version of the
+     * unsharing is known to the merge.
+     */
+    static Map<String, Object> withSection(Map<String, Object> held, String author, String section,
+            Map<String, Object> values, String updated) {
+        Map<String, Object> next = new LinkedHashMap<>(held);
+        next.remove("signature");
+        long version = version(held) + 1;
+        next.put("version", version);
+        next.put("base_version", version - 1);
+        next.put("author", author);
+        next.put("updated", updated);
+        Map<String, Object> profile = new LinkedHashMap<>();
+        if (held.get("profile") instanceof Map) {
+            profile.putAll(TinyJson.object(held.get("profile")));
+        }
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put(AT, version);
+        if (values != null) {
+            entry.put("values", new LinkedHashMap<>(values));
+        }
+        profile.put(section, entry);
+        next.put("profile", profile);
+        return next;
+    }
+
+    /** The secrets in {@code document}'s profile, by key, blanked in place; an empty one too. */
+    static Map<String, String> stripSecrets(Map<String, Object> document) {
+        Map<String, String> secrets = new LinkedHashMap<>();
+        for (String section : SECTIONS) {
+            Map<String, Object> values = sectionValues(document, section);
+            if (values == null) {
+                continue;
+            }
+            for (String key : SECRET_KEYS) {
+                if (values.get(key) instanceof String) {
+                    secrets.put(key, (String) values.get(key));
+                    values.put(key, "");
+                }
+            }
+        }
+        return secrets;
+    }
+
+    /** Puts {@code secrets} back where {@link #stripSecrets} blanked them. */
+    static void fillSecrets(Map<String, Object> document, Map<String, String> secrets) {
+        for (String section : SECTIONS) {
+            Map<String, Object> values = sectionValues(document, section);
+            if (values == null) {
+                continue;
+            }
+            for (String key : SECRET_KEYS) {
+                if (values.containsKey(key) && secrets.containsKey(key)) {
+                    values.put(key, secrets.get(key));
+                }
+            }
+        }
+    }
 
     /** The revoked key hashes. */
     static Set<String> revoked(Map<String, Object> document) {
@@ -369,9 +469,10 @@ final class FleetDocument {
      * fleet apart end with the same list once they meet, whatever the order: every member either
      * lists, under the entry of the newer document where both have it; every key either revokes,
      * at the later of the two versions, unless a member entry joined after that (a fresh join
-     * after the removal); the fleet, the profile, the overrides and the tier of the newer
-     * document. Version, author and signature are the newer document's and must be set anew
-     * when the result differs from both inputs. {@code held} may be null.
+     * after the removal); each shared section of the profile from the document that changed it
+     * last; the fleet, the overrides and the tier of the newer document. Version, author and
+     * signature are the newer document's and must be set anew when the result differs from both
+     * inputs. {@code held} may be null.
      */
     static Map<String, Object> merge(Map<String, Object> held, Map<String, Object> incoming) {
         Map<String, Object> newer = newer(incoming, held) ? incoming : held;
@@ -403,6 +504,21 @@ final class FleetDocument {
         }
         merged.put("members", members);
         merged.put("revoked", revokedList(revoked));
+        // Each shared section on its own: the later change wins, the newer document on a tie.
+        Map<String, Object> profile = new LinkedHashMap<>();
+        for (String section : SECTIONS) {
+            Map<String, Object> ours = profileEntry(newer, section);
+            Map<String, Object> theirs = profileEntry(older, section);
+            Map<String, Object> winner = theirs != null
+                    && (ours == null || numberOf(theirs, AT) > numberOf(ours, AT)) ? theirs : ours;
+            if (winner != null) {
+                profile.put(section, winner);
+            }
+        }
+        if (!profile.isEmpty() || newer.containsKey("profile")
+                || (older != null && older.containsKey("profile"))) {
+            merged.put("profile", profile);
+        }
         return merged;
     }
 

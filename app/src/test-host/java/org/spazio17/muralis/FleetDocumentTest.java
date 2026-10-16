@@ -187,6 +187,47 @@ public final class FleetDocumentTest {
                 && FleetDocument.revoked(back).contains(repeat('e', 64)),
                 "a key joining again stayed revoked, or the reset key was not");
 
+        // The profile: a section shared from one panel, changed apart on two, the later wins;
+        // unsharing is a change too; secrets leave the stored copy and come back for the wire.
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("dashboard_url", "https://a.example/");
+        Map<String, Object> shared = FleetDocument.withSection(read, "kiosk-a", "dashboard",
+                values, "2026-10-12T21:00:00Z");
+        require(FleetDocument.version(shared) == 2 && FleetDocument.sectionAt(shared, "dashboard")
+                == 2 && "https://a.example/".equals(FleetDocument.sectionValues(shared,
+                "dashboard").get("dashboard_url")), "sharing a section did not stamp it");
+        require(FleetDocument.sectionValues(shared, "mqtt") == null
+                && FleetDocument.sectionAt(shared, "mqtt") == 0, "an unshared section read as shared");
+        Map<String, Object> v2 = new LinkedHashMap<>();
+        v2.put("dashboard_url", "https://b.example/");
+        Map<String, Object> byB2 = FleetDocument.withSection(shared, "kiosk-b", "dashboard", v2,
+                "2026-10-12T21:01:00Z");
+        Map<String, Object> byC2 = FleetDocument.withSection(FleetDocument.withSection(shared,
+                "kiosk-c", "mqtt", Collections.singletonMap("mqtt_host", "broker"),
+                "2026-10-12T21:01:00Z"), "kiosk-c", "dashboard", values, "2026-10-12T21:02:00Z");
+        Map<String, Object> both = FleetDocument.merge(byB2, byC2);
+        require("https://a.example/".equals(FleetDocument.sectionValues(both, "dashboard")
+                .get("dashboard_url")), "the later change of a section lost");
+        require("broker".equals(FleetDocument.sectionValues(both, "mqtt").get("mqtt_host")),
+                "a section shared on one side only was lost");
+        Map<String, Object> unshared = FleetDocument.withSection(both, "kiosk-a", "mqtt", null,
+                "2026-10-12T21:03:00Z");
+        require(FleetDocument.sectionValues(unshared, "mqtt") == null
+                && FleetDocument.sectionValues(FleetDocument.merge(byC2, unshared), "mqtt") == null,
+                "unsharing did not hold in a merge");
+        Map<String, Object> secret = new LinkedHashMap<>();
+        secret.put("mqtt_host", "broker");
+        secret.put("mqtt_password", "hunter2");
+        Map<String, Object> withSecret = FleetDocument.withSection(read, "kiosk-a", "mqtt", secret,
+                "2026-10-12T21:04:00Z");
+        Map<String, String> taken = FleetDocument.stripSecrets(withSecret);
+        require("hunter2".equals(taken.get("mqtt_password")) && "".equals(
+                FleetDocument.sectionValues(withSecret, "mqtt").get("mqtt_password")),
+                "the secret was not stripped");
+        FleetDocument.fillSecrets(withSecret, taken);
+        require("hunter2".equals(FleetDocument.sectionValues(withSecret, "mqtt")
+                .get("mqtt_password")), "the secret did not come back");
+
         System.out.println("FleetDocumentTest passed");
     }
 
