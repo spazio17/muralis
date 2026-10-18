@@ -512,7 +512,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Android sends a device owner set up the QR way no "provisioning done" from Android 10 on,
      * and the system's launcher comes up instead, so the person would have to find Muralis in
      * the app list to start the first-start screens. Watched on the setting the setup wizard
-     * writes when it finishes; nothing else is opened, and HOME still waits for the way out.
+     * writes when it finishes. Without combinations it opens the first-start screens and HOME
+     * waits for the way out; with combinations a setup QR carried, it claims HOME at once.
      */
     private void openFirstStartAfterSetup() {
         android.content.SharedPreferences runtime = KioskConfig.storageContext(this)
@@ -520,7 +521,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!runtime.getBoolean(OPEN_AFTER_SETUP, false)) {
             return;
         }
-        if (!isDeviceOwner() || KioskConfig.load(this).escapeSequencesConfigured()) {
+        // Opened whether or not the combinations exist: a setup QR can carry them, and then
+        // Muralis's first screen claims HOME and shows the dashboard at once, instead of the
+        // device ending its setup on the system's launcher (2026-10-18). The mark is set only
+        // when Muralis becomes device owner, so a panel already in use is never interrupted.
+        if (!isDeviceOwner()) {
             runtime.edit().remove(OPEN_AFTER_SETUP).apply();
             return;
         }

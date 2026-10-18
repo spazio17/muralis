@@ -59,9 +59,10 @@ public final class KioskDeviceAdminReceiver extends DeviceAdminReceiver {
     @Override
     public void onEnabled(Context context, android.content.Intent intent) {
         Log.i(TAG, "Muralis device admin enabled");
-        // Once the device's own setup is over, Muralis opens its first-start screens, so a panel
-        // set up by QR lands in Muralis rather than in the system's launcher; see
-        // KioskService.openFirstStartAfterSetup. HOME itself still waits for the way out.
+        // Once the device's own setup is over, Muralis opens, so a panel set up by QR lands in
+        // Muralis rather than in the system's launcher; see KioskService.openFirstStartAfterSetup.
+        // HOME is claimed at once when the QR carried the combinations, and otherwise waits for
+        // the way out.
         KioskConfig.storageContext(context).getSharedPreferences("kiosk_runtime",
                 Context.MODE_PRIVATE).edit().putBoolean(KioskService.OPEN_AFTER_SETUP, true).apply();
         // The process was started for the setup's questions, before Muralis was the owner, so
