@@ -583,9 +583,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         super.onCreate();
         createdAtMs = SystemClock.elapsedRealtime();
         createNotificationChannel();
-        // The settings a setup QR carried, once, before anything reads them.
-        applyProvisionedSettings();
-        openFirstStartAfterSetup();
         // The base type alone, named: the two-argument call asks for every type the manifest
         // lists, and from Android 14 the camera and microphone types throw a SecurityException
         // here unless both permissions are already granted, which a fresh install never has
@@ -598,6 +595,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
             startForeground(NOTIFICATION_ID, buildNotification(0));
         }
         foregroundTypesNow = baseForegroundType();
+        // The settings a setup QR carried, once, before anything else reads them, and only now
+        // the service is in the foreground: applying them starts this service again (the sensors'
+        // refresh), which Android refuses to an app it counts as in the background, and a throw
+        // here would also miss startForeground's deadline (review, 2026-10-18). A failure costs
+        // the carried settings, never the start.
+        try {
+            applyProvisionedSettings();
+        } catch (RuntimeException failure) {
+            Log.e(TAG, "The settings the setup QR carried could not be applied", failure);
+        }
+        openFirstStartAfterSetup();
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
         android.os.UserManager users = getSystemService(android.os.UserManager.class);
