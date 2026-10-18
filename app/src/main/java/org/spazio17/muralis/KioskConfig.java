@@ -132,8 +132,8 @@ final class KioskConfig {
     String deviceId = "";
     String mqttHost = "";
     /**
-     * 1883, the plain-TCP MQTT port. Was 8883 with a TLS flag; see MqttController for why TLS was
-     * removed rather than left as an option that could not be configured.
+     * 1883, the plain-TCP MQTT port. Switching on TLS does not change it: the person types the
+     * broker's TLS port (often 8883) with it.
      */
     int mqttPort = 1883;
     String mqttUsername = "";
