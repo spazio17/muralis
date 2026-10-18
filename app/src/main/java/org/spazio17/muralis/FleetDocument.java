@@ -801,7 +801,8 @@ final class FleetDocument {
         merged.put("revoked", revokedList(revoked));
         // Pro's lease: the later confirmation, so an anchor's renewal is never lost to a document
         // that changed something else meanwhile.
-        Map<String, Object> tier = FleetTier.newer(tierOf(newer), tierOf(older));
+        Map<String, Object> tier = FleetTier.newer(tierOf(newer), tierOf(older),
+                System.currentTimeMillis());
         if (tier != null) {
             merged.put("tier", tier);
         }

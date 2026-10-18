@@ -22,6 +22,12 @@ final class FleetTier {
     static final int WARN_AFTER_DAYS = 20;
     /** An anchor that still owns Pro writes again once a confirmation is this old. */
     static final long RECONFIRM_MS = 12L * 60 * 60 * 1000;
+    /**
+     * How far ahead of this panel's clock a confirmation may lie and still count: clocks differ a
+     * little, but a block confirmed further ahead comes from a clock that is wrong (or a writer
+     * that lies), and trusting it would keep Pro past a refund and win every later merge.
+     */
+    static final long CLOCK_SKEW_MS = 24L * 60 * 60 * 1000;
     /** A Pro fleet holds at most this many panels, every Muralis install counted (2026-10-09). */
     static final int MAX_PANELS = 6;
 
@@ -88,7 +94,10 @@ final class FleetTier {
             long nowMs) {
         boolean heldPro = held != null && "pro".equals(held.get("tier"));
         if (owned) {
-            return !heldPro || nowMs - number(held, "confirmed") >= RECONFIRM_MS;
+            // Also over a block confirmed in the future, which the members no longer trust: the
+            // anchor whose clock ran ahead writes again once its clock is right.
+            return !heldPro || nowMs - number(held, "confirmed") >= RECONFIRM_MS
+                    || number(held, "confirmed") > nowMs + CLOCK_SKEW_MS;
         }
         return heldPro && panelId.equals(held.get("confirmed_by"));
     }
@@ -114,21 +123,32 @@ final class FleetTier {
                     "confirmed_by", "")), number(block, "confirmed"), 0, 0, false, false, true);
         }
         long confirmed = number(block, "confirmed");
-        long until = number(block, "valid_until");
+        // Never longer than one lease from the confirmation, whatever the block says, and nothing
+        // from a confirmation in the future.
+        long until = Math.min(number(block, "valid_until"), confirmed + LEASE_MS);
         int days = (int) Math.max(0, (nowMs - confirmed) / (24L * 60 * 60 * 1000));
-        boolean pro = nowMs < until;
+        boolean pro = nowMs < until && confirmed <= nowMs + CLOCK_SKEW_MS;
         String by = String.valueOf(block.getOrDefault("confirmed_by", ""));
         return new Status(pro, pro ? Source.FLEET : Source.NONE, by, confirmed, until, days,
                 pro && days >= WARN_AFTER_DAYS, !pro, false);
     }
 
-    /** Of two blocks, the one confirmed later; the first on a tie. Either may be null. */
-    static Map<String, Object> newer(Map<String, Object> a, Map<String, Object> b) {
+    /**
+     * Of two blocks, the one confirmed later; the first on a tie. Either may be null. A block
+     * confirmed more than {@link #CLOCK_SKEW_MS} after {@code nowMs} never wins over one that is
+     * not, so a wrong clock cannot hold the fleet's tier against a later renewal or a refund.
+     */
+    static Map<String, Object> newer(Map<String, Object> a, Map<String, Object> b, long nowMs) {
         if (a == null || a.isEmpty()) {
             return b;
         }
         if (b == null || b.isEmpty()) {
             return a;
+        }
+        boolean aAhead = number(a, "confirmed") > nowMs + CLOCK_SKEW_MS;
+        boolean bAhead = number(b, "confirmed") > nowMs + CLOCK_SKEW_MS;
+        if (aAhead != bAhead) {
+            return aAhead ? b : a;
         }
         return number(b, "confirmed") > number(a, "confirmed") ? b : a;
     }
