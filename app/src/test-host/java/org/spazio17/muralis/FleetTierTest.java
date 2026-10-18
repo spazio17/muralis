@@ -12,7 +12,8 @@ public final class FleetTierTest {
 
     public static void main(String[] args) {
         long day = 24L * 60 * 60 * 1000;
-        long now = 1_800_000_000_000L;
+        // The real clock: a merge reads it to set aside confirmations from the future.
+        long now = System.currentTimeMillis();
         Map<String, Object> pro = FleetTier.confirmed(true, "hallway", now);
         require("pro".equals(pro.get("tier")) && ((Number) pro.get("valid_until")).longValue()
                 == now + FleetTier.LEASE_MS, "an owner's block is pro for thirty days");
@@ -57,20 +58,37 @@ public final class FleetTierTest {
 
         // Which block wins.
         Map<String, Object> later = FleetTier.confirmed(true, "kitchen", now + day);
-        require(FleetTier.newer(pro, later) == later && FleetTier.newer(later, pro) == later,
+        require(FleetTier.newer(pro, later, now) == later && FleetTier.newer(later, pro, now) == later,
                 "the later confirmation wins, whichever side it is on");
-        require(FleetTier.newer(null, pro) == pro && FleetTier.newer(pro, new LinkedHashMap<>())
-                == pro, "a missing block loses");
+        require(FleetTier.newer(null, pro, now) == pro
+                && FleetTier.newer(pro, new LinkedHashMap<>(), now) == pro, "a missing block loses");
         Map<String, Object> docA = new LinkedHashMap<>();
         docA.put("version", 5L);
         docA.put("tier", later);
         Map<String, Object> docB = new LinkedHashMap<>();
         docB.put("version", 6L);
         docB.put("tier", pro);
-        require(FleetTier.newer(FleetDocument.tierOf(FleetDocument.merge(docA, docB)), later)
+        require(FleetTier.newer(FleetDocument.tierOf(FleetDocument.merge(docA, docB)), later, now)
                 == later && ((Number) FleetDocument.tierOf(FleetDocument.merge(docA, docB))
                         .get("confirmed")).longValue() == now + day,
                 "a merge keeps the later confirmation even from the older document");
+
+        // A wrong clock or a writer that lies (Emmet, 2026-10-18).
+        Map<String, Object> long_ = FleetTier.confirmed(true, "hallway", now);
+        long_.put("valid_until", now + 365 * day);
+        require(!FleetTier.status(false, long_, now + 31 * day).pro,
+                "a block never holds longer than one lease from its confirmation");
+        Map<String, Object> ahead = FleetTier.confirmed(true, "hallway", now + 300 * day);
+        require(!FleetTier.status(false, ahead, now).pro,
+                "a confirmation far in the future gives no Pro");
+        require(FleetTier.status(false, FleetTier.confirmed(true, "hallway", now + 3600_000L),
+                now).pro, "a clock a little ahead still counts");
+        Map<String, Object> refund = FleetTier.confirmed(false, "hallway", now);
+        require(FleetTier.newer(ahead, refund, now) == refund
+                && FleetTier.newer(refund, ahead, now) == refund,
+                "a refund wins over a confirmation from the future");
+        require(FleetTier.shouldWrite(true, "hallway", ahead, now),
+                "an owner writes again over a confirmation from the future");
         System.out.println("FleetTierTest passed");
     }
 
