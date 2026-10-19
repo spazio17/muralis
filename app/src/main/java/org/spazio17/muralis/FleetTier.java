@@ -13,7 +13,8 @@ import java.util.Map;
  * account owns Pro, and every member leases it for thirty days from each confirmation.
  *
  * <p>The block is {@code tier} ("pro" or "free"), {@code confirmed_by} (a panel id, never an
- * account), {@code confirmed} and {@code valid_until} (milliseconds since 1970). Pure, with no
+ * account), {@code confirmed_key} (that panel's key hash, which a rename does not change),
+ * {@code confirmed} and {@code valid_until} (milliseconds since 1970). Pure, with no
  * Android imports, so the rules are host-tested.
  */
 final class FleetTier {
@@ -74,10 +75,12 @@ final class FleetTier {
     }
 
     /** The block an anchor writes after Google Play answered for its account. */
-    static Map<String, Object> confirmed(boolean owned, String panelId, long nowMs) {
+    static Map<String, Object> confirmed(boolean owned, String panelId, String panelKey,
+            long nowMs) {
         Map<String, Object> block = new LinkedHashMap<>();
         block.put("tier", owned ? "pro" : "free");
         block.put("confirmed_by", panelId);
+        block.put("confirmed_key", panelKey);
         block.put("confirmed", nowMs);
         block.put("valid_until", owned ? nowMs + LEASE_MS : nowMs);
         return block;
@@ -88,10 +91,12 @@ final class FleetTier {
      * account and the fleet's block is {@code held}. An owner writes when the fleet is not Pro or
      * its confirmation is older than {@link #RECONFIRM_MS}; a panel whose account does not own
      * Pro writes "free" only over a block it confirmed itself (a refund), never over another
-     * anchor's, so two panels on two accounts do not undo each other.
+     * anchor's, so two panels on two accounts do not undo each other. Its own block is found by
+     * the panel's key, so a renamed anchor still ends it; by its id for a block written before
+     * the key was kept.
      */
-    static boolean shouldWrite(boolean owned, String panelId, Map<String, Object> held,
-            long nowMs) {
+    static boolean shouldWrite(boolean owned, String panelId, String panelKey,
+            Map<String, Object> held, long nowMs) {
         boolean heldPro = held != null && "pro".equals(held.get("tier"));
         if (owned) {
             // Also over a block confirmed in the future, which the members no longer trust: the
@@ -99,7 +104,9 @@ final class FleetTier {
             return !heldPro || nowMs - number(held, "confirmed") >= RECONFIRM_MS
                     || number(held, "confirmed") > nowMs + CLOCK_SKEW_MS;
         }
-        return heldPro && panelId.equals(held.get("confirmed_by"));
+        Object key = held == null ? null : held.get("confirmed_key");
+        return heldPro && (key != null ? panelKey.equals(key)
+                : panelId.equals(held.get("confirmed_by")));
     }
 
     /** This panel's Pro from its own purchase and the fleet's block, at {@code nowMs}. */

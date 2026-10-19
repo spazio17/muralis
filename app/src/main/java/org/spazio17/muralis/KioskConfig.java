@@ -1411,6 +1411,7 @@ final class KioskConfig {
         }
         android.os.PersistableBundle extras = intent.getParcelableExtra(
                 android.app.admin.DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE);
+        keepInvite(context, extras == null ? null : extras.getString("muralis_invite"));
         String packed = extras == null ? null : extras.getString("muralis_settings_z");
         String text = packed == null ? null : SettingsTransfer.unpacked(packed);
         SharedPreferences prefs = storageContext(context)
@@ -1421,8 +1422,58 @@ final class KioskConfig {
         if (text != null && !text.isEmpty() && !prefs.getBoolean(PROVISIONED_SETTINGS_KEPT, false)) {
             prefs.edit().putString(PROVISIONED_SETTINGS, text)
                     .putBoolean(PROVISIONED_SETTINGS_KEPT, true).commit();
+            reloadOnOwner(context);
+        }
+    }
+
+    /** Where an invitation QR's extra waits for the first start (kiosk_runtime). */
+    private static final String FLEET_INVITE = "fleet_invite";
+
+    /**
+     * Keeps an invitation QR's extra ({@link FleetInvite}) for the first start: the code and
+     * where the inviting panel listens. In device-protected storage like the other runtime
+     * state, never logged, removed once this panel is in the fleet or the invitation is over.
+     */
+    private static void keepInvite(Context context, String extra) {
+        if (extra == null || FleetJoin.parseQr(extra) == null || FleetInvite.until(extra) == 0) {
+            return;
+        }
+        SharedPreferences runtime = storageContext(context)
+                .getSharedPreferences("kiosk_runtime", Context.MODE_PRIVATE);
+        if (!runtime.contains(FLEET_INVITE)) {
+            runtime.edit().putString(FLEET_INVITE, extra).commit();
+            // The service may have started before the setup handed the extras over: it starts
+            // knocking now (KioskService.inviteKnock).
+            reloadOnOwner(context);
+        }
+    }
+
+    /**
+     * Asks a running service to take what the setup kept. Not before Muralis is the owner: the
+     * setup's first question comes earlier, and the service that onEnabled starts reads it then.
+     */
+    private static void reloadOnOwner(Context context) {
+        if (KioskDeviceAdminReceiver.isDeviceOwner(context)) {
             KioskService.reloadConfiguration(context);
         }
+    }
+
+    /** The kept invitation while it lasts and this panel is in no fleet, else null (and gone). */
+    static String pendingInvite(Context context) {
+        SharedPreferences runtime = storageContext(context)
+                .getSharedPreferences("kiosk_runtime", Context.MODE_PRIVATE);
+        String extra = runtime.getString(FLEET_INVITE, null);
+        if (extra != null && (!fleetIdOf(context).isEmpty()
+                || System.currentTimeMillis() >= FleetInvite.until(extra))) {
+            dropInvite(context);
+            return null;
+        }
+        return extra;
+    }
+
+    static void dropInvite(Context context) {
+        storageContext(context).getSharedPreferences("kiosk_runtime", Context.MODE_PRIVATE)
+                .edit().remove(FLEET_INVITE).apply();
     }
 
     /** The kept settings file, removed as it is read, or null. */
