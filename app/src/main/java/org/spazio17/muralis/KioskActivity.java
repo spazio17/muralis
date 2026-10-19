@@ -3773,7 +3773,7 @@ public final class KioskActivity extends Activity {
                 nameProblem.setVisibility(View.GONE);
                 return;
             }
-            String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+            String idProblem = FleetServer.nameProblem(this, deviceId);
             if (idProblem != null) {
                 // The box is called Name here; "device id" is the dispatcher's word for MQTT.
                 nameProblem.setText("Not saved: " + idProblem.replace("device id", "the name")
@@ -4068,7 +4068,7 @@ public final class KioskActivity extends Activity {
                 return;
             }
             String deviceId = deviceIdInput.getText().toString().trim();
-            String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+            String idProblem = FleetServer.nameProblem(this, deviceId);
             if (idProblem != null) {
                 Toast.makeText(this, "Not saved: " + idProblem + ".",
                         Toast.LENGTH_LONG).show();
@@ -4256,7 +4256,6 @@ public final class KioskActivity extends Activity {
         // thread, each drawn into its row as it arrives; a panel that does not answer says so.
         LinearLayout panels = card(theme, "Panels");
         org.json.JSONArray peers = FleetServer.peersJson(this);
-        String self = KioskConfig.deviceIdOf(this);
         java.util.List<Runnable> fetches = new java.util.ArrayList<>();
         Button shots = tonalButton(theme, "Screenshots");
         Button identifyAll = textButton(theme, "Identify all");
@@ -4264,7 +4263,7 @@ public final class KioskActivity extends Activity {
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
             String id = TinyJson.string(member, FleetDocument.ID, "");
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
-            String contact = FleetServer.contactLine(member, peers, self);
+            String contact = FleetServer.contactLine(this, member, peers);
             TextView line = new FlushText(this);
             line.setTextSize(15);
             line.setTextColor(theme.text);
@@ -4337,7 +4336,7 @@ public final class KioskActivity extends Activity {
             Button identify = textButton(theme, "Identify");
             identify.setOnClickListener(view -> fleetWork(app,
                     () -> FleetServer.identifyOn(app, member)));
-            if (id.equals(self)) {
+            if (FleetServer.isSelf(this, member)) {
                 panels.addView(fittingButtonRow(identify), matchWrapClose());
             } else {
                 // For a panel that cannot leave by itself (broken, wiped, gone); one that is

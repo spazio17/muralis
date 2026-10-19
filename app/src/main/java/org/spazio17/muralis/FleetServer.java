@@ -223,6 +223,12 @@ final class FleetServer {
         if (problem != null) {
             return new Adopted(problem, null);
         }
+        // Two panels of one name would share their MQTT topics and their place in the list.
+        if (invitation.id.equalsIgnoreCase(KioskConfig.deviceIdOf(context))
+                || nameTaken(context, invitation.id, invitation.spki) != null) {
+            return new Adopted("a panel called " + invitation.id + " is already in the fleet;"
+                    + " rename one of them first", null);
+        }
         FleetIdentity self = FleetIdentity.load(context);
         if (self == null) {
             return new Adopted("this panel's fleet key is not ready yet; try again in a moment",
@@ -506,11 +512,10 @@ final class FleetServer {
                     + " create or join a fleet.";
         }
         StringBuilder others = new StringBuilder();
-        String self = KioskConfig.deviceIdOf(context);
         long now = android.os.SystemClock.elapsedRealtime();
         for (java.util.Map<String, Object> one
                 : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
-            if (self.equals(TinyJson.string(one, FleetDocument.ID, ""))) {
+            if (isSelf(context, one)) {
                 continue;
             }
             Peer known = peers.get(TinyJson.string(one, FleetDocument.SPKI, ""));
@@ -1590,12 +1595,14 @@ final class FleetServer {
         }
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         String self = KioskConfig.deviceIdOf(context);
+        String key = KioskRuntimeState.fleetKey();
         long now = System.currentTimeMillis();
-        if (held == null || !FleetTier.shouldWrite(owned, self, FleetDocument.tierOf(held), now)) {
+        if (held == null || key.isEmpty()
+                || !FleetTier.shouldWrite(owned, self, key, FleetDocument.tierOf(held), now)) {
             return;
         }
         String refused = writeList(context, null, null, (identity, list) -> FleetDocument.withTier(
-                list, self, FleetTier.confirmed(owned, self, now),
+                list, self, FleetTier.confirmed(owned, self, identity.spki, now),
                 java.time.Instant.now().toString()),
                 owned ? "Confirmed Muralis Pro for the fleet" : "Muralis Pro ended for the fleet");
         if (refused != null) {
@@ -1609,6 +1616,7 @@ final class FleetServer {
             return false;
         }
         return FleetTier.shouldWrite(false, KioskConfig.deviceIdOf(context),
+                KioskRuntimeState.fleetKey(),
                 FleetDocument.tierOf(KioskConfig.fleetDocumentOf(context)),
                 System.currentTimeMillis());
     }
@@ -1810,28 +1818,45 @@ final class FleetServer {
         if (identity == null || held == null) {
             return;
         }
+        // This panel's own name, address and port first, so the others reach it where it is.
+        refreshSelf(context);
+        held = KioskConfig.fleetDocumentOf(context);
         JSONObject mine = checkinBody(context, FleetDocument.version(held));
-        java.util.List<Thread> calls = new java.util.ArrayList<>();
         java.util.concurrent.atomic.AtomicInteger answered = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicInteger removed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.List<java.util.Map<String, Object>> others = new java.util.ArrayList<>();
         for (java.util.Map<String, Object> member : FleetDocument.members(held)) {
-            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
-            if (spki.equals(identity.spki)) {
-                continue;
+            if (!identity.spki.equals(TinyJson.string(member, FleetDocument.SPKI, ""))) {
+                others.add(member);
             }
-            Thread call = new Thread(() -> heartbeatOne(context, identity, member, spki, mine,
-                    answered, removed),
-                    "MuralisFleetHeartbeat-" + FleetTls.shortForm(spki));
-            calls.add(call);
-            call.start();
         }
-        for (Thread call : calls) {
-            try {
-                call.join();
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return;
+        java.util.Set<String> silent = callAll(context, identity, others, mine, answered, removed);
+        // A member that did not answer where the list says may have a new address or port, as
+        // after a router restart that gave every panel a new one: looked for by its key among
+        // the panels announced on this network, and called again where it is found.
+        long now = android.os.SystemClock.elapsedRealtime();
+        java.util.Set<String> due = new java.util.HashSet<>();
+        for (String spki : silent) {
+            long[] wait = searchAfter.get(spki);
+            if (wait == null || now >= wait[0]) {
+                due.add(spki);
+                long next = wait == null ? HEARTBEAT_INTERVAL_MS
+                        : Math.min(wait[1] * 2, SEARCH_BACKOFF_MAX_MS);
+                searchAfter.put(spki, new long[] {now + next, next});
             }
+        }
+        if (!due.isEmpty() && !Thread.currentThread().isInterrupted()
+                && findOnNetwork(context, due) > 0) {
+            java.util.List<java.util.Map<String, Object>> found = new java.util.ArrayList<>();
+            for (java.util.Map<String, Object> member : others) {
+                if (announced.containsKey(TinyJson.string(member, FleetDocument.SPKI, ""))) {
+                    found.add(member);
+                }
+            }
+            callAll(context, identity, found, mine, answered, removed);
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            return;
         }
         // Removed only when every member that answered says so: one member that fell behind
         // still holds an old removal of a panel that joined again, and catches up by itself.
@@ -1842,24 +1867,207 @@ final class FleetServer {
         } else if (answered.get() > 0) {
             removedFrom = "";
         }
-        Log.i(TAG, "Heartbeat (" + why + ") to " + calls.size() + " panels done, "
+        Log.i(TAG, "Heartbeat (" + why + ") to " + others.size() + " panels done, "
                 + answered.get() + " answered");
         KioskService.publishTelemetrySoon(context);
     }
 
-    private static void heartbeatOne(Context context, FleetIdentity identity,
+    /** One check-in to each of {@code members} at once; the keys of those that did not answer. */
+    private static java.util.Set<String> callAll(Context context, FleetIdentity identity,
+            java.util.List<java.util.Map<String, Object>> members, JSONObject mine,
+            java.util.concurrent.atomic.AtomicInteger answered,
+            java.util.concurrent.atomic.AtomicInteger removed) {
+        java.util.Set<String> silent = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        java.util.List<Thread> calls = new java.util.ArrayList<>();
+        for (java.util.Map<String, Object> member : members) {
+            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+            Thread call = new Thread(() -> {
+                if (!heartbeatOne(context, identity, member, spki, mine, answered, removed)) {
+                    silent.add(spki);
+                }
+            }, "MuralisFleetHeartbeat-" + FleetTls.shortForm(spki));
+            calls.add(call);
+            call.start();
+        }
+        for (Thread call : calls) {
+            try {
+                call.join();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return silent;
+    }
+
+    /** Where members were last found announced on this network, by key; see findOnNetwork. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Peer> announced =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** How long a heartbeat looks for silent members on the network. */
+    private static final long FIND_MS = 15_000L;
+    /**
+     * Per silent member, when it may be looked for again and the wait after that: from one
+     * heartbeat (3 minutes) doubling to an hour, so a panel that left for good costs a search
+     * an hour, not one every round. Cleared when it answers and when the network comes back.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, long[]> searchAfter =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long SEARCH_BACKOFF_MAX_MS = 60 * 60_000L;
+
+    /** The network came back: every silent member is worth a search again. */
+    static void networkBack() {
+        searchAfter.clear();
+    }
+
+    /**
+     * Looks for the members {@code keys} among the panels announced on this network
+     * ({@code _muralis._tcp}, which every member of a fleet announces with its key hash), for
+     * {@link #FIND_MS}, and keeps where each was found for the next call. The address comes from
+     * the network, so it is only tried: the call still admits nothing but that member's key.
+     * Returns how many were found at an address or port other than the one tried.
+     */
+    private static int findOnNetwork(Context context, java.util.Set<String> keys) {
+        android.net.nsd.NsdManager nsd =
+                context.getApplicationContext().getSystemService(android.net.nsd.NsdManager.class);
+        if (nsd == null) {
+            return 0;
+        }
+        java.util.concurrent.LinkedBlockingQueue<android.net.nsd.NsdServiceInfo> seenQueue =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        android.net.nsd.NsdManager.DiscoveryListener listener =
+                new android.net.nsd.NsdManager.DiscoveryListener() {
+                    @Override public void onStartDiscoveryFailed(String type, int error) { }
+                    @Override public void onStopDiscoveryFailed(String type, int error) { }
+                    @Override public void onDiscoveryStarted(String type) { }
+                    @Override public void onDiscoveryStopped(String type) { }
+                    @Override public void onServiceLost(android.net.nsd.NsdServiceInfo info) { }
+
+                    @Override
+                    public void onServiceFound(android.net.nsd.NsdServiceInfo info) {
+                        seenQueue.add(info);
+                    }
+                };
+        android.net.wifi.WifiManager wifi = context.getApplicationContext()
+                .getSystemService(android.net.wifi.WifiManager.class);
+        android.net.wifi.WifiManager.MulticastLock listening = wifi == null ? null
+                : wifi.createMulticastLock("muralis-find-members");
+        if (listening != null) {
+            listening.setReferenceCounted(false);
+            listening.acquire();
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        // Android 8 to 13 resolve one service at a time, a few seconds each: only the services
+        // named after a silent member, or after no member at all, are worth the time.
+        java.util.Set<String> skipped = new java.util.HashSet<>();
+        for (java.util.Map<String, Object> member : FleetDocument.members(held)) {
+            if (!keys.contains(TinyJson.string(member, FleetDocument.SPKI, ""))) {
+                skipped.add("Muralis " + TinyJson.string(member, FleetDocument.ID, ""));
+            }
+        }
+        java.util.Set<String> tried = new java.util.HashSet<>();
+        int moved = 0;
+        long deadline = android.os.SystemClock.elapsedRealtime() + FIND_MS;
+        try {
+            nsd.discoverServices("_muralis._tcp", android.net.nsd.NsdManager.PROTOCOL_DNS_SD,
+                    listener);
+            while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                android.net.nsd.NsdServiceInfo seen =
+                        seenQueue.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (seen == null || skipped.contains(seen.getServiceName())
+                        || !tried.add(seen.getServiceName())) {
+                    continue;
+                }
+                android.net.nsd.NsdServiceInfo resolved = resolve(nsd, seen);
+                if (resolved == null || resolved.getHost() == null) {
+                    // Android 13 and older resolve one service at a time: asked again later.
+                    tried.remove(seen.getServiceName());
+                    Thread.sleep(500);
+                    seenQueue.add(seen);
+                    continue;
+                }
+                String spki = text(resolved.getAttributes(), "spki");
+                if (!keys.contains(spki)) {
+                    continue;
+                }
+                java.util.Map<String, Object> member = FleetDocument.memberByKey(held, spki);
+                // The address the member announces, else its host's: a host name such as
+                // Android.local can belong to several devices.
+                String address = text(resolved.getAttributes(), "address");
+                if (!isLocalIpv4(address)) {
+                    address = resolved.getHost().getHostAddress();
+                }
+                if (!isLocalIpv4(address)) {
+                    continue;
+                }
+                int port = resolved.getPort();
+                if (member != null && (!address.equals(addressOf(member, spki))
+                        || port != portOf(member, spki))) {
+                    Log.i(TAG, "Found key " + FleetTls.shortForm(spki) + " on the network at "
+                            + address + " port " + port + ", not " + addressOf(member, spki)
+                            + " port " + portOf(member, spki));
+                    announced.put(spki, new Peer(address, port, 0, 0, new JSONObject(), 0));
+                    // A contact heard lately at the old place would still win over the new one.
+                    String foundAddress = address;
+                    peers.computeIfPresent(spki, (key, old) -> new Peer(foundAddress, port,
+                            old.version, old.seenAt, old.health, old.clockSkewMs));
+                    moved++;
+                }
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Looking for the fleet's panels on the network failed", refused);
+        } finally {
+            if (listening != null) {
+                listening.release();
+            }
+            try {
+                nsd.stopServiceDiscovery(listener);
+            } catch (RuntimeException alreadyStopped) {
+                Log.d(TAG, "Discovery already stopped");
+            }
+        }
+        return moved;
+    }
+
+    /**
+     * Whether {@code text} is an IPv4 address of a local network (10/8, 172.16/12, 192.168/16,
+     * 169.254/16). Anyone on the network can announce a member's key with any address; such an
+     * address is only tried, the call still admits nothing but that member's key, and an
+     * address outside the local ranges is not even tried.
+     */
+    static boolean isLocalIpv4(String text) {
+        if (text == null || !text.matches("\\d{1,3}(\\.\\d{1,3}){3}")) {
+            return false;
+        }
+        String[] parts = text.split("\\.");
+        int a = Integer.parseInt(parts[0]);
+        int b = Integer.parseInt(parts[1]);
+        for (String part : parts) {
+            if (Integer.parseInt(part) > 255) {
+                return false;
+            }
+        }
+        return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168)
+                || (a == 169 && b == 254);
+    }
+
+    /** One check-in; true when the member answered at all. */
+    private static boolean heartbeatOne(Context context, FleetIdentity identity,
             java.util.Map<String, Object> member, String spki, JSONObject mine,
             java.util.concurrent.atomic.AtomicInteger answered,
             java.util.concurrent.atomic.AtomicInteger removed) {
         String address = addressOf(member, spki);
         if (address.isEmpty()) {
-            return;
+            return false;
         }
         int port = portOf(member, spki);
         try {
             Reply reply = call(context, address, port, spki, "POST", "/fleet/checkin", mine);
             if (reply.status == 200) {
                 answered.incrementAndGet();
+                announced.remove(spki);
+                searchAfter.remove(spki);
                 Peer known = peers.get(spki);
                 peers.put(spki, new Peer(address, port, reply.body.optLong("version", 0),
                         android.os.SystemClock.elapsedRealtime(),
@@ -1876,9 +2084,13 @@ final class FleetServer {
                 Log.d(TAG, "Heartbeat to key " + FleetTls.shortForm(spki) + " answered "
                         + reply.status + ": " + reply.reason());
             }
+            return true;
         } catch (IOException failed) {
             Log.d(TAG, "Heartbeat to key " + FleetTls.shortForm(spki) + " failed: "
                     + failed.getMessage());
+            // A place found on the network is good for one try: the list's own is next.
+            announced.remove(spki);
+            return false;
         }
     }
 
@@ -1918,6 +2130,10 @@ final class FleetServer {
         if (known != null && !known.address.isEmpty()) {
             return known.address;
         }
+        Peer found = announced.get(spki);
+        if (found != null) {
+            return found.address;
+        }
         Object addresses = member.get("addresses");
         return addresses instanceof java.util.List && !((java.util.List<?>) addresses).isEmpty()
                 ? String.valueOf(((java.util.List<?>) addresses).get(0)) : "";
@@ -1925,7 +2141,8 @@ final class FleetServer {
 
     private static int portOf(java.util.Map<String, Object> member, String spki) {
         Peer known = recent(spki);
-        return known != null ? known.port
+        Peer found = known == null ? announced.get(spki) : null;
+        return known != null ? known.port : found != null ? found.port
                 : (int) TinyJson.number(member, "port", KioskConfig.DEFAULT_FLEET_PORT);
     }
 
@@ -1948,9 +2165,9 @@ final class FleetServer {
      * A member's last contact on the Fleet page of both surfaces: "this panel", "online, seen
      * 2 min ago", "offline, last seen 1 h 3 min ago" or "not heard from yet".
      */
-    static String contactLine(java.util.Map<String, Object> member, org.json.JSONArray peers,
-            String selfId) {
-        if (selfId.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+    static String contactLine(Context context, java.util.Map<String, Object> member,
+            org.json.JSONArray peers) {
+        if (isSelf(context, member)) {
             return "this panel";
         }
         String spki = TinyJson.string(member, FleetDocument.SPKI, "");
@@ -1973,11 +2190,10 @@ final class FleetServer {
     static org.json.JSONArray peersJson(Context context) {
         org.json.JSONArray list = new org.json.JSONArray();
         long now = android.os.SystemClock.elapsedRealtime();
-        String self = KioskConfig.deviceIdOf(context);
         for (java.util.Map<String, Object> member
                 : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
-            if (self.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+            if (isSelf(context, member)) {
                 continue;
             }
             Peer known = peers.get(spki);
@@ -2205,6 +2421,82 @@ final class FleetServer {
                         follows, java.time.Instant.now().toString()),
                 follows ? "This panel follows the fleet's shared settings"
                         : "This panel keeps its own values for what the whole fleet shares");
+    }
+
+    /**
+     * Brings this panel's own entry in the fleet's list up to date with its name, address and
+     * member port, after a rename, a port change or a new address from the router; the list
+     * then goes to every member, as any change to it does. Nothing when the list already says
+     * so. Off the main thread.
+     */
+    static void refreshSelfSoon(Context context) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return;
+        }
+        Context app = context.getApplicationContext();
+        new Thread(() -> refreshSelf(app), "MuralisFleetSelf").start();
+    }
+
+    /** One at a time: a second refresh then sees the list the first wrote. */
+    private static synchronized void refreshSelf(Context context) {
+        try {
+            String key = KioskRuntimeState.fleetKey();
+            java.util.Map<String, Object> me = key.isEmpty() ? null
+                    : FleetDocument.memberByKey(KioskConfig.fleetDocumentOf(context), key);
+            if (me == null) {
+                return;
+            }
+            String name = KioskConfig.deviceIdOf(context);
+            SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+            String address = facts == null || facts.ipAddress == null ? "" : facts.ipAddress;
+            // The port the endpoint really serves; while it serves none, the listed one stays.
+            long port = KioskRuntimeState.fleetListening() ? KioskRuntimeState.fleetPort()
+                    : TinyJson.number(me, "port", KioskConfig.DEFAULT_FLEET_PORT);
+            Object listed = me.get("addresses");
+            boolean moved = !address.isEmpty() && !(listed instanceof java.util.List
+                    && !((java.util.List<?>) listed).isEmpty()
+                    && address.equals(String.valueOf(((java.util.List<?>) listed).get(0))));
+            if (name.equals(TinyJson.string(me, FleetDocument.ID, ""))
+                    && name.equals(TinyJson.string(me, FleetDocument.NAME, ""))
+                    && port == (long) TinyJson.number(me, "port", KioskConfig.DEFAULT_FLEET_PORT)
+                    && !moved) {
+                return;
+            }
+            String refused = writeList(context, null, null, (own, list) -> FleetDocument
+                    .withMemberSelf(list, own.spki, name, address, port,
+                            java.time.Instant.now().toString()),
+                    "This panel's entry in the fleet is now " + name + " on port " + port);
+            if (refused != null) {
+                Log.w(TAG, "This panel's entry in the fleet could not be updated: " + refused);
+            }
+        } catch (RuntimeException failed) {
+            Log.w(TAG, "This panel's entry in the fleet could not be updated", failed);
+        }
+    }
+
+    /** Why {@code name} cannot be this panel's name: the id rules, then a name the fleet has. */
+    static String nameProblem(Context context, String name) {
+        String problem = KioskCommandDispatcher.validateDeviceId(name);
+        return problem != null ? problem
+                : nameTaken(context, name.trim(), KioskRuntimeState.fleetKey());
+    }
+
+    /**
+     * Why {@code name} cannot be this panel's new name, or null: another member of the fleet
+     * (any but the one with key {@code exceptKey}) is already called so, and two panels of one
+     * name would share their MQTT topics and their place in the list.
+     */
+    static String nameTaken(Context context, String name, String exceptKey) {
+        for (java.util.Map<String, Object> member
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            if (!TinyJson.string(member, FleetDocument.SPKI, "").equals(exceptKey)
+                    && (name.equalsIgnoreCase(TinyJson.string(member, FleetDocument.ID, ""))
+                    || name.equalsIgnoreCase(TinyJson.string(member, FleetDocument.NAME, "")))) {
+                return "another panel of the fleet is called "
+                        + TinyJson.string(member, FleetDocument.NAME, name);
+            }
+        }
+        return null;
     }
 
     /** How the next list is built from the one held, under the lock. */
@@ -2568,8 +2860,15 @@ final class FleetServer {
         return null;
     }
 
-    private static boolean isSelf(Context context, java.util.Map<String, Object> member) {
-        return KioskConfig.deviceIdOf(context).equals(TinyJson.string(member, FleetDocument.ID, ""));
+    /**
+     * Whether {@code member} is this panel: by its key, which never changes and no other panel
+     * has; by the name only while the member endpoint has not read the key yet.
+     */
+    static boolean isSelf(Context context, java.util.Map<String, Object> member) {
+        String key = KioskRuntimeState.fleetKey();
+        String id = TinyJson.string(member, FleetDocument.ID, "");
+        return key.isEmpty() ? KioskConfig.deviceIdOf(context).equals(id)
+                : key.equals(TinyJson.string(member, FleetDocument.SPKI, ""));
     }
 
     /**

@@ -233,6 +233,33 @@ final class FleetDocument {
         return next;
     }
 
+    /**
+     * A member's own entry as its panel is now: its name (renamed on the panel or in the web
+     * admin), its address (a new one from the router) and its member port, so every panel
+     * shows the name and reaches it where it is. An empty address leaves the listed one.
+     */
+    static Map<String, Object> withMemberSelf(Map<String, Object> held, String spki, String name,
+            String address, long port, String updated) {
+        Map<String, Object> next = bumped(held, name, updated);
+        List<Object> members = new ArrayList<>();
+        for (Map<String, Object> member : members(held)) {
+            if (spki.equals(TinyJson.string(member, SPKI, ""))) {
+                member = new LinkedHashMap<>(member);
+                member.put(ID, name);
+                member.put(NAME, name);
+                if (!address.isEmpty()) {
+                    member.put("addresses", new ArrayList<Object>(
+                            java.util.Collections.singletonList(address)));
+                }
+                member.put("port", port);
+                member.put(AT, version(next));
+            }
+            members.add(member);
+        }
+        next.put("members", members);
+        return next;
+    }
+
     /** The groups a person made, by id: name and at; removed ones left out. */
     static Map<String, String> groups(Map<String, Object> document) {
         Map<String, String> groups = new LinkedHashMap<>();
@@ -877,7 +904,7 @@ final class FleetDocument {
 
     /**
      * What {@code after} changed against {@code before}, one line each, for the History card:
-     * the fleet renamed, panels added or removed, groups made, renamed or removed, sections
+     * the fleet renamed, panels added, renamed or removed, groups made, renamed or removed, sections
      * shared, changed or unshared in a scope. Empty when nothing of that changed (a version
      * carrying only a member's stamp, say); {@code before} may be null for the first version.
      */
@@ -889,8 +916,11 @@ final class FleetDocument {
         Map<String, String> membersBefore = memberNames(before);
         Map<String, String> membersAfter = memberNames(after);
         for (Map.Entry<String, String> member : membersAfter.entrySet()) {
-            if (!membersBefore.containsKey(member.getKey())) {
+            String was = membersBefore.get(member.getKey());
+            if (was == null) {
                 lines.add("panel " + member.getValue() + " added");
+            } else if (!was.equals(member.getValue())) {
+                lines.add("panel " + was + " renamed to " + member.getValue());
             }
         }
         for (Map.Entry<String, String> member : membersBefore.entrySet()) {

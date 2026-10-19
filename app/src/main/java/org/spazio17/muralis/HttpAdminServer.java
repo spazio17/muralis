@@ -1504,7 +1504,7 @@ final class HttpAdminServer {
                     return stale;
                 }
                 String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
-                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                String idProblem = FleetServer.nameProblem(context, deviceId);
                 if (idProblem != null) {
                     // The box is called Name; "device id" is the dispatcher's word for MQTT.
                     return "Not saved: " + idProblem.replace("device id", "the name") + ".";
@@ -1723,7 +1723,7 @@ final class HttpAdminServer {
                     // since 2026-09-27; the Save button stays only for a browser without
                     // scripting (review, 2026-10-01).
                     String deviceId = form.get("device_id").trim();
-                    String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                    String idProblem = FleetServer.nameProblem(context, deviceId);
                     if (idProblem != null) {
                         return "Not saved: " + idProblem.replace("device id", "the name") + ".";
                     }
@@ -5965,12 +5965,11 @@ final class HttpAdminServer {
                 + "Identify all</button></div><p class=\"hint\" id=\"fleet-identify-all\""
                 + " hidden></p>");
         org.json.JSONArray peers = FleetServer.peersJson(context);
-        String self = KioskConfig.deviceIdOf(context);
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
             String id = TinyJson.string(member, FleetDocument.ID, "");
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
             String name = TinyJson.string(member, FleetDocument.NAME, id);
-            String contact = FleetServer.contactLine(member, peers, self);
+            String contact = FleetServer.contactLine(context, member, peers);
             java.util.List<String> in = FleetDocument.memberGroups(list, member);
             html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
                     .append("\"><input type=\"hidden\" name=\"what\" value=\"panel\"><input"
@@ -5997,7 +5996,7 @@ final class HttpAdminServer {
             }
             html.append("<button type=\"button\" class=\"text\" data-identify=\"")
                     .append(escapeHtml(id)).append("\">Identify</button>");
-            if (!id.equals(self)) {
+            if (!FleetServer.isSelf(context, member)) {
                 // For a panel that cannot leave by itself; one that is reachable is told.
                 html.append("<button type=\"submit\" class=\"text\" name=\"remove\" value=\"1\""
                         + " data-confirm=\"").append(escapeHtml("Remove " + name + "?\n\nIt is"

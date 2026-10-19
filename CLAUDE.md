@@ -92,7 +92,9 @@ on purpose.
   new tablet: a QR valid for ten minutes and for one tablet, which sets a factory-reset tablet up as
   device owner and joins it to the fleet by itself (the tablet opens its Join code with the
   invitation's code and asks the inviting panel to add it). Every QR opens full screen, dark on
-  white, at most 12 cm wide.
+  white, at most 12 cm wide. A panel knows itself in the list by its key and keeps its own entry
+  current (name, address, member port); names are unique within a fleet. A member that does not
+  answer is looked for by its key among the announcements, which carry each panel's address.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels:
   adding panels (at most six to a Pro fleet), the Fleet page and the fleet's alerts. A panel whose

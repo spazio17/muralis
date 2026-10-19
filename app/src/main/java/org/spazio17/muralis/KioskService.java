@@ -116,6 +116,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's announcement on the local network while it stands, and what it announced. */
     private android.net.nsd.NsdManager.RegistrationListener announcement;
     private String announcedKey = "";
+    /** Watches for the network coming back; see watchNetwork. */
+    private android.net.ConnectivityManager.NetworkCallback networkWatch;
+    private final Runnable networkBack = () -> {
+        FleetServer.networkBack();
+        stopAnnouncement();
+        refreshAnnouncement();
+        FleetServer.heartbeatSoon(this, "network back");
+    };
     private static final long ANNOUNCE_RETRY_MS = 60_000L;
     private SystemStats systemStats;
     private NetworkGate startupGate;
@@ -537,7 +545,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /** Set when Muralis became device owner: open the first-start screens after the setup. */
     static final String OPEN_AFTER_SETUP = "open_after_setup";
-    /** Set while the setup's policy-compliance question is still to come (ProvisioningModeActivity). */
+    /** Set while the setup's policy-compliance question is still to come. */
     static final String COMPLIANCE_DUE = "compliance_due";
     private android.database.ContentObserver setupWatcher;
 
@@ -658,8 +666,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         openFirstStartAfterSetup();
         mainHandler.postDelayed(inviteKnock, 5_000);
+        FleetServer.refreshSelfSoon(this);
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
+        watchNetwork();
         android.os.UserManager users = getSystemService(android.os.UserManager.class);
         if (users != null && !users.isUserUnlocked()) {
             registerReceiver(unlockReceiver, new IntentFilter(Intent.ACTION_USER_UNLOCKED));
@@ -743,6 +753,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             mainHandler.removeCallbacks(inviteKnock);
             mainHandler.post(inviteKnock);
             openFirstStartAfterSetup();
+            // A new name or member port for this panel goes into the fleet's list.
+            FleetServer.refreshSelfSoon(this);
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
             publishStateSoon();
@@ -765,6 +777,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public void onDestroy() {
+        mainHandler.removeCallbacks(networkBack);
+        if (networkWatch != null) {
+            try {
+                getSystemService(android.net.ConnectivityManager.class)
+                        .unregisterNetworkCallback(networkWatch);
+            } catch (RuntimeException notRegistered) {
+                // Registered by watchNetwork only when Android allowed it.
+            }
+            networkWatch = null;
+        }
         if (setupWatcher != null) {
             getContentResolver().unregisterContentObserver(setupWatcher);
             setupWatcher = null;
@@ -1151,12 +1173,51 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
+     * When the network comes back after it was lost (a router restart, Wi-Fi off and on), the
+     * panel announces itself again and calls the fleet at once: Android's discovery daemon can
+     * drop an announcement with the network and never send it again (the Huawei tablet on
+     * Android 8, 2026-10-19), and the router may have given the panel a new address.
+     */
+    private void watchNetwork() {
+        android.net.ConnectivityManager connectivity =
+                getSystemService(android.net.ConnectivityManager.class);
+        if (connectivity == null) {
+            return;
+        }
+        networkWatch = new android.net.ConnectivityManager.NetworkCallback() {
+            private boolean lost;
+
+            @Override
+            public void onLost(android.net.Network network) {
+                lost = true;
+            }
+
+            @Override
+            public void onAvailable(android.net.Network network) {
+                if (!lost) {
+                    return;
+                }
+                lost = false;
+                // A few seconds for the new address to settle.
+                mainHandler.removeCallbacks(networkBack);
+                mainHandler.postDelayed(networkBack, 5_000);
+            }
+        };
+        try {
+            connectivity.registerDefaultNetworkCallback(networkWatch);
+        } catch (RuntimeException refused) {
+            networkWatch = null;
+            Log.w(TAG, "The network cannot be watched; the announcement is not renewed", refused);
+        }
+    }
+
+    /**
      * Announces this panel as {@code _muralis._tcp} on the local network (mDNS, Android's own
      * service discovery) while it is in a fleet or shows its Join code, with no switch, as Matter
-     * devices and printers do, with its id, name, member port, key hash, the protocol version
-     * and whether it is ready to be joined (with its code's first two digits as a tag), so a
-     * console can find it; a panel in no fleet with
-     * its Join code closed announces nothing. Announced again when any of them changes, and a minute after Android
+     * devices and printers do, with its id, name, address, member port, key hash, the protocol
+     * version and whether it is ready to be joined (with its code's first two digits as a tag),
+     * so a console or another member can find it; a panel in no fleet with its Join code closed
+     * announces nothing. Announced again when any of them changes, and a minute after Android
      * reports a failed announcement (its discovery daemon can fail while the device boots);
      * withdrawn when the endpoint stops. Main thread.
      */
@@ -1169,8 +1230,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         String id = KioskConfig.deviceIdOf(this);
         // The open code's first two digits, so a typed code is tried only on its panel.
         String tag = FleetJoin.shared.tag(FleetServer.joinClock());
+        // The address itself too: a host name such as Android.local is shared by many Android
+        // devices on one network, so a member found by its key is reached at this one.
+        SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+        String address = facts == null || facts.ipAddress == null ? "" : facts.ipAddress;
         String key = on ? id + '\u0000' + server.port() + '\u0000' + server.spki() + '\u0000'
-                + state + '\u0000' + tag : "";
+                + state + '\u0000' + tag + '\u0000' + address : "";
         if (key.equals(announcedKey)) {
             return;
         }
@@ -1232,6 +1297,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             info.setAttribute("name", id);
             info.setAttribute("port", Integer.toString(server.port()));
             info.setAttribute("spki", server.spki());
+            if (!address.isEmpty()) {
+                info.setAttribute("address", address);
+            }
             info.setAttribute("v", "1");
             info.setAttribute("state", state);
             if (!tag.isEmpty()) {
