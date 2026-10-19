@@ -32,6 +32,10 @@ public final class PolicyComplianceActivity extends Activity {
         KioskConfig.keepProvisionedSettings(this, getIntent());
         setResult(RESULT_OK);
         finish();
+        // Answered: Muralis may open now, or when the setup ends (KioskService.openFirstStartAfterSetup).
+        KioskConfig.storageContext(this).getSharedPreferences("kiosk_runtime", MODE_PRIVATE)
+                .edit().remove(KioskService.COMPLIANCE_DUE).commit();
+        KioskService.reloadConfiguration(this);
         Log.i(TAG, "Setup asked for policy compliance: the QR's settings kept, the rest waits for"
                 + " the first start");
     }

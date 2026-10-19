@@ -192,6 +192,7 @@ final class HttpAdminServer {
     private final String playlistScript;
     private final String menuScript;
     private final String fleetScript;
+    private final String qrScript;
     private final String pageCss;
 
 
@@ -276,6 +277,7 @@ final class HttpAdminServer {
         playlistScript = script(R.raw.admin_playlists);
         menuScript = script(R.raw.admin_menu);
         fleetScript = script(R.raw.admin_fleet);
+        qrScript = script(R.raw.admin_qr);
         // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
@@ -1116,6 +1118,32 @@ final class HttpAdminServer {
             FleetJoin.shared.close();
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
+        } else if (path.equals("/api/fleet/invite") && method.equals("GET")) {
+            writeResponse(output, 200, "application/json",
+                    bytes(FleetServer.inviteState(context).toString()));
+        } else if (path.equals("/api/fleet/invite") && method.equals("POST")) {
+            FleetInvite.shared.cancel();
+            String refusal = FleetServer.openInvite(context);
+            if (refusal != null) {
+                writeResponse(output, 409, "application/json", bytes(rejectedJson(
+                        "Not invited: " + refusal + ".")));
+            } else {
+                writeResponse(output, 200, "application/json",
+                        bytes(FleetServer.inviteState(context).toString()));
+            }
+        } else if (path.equals("/api/fleet/invite/cancel") && method.equals("POST")) {
+            FleetInvite.shared.cancel();
+            writeResponse(output, 200, "application/json",
+                    bytes(FleetServer.inviteState(context).toString()));
+        } else if (path.equals("/api/fleet/invite.svg") && method.equals("GET")) {
+            String content = FleetServer.inviteQrContent(context);
+            String svg = content == null ? null : QrCodes.svg(content, true);
+            if (svg == null) {
+                writeResponse(output, 404, "text/plain", bytes("No invitation is open"));
+            } else {
+                writeResponse(output, 200, "image/svg+xml", bytes(svg),
+                        java.util.Collections.singletonMap("Cache-Control", "no-store"));
+            }
         } else if (path.equals("/api/fleet/code.svg") && method.equals("GET")) {
             String content = FleetServer.joinQrContent(context);
             String svg = content == null ? null : QrCodes.svg(content, true);
@@ -1476,7 +1504,7 @@ final class HttpAdminServer {
                     return stale;
                 }
                 String deviceId = form.getOrDefault("device_id", fresh.deviceId).trim();
-                String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                String idProblem = FleetServer.nameProblem(context, deviceId);
                 if (idProblem != null) {
                     // The box is called Name; "device id" is the dispatcher's word for MQTT.
                     return "Not saved: " + idProblem.replace("device id", "the name") + ".";
@@ -1695,7 +1723,7 @@ final class HttpAdminServer {
                     // since 2026-09-27; the Save button stays only for a browser without
                     // scripting (review, 2026-10-01).
                     String deviceId = form.get("device_id").trim();
-                    String idProblem = KioskCommandDispatcher.validateDeviceId(deviceId);
+                    String idProblem = FleetServer.nameProblem(context, deviceId);
                     if (idProblem != null) {
                         return "Not saved: " + idProblem.replace("device id", "the name") + ".";
                     }
@@ -2073,6 +2101,8 @@ final class HttpAdminServer {
                 + "a1 1 0 011-1h5\"/>");
         // The Folders head's one button: chevrons closing on each other, or opening away.
         paths.put("unfold_less", "<path d=\"M7 4l5 5 5-5M7 20l5-5 5 5\"/>");
+        // Material's fullscreen, four corners: what opens a QR at the size of the window.
+        paths.put("fullscreen", "<path d=\"M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5\"/>");
         paths.put("unfold_more", "<path d=\"M7 9l5-5 5 5M7 15l5 5 5-5\"/>");
         paths.put("sun", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,7c-2.76,0 -5,2.24 -5,5s2.24,5 5,5 5,-2.24 5,-5 -2.24,-5 -5,-5zM2,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1L2,11c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM20,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1h-2c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM11,2v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1L13,2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM11,20v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1v-2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM5.99,4.58c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0s0.39,-1.03 0,-1.41L5.99,4.58zM18.36,16.95c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0 0.39,-0.39 0.39,-1.03 0,-1.41l-1.06,-1.06zM19.42,5.99c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06zM7.05,18.36c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06z\"/>");
         // Material's brightness_medium, the half-lit sun for following the device.
@@ -2085,6 +2115,16 @@ final class HttpAdminServer {
 
     private static String glyph(String name) {
         return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + GLYPHS.get(name) + "</svg>";
+    }
+
+    /**
+     * "Show full screen" with its glyph under a QR: admin_qr.js opens the image named by {@code imageId} at
+     * the size of the window, with the text of {@code leftId}, the time left, when there is one.
+     */
+    private static String fullScreenButton(String imageId, String leftId) {
+        return "<div class=\"actions\"><button type=\"button\" class=\"text\" data-qr-full=\""
+                + imageId + "\"" + (leftId == null ? "" : " data-qr-left=\"" + leftId + "\"") + ">"
+                + glyph("fullscreen") + "Show full screen</button></div>";
     }
 
     /** A 40 px icon button that submits its form; the label is its tooltip and its spoken name. */
@@ -2199,6 +2239,7 @@ final class HttpAdminServer {
         html.append(statsScript);
         html.append(themeScript);
         html.append(menuScript);
+        html.append(qrScript);
         html.append("</main></body></html>");
         return html.toString();
     }
@@ -3819,10 +3860,6 @@ final class HttpAdminServer {
     private volatile SettingsTransfer.Contents pendingImport;
     private volatile String pendingImportToken;
 
-    /** The release's own provisioning values, as the site's generate-download.py writes them. */
-    private static final String SETUP_APK =
-            "https://muralis.spazio17.org/download/muralis-latest.apk";
-    private static final String SETUP_CHECKSUM = "fnYZamPm8amKEk-zBylW0cke1QP2FIC9fEIh0w6d_ZE";
     /** What a QR at error correction M holds with room to spare; more is refused. */
     private static final int SETUP_QR_MAX_BYTES = 2_300;
 
@@ -3835,19 +3872,9 @@ final class HttpAdminServer {
             JSONObject extras = new JSONObject().put("muralis_settings_z",
                     SettingsTransfer.packed(SettingsTransfer.export(
                             KioskConfig.transferableSettings(context), null, null, appVersionName())));
-            String content = new JSONObject()
-                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME",
-                            "org.spazio17.muralis/.KioskDeviceAdminReceiver")
-                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION",
-                            SETUP_APK)
-                    .put("android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM",
-                            SETUP_CHECKSUM)
-                    .put("android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED", true)
-                    .put("android.app.extra.PROVISIONING_SKIP_ENCRYPTION", true)
-                    .put("android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE", extras)
-                    .toString();
-            return content.getBytes(StandardCharsets.UTF_8).length > SETUP_QR_MAX_BYTES
-                    ? null : content;
+            String content = KioskDeviceAdminReceiver.provisioningQr(context, extras);
+            return content == null || content.getBytes(StandardCharsets.UTF_8).length
+                    > SETUP_QR_MAX_BYTES ? null : content;
         } catch (JSONException impossible) {
             return null;
         }
@@ -3889,11 +3916,16 @@ final class HttpAdminServer {
                 + "<div class=\"actions\"><button type=\"submit\" class=\"tonal\">Read the file"
                 + "</button></div></form>");
         boolean fits = setupQrContent() != null;
+        // A debug build names a download address only when it was built with one.
+        boolean downloadable = KioskDeviceAdminReceiver.provisioningQr(context, new JSONObject())
+                != null;
         html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
                 + "<p class=\"hint\">Scanned during a new tablet's first setup, it installs Muralis"
                 + " as the device owner and starts it with these settings, never the passwords.</p>"
-                + (fits ? "<img src=\"/api/setup-qr.svg\" alt=\"Setup QR with these settings\""
-                        + " width=\"320\" height=\"320\">"
+                + (fits ? "<img id=\"setup-qr\" src=\"/api/setup-qr.svg\""
+                        + " alt=\"Setup QR\" width=\"320\" height=\"320\">"
+                        + fullScreenButton("setup-qr", null)
+                        : !downloadable ? "<p class=\"hint bad\">No download address in this build.</p>"
                         : "<p class=\"hint bad\">These settings do not fit in a QR (it holds about"
                         + " 2 KB packed, the rules take the most). Set the tablet up with the plain QR on"
                         + " the website, then import the file here.</p>")
@@ -4249,6 +4281,7 @@ final class HttpAdminServer {
         boolean member = !KioskConfig.fleetIdOf(context).isEmpty();
         return fleetMembership()
                 + addByCodeForm(notice, noticeSection)
+                + inviteBlock()
                 + sharedSwitches()
                 + "<p class=\"label\">Connection</p>"
                 + sectionFormStart("fleet", notice, noticeSection)
@@ -4318,10 +4351,12 @@ final class HttpAdminServer {
                 + "</div>"
                 + "<p class=\"hint bad\" id=\"fleet-error\" role=\"alert\" hidden></p>"
                 + "<div class=\"fleet-join\" id=\"fleet-join\" hidden>"
-                + "<img id=\"fleet-join-qr\" alt=\"Join code as a QR code\" width=\"240\""
+                + "<img id=\"fleet-join-qr\" alt=\"Join QR\" width=\"240\""
                 + " height=\"240\" hidden>"
+                + fullScreenButton("fleet-join-qr", "fleet-join-left")
                 + "<p class=\"join-code\" id=\"fleet-join-code\"></p>"
                 + "<p class=\"hint\" id=\"fleet-join-detail\"></p>"
+                + "<p class=\"hint\" id=\"fleet-join-left\"></p>"
                 + "<p id=\"fleet-join-line\"></p>"
                 + "<div class=\"actions\">"
                 + "<button type=\"button\" class=\"text\" id=\"fleet-join-close\">Close</button>"
@@ -4387,6 +4422,36 @@ final class HttpAdminServer {
                 + " seconds.</p>"
                 + (pro ? sectionFormEnd("Add")
                         : sectionFormEnd("Add").replace("</form>", "</fieldset></form>"));
+    }
+
+    /**
+     * Invite a new tablet, as the panel's Fleet section has it: greyed without Pro, the Pro line
+     * saying why; pressed, an invitation opens (FleetInvite, ten minutes, single use) and its QR
+     * shows with Show full screen and the time left, then what it came to. admin_stats.js draws
+     * it from {@code /api/fleet/invite}. Only in a fleet that exists.
+     */
+    private String inviteBlock() {
+        if (!KioskRuntimeState.fleetListening() || KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "";
+        }
+        boolean pro = FleetServer.proStatus(context).pro;
+        return "<div class=\"fleet-invite\" id=\"fleet-invite\">"
+                + (pro ? "" : "<p class=\"hint\">" + escapeHtml(FleetServer.proLine(context))
+                        + "</p>")
+                + "<div class=\"actions\"><button type=\"button\" class=\"tonal\""
+                + " id=\"fleet-invite-open\"" + (pro ? "" : " disabled")
+                + ">Invite a new tablet</button></div>"
+                + "<div class=\"fleet-join\" id=\"fleet-invite-box\" hidden>"
+                + "<img id=\"fleet-invite-qr\" alt=\"Invitation QR\""
+                + " width=\"240\" height=\"240\" hidden>"
+                + fullScreenButton("fleet-invite-qr", "fleet-invite-left")
+                + "<p id=\"fleet-invite-left\" aria-live=\"polite\"></p>"
+                + "<p id=\"fleet-invite-line\" aria-live=\"polite\"></p>"
+                + "<div class=\"actions\">"
+                + "<button type=\"button\" class=\"text\" id=\"fleet-invite-cancel\">Cancel"
+                + " invitation</button></div></div>"
+                + "<p class=\"hint bad\" id=\"fleet-invite-error\" role=\"alert\" hidden></p>"
+                + "</div>";
     }
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */
@@ -5308,7 +5373,7 @@ final class HttpAdminServer {
     /** The scripts and the closing tags every page of this server ends with. */
     private String pageEnd() {
         return commandScript + settingScript + pictureScript + statsScript + automationScript
-                + themeScript + "</main></body></html>";
+                + themeScript + qrScript + "</main></body></html>";
     }
 
     /** The browse token is {@code offset|location}, or a bare location for the first page. */
@@ -5900,12 +5965,11 @@ final class HttpAdminServer {
                 + "Identify all</button></div><p class=\"hint\" id=\"fleet-identify-all\""
                 + " hidden></p>");
         org.json.JSONArray peers = FleetServer.peersJson(context);
-        String self = KioskConfig.deviceIdOf(context);
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
             String id = TinyJson.string(member, FleetDocument.ID, "");
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
             String name = TinyJson.string(member, FleetDocument.NAME, id);
-            String contact = FleetServer.contactLine(member, peers, self);
+            String contact = FleetServer.contactLine(context, member, peers);
             java.util.List<String> in = FleetDocument.memberGroups(list, member);
             html.append("<form method=\"post\" action=\"/fleet?scope=").append(escapeHtml(scope))
                     .append("\"><input type=\"hidden\" name=\"what\" value=\"panel\"><input"
@@ -5932,7 +5996,7 @@ final class HttpAdminServer {
             }
             html.append("<button type=\"button\" class=\"text\" data-identify=\"")
                     .append(escapeHtml(id)).append("\">Identify</button>");
-            if (!id.equals(self)) {
+            if (!FleetServer.isSelf(context, member)) {
                 // For a panel that cannot leave by itself; one that is reachable is told.
                 html.append("<button type=\"submit\" class=\"text\" name=\"remove\" value=\"1\""
                         + " data-confirm=\"").append(escapeHtml("Remove " + name + "?\n\nIt is"

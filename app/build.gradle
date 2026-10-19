@@ -54,6 +54,12 @@ def muralisLicenseKey = (System.getenv('MURALIS_LICENSE_KEY') ?: '').replaceAll(
 // branch, so R8 strips it from a release build entirely.
 def muralisProOverride = System.getenv('MURALIS_PRO_OVERRIDE') ?: ''
 
+// Debug-only: where a debug build's setup and invitation QRs download Muralis from, a server
+// that holds this same debug-signed APK (a release build always names the website's file, and
+// its checksum is read from the installed app, so a debug QR could never install the Play-signed
+// one). Empty refuses those QRs with the reason.
+def muralisSetupApkUrl = System.getenv('MURALIS_SETUP_APK_URL') ?: ''
+
 android {
     namespace 'org.spazio17.muralis'
 
@@ -125,6 +131,7 @@ android {
 
         buildConfigField 'String', 'LICENSE_KEY', "\"${muralisLicenseKey}\""
         buildConfigField 'String', 'PRO_OVERRIDE', "\"${muralisProOverride}\""
+        buildConfigField 'String', 'SETUP_APK_URL', "\"${muralisSetupApkUrl}\""
     }
 
     buildTypes {

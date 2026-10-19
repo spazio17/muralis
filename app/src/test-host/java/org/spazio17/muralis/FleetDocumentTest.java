@@ -251,6 +251,16 @@ public final class FleetDocumentTest {
                         FleetDocument.withMemberFollowsFleet(read, "kiosk-a", memberSpki, false,
                                 "2026-10-12T21:04:30Z"), memberSpki)),
                 "the follow flag is wrong");
+        Map<String, Object> renamed = FleetDocument.memberByKey(FleetDocument.withMemberSelf(read,
+                memberSpki, "hall", "10.0.0.9", 8090, "2026-10-12T21:04:40Z"), memberSpki);
+        require("hall".equals(TinyJson.string(renamed, FleetDocument.ID, ""))
+                && "hall".equals(TinyJson.string(renamed, FleetDocument.NAME, ""))
+                && "[10.0.0.9]".equals(String.valueOf(renamed.get("addresses")))
+                && ((Number) renamed.get("port")).longValue() == 8090,
+                "a panel's own entry kept its old name, address or port");
+        require(FleetDocument.describeChange(read, FleetDocument.withMemberSelf(read, memberSpki,
+                "hall", "", 8081, "2026-10-12T21:04:40Z")).toString().contains(" renamed to hall"),
+                "the history does not say the panel was renamed");
         require(FleetDocument.validateGroupName("Everyone") != null
                 && FleetDocument.validateGroupName(" ") != null
                 && FleetDocument.validateGroupName("Lobby") == null, "the group name rule");

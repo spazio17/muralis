@@ -35,6 +35,12 @@ public final class ProvisioningModeActivity extends Activity {
         if (Provisioning.fullyManagedOffered(getIntent().getIntegerArrayListExtra(
                 DevicePolicyManager.EXTRA_PROVISIONING_ALLOWED_PROVISIONING_MODES))) {
             Log.i(TAG, "Setup asked for the provisioning mode: fully managed device");
+            // The setup's last question comes next: Muralis opens only once it is answered
+            // (KioskService.openFirstStartAfterSetup). The QR's settings and invitation are kept
+            // already here, as the same extras come with this question from Android 10 on.
+            KioskConfig.storageContext(this).getSharedPreferences("kiosk_runtime", MODE_PRIVATE)
+                    .edit().putBoolean(KioskService.COMPLIANCE_DUE, true).commit();
+            KioskConfig.keepProvisionedSettings(this, getIntent());
             setResult(RESULT_OK, new Intent().putExtra(DevicePolicyManager.EXTRA_PROVISIONING_MODE,
                     DevicePolicyManager.PROVISIONING_MODE_FULLY_MANAGED_DEVICE));
         } else {
