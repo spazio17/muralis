@@ -1806,6 +1806,10 @@ final class FleetServer {
         new Thread(() -> {
             try {
                 heartbeat(context.getApplicationContext(), why);
+            } catch (RuntimeException failure) {
+                // A round that fails is a round missed, never the whole app: the heartbeat runs
+                // at every start, and an uncaught error here would end the process each time.
+                Log.w(TAG, "A heartbeat round failed", failure);
             } finally {
                 heartbeating.set(false);
             }
@@ -1882,7 +1886,12 @@ final class FleetServer {
         for (java.util.Map<String, Object> member : members) {
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
             Thread call = new Thread(() -> {
-                if (!heartbeatOne(context, identity, member, spki, mine, answered, removed)) {
+                try {
+                    if (!heartbeatOne(context, identity, member, spki, mine, answered, removed)) {
+                        silent.add(spki);
+                    }
+                } catch (RuntimeException failure) {
+                    Log.w(TAG, "A heartbeat to " + FleetTls.shortForm(spki) + " failed", failure);
                     silent.add(spki);
                 }
             }, "MuralisFleetHeartbeat-" + FleetTls.shortForm(spki));
