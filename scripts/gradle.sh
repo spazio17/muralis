@@ -100,6 +100,9 @@ fi
 if [[ -n ${MURALIS_PRO_OVERRIDE:-} ]]; then
     entitlement_args+=(--env "MURALIS_PRO_OVERRIDE=${MURALIS_PRO_OVERRIDE}")
 fi
+if [[ -n ${MURALIS_SETUP_APK_URL:-} ]]; then
+    entitlement_args+=(--env "MURALIS_SETUP_APK_URL=${MURALIS_SETUP_APK_URL}")
+fi
 
 # --no-daemon: each invocation is a fresh short-lived container, so a lingering
 # daemon would be killed with it anyway and only costs startup work.

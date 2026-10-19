@@ -406,3 +406,36 @@ document.getElementById('log-clear').addEventListener('click',function(){
 since=lines.length?lines[lines.length-1].text:since;paint();});
 poll();
 })();
+// Invite a new tablet: opened by its button, drawn from /api/fleet/invite every two seconds
+// while an invitation is open, then what it came to. The QR is fetched once per invitation (its
+// content does not change while it lasts); hidden, the full-screen view closes with it.
+(function(){
+var start=document.getElementById('fleet-invite-open');if(!start){return;}
+var box=document.getElementById('fleet-invite-box'),qr=document.getElementById('fleet-invite-qr');
+var error=document.getElementById('fleet-invite-error'),timer=0;
+var full=document.querySelector('[data-qr-full="fleet-invite-qr"]');
+function inviteSet(id,text){var el=document.getElementById(id);if(el.textContent!==text){el.textContent=text;}el.hidden=!text;}
+function invitePaint(j,shown){
+var opened=!!j.open;
+if(shown||opened){box.hidden=false;}
+if(opened&&!qr.getAttribute('src')){qr.src='/api/fleet/invite.svg?t='+Date.now();}
+if(!opened){qr.removeAttribute('src');}
+qr.hidden=!opened;if(full){full.hidden=!opened;}
+inviteSet('fleet-invite-left',j.left||'');inviteSet('fleet-invite-line',opened?'':(j.result||''));
+document.getElementById('fleet-invite-cancel').hidden=!opened;
+// One invitation at a time, as on the panel: a second press would replace the one being scanned.
+start.hidden=opened;
+if(!opened){clearInterval(timer);timer=0;}}
+function inviteCall(method,path,shown){
+error.hidden=true;
+return fetch(path,{method:method,credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:method==='POST'?'':undefined})
+.then(function(r){
+if(r.status===401||r.status===403){throw new Error('Not done: this browser was not authorised. Reload the page to sign in again.');}
+return r.json().then(function(j){if(!r.ok){throw new Error(j.detail||('Not done: the panel answered '+r.status+'.'));}return j;});})
+.then(function(j){invitePaint(j,shown);if(j.open&&!timer){timer=setInterval(function(){inviteCall('GET','/api/fleet/invite',false);},2000);}})
+.catch(function(e){error.textContent=e&&e.message?e.message:'The panel did not answer. It may be rebooting or off the network.';error.hidden=false;});}
+function inviteOpen(){qr.removeAttribute('src');inviteCall('POST','/api/fleet/invite',true);}
+start.addEventListener('click',inviteOpen);
+document.getElementById('fleet-invite-cancel').addEventListener('click',function(){inviteCall('POST','/api/fleet/invite/cancel',false).then(function(){box.hidden=true;});});
+inviteCall('GET','/api/fleet/invite',false);
+})();

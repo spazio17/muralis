@@ -69,6 +69,22 @@ final class FleetJoin {
         return code;
     }
 
+    /**
+     * Opens the code an invitation QR brought ({@link FleetInvite}), for as long as the
+     * invitation lasts but never longer than one; null while locked out or when the code is not
+     * eight digits. The inviting panel then proves it as it proves a scanned code.
+     */
+    synchronized String openGiven(String given, long now, long lifetimeMs) {
+        if (now < lockedUntil || given == null || !given.matches("[0-9]{8}") || lifetimeMs <= 0) {
+            return null;
+        }
+        code = given;
+        expiresAt = now + Math.min(lifetimeMs, FleetInvite.LIFETIME_MS);
+        wrong = 0;
+        pendingCaller = null;
+        return code;
+    }
+
     /** Ends the open code, as closing the Join screen does. */
     synchronized void close() {
         code = null;

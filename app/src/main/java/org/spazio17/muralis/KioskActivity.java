@@ -3667,6 +3667,7 @@ public final class KioskActivity extends Activity {
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
                     paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton,
                             fleetAddButton, theme);
+                    paintInviteLine();
                     if (!groupSwitches.isEmpty()) {
                         java.util.Map<String, Object> list =
                                 KioskConfig.fleetDocumentOf(KioskActivity.this);
@@ -3901,8 +3902,22 @@ public final class KioskActivity extends Activity {
         fleetCodeButton.setOnClickListener(view -> showAddByCode());
         fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening()
                 && FleetServer.proStatus(this).pro);
-        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton),
-                matchWrapClose());
+        // A new tablet, set up and joined in one scan: Pro, in a fleet that exists.
+        Button fleetInviteButton = textButton(theme, "Invite a new tablet");
+        fleetInviteButton.setOnClickListener(view -> showInvitePage(true));
+        fleetInviteButton.setEnabled(KioskRuntimeState.fleetListening()
+                && FleetServer.proStatus(this).pro);
+        fleetInviteButton.setVisibility(KioskConfig.fleetIdOf(this).isEmpty() ? View.GONE
+                : View.VISIBLE);
+        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton,
+                fleetInviteButton), matchWrapClose());
+        // An invitation open while its page is closed, so it is not forgotten; kept current by
+        // the live sync, gone once the invitation ends.
+        fleetInviteLine = new FlushText(this);
+        fleetInviteLine.setTextSize(14);
+        fleetInviteLine.setTextColor(theme.subtext);
+        fleetCard.addView(fleetInviteLine, matchWrapClose());
+        paintInviteLine();
         // Whether this panel follows what the whole fleet shares, the groups it is in, and the
         // way to the Fleet page; the group switches are followed by the live sync
         // above, as the web admin follows them from its poll.
@@ -7568,6 +7583,21 @@ public final class KioskActivity extends Activity {
      * The Fleet section's membership line and its button: Join a fleet, which needs the member
      * endpoint listening, or Leave the fleet; from what is stored now.
      */
+    /** The fleet card's "Invitation open" line, on the settings screen built last. */
+    private TextView fleetInviteLine;
+
+    private void paintInviteLine() {
+        if (fleetInviteLine == null) {
+            return;
+        }
+        String left = KioskConfig.fleetIdOf(this).isEmpty() ? "" : FleetServer.inviteTimeLeft();
+        String text = left.isEmpty() ? "" : "Invitation: " + left.replace("Valid for ", "") + " left";
+        if (!text.contentEquals(fleetInviteLine.getText())) {
+            fleetInviteLine.setText(text);
+        }
+        fleetInviteLine.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
     private void paintFleetMembership(TextView line, Button join, Button leave, Button add,
             KioskTheme theme) {
         boolean member = !KioskConfig.fleetIdOf(this).isEmpty();
@@ -7671,6 +7701,8 @@ public final class KioskActivity extends Activity {
         currentScreen = () -> showJoinPage(fromWizard);
         Runnable close = () -> {
             FleetJoin.shared.close();
+            // Closed by the person: the invitation that opened it is given up.
+            KioskConfig.dropInvite(this);
             if (fromWizard) {
                 showFirstStartWizard();
             } else {
@@ -7691,14 +7723,14 @@ public final class KioskActivity extends Activity {
         // Dark on white with its quiet zone in both themes: what a camera reads.
         ImageView qr = new ImageView(this);
         qr.setScaleType(ImageView.ScaleType.CENTER);
-        qr.setContentDescription("Join code as a QR code");
-        box.addView(qr, new LinearLayout.LayoutParams(dp(240), dp(240)));
+        qr.setContentDescription("Join QR");
+        // As large as the drawn code, so no empty band separates it from what follows.
+        box.addView(qr, wrapCentred());
         // The same code at the size of the screen, for a camera that cannot read it at 240 dp.
         Runnable fullJoin = () -> {
             String shown = FleetServer.joinQrContent(this);
             if (shown != null) {
-                showQrFullScreen(shown, true, "Join code as a QR code",
-                        "Scan with a Muralis panel that has Pro",
+                showQrFullScreen(shown, true, "Join QR",
                         () -> FleetServer.joinTimeLeft(this),
                         () -> shown.equals(FleetServer.joinQrContent(this)));
             }
@@ -7729,6 +7761,7 @@ public final class KioskActivity extends Activity {
         box.addView(state, stateParams);
         Button again = tonalButton(theme, "New code");
         again.setOnClickListener(view -> {
+            KioskConfig.dropInvite(this);
             FleetServer.openJoinCode(this);
             showJoinPage(fromWizard);
         });
@@ -7852,11 +7885,11 @@ public final class KioskActivity extends Activity {
      * step away. A child view of this activity, so lock task and the corner escape stay as they
      * are. Close, Back and a tap beside the code close it, never a tap on the code itself, which
      * someone scanning may brush; it closes by itself once {@code valid} says the code is spent,
-     * and on pause, so the brightness never stays up. {@code timeLeft} is "" where nothing runs
-     * out.
+     * and on pause, so the brightness never stays up. No caption: the code, Close and the time
+     * left are all it needs. {@code timeLeft} is "" where nothing runs out.
      */
     private void showQrFullScreen(String content, boolean withIcon, String description,
-            String caption, java.util.function.Supplier<String> timeLeft,
+            java.util.function.Supplier<String> timeLeft,
             java.util.function.BooleanSupplier valid) {
         closeQrFull();
         ViewGroup root = findViewById(android.R.id.content);
@@ -7876,15 +7909,8 @@ public final class KioskActivity extends Activity {
         // Takes the tap so it does not reach the layer: brushing the code while scanning.
         code.setClickable(true);
         column.addView(code, new LinearLayout.LayoutParams(dp(240), dp(240)));
-        TextView words = new FlushText(this);
-        words.setText(caption);
-        words.setTextSize(16);
-        words.setTextColor(0xDE000000);
-        words.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams wordsParams = matchWrap();
-        wordsParams.topMargin = dp(12);
-        column.addView(words, wordsParams);
         TextView left = new FlushText(this);
+        left.setPadding(0, dp(12), 0, 0);
         left.setTextSize(14);
         left.setTextColor(0x99000000);
         left.setGravity(Gravity.CENTER);
@@ -8315,6 +8341,103 @@ public final class KioskActivity extends Activity {
         column.setOrientation(LinearLayout.VERTICAL);
         column.addView(box, matchWrap());
         page.addView(column, singlePanelParams());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * Invite a new tablet: an invitation opened at once (FleetInvite, ten minutes, single use), its
+     * QR with Show full screen and the time left, Cancel invitation; the tablet that scans it is
+     * set up as device owner and joins the fleet by itself, and the page says so. No digits:
+     * nobody types this code.
+     */
+    private void showInvitePage(boolean mayOpen) {
+        // Drawn again (a rotation, a return to the screen), the page shows what there is: a
+        // new invitation opens only from a button, never because the screen was rebuilt after
+        // the last one was used.
+        currentScreen = () -> showInvitePage(false);
+        String refusal = mayOpen && FleetServer.inviteQrContent(this) == null
+                ? FleetServer.openInvite(this) : null;
+        LinearLayout page = subPage("Invite a new tablet", this::showSettings);
+        KioskTheme theme = currentTheme();
+        LinearLayout box = card(theme, null);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        ImageView qr = new ImageView(this);
+        qr.setScaleType(ImageView.ScaleType.CENTER);
+        qr.setContentDescription("Invitation QR");
+        // As large as the drawn code, so no empty band separates it from what follows.
+        box.addView(qr, wrapCentred());
+        Runnable fullInvite = () -> {
+            String shown = FleetServer.inviteQrContent(this);
+            if (shown != null) {
+                showQrFullScreen(shown, true, "Invitation QR",
+                        FleetServer::inviteTimeLeft,
+                        () -> shown.equals(FleetServer.inviteQrContent(this)));
+            }
+        };
+        qr.setOnClickListener(view -> fullInvite.run());
+        Button full = fullScreenButton(theme);
+        full.setOnClickListener(view -> fullInvite.run());
+        LinearLayout.LayoutParams fullParams = wrapCentred();
+        fullParams.topMargin = dp(8);
+        box.addView(full, fullParams);
+        TextView state = new FlushText(this);
+        state.setTextSize(16);
+        state.setTextColor(theme.text);
+        state.setGravity(Gravity.CENTER);
+        state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        LinearLayout.LayoutParams stateParams = matchWrap();
+        stateParams.topMargin = dp(4);
+        box.addView(state, stateParams);
+        Button cancel = textButton(theme, "Cancel invitation");
+        cancel.setOnClickListener(view -> {
+            FleetInvite.shared.cancel();
+            showSettings();
+        });
+        Button again = tonalButton(theme, "Invite again");
+        again.setOnClickListener(view -> {
+            FleetInvite.shared.cancel();
+            showInvitePage(true);
+        });
+        // Centred under the QR and the time left, like everything else on this card.
+        LinearLayout actions = buttonRow(cancel, again);
+        actions.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+        box.addView(actions, matchWrapClose());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(box, matchWrap());
+        page.addView(column, singlePanelParams());
+        String[] drawn = {null};
+        Runnable paint = new Runnable() {
+            @Override
+            public void run() {
+                if (!page.isAttachedToWindow() && drawn[0] != null) {
+                    return;
+                }
+                String content = FleetServer.inviteQrContent(KioskActivity.this);
+                if (content == null) {
+                    qr.setImageDrawable(null);
+                } else if (!content.equals(drawn[0])) {
+                    qr.setImageBitmap(qrBitmap(content, dp(240), true));
+                }
+                drawn[0] = content == null ? "" : content;
+                boolean open = content != null;
+                qr.setVisibility(open ? View.VISIBLE : View.GONE);
+                full.setVisibility(open ? View.VISIBLE : View.GONE);
+                String line = open ? FleetServer.inviteTimeLeft()
+                        : refusal != null ? "Not invited: " + refusal + "."
+                        : FleetInvite.shared.result();
+                if (!line.contentEquals(state.getText())) {
+                    state.setText(line);
+                }
+                // Nothing to say (an invitation cancelled elsewhere): no empty line above the button.
+                state.setVisibility(line.isEmpty() ? View.GONE : View.VISIBLE);
+                state.setTextColor(!open && refusal != null ? theme.bad : theme.text);
+                cancel.setVisibility(open ? View.VISIBLE : View.GONE);
+                again.setVisibility(open || refusal != null ? View.GONE : View.VISIBLE);
+                mainHandler.postDelayed(this, 1_000);
+            }
+        };
+        paint.run();
         setContentView(scrollPage(theme, page));
     }
 
@@ -11300,6 +11423,19 @@ public final class KioskActivity extends Activity {
      * retired defaults into them as if a user had chosen them would defeat the removal.
      */
     private void showFirstStartWizard() {
+        // Set up by an invitation QR: its Join screen, the code already open, while the panel
+        // that invited it adds it; then the wizard is done and the dashboard follows.
+        String invite = KioskConfig.pendingInvite(this);
+        if (invite != null) {
+            FleetJoin.Invitation inviter = FleetJoin.parseQr(invite);
+            long now = FleetServer.joinClock();
+            if (inviter != null && FleetJoin.shared.code(now) == null) {
+                FleetJoin.shared.openGiven(inviter.code, now,
+                        FleetInvite.until(invite) - System.currentTimeMillis());
+            }
+            showJoinPage(true);
+            return;
+        }
         KioskConfig config = KioskConfig.load(this);
         if (config.escapeSequencesConfigured()) {
             // Both combinations arrived while the wizard was up, typed into the web admin of an

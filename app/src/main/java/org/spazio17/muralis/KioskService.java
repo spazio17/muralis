@@ -503,8 +503,42 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
     }
 
+    /** Answering an invitation QR runs one knock at a time. */
+    private volatile boolean knocking;
+
+    /**
+     * Every 15 seconds while an invitation QR's code waits on this panel: its Join code open and
+     * a knock on the inviting panel (FleetServer.answerInvite), until it is in the fleet or the
+     * invitation is over; nothing runs on a panel no invitation set up.
+     */
+    private final Runnable inviteKnock = new Runnable() {
+        @Override
+        public void run() {
+            String extra = KioskConfig.pendingInvite(KioskService.this);
+            if (extra == null) {
+                return;
+            }
+            if (!knocking) {
+                knocking = true;
+                Context app = getApplicationContext();
+                new Thread(() -> {
+                    try {
+                        FleetServer.answerInvite(app, extra);
+                    } catch (RuntimeException failure) {
+                        Log.w(TAG, "Answering the invitation failed", failure);
+                    } finally {
+                        knocking = false;
+                    }
+                }, "MuralisInviteKnock").start();
+            }
+            mainHandler.postDelayed(this, 15_000);
+        }
+    };
+
     /** Set when Muralis became device owner: open the first-start screens after the setup. */
     static final String OPEN_AFTER_SETUP = "open_after_setup";
+    /** Set while the setup's policy-compliance question is still to come (ProvisioningModeActivity). */
+    static final String COMPLIANCE_DUE = "compliance_due";
     private android.database.ContentObserver setupWatcher;
 
     /**
@@ -529,10 +563,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
             runtime.edit().remove(OPEN_AFTER_SETUP).apply();
             return;
         }
+        // Android 10 marks the setup complete just before its last question to Muralis: opened
+        // then, Muralis covered the question, which never ran and never kept the QR's extras
+        // (Lenovo, 2026-10-19). PolicyComplianceActivity asks again once it has answered.
+        if (runtime.getBoolean(COMPLIANCE_DUE, false)) {
+            return;
+        }
         if (android.provider.Settings.Secure.getInt(getContentResolver(),
                 "user_setup_complete", 0) == 1) {
             runtime.edit().remove(OPEN_AFTER_SETUP).apply();
             Log.i(TAG, "The device's setup is done: opening Muralis's first start");
+            // With both combinations already here (from the setup QR or the fleet that added this
+            // panel), HOME is claimed before the setup's own last HOME, which otherwise asks the
+            // person to pick a launcher while Muralis is already open (Mi 9T, 2026-10-19).
+            if (KioskConfig.load(this).escapeSequencesConfigured()) {
+                KioskDeviceAdminReceiver.pinAsHomeActivity(this);
+            }
             try {
                 startActivity(new Intent(this, KioskActivity.class)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -611,6 +657,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             Log.e(TAG, "The settings the setup QR carried could not be applied", failure);
         }
         openFirstStartAfterSetup();
+        mainHandler.postDelayed(inviteKnock, 5_000);
         judgeLastDarkExit();
         registerReceiver(screenReceiver, screenFilter());
         android.os.UserManager users = getSystemService(android.os.UserManager.class);
@@ -690,9 +737,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_RELOAD_CONFIGURATION.equals(intent.getAction())) {
-            // Setup may keep a QR's settings after this service already started.
+            // Setup may keep a QR's settings, or an invitation, after this service already started.
             applyProvisionedSettings();
             restartControllers();
+            mainHandler.removeCallbacks(inviteKnock);
+            mainHandler.post(inviteKnock);
+            openFirstStartAfterSetup();
         } else if (intent != null
                 && ACTION_PUBLISH_TELEMETRY_SOON.equals(intent.getAction())) {
             publishStateSoon();

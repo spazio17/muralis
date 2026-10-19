@@ -86,12 +86,14 @@ final class FleetServer {
         this.identity = identity;
         this.serverSocket = serverSocket;
         this.port = serverSocket.getLocalPort();
-        // While a join code is open, an unknown key gets through the handshake too; past it, only
-        // the join route serves such a key, and only for the right code (handle). A revoked key
+        // While a join code or an invitation is open, an unknown key gets through the handshake
+        // too; past it, only the join routes serve such a key, and only for the right code
+        // (handle), and the knock route, only while the invitation lasts. A revoked key
         // gets through as well, to be told on the check-in route that it was removed, and
         // nothing else.
         this.tls = FleetTls.context(identity.key, identity.certificate,
                 spki -> admits(spki) || FleetJoin.shared.isOpen(joinClock())
+                        || FleetInvite.shared.isOpen(joinClock())
                         || KioskConfig.fleetRevoked(context).contains(spki))
                 .getSocketFactory();
     }
@@ -650,6 +652,115 @@ final class FleetServer {
                 + timeOf(context, FleetJoin.shared.expiresAt(), now) + ".";
     }
 
+    /**
+     * Opens an invitation for a new tablet ({@link FleetInvite}), replacing an open one; null,
+     * or the reason it cannot: no fleet yet, no Pro, a full fleet, or a build with nowhere to
+     * download Muralis from.
+     */
+    static String openInvite(Context context) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "create the fleet first";
+        }
+        String refusal = addRefusal(context);
+        if (refusal != null) {
+            return refusal;
+        }
+        if (!KioskRuntimeState.fleetListening()) {
+            return "the fleet port is off";
+        }
+        long now = joinClock();
+        FleetInvite.shared.open(now);
+        inviteUntilWallMs = System.currentTimeMillis() + (FleetInvite.shared.expiresAt() - now);
+        if (inviteQrContent(context) == null) {
+            FleetInvite.shared.cancel();
+            Log.w(TAG, "No download address for an invitation: a debug build needs"
+                    + " MURALIS_SETUP_APK_URL");
+            return "no download address in this build";
+        }
+        return null;
+    }
+
+    /**
+     * When the open invitation ends on the wall clock, fixed when it opens: the QR carries it,
+     * and a QR worked out again each time would change with every millisecond.
+     */
+    private static volatile long inviteUntilWallMs;
+
+    /**
+     * The invitation's QR: the setup QR's download and checksum, and in its extras the code and
+     * where this panel listens, until when; null when no invitation is open.
+     */
+    static String inviteQrContent(Context context) {
+        long now = joinClock();
+        String code = FleetInvite.shared.code(now);
+        SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
+        String address = facts == null ? "" : facts.ipAddress;
+        if (code == null || !KioskRuntimeState.fleetListening() || address.isEmpty()) {
+            return null;
+        }
+        try {
+            return KioskDeviceAdminReceiver.provisioningQr(context, new JSONObject().put(
+                    "muralis_invite", FleetInvite.extra(KioskConfig.deviceIdOf(context), address,
+                            KioskRuntimeState.fleetPort(), KioskRuntimeState.fleetKey(), code,
+                            inviteUntilWallMs)));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /**
+     * The new tablet's side of an invitation QR ({@code extra}, kept at setup): while it is in no
+     * fleet, its Join code open with the invitation's code (unless the person opened another),
+     * then a knock on the inviting panel's member port with this panel's id and member port. The
+     * inviting panel adds it from there. Called every few seconds until the invitation is over or
+     * this panel is in the fleet; off the main thread.
+     */
+    static void answerInvite(Context context, String extra) {
+        FleetJoin.Invitation inviter = FleetJoin.parseQr(extra);
+        if (inviter == null || !KioskConfig.fleetIdOf(context).isEmpty()
+                || !KioskRuntimeState.fleetListening()) {
+            return;
+        }
+        long now = joinClock();
+        if (FleetJoin.shared.code(now) == null) {
+            FleetJoin.shared.openGiven(inviter.code, now,
+                    FleetInvite.until(extra) - System.currentTimeMillis());
+        }
+        if (!inviter.code.equals(FleetJoin.shared.code(now))) {
+            return;
+        }
+        try {
+            Reply reply = call(context, inviter.address, inviter.port, inviter.spki, "POST",
+                    "/fleet/knock", new JSONObject()
+                            .put("id", KioskConfig.deviceIdOf(context))
+                            .put("port", KioskRuntimeState.fleetPort()));
+            if (reply.status != 202) {
+                Log.i(TAG, "The inviting panel did not take the knock: " + reply.reason());
+            }
+        } catch (IOException | JSONException unreachable) {
+            Log.i(TAG, "The inviting panel did not answer: " + unreachable.getMessage());
+        }
+    }
+
+    /** "Valid for 52 min" while an invitation is open; "" otherwise. */
+    static String inviteTimeLeft() {
+        long now = joinClock();
+        return FleetInvite.shared.code(now) == null ? ""
+                : validFor(FleetInvite.shared.expiresAt() - now);
+    }
+
+    /** What both surfaces draw the invitation from, for the web page as JSON. */
+    static JSONObject inviteState(Context context) {
+        try {
+            return new JSONObject()
+                    .put("open", inviteQrContent(context) != null)
+                    .put("left", inviteTimeLeft())
+                    .put("result", FleetInvite.shared.result());
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
     /** "Valid for 8 min" while a code is open, in whole minutes rounded up; "" otherwise. */
     static String joinTimeLeft(Context context) {
         long now = joinClock();
@@ -851,6 +962,9 @@ final class FleetServer {
             }
             boolean joinRoute = "/fleet/join".equals(parts[1])
                     || "/fleet/exchange".equals(parts[1]);
+            // A new tablet an invitation set up says where it waits; nothing else is served to it.
+            boolean knockRoute = "/fleet/knock".equals(parts[1])
+                    && FleetInvite.shared.isOpen(joinClock());
             // A removed panel's heartbeat is answered with the fact, so it can say so on its
             // screen and the person taps Leave there; it gets nothing else.
             if ("/fleet/checkin".equals(parts[1])
@@ -871,11 +985,11 @@ final class FleetServer {
             // session presents no certificate and never reaches the trust manager, so a key
             // revoked since its first call would otherwise get back in. The join route is the
             // one place an unknown key is served; the code authenticates it there.
-            if (joinRoute && KioskConfig.fleetRevoked(context).contains(caller)) {
+            if ((joinRoute || knockRoute) && KioskConfig.fleetRevoked(context).contains(caller)) {
                 respond(output, 403, error("this key was removed from this panel's fleet"));
                 return;
             }
-            if (!joinRoute && !admits(caller)) {
+            if (!joinRoute && !knockRoute && !admits(caller)) {
                 Log.i(TAG, "Member endpoint refused key " + FleetTls.shortForm(caller));
                 respond(output, 403, error("this key is not a member of this panel's fleet"));
                 return;
@@ -920,6 +1034,12 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only PUT or GET"));
                 }
+            } else if (knockRoute) {
+                if ("POST".equals(parts[0])) {
+                    knock(caller, socket.getInetAddress().getHostAddress(), body, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
             } else if ("/fleet/setup".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     setup(caller, body, output);
@@ -961,6 +1081,62 @@ final class FleetServer {
             }
             closeQuietly(channel != null ? channel : socket);
         }
+    }
+
+    /**
+     * {@code POST /fleet/knock} with {@code {"id": ..., "port": ...}}: a tablet an invitation
+     * set up, at its Join screen with the invitation's code, says where it waits. Its key is the
+     * one it called with and its address the one it called from, never what it claims. This
+     * panel then adds it as a scanned Join QR adds one (Spake2: the code never travels), off the
+     * connection; the answer is only that it was heard. One adoption at a time, a few seconds
+     * apart, the invitation closed after five that fail (FleetInvite).
+     */
+    private void knock(String caller, String from, byte[] body, OutputStream output)
+            throws IOException {
+        JSONObject request;
+        try {
+            request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException malformed) {
+            respond(output, 400, error("the body is not JSON"));
+            return;
+        }
+        String code = FleetInvite.shared.take(joinClock());
+        if (code == null) {
+            respond(output, 429, error("this panel is already adding a panel; knock again in a"
+                    + " few seconds"));
+            return;
+        }
+        String id = request.optString("id", "");
+        // An IPv4 caller on a dual-stack socket reads as ::ffff:a.b.c.d.
+        if (from.startsWith("::ffff:") && from.indexOf('.') > 0) {
+            from = from.substring("::ffff:".length());
+        }
+        FleetJoin.Invitation invitation = FleetJoin.parseQr(FleetJoin.qrContent(id, from,
+                request.optInt("port", -1), caller, code));
+        if (invitation == null) {
+            FleetInvite.shared.failed("a knock that did not say who it is");
+            respond(output, 400, error("the knock must carry this panel's id and member port"));
+            return;
+        }
+        respond(output, 202, new JSONObject());
+        Context app = context;
+        new Thread(() -> {
+            try {
+                Adopted adopted = adopt(app, invitation, KioskConfig.fleetIdOf(app),
+                        KioskConfig.fleetNameOf(app), id);
+                if (adopted.refusal == null) {
+                    FleetInvite.shared.joined(id);
+                    Log.i(TAG, "The invited tablet " + id + " joined the fleet");
+                } else {
+                    FleetInvite.shared.failed(adopted.refusal);
+                    Log.w(TAG, "The invited tablet could not be added: " + adopted.refusal);
+                }
+            } catch (RuntimeException failure) {
+                // Never left adding for good, and never the whole process.
+                FleetInvite.shared.failed("this panel failed while adding it");
+                Log.w(TAG, "Adding the invited tablet failed", failure);
+            }
+        }, "MuralisInvite").start();
     }
 
     /**

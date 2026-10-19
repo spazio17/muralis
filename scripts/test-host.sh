@@ -324,9 +324,13 @@ java -cp "${test_dir}/fleettls" org.spazio17.muralis.FleetTlsTest
 mkdir -p "${test_dir}/fleetjoin"
 javac -d "${test_dir}/fleetjoin" \
     "${pure_java_dir}/FleetJoin.java" \
+    "${pure_java_dir}/FleetInvite.java" \
     "${pure_java_dir}/Spake2.java" \
-    "${host_test_dir}/FleetJoinTest.java"
+    "${host_test_dir}/FleetJoinTest.java" \
+    "${host_test_dir}/FleetInviteTest.java"
 java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetJoinTest
+# The invitation for a new tablet: one hour, single use, Cancel, five failures.
+java -cp "${test_dir}/fleetjoin" org.spazio17.muralis.FleetInviteTest
 
 # The fleet document: canonical form, signature, and how two documents changed apart merge.
 mkdir -p "${test_dir}/fleetdocument"

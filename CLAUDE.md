@@ -88,7 +88,11 @@ on purpose.
   topic and to a web address; every member keeps the last versions of the fleet's list, with what
   each changed, and can restore one as a new version, membership kept as it is now. The Fleet page
   shows a picture of every panel's screen on request, fetched from each panel over the fleet's own
-  link and never stored, and Identify shows a panel's name on its screen.
+  link and never stored, and Identify shows a panel's name on its screen. A Pro panel can invite a
+  new tablet: a QR valid for ten minutes and for one tablet, which sets a factory-reset tablet up as
+  device owner and joins it to the fleet by itself (the tablet opens its Join code with the
+  invitation's code and asks the inviting panel to add it). Every QR opens full screen, dark on
+  white, at most 12 cm wide.
 - **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
   one-time purchase through Google Play, is the fleet and what only makes sense across panels:
   adding panels (at most six to a Pro fleet), the Fleet page and the fleet's alerts. A panel whose
@@ -137,8 +141,9 @@ on purpose.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
   password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
   endpoint is the one exception: it listens on every panel and admits only keys the panel trusts,
-  plus, while a person keeps a join code open, an unknown key on the join routes alone, and a
-  removed key on the check-in route alone, to be told it was removed.
+  plus, while a person keeps a join code open, an unknown key on the join routes alone, while an
+  invitation is open, an unknown key on the knock route alone, and a removed key on the check-in
+  route alone, to be told it was removed.
   Request sizes are bounded. A refusal is always answered with a reason (the one silence is an
   empty MQTT payload, which is how a retained command is cleared), and a command never claims a
   success it did not have (there is no "shutdown" command, because Android offers no way to do it).
