@@ -504,3 +504,16 @@ html:root .ld .nav ul.list li.on:hover{background:var(--secondary-container)}
 }
 ul.list li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:12px}
 details.older{margin-top:8px}details.older>summary{cursor:pointer;color:var(--accent);font-weight:500;padding:12px 0;list-style:none}details.older>summary::-webkit-details-marker{display:none}
+/* The full-screen QR (admin_qr.js): dark on white in both themes, the code as large as the
+   window allows up to 12 cm (the panel's QR_FULL_MAX_CM), beside a one-line caption and the
+   time left, Close at the top start. */
+img[id].qr-open,img#fleet-join-qr,img#setup-qr,img#fleet-invite-qr{cursor:zoom-in}
+dialog.qr-full{position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#fff;color:rgba(0,0,0,.87)}
+dialog.qr-full::backdrop{background:#fff}
+.qr-full-box{display:grid;justify-items:center;align-content:center;gap:8px;height:100%;padding:64px 16px 16px;box-sizing:border-box}
+.qr-full-box img{width:min(92vw,calc(92vh - 144px),12cm);height:auto;aspect-ratio:1;background:#fff;cursor:default}
+.qr-full-caption{margin:8px 0 0;font-size:1rem;text-align:center}
+.qr-full-left{margin:0;font-size:.875rem;color:rgba(0,0,0,.6);text-align:center}
+.qr-full-left[hidden]{display:none}
+dialog.qr-full .qr-full-close{position:absolute;top:8px;inset-inline-start:8px;min-height:44px;color:rgba(0,0,0,.87);background:transparent;border-color:transparent}
+dialog.qr-full .qr-full-close svg{color:rgba(0,0,0,.87)}

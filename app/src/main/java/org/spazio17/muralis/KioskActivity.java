@@ -1015,6 +1015,8 @@ public final class KioskActivity extends Activity {
 
     @Override
     protected void onPause() {
+        // The full-screen QR goes with the activity, so the brightness never stays up.
+        closeQrFull();
         inFront = false;
         KioskRuntimeState.publishActivityInFront(false);
         mainHandler.removeCallbacks(appLockOpen);
@@ -1097,7 +1099,7 @@ public final class KioskActivity extends Activity {
     public void onBackPressed() {
         // Inert only in a kiosk. Below API 33 this is the only hook, so the decision lives here and
         // in the OnBackInvokedCallback both.
-        if (putKeyboardAway() || isDeviceOwner()) {
+        if (putKeyboardAway() || closeQrFull() || isDeviceOwner()) {
             return;
         }
         if (!navigateBack()) {
@@ -1444,7 +1446,7 @@ public final class KioskActivity extends Activity {
                 android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                 () -> {
                     // The keyboard first, kiosk or not: putting it away is no way out.
-                    if (putKeyboardAway()) {
+                    if (putKeyboardAway() || closeQrFull()) {
                         return;
                     }
                     // Swallowed in a kiosk: every Muralis screen that needs to go back has an
@@ -7691,6 +7693,20 @@ public final class KioskActivity extends Activity {
         qr.setScaleType(ImageView.ScaleType.CENTER);
         qr.setContentDescription("Join code as a QR code");
         box.addView(qr, new LinearLayout.LayoutParams(dp(240), dp(240)));
+        // The same code at the size of the screen, for a camera that cannot read it at 240 dp.
+        Runnable fullJoin = () -> {
+            String shown = FleetServer.joinQrContent(this);
+            if (shown != null) {
+                showQrFullScreen(shown, true, "Join code as a QR code",
+                        "Scan with a Muralis panel that has Pro",
+                        () -> FleetServer.joinTimeLeft(this),
+                        () -> shown.equals(FleetServer.joinQrContent(this)));
+            }
+        };
+        qr.setOnClickListener(view -> fullJoin.run());
+        Button full = fullScreenButton(theme);
+        full.setOnClickListener(view -> fullJoin.run());
+        box.addView(full, wrapCentred());
         TextView code = new FlushText(this);
         code.setTextSize(34);
         code.setTextColor(theme.text);
@@ -7762,6 +7778,7 @@ public final class KioskActivity extends Activity {
                 }
                 drawn[0] = content == null ? "" : content;
                 qr.setVisibility(content == null ? View.GONE : View.VISIBLE);
+                full.setVisibility(content == null ? View.GONE : View.VISIBLE);
                 code.setText(open == null ? "" : FleetJoin.grouped(open));
                 code.setVisibility(open == null ? View.GONE : View.VISIBLE);
                 detail.setText(FleetServer.joinDetail(KioskRuntimeState.fleetKey(),
@@ -7781,6 +7798,185 @@ public final class KioskActivity extends Activity {
         };
         paint.run();
         setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * The widest a full-screen QR is drawn, in centimetres on the glass: an invitation of about
+     * 85 modules then has modules of about 1.4 mm, read from 40 cm, and a 177-module code about
+     * 0.7 mm, read from 15 to 25 cm; a wall-sized screen does not draw a code too large to frame
+     * (2026-10-19).
+     */
+    static final float QR_FULL_MAX_CM = 12f;
+
+    /** The full-screen QR while it shows, or null; see {@link #showQrFullScreen}. */
+    private FrameLayout qrFull;
+    /** The window's brightness and keep-screen-on flag from before the full-screen QR. */
+    private float qrFullBrightness;
+    private boolean qrFullKeptOn;
+    private final Runnable qrFullTick = new Runnable() {
+        @Override
+        public void run() {
+            if (qrFull == null) {
+                return;
+            }
+            Runnable paint = (Runnable) qrFull.getTag();
+            paint.run();
+            if (qrFull != null) {
+                mainHandler.postDelayed(this, 1_000);
+            }
+        }
+    };
+
+    /** "Show full screen" with the four-corner glyph, under every QR the panel shows. */
+    private Button fullScreenButton(KioskTheme theme) {
+        Button button = textButton(theme, "Show full screen");
+        android.graphics.drawable.Drawable corners = getDrawable(R.drawable.ic_fullscreen).mutate();
+        corners.setTint(theme.accent);
+        corners.setBounds(0, 0, dp(18), dp(18));
+        button.setCompoundDrawablesRelative(corners, null, null, null);
+        button.setCompoundDrawablePadding(dp(8));
+        return button;
+    }
+
+    private LinearLayout.LayoutParams wrapCentred() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.gravity = Gravity.CENTER_HORIZONTAL;
+        params.topMargin = dp(4);
+        return params;
+    }
+
+    /**
+     * One QR as large as the screen allows, dark on white with its quiet zone in either theme
+     * and the screen at full brightness while it shows: what an old tablet's camera reads from a
+     * step away. A child view of this activity, so lock task and the corner escape stay as they
+     * are. Close, Back and a tap beside the code close it, never a tap on the code itself, which
+     * someone scanning may brush; it closes by itself once {@code valid} says the code is spent,
+     * and on pause, so the brightness never stays up. {@code timeLeft} is "" where nothing runs
+     * out.
+     */
+    private void showQrFullScreen(String content, boolean withIcon, String description,
+            String caption, java.util.function.Supplier<String> timeLeft,
+            java.util.function.BooleanSupplier valid) {
+        closeQrFull();
+        ViewGroup root = findViewById(android.R.id.content);
+        if (root == null) {
+            return;
+        }
+        FrameLayout layer = new FrameLayout(this);
+        layer.setBackgroundColor(Color.WHITE);
+        layer.setClickable(true);
+        layer.setOnClickListener(view -> closeQrFull());
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.CENTER);
+        ImageView code = new ImageView(this);
+        code.setScaleType(ImageView.ScaleType.CENTER);
+        code.setContentDescription(description);
+        // Takes the tap so it does not reach the layer: brushing the code while scanning.
+        code.setClickable(true);
+        column.addView(code, new LinearLayout.LayoutParams(dp(240), dp(240)));
+        TextView words = new FlushText(this);
+        words.setText(caption);
+        words.setTextSize(16);
+        words.setTextColor(0xDE000000);
+        words.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams wordsParams = matchWrap();
+        wordsParams.topMargin = dp(12);
+        column.addView(words, wordsParams);
+        TextView left = new FlushText(this);
+        left.setTextSize(14);
+        left.setTextColor(0x99000000);
+        left.setGravity(Gravity.CENTER);
+        left.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        column.addView(left, matchWrap());
+        layer.addView(column, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Close at the top start, as Material's full-screen dialogs place it.
+        Button close = new PillButton(this);
+        pillShaped(close, "Close", 12);
+        close.setTextColor(0xDE000000);
+        close.setBackground(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        android.graphics.drawable.Drawable cross = getDrawable(R.drawable.ic_close).mutate();
+        cross.setTint(0xDE000000);
+        cross.setBounds(0, 0, dp(18), dp(18));
+        close.setCompoundDrawablesRelative(cross, null, null, null);
+        close.setCompoundDrawablePadding(dp(8));
+        close.setMinimumHeight(dp(48));
+        close.setOnClickListener(view -> closeQrFull());
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        closeParams.setMargins(dp(8), dp(8), dp(8), dp(8));
+        layer.addView(close, closeParams);
+        // As large as fits with room for Close above and the two lines below, but never wider
+        // than QR_FULL_MAX_CM on the glass: a camera held a hand's width away reads that best,
+        // and a code the size of a television only makes it step back. Redrawn when the
+        // screen turns.
+        // xdpi as the display reports it, unless it is far from the density Android works with:
+        // some devices report 160 whatever the glass, which would shrink the cap by a third.
+        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+        float dpi = metrics.xdpi > 0.75f * metrics.densityDpi
+                && metrics.xdpi < 1.33f * metrics.densityDpi ? metrics.xdpi : metrics.densityDpi;
+        float pxPerCm = dpi / 2.54f;
+        int widest = Math.round(QR_FULL_MAX_CM * pxPerCm);
+        int[] drawnSide = {0};
+        layer.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) -> {
+            int side = Math.min(Math.min(r - l - dp(32), b - t - dp(176)), widest);
+            if (side > 0 && side != drawnSide[0]) {
+                drawnSide[0] = side;
+                Bitmap bitmap = qrBitmap(content, side, withIcon);
+                code.setImageBitmap(bitmap);
+                ViewGroup.LayoutParams params = code.getLayoutParams();
+                params.width = side;
+                params.height = side;
+                code.setLayoutParams(params);
+            }
+        });
+        layer.setTag((Runnable) () -> {
+            if (!valid.getAsBoolean()) {
+                closeQrFull();
+                return;
+            }
+            String text = timeLeft.get();
+            if (!text.contentEquals(left.getText())) {
+                left.setText(text);
+            }
+            left.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+        });
+        root.addView(layer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        qrFull = layer;
+        android.view.WindowManager.LayoutParams window = getWindow().getAttributes();
+        qrFullBrightness = window.screenBrightness;
+        qrFullKeptOn = (window.flags & android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                != 0;
+        window.screenBrightness = 1f;
+        window.flags |= android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+        getWindow().setAttributes(window);
+        close.requestFocus();
+        mainHandler.removeCallbacks(qrFullTick);
+        qrFullTick.run();
+    }
+
+    /** Takes the full-screen QR away and puts the brightness back; false when none showed. */
+    private boolean closeQrFull() {
+        if (qrFull == null) {
+            return false;
+        }
+        mainHandler.removeCallbacks(qrFullTick);
+        ViewGroup parent = (ViewGroup) qrFull.getParent();
+        if (parent != null) {
+            parent.removeView(qrFull);
+        }
+        qrFull = null;
+        android.view.WindowManager.LayoutParams window = getWindow().getAttributes();
+        window.screenBrightness = qrFullBrightness;
+        if (!qrFullKeptOn) {
+            window.flags &= ~android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+        }
+        getWindow().setAttributes(window);
+        return true;
     }
 
     /** The camera of Add a panel while its page is up; see showAddPanelScanner. */

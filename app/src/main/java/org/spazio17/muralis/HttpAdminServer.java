@@ -192,6 +192,7 @@ final class HttpAdminServer {
     private final String playlistScript;
     private final String menuScript;
     private final String fleetScript;
+    private final String qrScript;
     private final String pageCss;
 
 
@@ -276,6 +277,7 @@ final class HttpAdminServer {
         playlistScript = script(R.raw.admin_playlists);
         menuScript = script(R.raw.admin_menu);
         fleetScript = script(R.raw.admin_fleet);
+        qrScript = script(R.raw.admin_qr);
         // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
@@ -2073,6 +2075,8 @@ final class HttpAdminServer {
                 + "a1 1 0 011-1h5\"/>");
         // The Folders head's one button: chevrons closing on each other, or opening away.
         paths.put("unfold_less", "<path d=\"M7 4l5 5 5-5M7 20l5-5 5 5\"/>");
+        // Material's fullscreen, four corners: what opens a QR at the size of the window.
+        paths.put("fullscreen", "<path d=\"M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5\"/>");
         paths.put("unfold_more", "<path d=\"M7 9l5-5 5 5M7 15l5 5 5-5\"/>");
         paths.put("sun", "<path fill=\"currentColor\" stroke=\"none\" d=\"M12,7c-2.76,0 -5,2.24 -5,5s2.24,5 5,5 5,-2.24 5,-5 -2.24,-5 -5,-5zM2,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1L2,11c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM20,13h2c0.55,0 1,-0.45 1,-1s-0.45,-1 -1,-1h-2c-0.55,0 -1,0.45 -1,1s0.45,1 1,1zM11,2v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1L13,2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM11,20v2c0,0.55 0.45,1 1,1s1,-0.45 1,-1v-2c0,-0.55 -0.45,-1 -1,-1s-1,0.45 -1,1zM5.99,4.58c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0s0.39,-1.03 0,-1.41L5.99,4.58zM18.36,16.95c-0.39,-0.39 -1.03,-0.39 -1.41,0 -0.39,0.39 -0.39,1.03 0,1.41l1.06,1.06c0.39,0.39 1.03,0.39 1.41,0 0.39,-0.39 0.39,-1.03 0,-1.41l-1.06,-1.06zM19.42,5.99c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06zM7.05,18.36c0.39,-0.39 0.39,-1.03 0,-1.41 -0.39,-0.39 -1.03,-0.39 -1.41,0l-1.06,1.06c-0.39,0.39 -0.39,1.03 0,1.41s1.03,0.39 1.41,0l1.06,-1.06z\"/>");
         // Material's brightness_medium, the half-lit sun for following the device.
@@ -2085,6 +2089,18 @@ final class HttpAdminServer {
 
     private static String glyph(String name) {
         return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + GLYPHS.get(name) + "</svg>";
+    }
+
+    /**
+     * "Show full screen" under a QR: admin_qr.js opens the image named by {@code imageId} at
+     * the size of the window, with {@code caption} under it and the text of {@code leftId}, the
+     * time left, when there is one.
+     */
+    private static String fullScreenButton(String imageId, String caption, String leftId) {
+        return "<div class=\"actions\"><button type=\"button\" class=\"text\" data-qr-full=\""
+                + imageId + "\" data-qr-caption=\"" + escapeHtml(caption) + "\""
+                + (leftId == null ? "" : " data-qr-left=\"" + leftId + "\"") + ">"
+                + glyph("fullscreen") + "Show full screen</button></div>";
     }
 
     /** A 40 px icon button that submits its form; the label is its tooltip and its spoken name. */
@@ -3892,8 +3908,11 @@ final class HttpAdminServer {
         html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
                 + "<p class=\"hint\">Scanned during a new tablet's first setup, it installs Muralis"
                 + " as the device owner and starts it with these settings, never the passwords.</p>"
-                + (fits ? "<img src=\"/api/setup-qr.svg\" alt=\"Setup QR with these settings\""
-                        + " width=\"320\" height=\"320\">"
+                + (fits ? "<img id=\"setup-qr\" src=\"/api/setup-qr.svg\""
+                        + " alt=\"Setup QR with these settings\" width=\"320\" height=\"320\">"
+                        + fullScreenButton("setup-qr",
+                                "Scan on a new tablet's welcome screen, after tapping it six times",
+                                null)
                         : "<p class=\"hint bad\">These settings do not fit in a QR (it holds about"
                         + " 2 KB packed, the rules take the most). Set the tablet up with the plain QR on"
                         + " the website, then import the file here.</p>")
@@ -4320,8 +4339,11 @@ final class HttpAdminServer {
                 + "<div class=\"fleet-join\" id=\"fleet-join\" hidden>"
                 + "<img id=\"fleet-join-qr\" alt=\"Join code as a QR code\" width=\"240\""
                 + " height=\"240\" hidden>"
+                + fullScreenButton("fleet-join-qr", "Scan with a Muralis panel that has Pro",
+                        "fleet-join-left")
                 + "<p class=\"join-code\" id=\"fleet-join-code\"></p>"
                 + "<p class=\"hint\" id=\"fleet-join-detail\"></p>"
+                + "<p class=\"hint\" id=\"fleet-join-left\"></p>"
                 + "<p id=\"fleet-join-line\"></p>"
                 + "<div class=\"actions\">"
                 + "<button type=\"button\" class=\"text\" id=\"fleet-join-close\">Close</button>"
@@ -5308,7 +5330,7 @@ final class HttpAdminServer {
     /** The scripts and the closing tags every page of this server ends with. */
     private String pageEnd() {
         return commandScript + settingScript + pictureScript + statsScript + automationScript
-                + themeScript + "</main></body></html>";
+                + themeScript + qrScript + "</main></body></html>";
     }
 
     /** The browse token is {@code offset|location}, or a bare location for the first page. */

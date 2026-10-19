@@ -650,6 +650,21 @@ final class FleetServer {
                 + timeOf(context, FleetJoin.shared.expiresAt(), now) + ".";
     }
 
+    /** "Valid for 8 min" while a code is open, in whole minutes rounded up; "" otherwise. */
+    static String joinTimeLeft(Context context) {
+        long now = joinClock();
+        if (FleetJoin.shared.code(now) == null) {
+            return "";
+        }
+        return validFor(FleetJoin.shared.expiresAt() - now);
+    }
+
+    /** "Valid for 52 min" for the time an open code or invitation has left. */
+    static String validFor(long leftMs) {
+        long minutes = Math.max(1, (leftMs + 59_999) / 60_000);
+        return "Valid for " + minutes + " min";
+    }
+
     /** The QR's content for the open code, or null when none is open. */
     static String joinQrContent(Context context) {
         long now = joinClock();
@@ -679,7 +694,8 @@ final class FleetServer {
                     .put("detail", joinDetail(KioskRuntimeState.fleetKey(),
                             facts == null ? "" : facts.ipAddress, KioskRuntimeState.fleetPort()))
                     .put("locked", FleetJoin.shared.lockedUntil(now) > 0)
-                    .put("line", joinLine(context));
+                    .put("line", joinLine(context))
+                    .put("left", joinTimeLeft(context));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }

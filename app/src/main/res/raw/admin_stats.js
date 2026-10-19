@@ -36,6 +36,8 @@ var line=document.getElementById('fleet-join-line');if(line.textContent!==j.line
 var src=j.qr&&j.code?'/api/fleet/code.svg?c='+encodeURIComponent(j.code+' '+j.detail):'';
 if(qr.getAttribute('data-src')!==src){qr.setAttribute('data-src',src);if(src){qr.src=src;}else{qr.removeAttribute('src');}}
 qr.hidden=!src;
+var fullJoin=document.querySelector('[data-qr-full="fleet-join-qr"]');if(fullJoin){fullJoin.hidden=!src;}
+var left=document.getElementById('fleet-join-left');if(left.textContent!==(j.left||'')){left.textContent=j.left||'';}left.hidden=!j.left;
 document.getElementById('fleet-join-new').hidden=j.member||!!j.code||j.locked||!j.can_join;
 // Once joined, the box closes by itself as the panel's own page does; Close counts down.
 var close=document.getElementById('fleet-join-close');
