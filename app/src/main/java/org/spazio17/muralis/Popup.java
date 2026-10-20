@@ -27,19 +27,28 @@ final class Popup {
         final int seconds;
         final boolean wake;
         final boolean chime;
-        /** A camera's sign-in for the address, sent to the camera's host only; null when none. */
-        final Cameras.Login login;
+        /** What the card draws below the message: the address, or a camera or a group's cameras. */
+        final java.util.List<Cameras.Tile> tiles;
         /** When it was asked for, on a clock a change of the date cannot move. */
         final long madeAtMs = clock.getAsLong();
 
         Request(String title, String message, String url, int seconds, boolean wake,
                 boolean chime) {
-            this(title, message, url, seconds, wake, chime, null);
+            this(title, message, url, url == null || url.isEmpty()
+                    ? java.util.Collections.<Cameras.Tile>emptyList()
+                    : java.util.Collections.singletonList(new Cameras.Tile(title, url, null)),
+                    seconds, wake, chime);
         }
 
-        Request(String title, String message, String url, int seconds, boolean wake,
-                boolean chime, Cameras.Login login) {
-            this.login = login;
+        /** A camera's or a group's pop-up: the cameras drawn as one grid, with their sign-ins. */
+        Request(String title, java.util.List<Cameras.Tile> tiles, int seconds, boolean wake,
+                boolean chime) {
+            this(title, "", tiles.isEmpty() ? "" : tiles.get(0).url, tiles, seconds, wake, chime);
+        }
+
+        private Request(String title, String message, String url,
+                java.util.List<Cameras.Tile> tiles, int seconds, boolean wake, boolean chime) {
+            this.tiles = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(tiles));
             this.title = title;
             this.message = message;
             this.url = url;

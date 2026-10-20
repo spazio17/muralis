@@ -45,19 +45,6 @@ final class CameraView {
     private static final int CONNECT_TIMEOUT_MS = 8_000;
     private static final int READ_TIMEOUT_MS = 20_000;
 
-    /** One camera to draw: its name, its address and its sign-in, or null for none. */
-    static final class Source {
-        final String name;
-        final String url;
-        final Cameras.Login login;
-
-        Source(String name, String url, Cameras.Login login) {
-            this.name = name;
-            this.url = url;
-            this.login = login == null || login.isEmpty() ? null : login;
-        }
-    }
-
     /** For the status publish when a camera's certificate starts waiting for Trust. */
     private static volatile android.content.Context app;
 
@@ -68,7 +55,7 @@ final class CameraView {
      * Sets {@code web} up for {@code sources} and starts drawing them; {@code pins} are the
      * certificates a person trusted, host to fingerprint, as for pages.
      */
-    static void show(WebView web, List<Source> sources, Map<String, String> pins) {
+    static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins) {
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
@@ -77,7 +64,7 @@ final class CameraView {
         settings.setDatabaseEnabled(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        final List<Source> list = new ArrayList<>(sources);
+        final List<Cameras.Tile> list = new ArrayList<>(sources);
         app = web.getContext().getApplicationContext();
         final Map<String, String> trusted = new LinkedHashMap<>(pins);
         web.setWebViewClient(new WebViewClient() {
@@ -97,7 +84,7 @@ final class CameraView {
         web.destroy();
     }
 
-    static WebResourceResponse intercept(List<Source> sources, Map<String, String> pins,
+    static WebResourceResponse intercept(List<Cameras.Tile> sources, Map<String, String> pins,
             WebResourceRequest request) {
         String url = request.getUrl().toString();
         if (url.startsWith(BASE)) {
@@ -106,7 +93,7 @@ final class CameraView {
             if (index < 0) {
                 return text(404, "Not Found", "text/plain", "");
             }
-            Source source = sources.get(index);
+            Cameras.Tile source = sources.get(index);
             if (path.startsWith("/probe/")) {
                 return probe(source, pins);
             }
@@ -144,9 +131,9 @@ final class CameraView {
     }
 
     /** The sign-in of the camera whose host {@code url} names; null when none. */
-    private static Cameras.Login loginFor(List<Source> sources, String url) {
+    private static Cameras.Login loginFor(List<Cameras.Tile> sources, String url) {
         String host = Cameras.hostOf(url);
-        for (Source source : sources) {
+        for (Cameras.Tile source : sources) {
             if (source.login != null && !host.isEmpty() && host.equals(Cameras.hostOf(source.url))) {
                 return source.login;
             }
@@ -155,7 +142,7 @@ final class CameraView {
     }
 
     /** What a camera sends, as the tile's script needs it: mjpeg, image, page or none. */
-    private static WebResourceResponse probe(Source source, Map<String, String> pins) {
+    private static WebResourceResponse probe(Cameras.Tile source, Map<String, String> pins) {
         String kind;
         HttpURLConnection connection = null;
         try {
@@ -176,8 +163,18 @@ final class CameraView {
             } else {
                 kind = "page";
             }
-        } catch (javax.net.ssl.SSLException untrusted) {
-            kind = "untrusted";
+        } catch (javax.net.ssl.SSLException secure) {
+            // A certificate refused, or another TLS failure (an old camera's protocol), which
+            // is simply no picture.
+            boolean certificate = false;
+            for (Throwable cause = secure; cause != null; cause = cause.getCause()) {
+                certificate |= cause instanceof java.security.cert.CertificateException;
+            }
+            kind = certificate ? "untrusted" : "none";
+            if (!certificate) {
+                Log.i(TAG, "Camera " + source.name + " cannot be reached securely");
+                return text(200, "OK", "application/json", "{\"kind\":\"none\"}");
+            }
             Log.i(TAG, "Camera " + source.name + " has a certificate this panel does not trust");
             // Both surfaces show the waiting certificate from the status document.
             android.content.Context context = app;
@@ -256,7 +253,7 @@ final class CameraView {
     }
 
     /**
-     * How each camera host last asked to be signed in to, "basic" or its Digest challenge, kept in
+     * How each camera address last asked to be signed in to, "basic" or its Digest challenge, kept in
      * memory only, so a snapshot fetched every two seconds is not refused first each time.
      */
     private static final Map<String, Object> SIGN_INS =
@@ -274,7 +271,9 @@ final class CameraView {
     private static HttpURLConnection open(String url, Cameras.Login login,
             Map<String, String> headers, Map<String, String> pins)
             throws IOException, java.security.GeneralSecurityException {
-        String host = Cameras.hostOf(url);
+        // Per camera address, not per host: an NVR's channels or two cameras behind one proxy
+        // may ask for different kinds of sign-in.
+        String host = signInKey(url);
         Object known = login == null ? null : SIGN_INS.get(host);
         HttpURLConnection connection = openOnce(url, authorization(known, login, url), headers,
                 pins);
@@ -297,13 +296,22 @@ final class CameraView {
             return connection;
         }
         SIGN_INS.put(host, scheme);
-        boolean retry = known == null
+        // A different kind of sign-in asked for is not a wrong password either.
+        boolean kindChanged = (known instanceof DigestAuth.Challenge)
+                != (scheme instanceof DigestAuth.Challenge);
+        boolean retry = known == null || kindChanged
                 || (scheme instanceof DigestAuth.Challenge && ((DigestAuth.Challenge) scheme).stale);
         if (!retry) {
             return connection;
         }
         drain(connection);
         return openOnce(url, authorization(scheme, login, url), headers, pins);
+    }
+
+    /** Where a sign-in kind is remembered: the address without its query. */
+    private static String signInKey(String url) {
+        int query = url.indexOf('?');
+        return query < 0 ? url : url.substring(0, query);
     }
 
     private static String authorization(Object scheme, Cameras.Login login, String url) {
@@ -402,7 +410,7 @@ final class CameraView {
     }
 
     /** The view's own page: one tile a camera, drawn and kept alive by its script. */
-    static String page(List<Source> sources) {
+    static String page(List<Cameras.Tile> sources) {
         StringBuilder names = new StringBuilder("[");
         StringBuilder urls = new StringBuilder("[");
         for (int i = 0; i < sources.size(); i++) {
@@ -414,7 +422,7 @@ final class CameraView {
         return "<!doctype html><html><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                 + "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
-                + "#grid{display:grid;height:100%;gap:2px;grid-auto-rows:1fr}"
+                + "#grid{display:grid;height:100%;gap:2px}"
                 + ".tile{position:relative;overflow:hidden;background:#111}"
                 + ".tile img,.tile iframe{position:absolute;inset:0;width:100%;height:100%;"
                 + "object-fit:contain;border:0}"
@@ -424,10 +432,19 @@ final class CameraView {
                 + ".tile p b{color:#fff}</style></head><body><div id=\"grid\"></div><script>"
                 + "var names=" + names + ",urls=" + urls + ";"
                 + "var grid=document.getElementById('grid');"
-                + "var cols=Math.ceil(Math.sqrt(names.length));"
-                + "grid.style.gridTemplateColumns='repeat('+cols+',1fr)';"
+                // The grid by the number of cameras and the shape of the view, as recorders lay
+                // it out: two side by side or stacked, three as one big and two small, then 2x2,
+                // 3x2, 3x3 and 4x3, turned for an upright view.
                 + "names.forEach(function(name,i){var t=document.createElement('div');"
                 + "t.className='tile';grid.appendChild(t);start(t,i,0);});"
+                + "function layout(){var n=names.length,w=innerWidth>=innerHeight,c,r;"
+                + "if(n<=1){c=1;r=1;}else if(n===2){c=w?2:1;r=w?1:2;}else if(n<=4){c=2;r=2;}"
+                + "else if(n<=6){c=w?3:2;r=w?2:3;}else if(n<=9){c=3;r=3;}else{c=w?4:3;r=w?3:4;}"
+                + "grid.style.gridTemplateColumns='repeat('+c+',1fr)';"
+                + "grid.style.gridTemplateRows='repeat('+r+',1fr)';"
+                + "var first=grid.firstChild;if(first){first.style.gridRow=n===3&&w?'span 2':'';"
+                + "first.style.gridColumn=n===3&&!w?'span 2':'';}}"
+                + "layout();addEventListener('resize',layout);"
                 + "function none(t,i,tries,why){t.innerHTML='';var p=document.createElement('p');"
                 + "var b=document.createElement('b');b.textContent=names[i];p.appendChild(b);"
                 + "p.appendChild(document.createTextNode(why||'No picture'));t.appendChild(p);"
@@ -442,14 +459,17 @@ final class CameraView {
                 + "if(kind!=='mjpeg'&&kind!=='image'){none(t,i,tries);return;}"
                 + "var img=document.createElement('img');img.alt=names[i];"
                 + "img.onerror=function(){none(t,i,tries);};"
-                + "if(kind==='image'){img.onload=function(){again(t,i,img);};}"
+                + "if(kind==='image'){img.onload=function(){again(t,i,img,0);};}"
                 + "img.src='/stream/'+i+'?t='+Date.now();t.appendChild(img);}"
                 // A picture is fetched again every two seconds; the new one replaces the old
                 // only once it has arrived, so the tile never flickers empty.
-                + "function again(t,i,img){img.onerror=null;setTimeout(function(){"
+                // One failed refresh keeps the last picture and tries again at the next tick (a
+                // camera that changed its sign-in nonce answers the next one); two in a row say so.
+                + "function again(t,i,img,fails){img.onerror=null;setTimeout(function(){"
                 + "if(!img.isConnected)return;var n=new Image();n.alt=img.alt;"
-                + "n.onload=function(){if(img.isConnected){t.replaceChild(n,img);again(t,i,n);}};"
-                + "n.onerror=function(){if(img.isConnected)none(t,i,0);};"
+                + "n.onload=function(){if(img.isConnected){t.replaceChild(n,img);again(t,i,n,0);}};"
+                + "n.onerror=function(){if(!img.isConnected)return;"
+                + "if(fails<1){again(t,i,img,fails+1);}else{none(t,i,0);}};"
                 + "n.src='/stream/'+i+'?t='+Date.now();},2000);}"
                 + "</script></body></html>";
     }

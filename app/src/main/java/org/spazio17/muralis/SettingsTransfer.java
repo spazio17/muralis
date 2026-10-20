@@ -45,7 +45,7 @@ final class SettingsTransfer {
                 "orientation", "display_off_method", "screensaver_mode",
                 "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
                 "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "cameras", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {
+                "automations", "beacon_names", "cameras", "camera_groups", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",

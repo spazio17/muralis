@@ -997,6 +997,13 @@ final class HttpAdminServer {
             if (refusal == null) {
                 KioskService.reloadConfiguration(context);
             }
+        } else if (path.equals("/camera-groups") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildCameraGroupsPage(null)));
+        } else if (path.equals("/camera-groups") && method.equals("POST")) {
+            String notice = saveCameraGroup(parseFormBody(headers, body));
+            writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
+                    "text/html; charset=utf-8", bytes(buildCameraGroupsPage(notice)));
         } else if (path.equals("/cameras") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
         } else if (path.equals("/adopt") && method.equals("POST")) {
@@ -4031,6 +4038,87 @@ final class HttpAdminServer {
                 bytes(buildSettingsFilePage("Not done: nothing to do.", null)));
     }
 
+    /**
+     * The camera groups, a page of their own: each group's form with its name, a tick for each
+     * camera, Save, Show and Remove, then an empty one to add a group. The panel's is the same.
+     */
+    private String buildCameraGroupsPage(String notice) {
+        StringBuilder html = new StringBuilder(pageStart("Camera groups", null,
+                settingsAt("cameras")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        for (Cameras.Group group : groups) {
+            html.append(cameraGroupForm(cameras, group));
+        }
+        if (groups.size() < Cameras.MAX_GROUPS) {
+            html.append(cameraGroupForm(cameras, null));
+        }
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String cameraGroupForm(java.util.List<Cameras.Camera> cameras,
+            Cameras.Group group) {
+        boolean fresh = group == null;
+        String sfx = fresh ? "-new" : "-" + Integer.toHexString(group.name.hashCode());
+        String labelId = "g-cams" + sfx;
+        StringBuilder ticks = new StringBuilder("<div role=\"group\" aria-labelledby=\"" + labelId
+                + "\"><p class=\"label\" id=\"" + labelId + "\">Cameras</p>");
+        for (int i = 0; i < cameras.size(); i++) {
+            Cameras.Camera camera = cameras.get(i);
+            boolean member = false;
+            if (!fresh) {
+                for (String one : group.cameras) {
+                    member |= one.equalsIgnoreCase(camera.name);
+                }
+            }
+            String id = "g-cam" + sfx + "-" + i;
+            ticks.append("<label class=\"check\" for=\"").append(id).append("\"><input type=\"checkbox\" id=\"")
+                    .append(id).append("\" name=\"cam").append(i).append("\" value=\"")
+                    .append(escapeHtml(camera.name)).append("\"").append(member ? " checked" : "")
+                    .append("> ").append(escapeHtml(camera.name)).append("</label>");
+        }
+        ticks.append("</div>");
+        return "<form method=\"post\" action=\"/camera-groups\" class=\"card\">"
+                + "<h2>" + (fresh ? "Add a group" : escapeHtml(group.name)) + "</h2>"
+                + "<input type=\"hidden\" name=\"was\" value=\""
+                + (fresh ? "" : escapeHtml(group.name)) + "\">"
+                + fieldWithId("g-name" + sfx, "text", "name", "Name", fresh ? "" : group.name,
+                        "", null).replace(MACHINE_TEXT, "")
+                + ticks
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\" name=\"what\""
+                + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
+                + (fresh ? "" : "<button type=\"submit\" name=\"what\" value=\"show\">Show"
+                        + "</button><button type=\"submit\" class=\"danger\" name=\"what\""
+                        + " value=\"remove\">Remove</button>")
+                + "</div></form>";
+    }
+
+    /** One group form's post: saved, shown or removed. */
+    private String saveCameraGroup(Map<String, String> form) {
+        String was = form.getOrDefault("was", "").trim();
+        if ("remove".equals(form.get("what"))) {
+            KioskService.removeCameraGroup(context, was);
+            return null;
+        }
+        if ("show".equals(form.get("what"))) {
+            String refused = kioskService.cameraPopup(was, false);
+            return refused == null ? "Shown on the panel." : "Not shown: " + refused + ".";
+        }
+        java.util.List<String> members = new java.util.ArrayList<>();
+        for (int i = 0; i < Cameras.MAX_CAMERAS; i++) {
+            String member = form.get("cam" + i);
+            if (member != null && !member.trim().isEmpty()) {
+                members.add(member.trim());
+            }
+        }
+        String problem = KioskService.saveCameraGroup(context, was, form.getOrDefault("name", ""),
+                members);
+        return problem == null ? null : "Not saved: " + problem + ".";
+    }
+
     /** One camera form's post: saved by the checks both surfaces share, shown, or removed. */
     private String saveCamera(Map<String, String> form) {
         String was = form.getOrDefault("was", "").trim();
@@ -4677,10 +4765,14 @@ final class HttpAdminServer {
             rows.append(linkRow("/cameras", "cameras", camera.name, camera.url, null, ""));
         }
         return (rows.length() == 0 ? "" : "<ul class=\"list seg\">" + rows + "</ul>")
-                + (cameras.size() >= Cameras.MAX_CAMERAS ? ""
-                        : "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
-                        + "<a class=\"btn text\" href=\"/cameras\">Add a camera" + glyph("next")
-                        + "</a></div>");
+                + ("<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                        + (cameras.size() >= Cameras.MAX_CAMERAS ? ""
+                                : "<a class=\"btn text\" href=\"/cameras\">Add a camera"
+                                        + glyph("next") + "</a>")
+                        // Groups once there is a camera to put in one.
+                        + (cameras.isEmpty() ? "" : "<a class=\"btn text\" href=\"/camera-groups\">"
+                                + "Groups" + glyph("next") + "</a>")
+                        + "</div>");
     }
 
     /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */

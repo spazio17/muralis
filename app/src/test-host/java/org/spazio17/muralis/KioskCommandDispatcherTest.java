@@ -961,6 +961,32 @@ public final class KioskCommandDispatcherTest {
         require(Cameras.withLogin(logins, "Front", "Front", "", "x").isEmpty(),
                 "an emptied user removes the sign-in");
         require(Cameras.checkLogin("a:b", "x") != null, "a user with a colon is refused");
+        java.util.List<Cameras.Camera> three = new java.util.ArrayList<>(back);
+        three = Cameras.with(three, "", new Cameras.Camera("Drive", "http://cam/d"));
+        java.util.List<Cameras.Group> groups = new java.util.ArrayList<>();
+        require(Cameras.groupProblem(three, groups, "", "door", java.util.Arrays.asList("Door"))
+                != null, "a group may not take a camera's name");
+        require(Cameras.groupProblem(three, groups, "", "Outside", new java.util.ArrayList<>())
+                != null, "a group needs a camera");
+        groups = Cameras.withGroup(groups, "", new Cameras.Group("Outside",
+                java.util.Arrays.asList("Drive", "Garden")));
+        groups = Cameras.withGroup(groups, "", new Cameras.Group("Front",
+                java.util.Arrays.asList("Door", "Drive")));
+        require(Cameras.saveProblem(three, groups, "", "outside", "http://x", "", "") != null,
+                "a camera may not take a group's name");
+        java.util.List<Cameras.Group> again = Cameras.parseGroups(Cameras.formatGroups(groups));
+        require(again.size() == 2 && again.get(1).cameras.get(1).equals("Drive"),
+                "the groups round-trip, a camera in two of them");
+        java.util.List<Cameras.Camera> outside = Cameras.resolve(three, again, "outside");
+        require(outside.size() == 2 && outside.get(0).name.equals("Garden"),
+                "a group shows its cameras in the list's order");
+        require(Cameras.resolve(three, again, "Door").size() == 1
+                && Cameras.resolve(three, again, "Nope").isEmpty(), "a camera, or nothing");
+        java.util.List<Cameras.Group> moved = Cameras.afterCamera(again, "Drive", "Driveway");
+        require(moved.get(0).cameras.contains("Driveway") && moved.get(1).cameras.contains("Driveway"),
+                "a renamed camera follows in every group");
+        require(!Cameras.afterCamera(again, "Drive", "").get(0).cameras.contains("Drive"),
+                "a removed camera leaves its groups");
         Object[] named = Cameras.splitLogin("http://h/q.jpg?username=u&password=p%20w%26x");
         require("http://h/q.jpg?username={user}&password={password}".equals(named[0])
                 && ((Cameras.Login) named[1]).user.equals("u")

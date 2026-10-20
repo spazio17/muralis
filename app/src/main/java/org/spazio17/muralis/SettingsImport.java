@@ -111,6 +111,8 @@ final class SettingsImport {
         switch (key) {
             case "cameras":
                 return Cameras.format(Cameras.parse((String) value));
+            case "camera_groups":
+                return Cameras.formatGroups(Cameras.parseGroups((String) value));
             case "certificate_pins":
                 return CertificatePins.format(CertificatePins.parse((String) value));
             default:
@@ -246,6 +248,9 @@ final class SettingsImport {
             case "cameras":
                 return Cameras.parse(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
                         ? "not a list of cameras" : null;
+            case "camera_groups":
+                return Cameras.parseGroups(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
+                        ? "not a list of camera groups" : null;
             case "beacon_names":
             case "certificate_pins":
                 return null;

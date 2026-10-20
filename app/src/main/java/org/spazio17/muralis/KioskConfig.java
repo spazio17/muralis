@@ -45,6 +45,7 @@ final class KioskConfig {
     /** The cameras, as Cameras writes them; their sign-ins are one secret apart. */
     private static final String CAMERAS = "cameras";
     private static final String CAMERA_LOGINS = "camera_logins";
+    private static final String CAMERA_GROUPS = "camera_groups";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -483,6 +484,11 @@ final class KioskConfig {
 
         Editor cameras(java.util.List<Cameras.Camera> cameras) {
             plain.putString(CAMERAS, Cameras.format(cameras));
+            return this;
+        }
+
+        Editor cameraGroups(java.util.List<Cameras.Group> groups) {
+            plain.putString(CAMERA_GROUPS, Cameras.formatGroups(groups));
             return this;
         }
 
@@ -1541,6 +1547,12 @@ final class KioskConfig {
         return Cameras.parse(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(CAMERAS, ""));
+    }
+
+    static java.util.List<Cameras.Group> cameraGroupsOf(Context context) {
+        return Cameras.parseGroups(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CAMERA_GROUPS, ""));
     }
 
     /** The cameras' sign-ins, read only to fetch a camera or to save one; empty when none. */

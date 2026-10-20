@@ -51,6 +51,19 @@ final class Cameras {
         }
     }
 
+    /** One camera to draw, as a pop-up or the grid receives it: name, address and sign-in. */
+    static final class Tile {
+        final String name;
+        final String url;
+        final Login login;
+
+        Tile(String name, String url, Login login) {
+            this.name = name;
+            this.url = url;
+            this.login = login == null || login.isEmpty() ? null : login;
+        }
+    }
+
     private Cameras() {
     }
 
@@ -388,7 +401,16 @@ final class Cameras {
      */
     static String saveProblem(List<Camera> cameras, String was, String name, String url,
             String user, String password) {
+        return saveProblem(cameras, new ArrayList<>(), was, name, url, user, password);
+    }
+
+    /** The same, a name also refused when a group has it, so a name always means one thing. */
+    static String saveProblem(List<Camera> cameras, List<Group> groups, String was, String name,
+            String url, String user, String password) {
         String problem = check(name, url);
+        if (problem == null && findGroup(groups, name) != null) {
+            problem = "a group has that name";
+        }
         if (problem == null) {
             problem = checkLogin(user, password);
         }
@@ -400,5 +422,180 @@ final class Cameras {
             problem = "there are " + MAX_CAMERAS + " cameras already";
         }
         return problem;
+    }
+
+    static final int MAX_GROUPS = 10;
+
+    /**
+     * A group of cameras, made and named by the person: shown together as one grid, and a camera
+     * may be in several. Its cameras are kept by name, in the order the Cameras list has them.
+     */
+    static final class Group {
+        final String name;
+        final List<String> cameras;
+
+        Group(String name, List<String> cameras) {
+            this.name = name;
+            this.cameras = java.util.Collections.unmodifiableList(new ArrayList<>(cameras));
+        }
+    }
+
+    /** The groups' line: "No groups", "1 group", "3 groups". */
+    static String groupsSummary(List<Group> groups) {
+        int count = groups == null ? 0 : groups.size();
+        return count == 0 ? "No groups" : count == 1 ? "1 group" : count + " groups";
+    }
+
+    static List<Group> parseGroups(String json) {
+        List<Group> groups = new ArrayList<>();
+        if (json == null || json.isEmpty()) {
+            return groups;
+        }
+        try {
+            for (Object one : TinyJson.array(TinyJson.parse(json))) {
+                Map<String, Object> entry = TinyJson.object(one);
+                String name = TinyJson.string(entry, "name", "").trim();
+                List<String> members = new ArrayList<>();
+                Object listed = entry.get("cameras");
+                if (listed != null) {
+                    for (Object member : TinyJson.array(listed)) {
+                        if (member instanceof String && !((String) member).trim().isEmpty()) {
+                            members.add(((String) member).trim());
+                        }
+                    }
+                }
+                if (checkName(name) == null && findGroup(groups, name) == null
+                        && groups.size() < MAX_GROUPS) {
+                    groups.add(new Group(name, members));
+                }
+            }
+        } catch (IllegalArgumentException unreadable) {
+            return new ArrayList<>();
+        }
+        return groups;
+    }
+
+    static String formatGroups(List<Group> groups) {
+        List<Object> out = new ArrayList<>();
+        for (Group group : groups) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("name", group.name);
+            entry.put("cameras", new ArrayList<Object>(group.cameras));
+            out.add(entry);
+        }
+        return TinyJson.write(out);
+    }
+
+    private static String checkName(String name) {
+        if (name == null || name.trim().isEmpty() || name.trim().length() > MAX_NAME
+                || name.chars().anyMatch(Character::isISOControl)) {
+            return "the name must be one line of 1 to " + MAX_NAME + " characters";
+        }
+        return null;
+    }
+
+    static Group findGroup(List<Group> groups, String name) {
+        for (Group group : groups) {
+            if (group.name.equalsIgnoreCase(name == null ? "" : name.trim())) {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    /** Why a group cannot be saved, or null: its name free among groups and cameras, a camera in it. */
+    static String groupProblem(List<Camera> cameras, List<Group> groups, String was, String name,
+            List<String> members) {
+        String problem = checkName(name);
+        if (problem == null && find(cameras, name) != null) {
+            problem = "a camera has that name";
+        }
+        if (problem == null && !name.equalsIgnoreCase(was == null ? "" : was)
+                && findGroup(groups, name) != null) {
+            problem = "another group has that name";
+        }
+        if (problem == null && (members == null || members.isEmpty())) {
+            problem = "tick at least one camera";
+        }
+        if (problem == null && (was == null || was.isEmpty() || findGroup(groups, was) == null)
+                && groups.size() >= MAX_GROUPS) {
+            problem = "there are " + MAX_GROUPS + " groups already";
+        }
+        return problem;
+    }
+
+    /** The groups with one put in: {@code was} replaced in place, or a new one at the end. */
+    static List<Group> withGroup(List<Group> groups, String was, Group group) {
+        List<Group> next = new ArrayList<>();
+        String key = was == null || was.isEmpty() ? group.name : was;
+        boolean replaced = false;
+        for (Group one : groups) {
+            if (one.name.equalsIgnoreCase(key)) {
+                next.add(group);
+                replaced = true;
+            } else {
+                next.add(one);
+            }
+        }
+        if (!replaced) {
+            next.add(group);
+        }
+        return next;
+    }
+
+    static List<Group> withoutGroup(List<Group> groups, String name) {
+        List<Group> next = new ArrayList<>();
+        for (Group one : groups) {
+            if (!one.name.equalsIgnoreCase(name)) {
+                next.add(one);
+            }
+        }
+        return next;
+    }
+
+    /**
+     * The groups after a camera was renamed ({@code name} not empty) or removed ({@code name}
+     * empty): the camera follows its new name in every group, or leaves them all.
+     */
+    static List<Group> afterCamera(List<Group> groups, String was, String name) {
+        List<Group> next = new ArrayList<>();
+        for (Group group : groups) {
+            List<String> members = new ArrayList<>();
+            for (String member : group.cameras) {
+                if (!member.equalsIgnoreCase(was)) {
+                    members.add(member);
+                } else if (name != null && !name.isEmpty()) {
+                    members.add(name);
+                }
+            }
+            next.add(new Group(group.name, members));
+        }
+        return next;
+    }
+
+    /**
+     * What a name shows, in the Cameras list's order: the camera of that name, or the cameras of
+     * the group of that name that still exist; empty when the name is neither.
+     */
+    static List<Camera> resolve(List<Camera> cameras, List<Group> groups, String name) {
+        List<Camera> shown = new ArrayList<>();
+        Camera camera = find(cameras, name);
+        if (camera != null) {
+            shown.add(camera);
+            return shown;
+        }
+        Group group = findGroup(groups, name);
+        if (group == null) {
+            return shown;
+        }
+        for (Camera one : cameras) {
+            for (String member : group.cameras) {
+                if (one.name.equalsIgnoreCase(member)) {
+                    shown.add(one);
+                    break;
+                }
+            }
+        }
+        return shown;
     }
 }

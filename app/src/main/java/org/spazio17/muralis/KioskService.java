@@ -1710,6 +1710,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 cameras.put(one);
             }
             applied.put("cameras", cameras);
+            org.json.JSONArray groups = new org.json.JSONArray();
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(this)) {
+                groups.put(new org.json.JSONObject().put("name", group.name)
+                        .put("cameras", new org.json.JSONArray(group.cameras)));
+            }
+            applied.put("camera_groups", groups);
             CertificatePins.Waiting waiting = CertificatePins.waiting;
             applied.put("certificate_waiting", waiting == null ? org.json.JSONObject.NULL
                     : new org.json.JSONObject().put("host", waiting.host)
@@ -2446,12 +2452,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
         String user = inUrl != null ? inUrl.user : typedUser == null ? "" : typedUser.trim();
         String password = inUrl != null ? inUrl.password : typedPassword;
         java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
-        String problem = Cameras.saveProblem(cameras, was, name, url, user, password);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
+        String problem = was != null && !was.isEmpty() && Cameras.find(cameras, was) == null
+                ? "the camera was removed meanwhile" : null;
+        if (problem == null) {
+            problem = Cameras.saveProblem(cameras, groups, was, name, url, user, password);
+        }
         if (problem != null) {
             return problem;
         }
         KioskConfig.edit(context)
                 .cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url)))
+                .cameraGroups(was == null || was.isEmpty() ? groups
+                        : Cameras.afterCamera(groups, was, name))
                 .cameraLogins(Cameras.withLogin(KioskConfig.cameraLoginsOf(context), was, name,
                         user, password))
                 .apply();
@@ -2462,9 +2475,57 @@ public final class KioskService extends Service implements KioskCommandDispatche
     static void removeCamera(Context context, String name) {
         KioskConfig.edit(context)
                 .cameras(Cameras.without(KioskConfig.camerasOf(context), name))
+                .cameraGroups(Cameras.afterCamera(KioskConfig.cameraGroupsOf(context), name, ""))
                 .cameraLogins(Cameras.withoutLogin(KioskConfig.cameraLoginsOf(context), name))
                 .apply();
         publishTelemetrySoon(context);
+    }
+
+    /** Stores one group from either surface; null when saved, otherwise the reason. */
+    static String saveCameraGroup(Context context, String was, String typedName,
+            java.util.List<String> members) {
+        String name = typedName == null ? "" : typedName.trim();
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
+        java.util.List<String> kept = new java.util.ArrayList<>();
+        for (Cameras.Camera camera : cameras) {
+            for (String member : members) {
+                if (camera.name.equalsIgnoreCase(member)) {
+                    kept.add(camera.name);
+                    break;
+                }
+            }
+        }
+        String problem = was != null && !was.isEmpty() && Cameras.findGroup(groups, was) == null
+                ? "the group was removed meanwhile"
+                : Cameras.groupProblem(cameras, groups, was, name, kept);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(context)
+                .cameraGroups(Cameras.withGroup(groups, was, new Cameras.Group(name, kept)))
+                .apply();
+        publishTelemetrySoon(context);
+        return null;
+    }
+
+    static void removeCameraGroup(Context context, String name) {
+        KioskConfig.edit(context)
+                .cameraGroups(Cameras.withoutGroup(KioskConfig.cameraGroupsOf(context), name))
+                .apply();
+        publishTelemetrySoon(context);
+    }
+
+    /** What a camera's or a group's name shows, with each camera's sign-in; empty when unknown. */
+    static java.util.List<Cameras.Tile> cameraTiles(Context context, String name) {
+        java.util.Map<String, Cameras.Login> logins = KioskConfig.cameraLoginsOf(context);
+        java.util.List<Cameras.Tile> tiles = new java.util.ArrayList<>();
+        for (Cameras.Camera camera : Cameras.resolve(KioskConfig.camerasOf(context),
+                KioskConfig.cameraGroupsOf(context), name)) {
+            tiles.add(new Cameras.Tile(camera.name, camera.url,
+                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT))));
+        }
+        return tiles;
     }
 
     /**
@@ -2474,16 +2535,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     @Override
     public String cameraPopup(String name, boolean trigger) {
-        Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(this), name);
-        if (camera == null) {
-            return "no camera has that name";
+        java.util.List<Cameras.Tile> tiles = cameraTiles(this, name);
+        if (tiles.isEmpty()) {
+            return Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name) != null
+                    ? "the group has no camera" : "no camera or group has that name";
         }
         if (trigger) {
             return "no automation waits for this camera";
         }
-        Popup.Request request = new Popup.Request(camera.name, "", camera.url,
-                Popup.DEFAULT_SECONDS, true, false,
-                KioskConfig.cameraLoginsOf(this).get(camera.name.toLowerCase(java.util.Locale.ROOT)));
+        Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name);
+        Popup.Request request = new Popup.Request(group != null ? group.name : tiles.get(0).name,
+                tiles, Popup.DEFAULT_SECONDS, true, false);
         displayWake();
         showPopup(request);
         return null;

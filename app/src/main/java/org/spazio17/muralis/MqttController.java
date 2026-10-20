@@ -398,6 +398,10 @@ final class MqttController implements MqttCallbackExtended {
         for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
             key.append(camera.name).append(',');
         }
+        key.append('|');
+        for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
+            key.append(group.name).append(',');
+        }
         return key.toString();
     }
 
@@ -1218,14 +1222,26 @@ final class MqttController implements MqttCallbackExtended {
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
-            // One button per camera, "Show <name>", which pops it up; a doorbell's automation
+            // One button per camera and per group, "Show <name>", which pops it up; a doorbell's automation
             // in Home Assistant sends camera.trigger itself, for the panel's automations.
+            java.util.List<String> shown = new java.util.ArrayList<>();
             for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
-                String name = "Show " + camera.name;
+                shown.add(camera.name);
+            }
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
+                shown.add(group.name);
+            }
+            for (String cameraName : shown) {
+                String name = "Show " + cameraName;
                 JSONObject show = button(name, new JSONObject().put("command", "camera.show")
-                        .put("args", new JSONObject().put("value", camera.name)).toString());
-                components.put(uniqueId(name).substring(config.deviceId.length() + 1)
-                        .replaceAll("[^a-z0-9_]", "_"), show);
+                        .put("args", new JSONObject().put("value", cameraName)).toString());
+                String key = uniqueId(name).substring(config.deviceId.length() + 1)
+                        .replaceAll("[^a-z0-9_]", "_");
+                // "Door 1" and "Door-1" squeeze to one key: the second keeps its own button.
+                for (int n = 2; components.has(key); n++) {
+                    key = key.replaceAll("_\\d+$", "") + "_" + n;
+                }
+                components.put(key, show);
             }
             JSONObject screen = new JSONObject();
             screen.put("p", "image");

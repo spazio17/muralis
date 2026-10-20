@@ -2773,7 +2773,8 @@ public final class KioskActivity extends Activity {
     private LinearLayout cameraCard(KioskTheme theme, Cameras.Camera camera, Cameras.Login login) {
         boolean fresh = camera == null;
         LinearLayout card = card(theme, fresh ? "Add a camera" : camera.name);
-        EditText nameInput = themedInput(theme, fresh ? "" : camera.name, false);
+        // A name, not a machine value: the prose box, as for a beacon's name.
+        EditText nameInput = proseInput(theme, fresh ? "" : camera.name);
         addField(card, theme, "Name", nameInput);
         EditText urlInput = themedInput(theme, fresh ? "" : camera.url, false);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
@@ -2793,6 +2794,8 @@ public final class KioskActivity extends Activity {
                     passwordInput.getText().toString());
             if (problem != null) {
                 Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                // A camera changed or removed elsewhere meanwhile: the page shows what is stored.
+                redrawInPlace(this::showCamerasPage);
                 return;
             }
             redrawInPlace(this::showCamerasPage);
@@ -2816,6 +2819,97 @@ public final class KioskActivity extends Activity {
             remove.setOnClickListener(view -> {
                 KioskService.removeCamera(this, was);
                 redrawInPlace(this::showCamerasPage);
+            });
+            card.addView(buttonRow(save, show, remove), matchWrap());
+        }
+        return card;
+    }
+
+    /**
+     * The camera groups, a page under the Cameras section: each group's card with its name, a
+     * tick for each camera, Save, Show and Remove, then one to add a group; the web admin's
+     * Camera groups page is the same.
+     */
+    private void showCameraGroupsPage() {
+        currentScreen = this::showCameraGroupsPage;
+        LinearLayout page = subPage("Camera groups", this::showSettings);
+        KioskTheme theme = currentTheme();
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        java.util.List<View> cards = new java.util.ArrayList<>();
+        for (Cameras.Group group : groups) {
+            cards.add(cameraGroupCard(theme, cameras, group));
+        }
+        if (groups.size() < Cameras.MAX_GROUPS) {
+            cards.add(cameraGroupCard(theme, cameras, null));
+        }
+        page.addView(cardGrid(theme, cards), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    private LinearLayout cameraGroupCard(KioskTheme theme, java.util.List<Cameras.Camera> cameras,
+            Cameras.Group group) {
+        boolean fresh = group == null;
+        LinearLayout card = card(theme, fresh ? "Add a group" : group.name);
+        // A name, not a machine value: the prose box, as for a beacon's name.
+        EditText nameInput = proseInput(theme, fresh ? "" : group.name);
+        addField(card, theme, "Name", nameInput);
+        card.addView(fieldCaption(theme, "Cameras"), matchWrapClose());
+        java.util.List<CompoundButton> ticks = new java.util.ArrayList<>();
+        for (Cameras.Camera camera : cameras) {
+            CheckBox tick = new CheckBox(this);
+            tick.setText(camera.name);
+            tick.setTextColor(theme.text);
+            tick.setTextSize(16);
+            tick.setButtonTintList(ColorStateList.valueOf(theme.accent));
+            tick.setMinHeight(dp(48));
+            tick.setTag(camera.name);
+            boolean member = false;
+            if (!fresh) {
+                for (String one : group.cameras) {
+                    member |= one.equalsIgnoreCase(camera.name);
+                }
+            }
+            tick.setChecked(member);
+            ticks.add(tick);
+            card.addView(tick, matchWrap());
+        }
+        Button save = primaryButton(theme, fresh ? "Add" : "Save");
+        String was = fresh ? "" : group.name;
+        save.setOnClickListener(view -> {
+            java.util.List<String> members = new java.util.ArrayList<>();
+            for (CompoundButton tick : ticks) {
+                if (tick.isChecked()) {
+                    members.add((String) tick.getTag());
+                }
+            }
+            String problem = KioskService.saveCameraGroup(this, was,
+                    nameInput.getText().toString(), members);
+            if (problem != null) {
+                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                redrawInPlace(this::showCameraGroupsPage);
+                return;
+            }
+            redrawInPlace(this::showCameraGroupsPage);
+        });
+        if (fresh) {
+            card.addView(buttonRow(save), matchWrap());
+        } else {
+            Button show = textButton(theme, "Show");
+            show.setOnClickListener(view -> {
+                KioskService service = KioskService.liveService();
+                String refused = service == null ? "the service is not running"
+                        : service.cameraPopup(was, false);
+                if (refused != null) {
+                    Toast.makeText(this, "Not shown: " + refused + ".", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                showDashboard(KioskConfig.load(this).dashboardUrl);
+            });
+            Button remove = textButton(theme, "Remove");
+            remove.setOnClickListener(view -> {
+                KioskService.removeCameraGroup(this, was);
+                redrawInPlace(this::showCameraGroupsPage);
             });
             card.addView(buttonRow(save, show, remove), matchWrap());
         }
@@ -3721,10 +3815,21 @@ public final class KioskActivity extends Activity {
                     camera.url, null, this::showCamerasPage, false, false),
                     camerasCard.getChildCount() == 0);
         }
+        java.util.List<Button> cameraButtons = new java.util.ArrayList<>();
         if (cameraList.size() < Cameras.MAX_CAMERAS) {
             Button camerasMore = textButtonOnward(theme, "Add a camera");
             camerasMore.setOnClickListener(view -> showCamerasPage());
-            camerasCard.addView(buttonRow(camerasMore), matchWrap());
+            cameraButtons.add(camerasMore);
+        }
+        // Groups once there is a camera to put in one.
+        if (!cameraList.isEmpty()) {
+            Button groupsMore = textButtonOnward(theme, "Groups");
+            groupsMore.setOnClickListener(view -> showCameraGroupsPage());
+            cameraButtons.add(groupsMore);
+        }
+        if (!cameraButtons.isEmpty()) {
+            camerasCard.addView(fittingButtonRow(cameraButtons.toArray(new Button[0])),
+                    matchWrap());
         }
 
         // Integrations (2026-10-15): in the menu already, empty until the first ones come.
@@ -15258,7 +15363,7 @@ public final class KioskActivity extends Activity {
             box.addView(message, matchWrapClose());
         }
         android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-        if (!request.url.isEmpty()) {
+        if (!request.tiles.isEmpty()) {
             WebView web = new WebView(this);
             // The card is closed by a touch, so the page inside it takes none.
             web.setOnTouchListener((view, event) -> {
@@ -15268,9 +15373,7 @@ public final class KioskActivity extends Activity {
                 return true;
             });
             // Drawn from memory, never stored: a camera's stream as much as any picture or page.
-            CameraView.show(web, java.util.Collections.singletonList(new CameraView.Source(
-                    request.title, request.url, request.login)),
-                    KioskConfig.certificatePinsOf(this));
+            CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this));
             LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, (int) (metrics.heightPixels * 0.55f));
             webParams.topMargin = dp(12);
