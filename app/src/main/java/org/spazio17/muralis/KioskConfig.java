@@ -42,8 +42,9 @@ final class KioskConfig {
     private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
     /** The certificates a person trusted, one host and fingerprint a line (CertificatePins). */
     private static final String CERTIFICATE_PINS = "certificate_pins";
-    /** The cameras for pop-ups, as PopupCameras writes them. */
-    private static final String POPUP_CAMERAS = "popup_cameras";
+    /** The cameras, as Cameras writes them; their sign-ins are one secret apart. */
+    private static final String CAMERAS = "cameras";
+    private static final String CAMERA_LOGINS = "camera_logins";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -480,8 +481,13 @@ final class KioskConfig {
             return this;
         }
 
-        Editor popupCameras(java.util.List<PopupCameras.Camera> cameras) {
-            plain.putString(POPUP_CAMERAS, PopupCameras.format(cameras));
+        Editor cameras(java.util.List<Cameras.Camera> cameras) {
+            plain.putString(CAMERAS, Cameras.format(cameras));
+            return this;
+        }
+
+        Editor cameraLogins(java.util.Map<String, Cameras.Login> logins) {
+            secrets.put(CAMERA_LOGINS, Cameras.formatLogins(logins));
             return this;
         }
 
@@ -1531,10 +1537,16 @@ final class KioskConfig {
         return secrets;
     }
 
-    static java.util.List<PopupCameras.Camera> popupCamerasOf(Context context) {
-        return PopupCameras.parse(storageContext(context)
+    static java.util.List<Cameras.Camera> camerasOf(Context context) {
+        return Cameras.parse(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(POPUP_CAMERAS, ""));
+                .getString(CAMERAS, ""));
+    }
+
+    /** The cameras' sign-ins, read only to fetch a camera or to save one; empty when none. */
+    static java.util.Map<String, Cameras.Login> cameraLoginsOf(Context context) {
+        return Cameras.parseLogins(new SecretStore(storageContext(context))
+                .getOrNull(CAMERA_LOGINS));
     }
 
     /** The trusted certificates, read for every certificate Android refuses. */

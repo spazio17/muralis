@@ -7,9 +7,10 @@ package org.spazio17.muralis;
 import java.util.Map;
 
 /**
- * A pop-up over the screen, {@code panel.notify}: a message with an optional title,
- * and optionally an address shown in the card (a picture, a camera's stream or a page), for a
- * number of seconds or until touched. Pure, so the arguments' checks are host-tested; the card
+ * A pop-up over the screen, {@code panel.notify} and {@code camera.show}: a message with an
+ * optional title, and optionally an address shown in the card (a picture, a camera's stream or a
+ * page, drawn by {@code CameraView}, so nothing it sends is stored), for a number of seconds or
+ * until touched. Pure, so the arguments' checks are host-tested; the card
  * is drawn by {@code KioskActivity}.
  */
 final class Popup {
@@ -26,11 +27,19 @@ final class Popup {
         final int seconds;
         final boolean wake;
         final boolean chime;
+        /** A camera's sign-in for the address, sent to the camera's host only; null when none. */
+        final Cameras.Login login;
         /** When it was asked for, on a clock a change of the date cannot move. */
         final long madeAtMs = clock.getAsLong();
 
         Request(String title, String message, String url, int seconds, boolean wake,
                 boolean chime) {
+            this(title, message, url, seconds, wake, chime, null);
+        }
+
+        Request(String title, String message, String url, int seconds, boolean wake,
+                boolean chime, Cameras.Login login) {
+            this.login = login;
             this.title = title;
             this.message = message;
             this.url = url;

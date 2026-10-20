@@ -44,8 +44,10 @@ on purpose.
   playlists, then display off after a second delay. A status light for panels with none of
   their own: a coloured frame around the screen, set like a Home Assistant light.
   Pop-ups over the screen (a message, a picture, a camera's stream or a page, for some seconds
-  or until touched), from HTTP, MQTT, Home Assistant's notify and the automations, and cameras
-  that pop up on demand or on a doorbell's trigger, each with a mode on each panel and a cooldown.
+  or until touched), from HTTP, MQTT, Home Assistant's notify and the automations. Cameras, a
+  list of snapshots, MJPEG streams or camera pages with an optional sign-in kept as a secret,
+  shown on request; a camera is only streamed, what it sends is drawn from memory and never
+  written to the device.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
   uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery, plain
   or over TLS (the broker trusted by Android or by the certificate a person trusted on the panel,

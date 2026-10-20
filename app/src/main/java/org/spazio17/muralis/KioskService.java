@@ -1696,14 +1696,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             applied.put("certificate_pins", pins);
             org.json.JSONArray cameras = new org.json.JSONArray();
-            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(this)) {
-                org.json.JSONObject one = new org.json.JSONObject().put("name", camera.name)
-                        .put("mode", camera.mode)
-                        .put("seconds", camera.seconds).put("cooldown", camera.cooldown);
+            java.util.Map<String, Cameras.Login> logins = includeAdminDetail
+                    ? KioskConfig.cameraLoginsOf(this) : java.util.Collections.emptyMap();
+            for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
+                org.json.JSONObject one = new org.json.JSONObject().put("name", camera.name);
                 if (includeAdminDetail) {
-                    // A camera's address often carries its user and password or a token, so it
-                    // stays off MQTT, like the escape combinations.
+                    // An address can carry a token, so it stays off MQTT, like the escape
+                    // combinations; of the sign-in only whether there is one, as for the page's.
                     one.put("url", camera.url);
+                    one.put("sign_in", logins.containsKey(
+                            camera.name.toLowerCase(java.util.Locale.ROOT)));
                 }
                 cameras.put(one);
             }
@@ -2429,26 +2431,60 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return true;
     }
 
-    /** When each camera last showed on this panel, for its cooldown; forgotten on a restart. */
-    private final java.util.Map<String, Long> cameraShownAt = new java.util.HashMap<>();
+    /**
+     * Stores one camera from either surface by the checks both share; a sign-in typed into the
+     * address is taken out of it and stored as the camera's secret, and an empty password keeps
+     * the stored one. {@code was} is the camera being edited, empty for a new one. Null when
+     * saved, otherwise the reason.
+     */
+    static String saveCamera(Context context, String was, String typedName, String typedUrl,
+            String typedUser, String typedPassword) {
+        String name = typedName == null ? "" : typedName.trim();
+        Object[] split = Cameras.splitLogin(typedUrl == null ? "" : typedUrl.trim());
+        String url = (String) split[0];
+        Cameras.Login inUrl = (Cameras.Login) split[1];
+        String user = inUrl != null ? inUrl.user : typedUser == null ? "" : typedUser.trim();
+        String password = inUrl != null ? inUrl.password : typedPassword;
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        String problem = Cameras.saveProblem(cameras, was, name, url, user, password);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(context)
+                .cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url)))
+                .cameraLogins(Cameras.withLogin(KioskConfig.cameraLoginsOf(context), was, name,
+                        user, password))
+                .apply();
+        publishTelemetrySoon(context);
+        return null;
+    }
 
+    static void removeCamera(Context context, String name) {
+        KioskConfig.edit(context)
+                .cameras(Cameras.without(KioskConfig.camerasOf(context), name))
+                .cameraLogins(Cameras.withoutLogin(KioskConfig.cameraLoginsOf(context), name))
+                .apply();
+        publishTelemetrySoon(context);
+    }
+
+    /**
+     * {@code camera.show}: the camera in a pop-up at once, the screen woken. {@code camera.trigger}
+     * is the camera's event, which the automations answer; until one waits for this camera it is
+     * refused with that reason.
+     */
     @Override
     public String cameraPopup(String name, boolean trigger) {
-        PopupCameras.Camera camera = PopupCameras.find(KioskConfig.popupCamerasOf(this), name);
-        long now = android.os.SystemClock.elapsedRealtime();
-        String key = name.toLowerCase(java.util.Locale.ROOT);
-        synchronized (cameraShownAt) {
-            Long last = cameraShownAt.get(key);
-            String refused = PopupCameras.refusal(camera, trigger, last == null ? 0 : last, now);
-            if (refused != null) {
-                return refused;
-            }
-            cameraShownAt.put(key, now);
+        Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(this), name);
+        if (camera == null) {
+            return "no camera has that name";
         }
-        Popup.Request request = PopupCameras.popup(camera, trigger);
-        if (request.wake) {
-            displayWake();
+        if (trigger) {
+            return "no automation waits for this camera";
         }
+        Popup.Request request = new Popup.Request(camera.name, "", camera.url,
+                Popup.DEFAULT_SECONDS, true, false,
+                KioskConfig.cameraLoginsOf(this).get(camera.name.toLowerCase(java.util.Locale.ROOT)));
+        displayWake();
         showPopup(request);
         return null;
     }

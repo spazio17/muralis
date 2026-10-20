@@ -390,12 +390,12 @@ final class MqttController implements MqttCallbackExtended {
         });
     }
 
-    /** The pop-up cameras' names discovery last announced, one button each. */
+    /** The cameras' names discovery last announced, one button each. */
     private volatile String announcedCameras = null;
 
     private String camerasKey() {
         StringBuilder key = new StringBuilder();
-        for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+        for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
             key.append(camera.name).append(',');
         }
         return key.toString();
@@ -1218,9 +1218,9 @@ final class MqttController implements MqttCallbackExtended {
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
-            // One button per pop-up camera, "Show <name>"; a doorbell's automation in
-            // Home Assistant sends camera.trigger itself.
-            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+            // One button per camera, "Show <name>", which pops it up; a doorbell's automation
+            // in Home Assistant sends camera.trigger itself, for the panel's automations.
+            for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
                 String name = "Show " + camera.name;
                 JSONObject show = button(name, new JSONObject().put("command", "camera.show")
                         .put("args", new JSONObject().put("value", camera.name)).toString());

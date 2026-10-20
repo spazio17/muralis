@@ -176,8 +176,8 @@ final class KioskCommandDispatcher {
         void showPopup(Popup.Request request);
 
         /**
-         * A camera's pop-up: shown on demand, or for a doorbell's trigger by the
-         * camera's mode and cooldown. Returns why it does not show, or null.
+         * {@code camera.show} pops a camera up; {@code camera.trigger} is the camera's event, for
+         * the automations. Returns why nothing happens, or null.
          */
         String cameraPopup(String name, boolean trigger);
 

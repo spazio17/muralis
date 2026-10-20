@@ -2749,26 +2749,28 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The pop-up cameras, a page under Dashboard: each camera's card with Save and
-     * Remove, then one to add a camera; the web admin's Pop-up cameras page is the same.
+     * The cameras, a page under the Cameras section: each camera's card with Save, Show and
+     * Remove, then one to add a camera; the web admin's Cameras page is the same.
      */
     private void showCamerasPage() {
         currentScreen = this::showCamerasPage;
-        LinearLayout page = subPage("Pop-up cameras", this::showSettings);
+        LinearLayout page = subPage("Cameras", this::showSettings);
         KioskTheme theme = currentTheme();
-        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(this);
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        java.util.Map<String, Cameras.Login> logins = KioskConfig.cameraLoginsOf(this);
         java.util.List<View> cards = new java.util.ArrayList<>();
-        for (PopupCameras.Camera camera : cameras) {
-            cards.add(cameraCard(theme, camera));
+        for (Cameras.Camera camera : cameras) {
+            cards.add(cameraCard(theme, camera,
+                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT))));
         }
-        if (cameras.size() < PopupCameras.MAX_CAMERAS) {
-            cards.add(cameraCard(theme, null));
+        if (cameras.size() < Cameras.MAX_CAMERAS) {
+            cards.add(cameraCard(theme, null, null));
         }
         page.addView(cardGrid(theme, cards), matchWrap());
         setContentView(scrollPage(theme, page));
     }
 
-    private LinearLayout cameraCard(KioskTheme theme, PopupCameras.Camera camera) {
+    private LinearLayout cameraCard(KioskTheme theme, Cameras.Camera camera, Cameras.Login login) {
         boolean fresh = camera == null;
         LinearLayout card = card(theme, fresh ? "Add a camera" : camera.name);
         EditText nameInput = themedInput(theme, fresh ? "" : camera.name, false);
@@ -2777,69 +2779,45 @@ public final class KioskActivity extends Activity {
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(card, theme, "Address", urlInput, "A snapshot, an MJPEG stream or a camera page.");
-        card.addView(fieldCaption(theme, "Mode on this panel"), matchWrapClose());
-        RadioGroup modeInput = new RadioGroup(this);
-        for (String[] mode : PopupCameras.MODES) {
-            radioChoice(theme, modeInput, mode[1], mode[0]);
-        }
-        checkRadioIfChanged(modeInput, fresh ? PopupCameras.TRIGGER : camera.mode);
-        card.addView(modeInput, matchWrapClose());
-        EditText secondsInput = themedInput(theme,
-                String.valueOf(fresh ? Popup.DEFAULT_SECONDS : camera.seconds), false);
-        secondsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(card, theme, "Shows for (seconds, 0 = until touched)", secondsInput);
-        EditText cooldownInput = themedInput(theme,
-                String.valueOf(fresh ? PopupCameras.DEFAULT_COOLDOWN : camera.cooldown), false);
-        cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(card, theme, "Cooldown (seconds)", cooldownInput);
+        EditText userInput = themedInput(theme, login == null ? "" : login.user, false);
+        addField(card, theme, "User", userInput);
+        // Rendered empty, as every password box: empty keeps the stored one.
+        EditText passwordInput = themedInput(theme, "", true);
+        addField(card, theme, "Password", passwordInput,
+                login != null && !login.password.isEmpty() ? "Stored. Empty keeps it." : null);
         Button save = primaryButton(theme, fresh ? "Add" : "Save");
         String was = fresh ? "" : camera.name;
         save.setOnClickListener(view -> {
-            View checked = modeInput.findViewById(modeInput.getCheckedRadioButtonId());
-            String name = nameInput.getText().toString().trim();
-            String url = urlInput.getText().toString().trim();
-            String mode = checked == null ? "" : (String) checked.getTag();
-            int seconds;
-            int cooldown;
-            try {
-                seconds = Integer.parseInt(secondsInput.getText().toString().trim());
-                cooldown = Integer.parseInt(cooldownInput.getText().toString().trim());
-            } catch (NumberFormatException notANumber) {
-                seconds = -1;
-                cooldown = -1;
-            }
-            String problem = PopupCameras.check(name, url, mode, seconds, cooldown);
-            java.util.List<PopupCameras.Camera> base = was.isEmpty()
-                    ? KioskConfig.popupCamerasOf(this)
-                    : PopupCameras.without(KioskConfig.popupCamerasOf(this), was);
-            if (problem == null && PopupCameras.find(base, name) != null) {
-                problem = "another camera has that name";
-            }
-            java.util.List<PopupCameras.Camera> next = problem != null ? null
-                    : PopupCameras.with(base, new PopupCameras.Camera(name, url, mode, seconds,
-                            cooldown));
-            if (problem == null && next == null) {
-                problem = "there are " + PopupCameras.MAX_CAMERAS + " cameras already";
-            }
+            String problem = KioskService.saveCamera(this, was, nameInput.getText().toString(),
+                    urlInput.getText().toString(), userInput.getText().toString(),
+                    passwordInput.getText().toString());
             if (problem != null) {
                 Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
                 return;
             }
-            KioskConfig.edit(this).popupCameras(next).apply();
-            KioskService.publishTelemetrySoon(this);
             redrawInPlace(this::showCamerasPage);
         });
         if (fresh) {
             card.addView(buttonRow(save), matchWrap());
         } else {
+            Button show = textButton(theme, "Show");
+            show.setOnClickListener(view -> {
+                KioskService service = KioskService.liveService();
+                String refused = service == null ? "the service is not running"
+                        : service.cameraPopup(was, false);
+                if (refused != null) {
+                    Toast.makeText(this, "Not shown: " + refused + ".", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                // A pop-up waits while the settings are open, so the dashboard comes forward.
+                showDashboard(KioskConfig.load(this).dashboardUrl);
+            });
             Button remove = textButton(theme, "Remove");
             remove.setOnClickListener(view -> {
-                KioskConfig.edit(this).popupCameras(PopupCameras.without(
-                        KioskConfig.popupCamerasOf(this), was)).apply();
-                KioskService.publishTelemetrySoon(this);
+                KioskService.removeCamera(this, was);
                 redrawInPlace(this::showCamerasPage);
             });
-            card.addView(buttonRow(save, remove), matchWrap());
+            card.addView(buttonRow(save, show, remove), matchWrap());
         }
         return card;
     }
@@ -3734,12 +3712,20 @@ public final class KioskActivity extends Activity {
         volumeButtonsParams.topMargin = dp(14);
         escapeCard.addView(volumeButtonsInput, volumeButtonsParams);
 
-        // Pop-ups (the UI round, 2026-10-15): a section of their own, the cameras that pop up
-        // on demand or on a doorbell's trigger, moved here from Dashboard.
-        LinearLayout popupsCard = sectionBody(theme);
-        Button camerasMore = textButtonOnward(theme, "Pop-up cameras");
-        camerasMore.setOnClickListener(view -> showCamerasPage());
-        popupsCard.addView(buttonRow(camerasMore), matchWrap());
+        // Cameras: one row a camera, nothing but Add a camera until the first one exists, as
+        // Automations lists its rules; each opens the Cameras page.
+        LinearLayout camerasCard = sectionBody(theme);
+        java.util.List<Cameras.Camera> cameraList = KioskConfig.camerasOf(this);
+        for (Cameras.Camera camera : cameraList) {
+            addListRow(camerasCard, theme, glyphRow(theme, R.drawable.ic_cameras, camera.name,
+                    camera.url, null, this::showCamerasPage, false, false),
+                    camerasCard.getChildCount() == 0);
+        }
+        if (cameraList.size() < Cameras.MAX_CAMERAS) {
+            Button camerasMore = textButtonOnward(theme, "Add a camera");
+            camerasMore.setOnClickListener(view -> showCamerasPage());
+            camerasCard.addView(buttonRow(camerasMore), matchWrap());
+        }
 
         // Integrations (2026-10-15): in the menu already, empty until the first ones come.
         LinearLayout integrationsCard = sectionBody(theme);
@@ -4016,8 +4002,8 @@ public final class KioskActivity extends Activity {
                         displayCard),
                 new Section(GROUP_SCREEN, R.drawable.ic_screensaver, "Ambient",
                         screensaverSummary(), screensaverCard),
-                new Section(GROUP_SCREEN, R.drawable.ic_popups, "Pop-ups",
-                        popupsSummary(), popupsCard),
+                new Section(GROUP_SCREEN, R.drawable.ic_cameras, "Cameras",
+                        camerasSummary(), camerasCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_sensors, "Sensors", sensorsSummary(),
                         sensorsCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_automations, "Automations",
@@ -5406,8 +5392,8 @@ public final class KioskActivity extends Activity {
     }
 
     /** "2 cameras", the same line the web page's section shows. */
-    private String popupsSummary() {
-        return PopupCameras.summary(KioskConfig.popupCamerasOf(this));
+    private String camerasSummary() {
+        return Cameras.summary(KioskConfig.camerasOf(this));
     }
 
     /** "2 of 7 on", the same line the web page's section shows. */
@@ -15274,11 +15260,6 @@ public final class KioskActivity extends Activity {
         android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
         if (!request.url.isEmpty()) {
             WebView web = new WebView(this);
-            web.getSettings().setJavaScriptEnabled(true);
-            web.getSettings().setMediaPlaybackRequiresUserGesture(false);
-            web.getSettings().setLoadWithOverviewMode(true);
-            web.getSettings().setUseWideViewPort(true);
-            web.setWebViewClient(new WebViewClient());
             // The card is closed by a touch, so the page inside it takes none.
             web.setOnTouchListener((view, event) -> {
                 if (event.getActionMasked() == MotionEvent.ACTION_UP) {
@@ -15286,7 +15267,10 @@ public final class KioskActivity extends Activity {
                 }
                 return true;
             });
-            web.loadUrl(request.url);
+            // Drawn from memory, never stored: a camera's stream as much as any picture or page.
+            CameraView.show(web, java.util.Collections.singletonList(new CameraView.Source(
+                    request.title, request.url, request.login)),
+                    KioskConfig.certificatePinsOf(this));
             LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, (int) (metrics.heightPixels * 0.55f));
             webParams.topMargin = dp(12);
@@ -15300,7 +15284,7 @@ public final class KioskActivity extends Activity {
         if (overApp) {
             if (!AppLock.showOver(this, shade, true)) {
                 if (popupWeb != null) {
-                    popupWeb.destroy();
+                    CameraView.close(popupWeb);
                     popupWeb = null;
                 }
                 return;
@@ -15342,8 +15326,7 @@ public final class KioskActivity extends Activity {
         WebView web = popupWeb;
         popupWeb = null;
         if (web != null) {
-            web.stopLoading();
-            web.destroy();
+            CameraView.close(web);
         }
         if (inFront) {
             // Muralis came forward meanwhile: the app comes back once nothing is drawn.
