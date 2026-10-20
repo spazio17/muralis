@@ -1004,6 +1004,14 @@ final class HttpAdminServer {
             String notice = saveCameraGroup(parseFormBody(headers, body));
             writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
                     "text/html; charset=utf-8", bytes(buildCameraGroupsPage(notice)));
+        } else if (path.equals("/camera-view") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
+        } else if (path.equals("/camera-view") && method.equals("POST")) {
+            String refused = kioskService.setDashboardCameras(
+                    parseFormBody(headers, body).getOrDefault("dashboard_cameras", ""));
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildCameraViewPage(refused == null ? "Saved." : "Not saved: " + refused
+                            + ".")));
         } else if (path.equals("/cameras") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
         } else if (path.equals("/adopt") && method.equals("POST")) {
@@ -2271,6 +2279,9 @@ final class HttpAdminServer {
         // An app instead of the page says so, as "The panel shows" does.
         if (!KioskConfig.appLockOf(context).isEmpty()) {
             return "App: " + KioskConfig.appLockLabelOf(context);
+        }
+        if (!KioskConfig.dashboardCamerasOf(context).isEmpty()) {
+            return "Cameras: " + KioskConfig.dashboardCamerasOf(context);
         }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
@@ -3759,13 +3770,26 @@ final class HttpAdminServer {
         // chosen on its own page. "A web page" switches App lock off and comes back here.
         String app = KioskConfig.appLockOf(context);
         boolean showsApp = !app.isEmpty();
+        // Cameras, the third answer, once there is a camera or a group to show.
+        String cameras = KioskConfig.dashboardCamerasOf(context);
+        boolean showsCameras = !showsApp && !cameras.isEmpty();
+        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(context).isEmpty();
+        boolean showsPage = !showsApp && !showsCameras;
         String shows = "<p class=\"label\" id=\"opt-shows-label\">The panel shows</p>"
                 + "<div class=\"segmented\" role=\"group\" aria-labelledby=\"opt-shows-label\">"
                 + "<form method=\"post\" action=\"/app-lock\"><input type=\"hidden\""
                 + " name=\"app_lock\" value=\"\"><button type=\"submit\" aria-pressed=\""
-                + !showsApp + "\">" + (showsApp ? "" : glyph("check")) + "A web page</button></form>"
+                + showsPage + "\">" + (showsPage ? glyph("check") : "") + "A web page</button></form>"
                 + "<a href=\"/app-lock\" role=\"button\" aria-pressed=\"" + showsApp + "\">"
-                + (showsApp ? glyph("check") : "") + "An app</a></div>";
+                + (showsApp ? glyph("check") : "") + "An app</a>"
+                + (offerCameras ? "<a href=\"/camera-view\" role=\"button\" aria-pressed=\""
+                        + showsCameras + "\">" + (showsCameras ? glyph("check") : "") + "Cameras</a>"
+                        : "")
+                + "</div>";
+        if (showsCameras) {
+            return shows + "<ul class=\"list\">" + linkRow("/camera-view", "cameras", cameras,
+                    "Shown as the main view", null, "") + "</ul>";
+        }
         if (showsApp) {
             String problem = AppLock.problem(context, app);
             return shows
@@ -4111,6 +4135,44 @@ final class HttpAdminServer {
         }
         writeResponse(output, 400, "text/html; charset=utf-8",
                 bytes(buildSettingsFilePage("Not done: nothing to do.", null)));
+    }
+
+    /**
+     * The camera view, a page of its own as App lock is: the camera or group the panel shows as
+     * its main view. The panel's Camera view page is the same.
+     */
+    private String buildCameraViewPage(String notice) {
+        StringBuilder html = new StringBuilder(pageStart("Camera view", null,
+                settingsAt("dashboard")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        String chosen = KioskConfig.dashboardCamerasOf(context);
+        html.append("<form method=\"post\" action=\"/camera-view\" class=\"card\">"
+                + "<h2>The cameras this panel shows</h2><p class=\"hint\">A camera, or a group as"
+                + " a grid, instead of the web page. A tap opens one camera of a grid, pinch to"
+                + " zoom; a tap brings the grid back.</p><div class=\"radios\">");
+        int count = 0;
+        for (Cameras.Camera camera : KioskConfig.camerasOf(context)) {
+            html.append(radioRow("cv-" + count++, camera.name, camera.name, chosen));
+        }
+        for (Cameras.Group group : KioskConfig.cameraGroupsOf(context)) {
+            html.append(radioRow("cv-" + count++, group.name, group.name + " (group)", chosen));
+        }
+        html.append("</div>");
+        if (count == 0) {
+            html.append("<p class=\"hint\">No cameras yet. Add one in Cameras, under Screen.</p>");
+        }
+        html.append("<div class=\"actions\"><button type=\"submit\" class=\"primary\">Save</button>"
+                + "</div></form>");
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String radioRow(String id, String value, String label, String chosen) {
+        return "<label class=\"radio\" for=\"" + id + "\"><input type=\"radio\" id=\"" + id
+                + "\" name=\"dashboard_cameras\" value=\"" + escapeHtml(value) + "\""
+                + (value.equalsIgnoreCase(chosen) ? " checked" : "") + ">" + escapeHtml(label)
+                + "</label>";
     }
 
     /**

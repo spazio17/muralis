@@ -1652,6 +1652,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             KioskConfig config = KioskConfig.load(this);
             org.json.JSONObject applied = new org.json.JSONObject();
             applied.put("dashboard_url", config.dashboardUrl);
+            applied.put("dashboard_cameras", KioskConfig.dashboardCamerasOf(this));
             applied.put("device_id", config.deviceId);
             if (includeAdminDetail) {
                 applied.put("settings_sequence", config.settingsSequence);
@@ -2400,6 +2401,31 @@ public final class KioskService extends Service implements KioskCommandDispatche
         publishTelemetrySoon(this);
     }
 
+    @Override
+    public String setDashboardCameras(String name) {
+        String chosen = name == null ? "" : name.trim();
+        // "None" is what Home Assistant's select sends for the web page.
+        if (MqttController.PLAYLIST_NONE.equalsIgnoreCase(chosen)) {
+            chosen = "";
+        }
+        if (!chosen.isEmpty()) {
+            Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(this), chosen);
+            Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), chosen);
+            if (camera == null && group == null) {
+                return "no camera or group has that name";
+            }
+            chosen = camera != null ? camera.name : group.name;
+        }
+        KioskConfig.edit(this).dashboardCameras(chosen).apply();
+        // As set_url: not shown over the first-start screens, which show it when they are done.
+        if (KioskConfig.load(this).escapeSequencesConfigured()
+                && !KioskRuntimeState.wizardOnScreen()) {
+            sendUiCommand("dashboard.changed", -1, null);
+        }
+        publishTelemetrySoon(this);
+        return null;
+    }
+
     /**
      * Stores the orientation and tells the activity to turn.
      *
@@ -2461,15 +2487,32 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (problem != null) {
             return problem;
         }
-        KioskConfig.edit(context)
-                .cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url)))
+        KioskConfig.Editor edit = KioskConfig.edit(context);
+        if (was != null && !was.isEmpty()
+                && was.equalsIgnoreCase(KioskConfig.dashboardCamerasOf(context))) {
+            // The main view follows its camera's new name.
+            edit.dashboardCameras(name);
+        }
+        edit.cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url)))
                 .cameraGroups(was == null || was.isEmpty() ? groups
                         : Cameras.afterCamera(groups, was, name))
                 .cameraLogins(Cameras.withLogin(KioskConfig.cameraLoginsOf(context), was, name,
                         user, password))
                 .apply();
         publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
         return null;
+    }
+
+    /**
+     * A camera or group changed while cameras are the main view: the view is drawn again, so a
+     * removed group stops streaming and a camera added to it appears.
+     */
+    private static void cameraViewMayHaveChanged(Context context) {
+        KioskService service = liveService();
+        if (service != null && !KioskConfig.dashboardCamerasOf(context).isEmpty()) {
+            service.sendUiCommand("dashboard.changed", -1, null);
+        }
     }
 
     static void removeCamera(Context context, String name) {
@@ -2479,6 +2522,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 .cameraLogins(Cameras.withoutLogin(KioskConfig.cameraLoginsOf(context), name))
                 .apply();
         publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
     }
 
     /** Stores one group from either surface; null when saved, otherwise the reason. */
@@ -2502,10 +2546,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (problem != null) {
             return problem;
         }
-        KioskConfig.edit(context)
-                .cameraGroups(Cameras.withGroup(groups, was, new Cameras.Group(name, kept)))
-                .apply();
+        KioskConfig.Editor edit = KioskConfig.edit(context);
+        if (was != null && !was.isEmpty()
+                && was.equalsIgnoreCase(KioskConfig.dashboardCamerasOf(context))) {
+            edit.dashboardCameras(name);
+        }
+        edit.cameraGroups(Cameras.withGroup(groups, was, new Cameras.Group(name, kept))).apply();
         publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
         return null;
     }
 
@@ -2514,6 +2562,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 .cameraGroups(Cameras.withoutGroup(KioskConfig.cameraGroupsOf(context), name))
                 .apply();
         publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
     }
 
     /** What a camera's or a group's name shows, with each camera's sign-in; empty when unknown. */

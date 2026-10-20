@@ -1053,6 +1053,13 @@ public final class KioskCommandDispatcherTest {
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door"), executor)
                 .status.equals("accepted") && "popup".equals(executor.cameraAs),
                 "camera.show is a pop-up by default");
+        require(KioskCommandDispatcher.dispatch("kiosk.set_cameras",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, " Front "), executor)
+                .status.equals("accepted") && "Front".equals(executor.dashboardCameras),
+                "kiosk.set_cameras reaches the executor trimmed");
+        require(KioskCommandDispatcher.dispatch("kiosk.set_cameras",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
+                && "".equals(executor.dashboardCameras), "an empty name is the web page again");
         java.util.Map<String, String> asBad = new java.util.HashMap<>();
         asBad.put("as", "sideways");
         require(KioskCommandDispatcher.dispatch("camera.show",
@@ -1065,6 +1072,7 @@ public final class KioskCommandDispatcherTest {
         String cameraName;
         boolean cameraTrigger;
         String cameraAs;
+        String dashboardCameras;
         final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
                 new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
         Boolean lightOn;
@@ -1225,6 +1233,12 @@ public final class KioskCommandDispatcherTest {
             cameraName = name;
             cameraTrigger = false;
             cameraAs = show;
+            return null;
+        }
+
+        @Override
+        public String setDashboardCameras(String name) {
+            dashboardCameras = name;
             return null;
         }
 

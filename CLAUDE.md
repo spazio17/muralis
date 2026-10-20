@@ -46,8 +46,9 @@ on purpose.
   Pop-ups over the screen (a message, a picture, a camera's stream or a page, for some seconds
   or until touched), from HTTP, MQTT, Home Assistant's notify and the automations. Cameras, a
   list of snapshots, MJPEG streams or camera pages with an optional sign-in kept as a secret,
-  shown on request; a camera is only streamed, what it sends is drawn from memory and never
-  written to the device.
+  put in groups, shown on request or as the panel's main view instead of the page (a group as a
+  grid, a tap opening one camera, pinch to zoom, nothing fetched while it is not seen); a camera
+  is only streamed, what it sends is drawn from memory and never written to the device.
 - **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
   uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery, plain
   or over TLS (the broker trusted by Android or by the certificate a person trusted on the panel,

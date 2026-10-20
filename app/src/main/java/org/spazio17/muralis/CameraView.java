@@ -56,15 +56,16 @@ final class CameraView {
      * certificates a person trusted, host to fingerprint, as for pages.
      */
     static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins) {
-        show(web, sources, pins, false);
+        show(web, sources, pins, false, false, null);
     }
 
     /**
-     * The same; {@code zoom} lets a single camera be pinched up to four times and moved with
-     * one finger, a double tap back to the whole picture (a camera page by the view's own zoom).
+     * The same; {@code zoom} lets the camera on show be pinched up to four times and moved with
+     * one finger, a double tap back to the whole picture (a camera page by the view's own zoom);
+     * {@code focus} lets a tap open one camera of a grid over the whole view ({@link #page}).
      */
     static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins,
-            boolean zoom) {
+            boolean zoom, boolean focus, Runnable gone) {
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
@@ -73,19 +74,36 @@ final class CameraView {
         settings.setDatabaseEnabled(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setBuiltInZoomControls(zoom);
+        settings.setBuiltInZoomControls(zoom && sources.size() == 1);
         settings.setDisplayZoomControls(false);
         final List<Cameras.Tile> list = new ArrayList<>(sources);
         app = web.getContext().getApplicationContext();
         final Map<String, String> trusted = new LinkedHashMap<>(pins);
+        final Streams streams = new Streams();
         web.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view,
                     WebResourceRequest request) {
-                return intercept(list, trusted, request);
+                return intercept(list, trusted, streams, request);
+            }
+
+            /**
+             * The browser engine died or was killed for memory. It is one process for all of the
+             * app's web views, so a view that does not answer this takes the whole app down with
+             * it; this one is handed to its owner to close or rebuild, as the dashboard's is.
+             */
+            @Override
+            public boolean onRenderProcessGone(WebView view,
+                    android.webkit.RenderProcessGoneDetail detail) {
+                Log.w(TAG, "The browser engine under the cameras is gone");
+                streams.closeAll();
+                if (gone != null) {
+                    view.post(gone);
+                }
+                return true;
             }
         });
-        web.loadDataWithBaseURL(BASE, page(list, zoom), "text/html", "utf-8", null);
+        web.loadDataWithBaseURL(BASE, page(list, zoom, focus), "text/html", "utf-8", null);
     }
 
     /** Clears what the view may hold, then destroys it. */
@@ -95,8 +113,49 @@ final class CameraView {
         web.destroy();
     }
 
+    /**
+     * The stream each tile holds open: a tile emptied by the page (another opened over the
+     * grid) asks for its own to be closed ({@code /stop/i}), since the browser engine keeps
+     * reading a stream whose picture is gone. Only the newest is kept: a tile asks again only
+     * once its last one ended (a snapshot every two seconds, a stream after a failure), so the
+     * one before is closed, and nothing piles up on a view that runs for weeks.
+     */
+    static final class Streams {
+        private final Map<Integer, HttpURLConnection> open = new java.util.HashMap<>();
+
+        void add(int tile, HttpURLConnection connection) {
+            HttpURLConnection before;
+            synchronized (this) {
+                before = open.put(tile, connection);
+            }
+            if (before != null && before != connection) {
+                before.disconnect();
+            }
+        }
+
+        void close(int tile) {
+            HttpURLConnection connection;
+            synchronized (this) {
+                connection = open.remove(tile);
+            }
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+
+        void closeAll() {
+            List<Integer> tiles;
+            synchronized (this) {
+                tiles = new ArrayList<>(open.keySet());
+            }
+            for (int tile : tiles) {
+                close(tile);
+            }
+        }
+    }
+
     static WebResourceResponse intercept(List<Cameras.Tile> sources, Map<String, String> pins,
-            WebResourceRequest request) {
+            Streams streams, WebResourceRequest request) {
         String url = request.getUrl().toString();
         if (url.startsWith(BASE)) {
             String path = request.getUrl().getPath();
@@ -111,7 +170,11 @@ final class CameraView {
             if (path.startsWith("/stream/")) {
                 // The camera's own sign-in: an NVR's channels share a host, not always a user.
                 return fetch(Cameras.fill(source.url, source.login), source.login, null,
-                        source.name, pins);
+                        source.name, pins, connection -> streams.add(index, connection));
+            }
+            if (path.startsWith("/stop/")) {
+                streams.close(index);
+                return text(204, "No Content", "text/plain", "");
             }
             return text(404, "Not Found", "text/plain", "");
         }
@@ -122,7 +185,8 @@ final class CameraView {
         }
         // A camera page's own requests may name the sign-in as {user} and {password} too.
         Cameras.Login login = loginFor(sources, url);
-        return fetch(Cameras.fill(url, login), login, request.getRequestHeaders(), null, pins);
+        return fetch(Cameras.fill(url, login), login, request.getRequestHeaders(), null, pins,
+                null);
     }
 
     private static int indexIn(String path, int count) {
@@ -209,9 +273,13 @@ final class CameraView {
      * for the log; null for a camera page's own requests, which are not logged one by one.
      */
     private static WebResourceResponse fetch(String url, Cameras.Login login,
-            Map<String, String> headers, String name, Map<String, String> pins) {
+            Map<String, String> headers, String name, Map<String, String> pins,
+            java.util.function.Consumer<HttpURLConnection> held) {
         try {
             HttpURLConnection connection = open(url, login, headers, pins);
+            if (held != null) {
+                held.accept(connection);
+            }
             int status = connection.getResponseCode();
             InputStream body = status >= 400 ? connection.getErrorStream()
                     : connection.getInputStream();
@@ -421,7 +489,13 @@ final class CameraView {
     }
 
     /** The view's own page: one tile a camera, drawn and kept alive by its script. */
-    static String page(List<Cameras.Tile> sources, boolean zoom) {
+    /**
+     * The view's own page: one tile a camera, drawn and kept alive by its script. {@code zoom}
+     * lets the one camera on show be pinched; {@code focus} lets a tap open one tile of a grid
+     * over the whole view, the other streams stopped, and a tap on it (not zoomed), or a minute
+     * without a touch, bring the grid back.
+     */
+    static String page(List<Cameras.Tile> sources, boolean zoom, boolean focus) {
         StringBuilder names = new StringBuilder("[");
         StringBuilder urls = new StringBuilder("[");
         for (int i = 0; i < sources.size(); i++) {
@@ -437,33 +511,44 @@ final class CameraView {
                 + ".tile{position:relative;overflow:hidden;background:#111}"
                 + ".tile img,.tile iframe{position:absolute;inset:0;width:100%;height:100%;"
                 + "object-fit:contain;border:0;transform:var(--z,none);transform-origin:center}"
-                + ".zoom{touch-action:none}"
+                + ".touch{touch-action:none}"
                 + ".tile p{position:absolute;inset:0;margin:0;display:flex;flex-direction:column;"
                 + "align-items:center;justify-content:center;gap:6px;color:#c9cede;"
                 + "font:16px/1.3 system-ui,sans-serif;text-align:center}"
                 + ".tile p b{color:#fff}</style></head><body><div id=\"grid\"></div><script>"
-                + "var names=" + names + ",urls=" + urls + ";"
-                + "var grid=document.getElementById('grid');"
-                // The grid by the number of cameras and the shape of the view, as recorders lay
-                // it out: two side by side or stacked, three as one big and two small, then 2x2,
-                // 3x2, 3x3 and 4x3, turned for an upright view.
+                + "var names=" + names + ",urls=" + urls + ",zoom=" + zoom + ",focus=" + focus
+                + ";var grid=document.getElementById('grid'),tiles=[],focused=-1,idle=0;"
                 + "names.forEach(function(name,i){var t=document.createElement('div');"
-                + "t.className='tile';grid.appendChild(t);start(t,i,0);});"
-                + "function layout(){var n=names.length,w=innerWidth>=innerHeight,c,r;"
+                + "t.className='tile';grid.appendChild(t);tiles.push(t);"
+                + "if(zoom||focus){gestures(t,i);}start(t,i,0);});"
+                // The grid by the number of cameras on show and the shape of the view, as
+                // recorders lay it out: two side by side or stacked, three as one big and two
+                // small, then 2x2, 3x2, 3x3 and 4x3, turned for an upright view.
+                + "function layout(){var n=focused<0?tiles.length:1,w=innerWidth>=innerHeight,c,r;"
                 + "if(n<=1){c=1;r=1;}else if(n===2){c=w?2:1;r=w?1:2;}else if(n<=4){c=2;r=2;}"
                 + "else if(n<=6){c=w?3:2;r=w?2:3;}else if(n<=9){c=3;r=3;}else{c=w?4:3;r=w?3:4;}"
                 + "grid.style.gridTemplateColumns='repeat('+c+',1fr)';"
                 + "grid.style.gridTemplateRows='repeat('+r+',1fr)';"
-                + "var first=grid.firstChild;if(first){first.style.gridRow=n===3&&w?'span 2':'';"
-                + "first.style.gridColumn=n===3&&!w?'span 2':'';}}"
+                + "tiles.forEach(function(t,i){t.style.display=focused<0||focused===i?'':'none';"
+                + "var big=focused<0&&n===3&&i===0;t.style.gridRow=big&&w?'span 2':'';"
+                + "t.style.gridColumn=big&&!w?'span 2':'';});}"
                 + "layout();addEventListener('resize',layout);"
-                + (zoom ? ZOOM : "")
+                + "function focusOn(i){focused=i;tiles.forEach(function(t,j){if(j!==i){t.innerHTML='';"
+                + "fetch('/stop/'+j);}});"
+                + "layout();arm();}"
+                + "function unfocus(){var i=focused;if(i<0)return;focused=-1;clearTimeout(idle);"
+                + "unzoom(tiles[i]);tiles.forEach(function(t,j){if(j!==i){start(t,j,0);}});layout();}"
+                + "function arm(){clearTimeout(idle);if(focused>=0){idle=setTimeout(unfocus,60000);}}"
+                + GESTURES
                 + "function none(t,i,tries,why){t.innerHTML='';var p=document.createElement('p');"
                 + "var b=document.createElement('b');b.textContent=names[i];p.appendChild(b);"
                 + "p.appendChild(document.createTextNode(why||'No picture'));t.appendChild(p);"
                 + "setTimeout(function(){start(t,i,tries+1);},Math.min(60,5*Math.pow(2,tries))*1000);}"
-                + "function start(t,i,tries){fetch('/probe/'+i).then(function(r){return r.json();})"
-                + ".then(function(a){draw(t,i,a.kind,tries);}).catch(function(){none(t,i,tries);});}"
+                // A tile hidden behind an opened one fetches nothing until the grid is back.
+                + "function start(t,i,tries){if(focused>=0&&focused!==i)return;"
+                + "fetch('/probe/'+i).then(function(r){return r.json();})"
+                + ".then(function(a){if(focused>=0&&focused!==i)return;draw(t,i,a.kind,tries);})"
+                + ".catch(function(){none(t,i,tries);});}"
                 + "function draw(t,i,kind,tries){t.innerHTML='';"
                 + "if(kind==='page'){if(names.length===1){location.replace(urls[i]);return;}"
                 + "var f=document.createElement('iframe');f.src=urls[i];t.appendChild(f);return;}"
@@ -488,28 +573,39 @@ final class CameraView {
     }
 
     /**
-     * Pinch and move for the one tile: two fingers scale it between 1 and 4 times, one finger
-     * moves a zoomed picture without letting its edge leave the tile, a double tap goes back to
-     * the whole picture. The transform is a CSS variable on the tile, so a snapshot's next
-     * picture keeps it.
+     * A tile's touches. Pinch, for the one camera on show when zooming is on: two fingers scale
+     * it between 1 and 4 times, one finger moves a zoomed picture without letting its edge leave
+     * the tile, a double tap goes back to the whole picture; the transform is a CSS variable on
+     * the tile, so a snapshot's next picture keeps it. A single tap, when focusing is on, opens
+     * the tile over the grid, or takes an opened, unzoomed tile back to the grid.
      */
-    private static final String ZOOM = "(function(){var t=grid.firstChild;if(!t)return;"
-            + "t.classList.add('zoom');var s=1,x=0,y=0,p={},g=null,last=0;"
-            + "function put(){var w=t.clientWidth,h=t.clientHeight,mx=(s-1)*w/2,my=(s-1)*h/2;"
-            + "x=Math.max(-mx,Math.min(mx,x));y=Math.max(-my,Math.min(my,y));"
-            + "t.style.setProperty('--z',s===1?'none':'translate('+x+'px,'+y+'px) scale('+s+')');}"
+    private static final String GESTURES = "function unzoom(t){t.zs=1;t.zx=0;t.zy=0;"
+            + "t.style.setProperty('--z','none');}"
+            + "function gestures(t,i){unzoom(t);var p={},g=null,last=0,downAt=0,from=null,moved=false,"
+            + "tap=0;t.classList.add('touch');"
+            + "function can(){return zoom&&(tiles.length===1||focused===i);}"
+            + "function put(){var w=t.clientWidth,h=t.clientHeight,mx=(t.zs-1)*w/2,my=(t.zs-1)*h/2;"
+            + "t.zx=Math.max(-mx,Math.min(mx,t.zx));t.zy=Math.max(-my,Math.min(my,t.zy));"
+            + "t.style.setProperty('--z',t.zs===1?'none':'translate('+t.zx+'px,'+t.zy+'px) scale('+t.zs+')');}"
             + "function pts(){return Object.keys(p).map(function(k){return p[k];});}"
-            + "function grab(){var a=pts();g={s:s,x:x,y:y,a:a.map(function(q){return {x:q.x,y:q.y};})};}"
+            + "function grab(){g={s:t.zs,x:t.zx,y:t.zy,a:pts().map(function(q){return {x:q.x,y:q.y};})};}"
             + "t.addEventListener('pointerdown',function(e){p[e.pointerId]={x:e.clientX,y:e.clientY};"
-            + "if(pts().length===1){var n=Date.now();if(n-last<300){s=1;x=0;y=0;put();}last=n;}grab();});"
+            + "if(pts().length===1){downAt=Date.now();from={x:e.clientX,y:e.clientY};moved=false;}"
+            + "else{moved=true;}grab();arm();});"
             + "t.addEventListener('pointermove',function(e){if(!p[e.pointerId]||!g)return;"
             + "p[e.pointerId]={x:e.clientX,y:e.clientY};var a=pts();"
+            + "if(from&&Math.hypot(e.clientX-from.x,e.clientY-from.y)>10){moved=true;}"
+            + "if(!can())return;"
             + "if(a.length>=2&&g.a.length>=2){var d0=Math.hypot(g.a[0].x-g.a[1].x,g.a[0].y-g.a[1].y),"
-            + "d1=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);if(d0>0){s=Math.max(1,Math.min(4,g.s*d1/d0));}}"
-            + "else if(a.length===1&&g.a.length===1&&s>1){x=g.x+a[0].x-g.a[0].x;y=g.y+a[0].y-g.a[0].y;}"
-            + "put();});"
-            + "function up(e){delete p[e.pointerId];grab();}"
-            + "t.addEventListener('pointerup',up);t.addEventListener('pointercancel',up);})();";
+            + "d1=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);if(d0>0){t.zs=Math.max(1,Math.min(4,g.s*d1/d0));}}"
+            + "else if(a.length===1&&g.a.length===1&&t.zs>1){t.zx=g.x+a[0].x-g.a[0].x;"
+            + "t.zy=g.y+a[0].y-g.a[0].y;}put();});"
+            + "function up(e){if(!p[e.pointerId])return;delete p[e.pointerId];"
+            + "if(pts().length===0&&!moved&&Date.now()-downAt<300){var n=Date.now();"
+            + "if(n-last<300){clearTimeout(tap);last=0;if(can()){unzoom(t);}}"
+            + "else{last=n;tap=setTimeout(function(){if(!focus)return;"
+            + "if(focused<0){focusOn(i);}else if(focused===i&&t.zs===1){unfocus();}},300);}}grab();}"
+            + "t.addEventListener('pointerup',up);t.addEventListener('pointercancel',up);}";
 
     private static String jsString(String value) {
         StringBuilder out = new StringBuilder("\"");

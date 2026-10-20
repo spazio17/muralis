@@ -2617,6 +2617,57 @@ public final class KioskActivity extends Activity {
     private static final int REQUEST_PAGE_PERMISSION = 7_301;
 
     /**
+     * The camera view, a page under Dashboard as App lock is: the camera or group the panel shows
+     * as its main view, one tap to choose; the web admin's Camera view page is the same.
+     */
+    private void showCameraViewPage() {
+        currentScreen = this::showCameraViewPage;
+        LinearLayout page = subPage("Camera view", this::showSettings);
+        KioskTheme theme = currentTheme();
+        String chosen = KioskConfig.dashboardCamerasOf(this);
+        LinearLayout card = card(theme, "The cameras this panel shows");
+        TextView about = new FlushText(this);
+        about.setTextSize(13);
+        about.setTextColor(theme.subtext);
+        about.setText("A camera, or a group as a grid, instead of the web page. A tap opens one"
+                + " camera of a grid, pinch to zoom; a tap brings the grid back.");
+        card.addView(about, matchWrapClose());
+        // No "Off" here: the web page is the other answer of Dashboard's "The panel shows".
+        RadioGroup choices = new RadioGroup(this);
+        for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
+            radioChoice(theme, choices, camera.name, camera.name);
+        }
+        for (Cameras.Group group : KioskConfig.cameraGroupsOf(this)) {
+            radioChoice(theme, choices, group.name + " (group)", group.name);
+        }
+        if (choices.getChildCount() == 0) {
+            card.addView(emptyState(theme, "No cameras yet",
+                    "Add one in Cameras, under Screen."), matchWrapClose());
+        }
+        checkRadioIfChanged(choices, chosen);
+        choices.setOnCheckedChangeListener((group, id) -> {
+            View checked = group.findViewById(id);
+            String value = checked == null ? "" : (String) checked.getTag();
+            if (value.equals(KioskConfig.dashboardCamerasOf(this))) {
+                return;
+            }
+            KioskService service = KioskService.liveService();
+            String refused = service == null ? "the service is not running"
+                    : service.setDashboardCameras(value);
+            if (refused != null) {
+                Toast.makeText(this, "Not saved: " + refused + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            // App lock ends with the choice; the lock-task allowlist follows at once.
+            applyKioskPolicy();
+            Toast.makeText(this, value + " is the main view", Toast.LENGTH_SHORT).show();
+        });
+        card.addView(choices, matchWrapClose());
+        page.addView(card, matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
      * App lock: the one app the panel shows instead of the web page, or Off, chosen
      * from the installed apps and stored at once; the permission it needs, asked for with why.
      */
@@ -3092,14 +3143,24 @@ public final class KioskActivity extends Activity {
         // the address and its options below, or an app, App lock, chosen on a page of its own.
         String lockedApp = KioskConfig.appLockOf(this);
         boolean showsApp = !lockedApp.isEmpty();
+        // Cameras, the third answer, once there is a camera or a group to show.
+        String shownCameras = KioskConfig.dashboardCamerasOf(this);
+        boolean showsCameras = !showsApp && !shownCameras.isEmpty();
+        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(this).isEmpty();
         dashboardCard.addView(fieldCaption(theme, "The panel shows"), matchWrapClose());
         LinearLayout.LayoutParams showsParams = matchWrapClose();
         showsParams.topMargin = dp(8);
-        dashboardCard.addView(segmentedChoice(theme, new String[] {"A web page", "An app"},
-                showsApp ? 1 : 0, index -> {
+        dashboardCard.addView(segmentedChoice(theme, offerCameras
+                        ? new String[] {"A web page", "An app", "Cameras"}
+                        : new String[] {"A web page", "An app"},
+                showsApp ? 1 : showsCameras ? 2 : 0, index -> {
                     if (index == 1) {
                         showAppLockPage();
-                    } else if (!KioskConfig.appLockOf(this).isEmpty()) {
+                    } else if (index == 2) {
+                        showCameraViewPage();
+                    } else if (!KioskConfig.appLockOf(this).isEmpty()
+                            || !KioskConfig.dashboardCamerasOf(this).isEmpty()) {
+                        // The web page: App lock and the cameras both end.
                         KioskConfig.edit(this).appLock("").apply();
                         // The lock-task allowlist follows the choice at once.
                         applyKioskPolicy();
@@ -3107,6 +3168,11 @@ public final class KioskActivity extends Activity {
                         redrawThisScreen();
                     }
                 }), showsParams);
+        if (showsCameras) {
+            dashboardCard.addView(glyphRow(theme, R.drawable.ic_cameras, shownCameras,
+                    "Shown as the main view", null, this::showCameraViewPage, false, false),
+                    matchWrapClose());
+        }
         // The box holds what is stored and nothing else; the example is a hint. It used to be
         // prefilled with a Home Assistant address as real text, so a fresh panel saved and loaded
         // it at the first press of Open dashboard and showed an error page for a host that does
@@ -3115,7 +3181,7 @@ public final class KioskActivity extends Activity {
         urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        if (!showsApp) {
+        if (!showsApp && !showsCameras) {
             // The fleet shares the address, not the choice above it, so its line stands here.
             addSharedLine(dashboardCard, theme, "dashboard");
             addField(dashboardCard, theme, "Dashboard URL", urlInput);
@@ -3170,7 +3236,7 @@ public final class KioskActivity extends Activity {
             Button appLockMore = textButtonOnward(theme, "Choose the app");
             appLockMore.setOnClickListener(view -> showAppLockPage());
             dashboardCard.addView(buttonRow(appLockMore), matchWrap());
-        } else {
+        } else if (!showsCameras) {
             dashboardCard.addView(buttonRow(openOnce), matchWrap());
             Button browserMore = textButtonOnward(theme, "Page options");
             browserMore.setOnClickListener(view -> showBrowserOptionsPage());
@@ -5481,6 +5547,9 @@ public final class KioskActivity extends Activity {
         // An app instead of the page says so, as "The panel shows" does.
         if (!KioskConfig.appLockOf(this).isEmpty()) {
             return "App: " + KioskConfig.appLockLabelOf(this);
+        }
+        if (!KioskConfig.dashboardCamerasOf(this).isEmpty()) {
+            return "Cameras: " + KioskConfig.dashboardCamerasOf(this);
         }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
@@ -14410,7 +14479,19 @@ public final class KioskActivity extends Activity {
         // App lock: the app is what the panel shows, so a page address is neither needed nor
         // loaded; the screen behind the app is the dark plate the dashboard starts as.
         appLockPlate = appLockOn();
-        if (!appLockPlate && (url == null || url.trim().isEmpty())) {
+        // Cameras as the main view: the stored dashboard only, so Open once still shows its page.
+        String cameras = appLockPlate ? "" : KioskConfig.dashboardCamerasOf(this);
+        java.util.List<Cameras.Tile> cameraTiles = !cameras.isEmpty() && (url == null
+                || url.trim().isEmpty() || url.equals(KioskConfig.load(this).dashboardUrl))
+                ? KioskService.cameraTiles(this, cameras) : null;
+        if (cameraTiles != null && cameraTiles.isEmpty()) {
+            showParkingPage("No camera to show",
+                    "The camera or group chosen in Dashboard is gone. Choose another in the"
+                            + " Muralis settings.");
+            return;
+        }
+        boolean cameraPlate = cameraTiles != null;
+        if (!appLockPlate && !cameraPlate && (url == null || url.trim().isEmpty())) {
             showParkingPage();
             return;
         }
@@ -14471,6 +14552,16 @@ public final class KioskActivity extends Activity {
         FrameLayout dashboard = new FrameLayout(this);
         dashboard.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (cameraPlate) {
+            // The cameras over the empty page, under Ambient, the dark film and the overlays.
+            cameraDashboard = new WebView(this);
+            cameraDashboard.setBackgroundColor(Color.BLACK);
+            CameraView.show(cameraDashboard, cameraTiles, KioskConfig.certificatePinsOf(this),
+                    true, cameraTiles.size() > 1, this::rebuildCameraDashboard);
+            cameraDashboardPaused = false;
+            dashboard.addView(cameraDashboard, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
         // Give the keyboard its space back by shrinking the WebView, not by scrolling anything here.
         // Padding the FrameLayout reduces the WebView's measured height, which reduces the page's
         // viewport height, and Chromium then reflows and scrolls the focused input into view by itself.
@@ -14530,10 +14621,13 @@ public final class KioskActivity extends Activity {
         mainHandler.removeCallbacks(frozenPageCheckTask);
         mainHandler.removeCallbacks(serverProbeTask);
         cancelDashboardGate();
-        if (appLockPlate) {
+        if (appLockPlate || cameraPlate) {
             // No page, so nothing to watch over, and no page for the status to name.
             KioskRuntimeState.clearPage();
             KioskService.publishTelemetrySoon(this);
+            if (cameraPlate) {
+                mainHandler.postDelayed(cameraDashboardWatch, CAMERA_WATCH_MS);
+            }
             return;
         }
         mainHandler.postDelayed(dashboardSupervisor, SUPERVISOR_INTERVAL_MS);
@@ -14946,6 +15040,16 @@ public final class KioskActivity extends Activity {
         cancelDashboardGate();
         statsOverlay = null;
         networkWaitLabel = null;
+        mainHandler.removeCallbacks(cameraDashboardWatch);
+        if (cameraDashboard != null) {
+            ViewGroup holder = cameraDashboard.getParent() instanceof ViewGroup
+                    ? (ViewGroup) cameraDashboard.getParent() : null;
+            if (holder != null) {
+                holder.removeView(cameraDashboard);
+            }
+            CameraView.close(cameraDashboard);
+            cameraDashboard = null;
+        }
         if (webView != null) {
             webView.stopLoading();
             // Detach before destroying. Android's contract is that destroy() must follow removal
@@ -15513,7 +15617,8 @@ public final class KioskActivity extends Activity {
                 return true;
             });
             // Drawn from memory, never stored: a camera's stream as much as any picture or page.
-            CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this));
+            CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this), false, false,
+                    this::closePopup);
             LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, (int) (metrics.heightPixels * 0.55f));
             webParams.topMargin = dp(12);
@@ -15537,8 +15642,8 @@ public final class KioskActivity extends Activity {
         shade.setBackgroundColor(Color.BLACK);
         shade.setClickable(true);
         WebView web = new WebView(this);
-        CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this),
-                request.tiles.size() == 1);
+        CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this), true,
+                request.tiles.size() > 1, this::closePopup);
         shade.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         popupWeb = web;
@@ -15562,6 +15667,50 @@ public final class KioskActivity extends Activity {
     }
 
     private static final long CAMERA_WATCH_MS = 2_000L;
+
+    /** The cameras' browser engine died: the dashboard is built again, as for the page's. */
+    private void rebuildCameraDashboard() {
+        if (cameraDashboard != null && !configurationVisible) {
+            showDashboard(KioskConfig.load(this).dashboardUrl);
+        }
+    }
+
+    /** The cameras as the main view, over the empty page; null when the panel shows a page. */
+    private WebView cameraDashboard;
+    private boolean cameraDashboardPaused;
+
+    /**
+     * The cameras of the main view stream only while they are seen: nothing is fetched while the
+     * display is off, Ambient is up, the settings or another app are in front; they come back
+     * when the dashboard is seen again.
+     */
+    private final Runnable cameraDashboardWatch = new Runnable() {
+        @Override
+        public void run() {
+            WebView web = cameraDashboard;
+            if (web == null) {
+                return;
+            }
+            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+            boolean hidden = (power != null && !power.isInteractive())
+                    || (blackout != null && blackout.getVisibility() == View.VISIBLE)
+                    || screensaverStage != ScreensaverPolicy.Stage.DASHBOARD
+                    || !inFront || configurationVisible;
+            if (hidden && !cameraDashboardPaused) {
+                cameraDashboardPaused = true;
+                web.loadUrl("about:blank");
+            } else if (!hidden && cameraDashboardPaused) {
+                java.util.List<Cameras.Tile> tiles = KioskService.cameraTiles(KioskActivity.this,
+                        KioskConfig.dashboardCamerasOf(KioskActivity.this));
+                if (!tiles.isEmpty()) {
+                    cameraDashboardPaused = false;
+                    CameraView.show(web, tiles, KioskConfig.certificatePinsOf(KioskActivity.this),
+                            true, tiles.size() > 1, KioskActivity.this::rebuildCameraDashboard);
+                }
+            }
+            mainHandler.postDelayed(this, CAMERA_WATCH_MS);
+        }
+    };
 
     /**
      * A camera shown over the screen is closed once nobody can see it: the display went off (a
@@ -15744,10 +15893,22 @@ public final class KioskActivity extends Activity {
                     redrawSettingsSoon();
                 } else if (inFront) {
                     applyKioskPolicy();
-                    if (appLockPlate != appLockOn()) {
+                    // The web page chosen also ends the cameras as the main view.
+                    if (appLockPlate != appLockOn() || (cameraDashboard != null)
+                            == KioskConfig.dashboardCamerasOf(this).isEmpty()) {
                         showDashboard(KioskConfig.load(this).dashboardUrl);
                     }
                     scheduleLockedApp();
+                }
+                break;
+            case "dashboard.changed":
+                // The main view changed: a camera or group, or the web page again.
+                applyKioskPolicy();
+                if (!configurationVisible) {
+                    showDashboard(KioskConfig.load(this).dashboardUrl);
+                } else if (inFront) {
+                    // Dashboard's "The panel shows" and the menu's line follow the change.
+                    redrawSettingsSoon();
                 }
                 break;
             case "light.changed":
@@ -15773,7 +15934,7 @@ public final class KioskActivity extends Activity {
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
-                if (webView != null) {
+                if (webView != null && cameraDashboard == null) {
                     beginLoad();
                     homeLoad();
                     loadPage(pageUrl(KioskConfig.load(this).dashboardUrl));
@@ -15789,7 +15950,8 @@ public final class KioskActivity extends Activity {
                 }
                 if (webView == null) {
                     showDashboard(url);
-                } else {
+                } else if (cameraDashboard == null) {
+                    // Cameras stay the main view; the address is kept for the web page.
                     beginLoad();
                     homeLoad();
                     loadPage(pageUrl(url));
@@ -15821,7 +15983,9 @@ public final class KioskActivity extends Activity {
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
-                if (webView == null) {
+                if (webView == null || cameraDashboard != null
+                        || !KioskConfig.dashboardCamerasOf(this).isEmpty()) {
+                    // Built again: from the cameras a page shown once, or back to the cameras.
                     showDashboard(target);
                 } else {
                     beginLoad();

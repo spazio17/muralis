@@ -149,6 +149,12 @@ final class KioskCommandDispatcher {
         void setDashboardUrl(String url);
 
         /**
+         * {@code kiosk.set_cameras}: a camera or a group as the panel's main view, or the web
+         * page again for an empty name. Returns why not, or null.
+         */
+        String setDashboardCameras(String name);
+
+        /**
          * Shows {@code url} now without storing it, so the next reload of the *kiosk* (a restart,
          * a reboot, the nightly clean) returns to the stored dashboard. For a URL with one-off
          * query parameters, which is what a stored dashboard URL must not become.
@@ -315,6 +321,11 @@ final class KioskCommandDispatcher {
                 }
                 executor.openUrlOnce(args.url.trim());
                 return accepted();
+            }
+            case "kiosk.set_cameras": {
+                String problem = executor.setDashboardCameras(
+                        args.value == null ? "" : args.value.trim());
+                return problem == null ? accepted() : rejected(problem);
             }
             case "kiosk.home":
                 executor.showMainDashboard();

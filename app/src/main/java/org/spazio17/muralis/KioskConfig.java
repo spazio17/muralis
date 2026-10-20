@@ -46,6 +46,8 @@ final class KioskConfig {
     private static final String CAMERAS = "cameras";
     private static final String CAMERA_LOGINS = "camera_logins";
     private static final String CAMERA_GROUPS = "camera_groups";
+    /** The camera or group the panel shows as its main view; empty for the web page. */
+    private static final String DASHBOARD_CAMERAS = "dashboard_cameras";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -349,12 +351,26 @@ final class KioskConfig {
             return this;
         }
 
-        /** The app App lock shows, a package name; empty switches App lock off. */
+        /**
+         * The app App lock shows, a package name, empty switches App lock off; the app the panel shows; one answer of "The panel shows", so choosing an app, or the
+         * web page (empty), also ends the cameras.
+         */
         Editor appLock(String packageName) {
             String chosen = packageName == null ? "" : packageName.trim();
             plain.putString(APP_LOCK, chosen)
                     .putString(APP_LOCK_LABEL, chosen.isEmpty() ? ""
-                            : AppLock.labelOf(storageContext, chosen));
+                            : AppLock.labelOf(storageContext, chosen))
+                    .putString(DASHBOARD_CAMERAS, "");
+            return this;
+        }
+
+        /** The camera or group the panel shows; choosing one ends App lock, empty is the page. */
+        Editor dashboardCameras(String name) {
+            String chosen = name == null ? "" : name.trim();
+            plain.putString(DASHBOARD_CAMERAS, chosen);
+            if (!chosen.isEmpty()) {
+                plain.putString(APP_LOCK, "").putString(APP_LOCK_LABEL, "");
+            }
             return this;
         }
 
@@ -1547,6 +1563,11 @@ final class KioskConfig {
         return Cameras.parse(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(CAMERAS, ""));
+    }
+
+    static String dashboardCamerasOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(DASHBOARD_CAMERAS, "");
     }
 
     static java.util.List<Cameras.Group> cameraGroupsOf(Context context) {

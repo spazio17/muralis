@@ -75,9 +75,9 @@ final class Cameras {
 
     /** Null when the camera can be stored; otherwise the reason. */
     static String check(String name, String url) {
-        if (name == null || name.trim().isEmpty() || name.trim().length() > MAX_NAME
-                || name.chars().anyMatch(Character::isISOControl)) {
-            return "the name must be one line of 1 to " + MAX_NAME + " characters";
+        String named = checkName(name);
+        if (named != null) {
+            return named;
         }
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))
                 || url.chars().anyMatch(c -> c <= ' ')) {
@@ -490,6 +490,10 @@ final class Cameras {
         if (name == null || name.trim().isEmpty() || name.trim().length() > MAX_NAME
                 || name.chars().anyMatch(Character::isISOControl)) {
             return "the name must be one line of 1 to " + MAX_NAME + " characters";
+        }
+        // "None" is the web page in the camera view's choice (Home Assistant's select too).
+        if (name.trim().equalsIgnoreCase("None")) {
+            return "None is taken: it means the web page in the camera view";
         }
         return null;
     }
