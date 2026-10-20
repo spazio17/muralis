@@ -56,6 +56,15 @@ final class CameraView {
      * certificates a person trusted, host to fingerprint, as for pages.
      */
     static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins) {
+        show(web, sources, pins, false);
+    }
+
+    /**
+     * The same; {@code zoom} lets a single camera be pinched up to four times and moved with
+     * one finger, a double tap back to the whole picture (a camera page by the view's own zoom).
+     */
+    static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins,
+            boolean zoom) {
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
@@ -64,6 +73,8 @@ final class CameraView {
         settings.setDatabaseEnabled(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        settings.setBuiltInZoomControls(zoom);
+        settings.setDisplayZoomControls(false);
         final List<Cameras.Tile> list = new ArrayList<>(sources);
         app = web.getContext().getApplicationContext();
         final Map<String, String> trusted = new LinkedHashMap<>(pins);
@@ -74,7 +85,7 @@ final class CameraView {
                 return intercept(list, trusted, request);
             }
         });
-        web.loadDataWithBaseURL(BASE, page(list), "text/html", "utf-8", null);
+        web.loadDataWithBaseURL(BASE, page(list, zoom), "text/html", "utf-8", null);
     }
 
     /** Clears what the view may hold, then destroys it. */
@@ -410,7 +421,7 @@ final class CameraView {
     }
 
     /** The view's own page: one tile a camera, drawn and kept alive by its script. */
-    static String page(List<Cameras.Tile> sources) {
+    static String page(List<Cameras.Tile> sources, boolean zoom) {
         StringBuilder names = new StringBuilder("[");
         StringBuilder urls = new StringBuilder("[");
         for (int i = 0; i < sources.size(); i++) {
@@ -425,7 +436,8 @@ final class CameraView {
                 + "#grid{display:grid;height:100%;gap:2px}"
                 + ".tile{position:relative;overflow:hidden;background:#111}"
                 + ".tile img,.tile iframe{position:absolute;inset:0;width:100%;height:100%;"
-                + "object-fit:contain;border:0}"
+                + "object-fit:contain;border:0;transform:var(--z,none);transform-origin:center}"
+                + ".zoom{touch-action:none}"
                 + ".tile p{position:absolute;inset:0;margin:0;display:flex;flex-direction:column;"
                 + "align-items:center;justify-content:center;gap:6px;color:#c9cede;"
                 + "font:16px/1.3 system-ui,sans-serif;text-align:center}"
@@ -445,6 +457,7 @@ final class CameraView {
                 + "var first=grid.firstChild;if(first){first.style.gridRow=n===3&&w?'span 2':'';"
                 + "first.style.gridColumn=n===3&&!w?'span 2':'';}}"
                 + "layout();addEventListener('resize',layout);"
+                + (zoom ? ZOOM : "")
                 + "function none(t,i,tries,why){t.innerHTML='';var p=document.createElement('p');"
                 + "var b=document.createElement('b');b.textContent=names[i];p.appendChild(b);"
                 + "p.appendChild(document.createTextNode(why||'No picture'));t.appendChild(p);"
@@ -473,6 +486,30 @@ final class CameraView {
                 + "n.src='/stream/'+i+'?t='+Date.now();},2000);}"
                 + "</script></body></html>";
     }
+
+    /**
+     * Pinch and move for the one tile: two fingers scale it between 1 and 4 times, one finger
+     * moves a zoomed picture without letting its edge leave the tile, a double tap goes back to
+     * the whole picture. The transform is a CSS variable on the tile, so a snapshot's next
+     * picture keeps it.
+     */
+    private static final String ZOOM = "(function(){var t=grid.firstChild;if(!t)return;"
+            + "t.classList.add('zoom');var s=1,x=0,y=0,p={},g=null,last=0;"
+            + "function put(){var w=t.clientWidth,h=t.clientHeight,mx=(s-1)*w/2,my=(s-1)*h/2;"
+            + "x=Math.max(-mx,Math.min(mx,x));y=Math.max(-my,Math.min(my,y));"
+            + "t.style.setProperty('--z',s===1?'none':'translate('+x+'px,'+y+'px) scale('+s+')');}"
+            + "function pts(){return Object.keys(p).map(function(k){return p[k];});}"
+            + "function grab(){var a=pts();g={s:s,x:x,y:y,a:a.map(function(q){return {x:q.x,y:q.y};})};}"
+            + "t.addEventListener('pointerdown',function(e){p[e.pointerId]={x:e.clientX,y:e.clientY};"
+            + "if(pts().length===1){var n=Date.now();if(n-last<300){s=1;x=0;y=0;put();}last=n;}grab();});"
+            + "t.addEventListener('pointermove',function(e){if(!p[e.pointerId]||!g)return;"
+            + "p[e.pointerId]={x:e.clientX,y:e.clientY};var a=pts();"
+            + "if(a.length>=2&&g.a.length>=2){var d0=Math.hypot(g.a[0].x-g.a[1].x,g.a[0].y-g.a[1].y),"
+            + "d1=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);if(d0>0){s=Math.max(1,Math.min(4,g.s*d1/d0));}}"
+            + "else if(a.length===1&&g.a.length===1&&s>1){x=g.x+a[0].x-g.a[0].x;y=g.y+a[0].y-g.a[0].y;}"
+            + "put();});"
+            + "function up(e){delete p[e.pointerId];grab();}"
+            + "t.addEventListener('pointerup',up);t.addEventListener('pointercancel',up);})();";
 
     private static String jsString(String value) {
         StringBuilder out = new StringBuilder("\"");

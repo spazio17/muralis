@@ -2528,27 +2528,63 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return tiles;
     }
 
+    /** {@code camera.show}: a camera or a group at once, 30 seconds, the screen woken. */
+    @Override
+    public String cameraShow(String name, String show) {
+        return showCamera(name, Automations.SHOW_FULLSCREEN.equals(show), Popup.DEFAULT_SECONDS,
+                false);
+    }
+
     /**
-     * {@code camera.show}: the camera in a pop-up at once, the screen woken. {@code camera.trigger}
-     * is the camera's event, which the automations answer; until one waits for this camera it is
-     * refused with that reason.
+     * A camera or a group shown as a pop-up or full screen, for {@code seconds} (0 until
+     * touched or closed), the screen woken first; null when shown, otherwise why not.
+     */
+    String showCamera(String name, boolean fullscreen, int seconds, boolean chime) {
+        java.util.List<Cameras.Tile> tiles = cameraTiles(this, name);
+        Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name);
+        if (tiles.isEmpty()) {
+            return group != null ? "the group has no camera" : "no camera or group has that name";
+        }
+        displayWake();
+        showPopup(new Popup.Request(group != null && Cameras.find(KioskConfig.camerasOf(this),
+                name) == null ? group.name : tiles.get(0).name, tiles, seconds, true, chime,
+                fullscreen));
+        return null;
+    }
+
+    /**
+     * {@code camera.trigger}: the camera's event, which runs the automations waiting for it or
+     * for a group it is in (a group's own name runs the group's). Refused with the reason when
+     * nothing ran: no such name, no automation waiting, or each one inside its "not again
+     * within".
      */
     @Override
-    public String cameraPopup(String name, boolean trigger) {
-        java.util.List<Cameras.Tile> tiles = cameraTiles(this, name);
-        if (tiles.isEmpty()) {
-            return Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name) != null
-                    ? "the group has no camera" : "no camera or group has that name";
+    public String cameraTrigger(String name) {
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
+        Cameras.Camera camera = Cameras.find(cameras, name);
+        Cameras.Group named = Cameras.findGroup(groups, name);
+        if (camera == null && named == null) {
+            return "no camera or group has that name";
         }
-        if (trigger) {
-            return "no automation waits for this camera";
+        java.util.Set<String> names = new java.util.HashSet<>();
+        names.add(camera != null ? camera.name : named.name);
+        if (camera != null) {
+            for (Cameras.Group group : groups) {
+                for (String member : group.cameras) {
+                    if (member.equalsIgnoreCase(camera.name)) {
+                        names.add(group.name);
+                    }
+                }
+            }
         }
-        Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name);
-        Popup.Request request = new Popup.Request(group != null ? group.name : tiles.get(0).name,
-                tiles, Popup.DEFAULT_SECONDS, true, false);
-        displayWake();
-        showPopup(request);
-        return null;
+        Sensors watching = sensors;
+        int[] outcome = watching == null ? new int[2] : watching.cameraTriggered(names);
+        if (outcome[0] > 0) {
+            return null;
+        }
+        return outcome[1] > 0 ? "cooling down: an automation for it ran a moment ago"
+                : "no automation waits for this camera";
     }
 
     @Override
@@ -3043,9 +3079,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 problem = "accepted".equals(lit.status) ? null : lit.detail;
                 break;
             }
-            case "popup":
-                problem = refusalOf(dispatch("panel.notify",
-                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+            case "popup": {
+                // The rule's own time and chime; a pop-up always wakes the screen.
+                java.util.Map<String, String> named = new java.util.HashMap<>();
+                named.put("seconds", Integer.toString(rule.seconds));
+                named.put("chime", rule.chime ? "true" : "false");
+                problem = refusalOf(dispatch("panel.notify", new KioskCommandDispatcher.CommandArgs(
+                        -1, null, null, rule.argument, null, named)));
+                break;
+            }
+            case "camera":
+                problem = showCamera(rule.argument, Automations.SHOW_FULLSCREEN.equals(rule.show),
+                        rule.seconds, rule.chime);
                 break;
             case "light_off":
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);

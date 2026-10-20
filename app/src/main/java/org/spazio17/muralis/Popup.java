@@ -29,6 +29,11 @@ final class Popup {
         final boolean chime;
         /** What the card draws below the message: the address, or a camera or a group's cameras. */
         final java.util.List<Cameras.Tile> tiles;
+        /**
+         * Cameras over the whole screen instead of a card: closed by its own button, since a
+         * touch on the picture is for zooming, and 0 seconds means until closed.
+         */
+        final boolean fullscreen;
         /** When it was asked for, on a clock a change of the date cannot move. */
         final long madeAtMs = clock.getAsLong();
 
@@ -40,14 +45,25 @@ final class Popup {
                     seconds, wake, chime);
         }
 
-        /** A camera's or a group's pop-up: the cameras drawn as one grid, with their sign-ins. */
+        /**
+         * A camera's or a group's pop-up or full screen: the cameras drawn as one grid, with
+         * their sign-ins.
+         */
         Request(String title, java.util.List<Cameras.Tile> tiles, int seconds, boolean wake,
-                boolean chime) {
-            this(title, "", tiles.isEmpty() ? "" : tiles.get(0).url, tiles, seconds, wake, chime);
+                boolean chime, boolean fullscreen) {
+            this(title, "", tiles.isEmpty() ? "" : tiles.get(0).url, tiles, seconds, wake, chime,
+                    fullscreen);
         }
 
         private Request(String title, String message, String url,
                 java.util.List<Cameras.Tile> tiles, int seconds, boolean wake, boolean chime) {
+            this(title, message, url, tiles, seconds, wake, chime, false);
+        }
+
+        private Request(String title, String message, String url,
+                java.util.List<Cameras.Tile> tiles, int seconds, boolean wake, boolean chime,
+                boolean fullscreen) {
+            this.fullscreen = fullscreen;
             this.tiles = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(tiles));
             this.title = title;
             this.message = message;

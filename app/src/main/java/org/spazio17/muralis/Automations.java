@@ -111,6 +111,11 @@ final class Automations {
                 new Event("lost", "Network lost", null, false, false)));
         map.put("processor", Collections.singletonList(
                 new Event("hotter", "Hotter than", "°C", false, false)));
+        // Not a sensor: a camera's event, camera.trigger from a doorbell or a recorder. One-shot
+        // and named, as a tag is: the rule waits for one camera or one group, and a camera in a
+        // group fires the group's rules too.
+        map.put(CAMERAS, Collections.singletonList(
+                new Event("triggered", "A camera is triggered", null, false, true)));
         // Not a sensor: the panel's clock. The level is the minute of the day, and
         // the engine's day tick fires it, not a reading; see Engine.clock.
         map.put(TIME, Collections.singletonList(
@@ -133,7 +138,23 @@ final class Automations {
             new Action("ambient_mode", "Ambient mode", "Mode"),
             new Action("mqtt_publish", "Publish an MQTT message", "Topic and message"),
             new Action("call_url", "Call an address", "Address"),
-            new Action("popup", "Show a pop-up", "Message")));
+            new Action("popup", "Show a pop-up", "Message"),
+            new Action("camera", "Show a camera", "Camera or group")));
+
+    /** The When choice that is a camera's event, not a sensor. */
+    static final String CAMERAS = "cameras";
+    static final String CAMERAS_NAME = "A camera";
+
+    /** How "Show a camera" shows it. */
+    static final String SHOW_POPUP = "popup";
+    static final String SHOW_FULLSCREEN = "fullscreen";
+    static final int DEFAULT_COOLDOWN = 60;
+    static final int MAX_COOLDOWN = 3600;
+
+    /** Whether an action shows something for some seconds, with or without a chime. */
+    static boolean shows(String action) {
+        return "popup".equals(action) || "camera".equals(action);
+    }
 
     /** The When choice that is the clock, not a sensor, and its "level", a time of day. */
     static final String TIME = "time";
@@ -172,8 +193,16 @@ final class Automations {
         double level = Double.NaN;
         /** Minutes the condition must hold, 0 for at once. */
         int minutes;
-        /** The tag id an NFC rule waits for, empty for any tag. */
+        /** The tag id an NFC rule waits for, empty for any tag; the camera or group a camera rule waits for. */
         String tag = "";
+        /** Seconds a one-shot rule (a tag, a camera) is not run again after it ran; 0 for always. */
+        int cooldown = DEFAULT_COOLDOWN;
+        /** How long a pop-up or a camera shows, 0 until touched or closed. */
+        int seconds = Popup.DEFAULT_SECONDS;
+        /** Whether a pop-up or a camera plays the notification sound once. */
+        boolean chime;
+        /** "Show a camera" as a pop-up or full screen. */
+        String show = SHOW_POPUP;
         String action = "";
         String argument = "";
         boolean enabled = true;
@@ -196,6 +225,10 @@ final class Automations {
             other.level = level;
             other.minutes = minutes;
             other.tag = tag;
+            other.cooldown = cooldown;
+            other.seconds = seconds;
+            other.chime = chime;
+            other.show = show;
             other.action = action;
             other.argument = argument;
             other.enabled = enabled;
@@ -217,7 +250,8 @@ final class Automations {
         boolean sameCondition(Rule other) {
             return sensor.equals(other.sensor) && event.equals(other.event)
                     && (Double.isNaN(level) ? Double.isNaN(other.level) : level == other.level)
-                    && minutes == other.minutes && tag.equals(other.tag);
+                    && minutes == other.minutes && tag.equals(other.tag)
+                    && cooldown == other.cooldown;
         }
     }
 
@@ -282,6 +316,11 @@ final class Automations {
         rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
         rule.minutes = one.optInt("minutes", 0);
         rule.tag = one.optString("tag", "");
+        // A rule stored before the field keeps running every time, as it did.
+        rule.cooldown = one.optInt("cooldown", 0);
+        rule.seconds = one.optInt("seconds", Popup.DEFAULT_SECONDS);
+        rule.chime = one.optBoolean("chime", false);
+        rule.show = one.optString("show", SHOW_POPUP);
         rule.action = renamed(one.optString("action", ""));
         rule.argument = one.optString("argument", "");
         rule.enabled = one.optBoolean("enabled", true);
@@ -310,6 +349,10 @@ final class Automations {
                 }
                 one.put("minutes", rule.minutes);
                 one.put("tag", rule.tag);
+                one.put("cooldown", rule.cooldown);
+                one.put("seconds", rule.seconds);
+                one.put("chime", rule.chime);
+                one.put("show", rule.show);
                 one.put("action", rule.action);
                 one.put("argument", rule.argument);
                 one.put("enabled", rule.enabled);
@@ -366,10 +409,31 @@ final class Automations {
         }
         if (!event.tag) {
             rule.tag = "";
+            rule.cooldown = 0;
+        } else if (rule.cooldown < 0 || rule.cooldown > MAX_COOLDOWN) {
+            return "\"not again within\" must be 0 to " + MAX_COOLDOWN + " seconds";
+        }
+        if (CAMERAS.equals(rule.sensor) && rule.tag.isEmpty()) {
+            return "choose the camera or group";
         }
         Action action = action(rule.action);
         if (action == null) {
             return "choose what to do";
+        }
+        if (shows(action.id)) {
+            if (rule.seconds < 0 || rule.seconds > Popup.MAX_SECONDS) {
+                return "the time must be 0 to " + Popup.MAX_SECONDS + " seconds";
+            }
+        } else {
+            rule.seconds = Popup.DEFAULT_SECONDS;
+            rule.chime = false;
+        }
+        if (action.id.equals("camera")) {
+            if (!SHOW_POPUP.equals(rule.show) && !SHOW_FULLSCREEN.equals(rule.show)) {
+                return "show the camera as a pop-up or full screen";
+            }
+        } else {
+            rule.show = SHOW_POPUP;
         }
         if (action.argumentLabel == null) {
             rule.argument = "";
@@ -479,10 +543,23 @@ final class Automations {
                 text.append(": ").append(rule.tag);
             }
         }
+        boolean shows = action != null && shows(action.id);
         text.append(", then ");
         text.append(action == null ? rule.action : action.label);
         if (action != null && action.argumentLabel != null && !rule.argument.isEmpty()) {
             text.append(" \"").append(shortened(rule.argument, 40)).append('"');
+        }
+        if (shows) {
+            if (action.id.equals("camera") && SHOW_FULLSCREEN.equals(rule.show)) {
+                text.append(" full screen");
+            }
+            text.append(rule.seconds == 0 ? " until closed" : " for " + rule.seconds + " s");
+            if (rule.chime) {
+                text.append(" with a chime");
+            }
+        }
+        if (event != null && event.tag && rule.cooldown > 0) {
+            text.append(", not again within ").append(rule.cooldown).append(" s");
         }
         return text.toString();
     }
@@ -831,12 +908,29 @@ final class Automations {
 
         /** A one-shot event with an id: a tag read. */
         void event(String sensor, String id, int minuteOfDay) {
-            for (Rule rule : dueFor(sensor, id, minuteOfDay)) {
-                runner.run(rule);
-            }
+            event(sensor, Collections.singleton(id == null ? "" : id), minuteOfDay,
+                    System.nanoTime() / 1_000_000L);
         }
 
-        private synchronized List<Rule> dueFor(String sensor, String id, int minuteOfDay) {
+        /**
+         * A one-shot event that any of {@code ids} names (a camera, and the groups it is in):
+         * runs the enabled rules that wait for one of them, in their window and out of their
+         * "not again within"; returns how many ran and, of those left out, how many only because
+         * they ran too recently, so the caller can say which.
+         */
+        int[] event(String sensor, java.util.Set<String> ids, int minuteOfDay, long nowMs) {
+            int[] outcome = new int[2];
+            for (Rule rule : dueFor(sensor, ids, minuteOfDay, nowMs, outcome)) {
+                runner.run(rule);
+            }
+            return outcome;
+        }
+
+        /** When each one-shot rule last ran, for its "not again within"; forgotten on a restart. */
+        private final Map<String, Long> ranAt = new HashMap<>();
+
+        private synchronized List<Rule> dueFor(String sensor, java.util.Set<String> ids,
+                int minuteOfDay, long nowMs, int[] outcome) {
             List<Rule> due = new ArrayList<>();
             for (Rule rule : rules) {
                 if (!rule.sensor.equals(sensor) || !rule.enabled) {
@@ -846,10 +940,21 @@ final class Automations {
                 if (event == null || !event.tag) {
                     continue;
                 }
-                if ((rule.tag.isEmpty() || rule.tag.equalsIgnoreCase(id))
-                        && inWindow(rule, minuteOfDay)) {
-                    due.add(rule);
+                boolean named = rule.tag.isEmpty();
+                for (String id : ids) {
+                    named |= rule.tag.equalsIgnoreCase(id);
                 }
+                if (!named || !inWindow(rule, minuteOfDay)) {
+                    continue;
+                }
+                Long last = ranAt.get(rule.id);
+                if (last != null && rule.cooldown > 0 && nowMs - last < rule.cooldown * 1000L) {
+                    outcome[1]++;
+                    continue;
+                }
+                ranAt.put(rule.id, nowMs);
+                outcome[0]++;
+                due.add(rule);
             }
             return due;
         }

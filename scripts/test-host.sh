@@ -167,6 +167,12 @@ java -cp "${test_dir}/settings" org.spazio17.muralis.SettingsTransferTest
 # tree, since the class speaks Android's org.json and the host has none.
 javac -d "${test_dir}/automations" \
     "${pure_java_dir}/Automations.java" \
+    "${pure_java_dir}/Popup.java" \
+    "${pure_java_dir}/Cameras.java" \
+    "${pure_java_dir}/KioskCommandDispatcher.java" \
+    "${pure_java_dir}/DisplayOffPolicy.java" \
+    "${pure_java_dir}/BrowserOptions.java" \
+    "${pure_java_dir}/CertificatePins.java" \
     "${pure_java_dir}/StatusLight.java" \
     "${pure_java_dir}/ScreensaverPolicy.java" \
     "${pure_java_dir}/TinyJson.java" \

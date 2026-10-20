@@ -3026,6 +3026,21 @@ final class HttpAdminServer {
                 .append(Automations.TIME).append("\" value=\"at\" checked data-level=\"")
                 .append(Automations.TIME_UNIT).append("\" data-holds=\"\" data-tag=\"\">At</label>")
                 .append("</div>");
+        // A camera's event, once there is a camera or a group to wait for.
+        java.util.List<Cameras.Camera> cameraList = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groupList = KioskConfig.cameraGroupsOf(context);
+        boolean anyCamera = !cameraList.isEmpty() || !groupList.isEmpty();
+        if (anyCamera || Automations.CAMERAS.equals(rule.sensor)) {
+            offered |= Automations.CAMERAS.equals(chosenSensor);
+            sensorOptions.append(selectOption(Automations.CAMERAS, Automations.CAMERAS_NAME,
+                    chosenSensor));
+            events.append("<div class=\"radios events\" data-sensor=\"").append(Automations.CAMERAS)
+                    .append("\" role=\"radiogroup\" aria-label=\"").append(Automations.CAMERAS_NAME)
+                    .append(" events\"><label class=\"radio one\"><input type=\"radio\" name=\"event_")
+                    .append(Automations.CAMERAS).append("\" value=\"triggered\" checked data-level=\"\""
+                            + " data-holds=\"\" data-tag=\"1\" data-camera=\"1\">")
+                    .append("A camera is triggered</label></div>");
+        }
         if (!offered && !rule.sensor.isEmpty()) {
             // A rule on a sensor this device lacks keeps it: saving the rule for its name must
             // not move it to the first sensor of the menu (review, 2026-10-01).
@@ -3037,12 +3052,22 @@ final class HttpAdminServer {
         String chosenAction = rule.action.isEmpty() ? "display_on" : rule.action;
         StringBuilder actionOptions = new StringBuilder();
         for (Automations.Action action : Automations.ACTIONS) {
+            boolean camera = action.id.equals("camera");
+            // Show a camera once there is one to show.
+            if (camera && !anyCamera && !camera(chosenAction)) {
+                continue;
+            }
             actionOptions.append("<option value=\"").append(action.id).append("\"")
                     .append(action.id.equals(chosenAction) ? " selected" : "")
                     .append(" data-argument=\"")
-                    .append(action.argumentLabel == null ? "" : escapeHtml(action.argumentLabel))
+                    .append(action.argumentLabel == null || camera ? ""
+                            : escapeHtml(action.argumentLabel))
+                    .append("\" data-shows=\"").append(Automations.shows(action.id) ? "1" : "")
+                    .append("\" data-camera=\"").append(camera ? "1" : "")
                     .append("\">").append(escapeHtml(action.label)).append("</option>");
         }
+        String waitedFor = Automations.CAMERAS.equals(rule.sensor) ? rule.tag : "";
+        String shown = camera(rule.action) ? rule.argument : "";
         // Every tag read lately, by its id, newest first, as the panel's own editor has it.
         StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.tag));
         java.util.Set<String> tagsRead = KioskConfig.seenTags(context).keySet();
@@ -3075,11 +3100,27 @@ final class HttpAdminServer {
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
                 + selectField("a-tag" + sfx, "tag", "Tag", null, tags.toString(), null)
+                + selectField("a-camera" + sfx, "camera_tag", "Camera or group", null,
+                        cameraOptions(cameraList, groupList, waitedFor), null)
+                + fieldWithId("a-cooldown" + sfx, "number", "cooldown",
+                        "Not again within (seconds)", Integer.toString(rule.cooldown),
+                        " min=\"0\" max=\"" + Automations.MAX_COOLDOWN + "\"", null)
                 + "</section>"
                 + "<section class=\"card\"><h2>Then</h2>"
                 + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
-                + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence", rule.argument, "", null)
+                + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence",
+                        camera(rule.action) ? "" : rule.argument, "", null)
                         .replace(MACHINE_TEXT, "")
+                + selectField("a-target" + sfx, "target", "Camera or group", null,
+                        cameraOptions(cameraList, groupList, shown), null)
+                + selectField("a-show" + sfx, "show", "Show as", null,
+                        selectOption(Automations.SHOW_POPUP, "Pop-up", rule.show)
+                                + selectOption(Automations.SHOW_FULLSCREEN, "Full screen", rule.show),
+                        null)
+                + fieldWithId("a-seconds" + sfx, "number", "seconds",
+                        "For (seconds, 0 = until touched or closed)", Integer.toString(rule.seconds),
+                        " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
+                + switchRow("a-chime" + sfx, "Chime", " name=\"chime\" value=\"1\"", rule.chime)
                 + "</section>"
                 + "<section class=\"card\"><h2>Only</h2>"
                 + switchRow("a-only" + sfx, "Between these times", " name=\"only\" value=\"1\"",
@@ -3104,6 +3145,30 @@ final class HttpAdminServer {
                         + " data-confirm=\"" + escapeHtml(deleteQuestion(
                                 stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
+    }
+
+    private static boolean camera(String action) {
+        return "camera".equals(action);
+    }
+
+    /** The cameras, then the groups (marked as such), with {@code chosen} selected. */
+    private static String cameraOptions(java.util.List<Cameras.Camera> cameras,
+            java.util.List<Cameras.Group> groups, String chosen) {
+        StringBuilder options = new StringBuilder();
+        boolean found = false;
+        for (Cameras.Camera camera : cameras) {
+            options.append(selectOption(camera.name, camera.name, chosen));
+            found |= camera.name.equalsIgnoreCase(chosen);
+        }
+        for (Cameras.Group group : groups) {
+            options.append(selectOption(group.name, group.name + " (group)", chosen));
+            found |= group.name.equalsIgnoreCase(chosen);
+        }
+        if (!chosen.isEmpty() && !found) {
+            // Removed since: kept, so saving the rule does not move it to another camera.
+            options.append(selectOption(chosen, chosen + " (gone)", chosen));
+        }
+        return options.toString();
     }
 
     /** A "Time of day" rule's time box to its level, the minute of the day; NaN when it is none. */
@@ -3385,9 +3450,19 @@ final class HttpAdminServer {
         rule.level = Automations.TIME.equals(rule.sensor)
                 ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
-        rule.tag = form.getOrDefault("tag", "").trim();
+        rule.tag = (Automations.CAMERAS.equals(rule.sensor) ? form.getOrDefault("camera_tag", "")
+                : form.getOrDefault("tag", "")).trim();
+        String cooldown = form.getOrDefault("cooldown", "").trim();
+        rule.cooldown = cooldown.isEmpty() ? 0 : cooldown.matches("\\d{1,5}")
+                ? Integer.parseInt(cooldown) : -1;
         rule.action = form.getOrDefault("action", "");
-        rule.argument = form.getOrDefault("argument", "");
+        rule.argument = camera(rule.action) ? form.getOrDefault("target", "")
+                : form.getOrDefault("argument", "");
+        String seconds = form.getOrDefault("seconds", "").trim();
+        rule.seconds = seconds.isEmpty() ? Popup.DEFAULT_SECONDS : seconds.matches("\\d{1,4}")
+                ? Integer.parseInt(seconds) : -1;
+        rule.chime = isTrue(form.getOrDefault("chime", "0"));
+        rule.show = form.getOrDefault("show", Automations.SHOW_POPUP);
         boolean only = isTrue(form.getOrDefault("only", "0"));
         String typedFrom = form.getOrDefault("only_from", "");
         String typedTo = form.getOrDefault("only_to", "");
@@ -4104,7 +4179,7 @@ final class HttpAdminServer {
             return null;
         }
         if ("show".equals(form.get("what"))) {
-            String refused = kioskService.cameraPopup(was, false);
+            String refused = kioskService.cameraShow(was, Automations.SHOW_POPUP);
             return refused == null ? "Shown on the panel." : "Not shown: " + refused + ".";
         }
         java.util.List<String> members = new java.util.ArrayList<>();
@@ -4127,7 +4202,7 @@ final class HttpAdminServer {
             return null;
         }
         if ("show".equals(form.get("what"))) {
-            String refused = kioskService.cameraPopup(was, false);
+            String refused = kioskService.cameraShow(was, Automations.SHOW_POPUP);
             return refused == null ? "Shown on the panel." : "Not shown: " + refused + ".";
         }
         String problem = KioskService.saveCamera(context, was, form.getOrDefault("name", ""),

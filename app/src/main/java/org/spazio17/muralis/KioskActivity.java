@@ -2794,8 +2794,11 @@ public final class KioskActivity extends Activity {
                     passwordInput.getText().toString());
             if (problem != null) {
                 Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
-                // A camera changed or removed elsewhere meanwhile: the page shows what is stored.
-                redrawInPlace(this::showCamerasPage);
+                // A camera removed elsewhere meanwhile: the page shows what is stored. Any
+                // other refusal keeps what was typed, to be corrected.
+                if (problem.endsWith("removed meanwhile")) {
+                    redrawInPlace(this::showCamerasPage);
+                }
                 return;
             }
             redrawInPlace(this::showCamerasPage);
@@ -2807,7 +2810,7 @@ public final class KioskActivity extends Activity {
             show.setOnClickListener(view -> {
                 KioskService service = KioskService.liveService();
                 String refused = service == null ? "the service is not running"
-                        : service.cameraPopup(was, false);
+                        : service.cameraShow(was, Automations.SHOW_POPUP);
                 if (refused != null) {
                     Toast.makeText(this, "Not shown: " + refused + ".", Toast.LENGTH_LONG).show();
                     return;
@@ -2887,7 +2890,9 @@ public final class KioskActivity extends Activity {
                     nameInput.getText().toString(), members);
             if (problem != null) {
                 Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
-                redrawInPlace(this::showCameraGroupsPage);
+                if (problem.endsWith("removed meanwhile")) {
+                    redrawInPlace(this::showCameraGroupsPage);
+                }
                 return;
             }
             redrawInPlace(this::showCameraGroupsPage);
@@ -2899,7 +2904,7 @@ public final class KioskActivity extends Activity {
             show.setOnClickListener(view -> {
                 KioskService service = KioskService.liveService();
                 String refused = service == null ? "the service is not running"
-                        : service.cameraPopup(was, false);
+                        : service.cameraShow(was, Automations.SHOW_POPUP);
                 if (refused != null) {
                     Toast.makeText(this, "Not shown: " + refused + ".", Toast.LENGTH_LONG).show();
                     return;
@@ -2914,6 +2919,25 @@ public final class KioskActivity extends Activity {
             card.addView(buttonRow(save, show, remove), matchWrap());
         }
         return card;
+    }
+
+    /** A menu of the cameras, then the groups (marked as such), with {@code chosen} selected. */
+    private MenuField cameraTargetMenu(LinearLayout card, KioskTheme theme, String label,
+            java.util.List<String> cameras, java.util.List<String> groups, String chosen) {
+        MenuField menu = new MenuField(card, theme, label);
+        for (String name : cameras) {
+            menu.add(name, name);
+        }
+        for (String name : groups) {
+            menu.add(name + " (group)", name);
+        }
+        if (!chosen.isEmpty() && !menu.values.contains(chosen)) {
+            // A camera or group removed since: kept, so saving the rule does not move it.
+            menu.add(chosen + " (gone)", chosen);
+        }
+        // The first entry when nothing is chosen yet.
+        menu.select(chosen);
+        return menu;
     }
 
     /** What the browser options' Save compares, the password apart. */
@@ -2995,10 +3019,16 @@ public final class KioskActivity extends Activity {
     private Runnable pinPrompt;
 
     /**
-     * Every screen is set through here: where its Back goes is taken up ({@link #pageBack}).
+     * Every screen is set through here: where its Back goes is taken up ({@link #pageBack}). A
+     * new screen takes the window's content, a pop-up's shade with it, so the pop-up is closed
+     * properly first: a camera left on screen until closed stops streaming when the settings
+     * open over it (one drawn over App lock lives in its own window and stays).
      */
     @Override
     public void setContentView(View view) {
+        if (popupView != null && !popupOverApp) {
+            closePopup();
+        }
         super.setContentView(view);
         pageBack = pendingBack;
         pendingBack = null;
@@ -5739,6 +5769,7 @@ public final class KioskActivity extends Activity {
             case "memory": return R.drawable.ic_sensor_memory;
             case "processor": return R.drawable.ic_sensor_processor;
             case "tag": return R.drawable.ic_sensor_tag;
+            case "cameras": return R.drawable.ic_cameras;
             default: return R.drawable.ic_sensor_bolt;
         }
     }
@@ -7202,6 +7233,19 @@ public final class KioskActivity extends Activity {
         }
         // The clock, which every panel has.
         sensorMenu.add(Automations.TIME_NAME, Automations.TIME);
+        // A camera's event, once there is a camera or a group to wait for.
+        java.util.List<String> cameraNames = new java.util.ArrayList<>();
+        for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
+            cameraNames.add(camera.name);
+        }
+        java.util.List<String> groupNames = new java.util.ArrayList<>();
+        for (Cameras.Group group : KioskConfig.cameraGroupsOf(this)) {
+            groupNames.add(group.name);
+        }
+        boolean anyCamera = !cameraNames.isEmpty() || !groupNames.isEmpty();
+        if (anyCamera || Automations.CAMERAS.equals(draft.sensor)) {
+            sensorMenu.add(Automations.CAMERAS_NAME, Automations.CAMERAS);
+        }
         if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
             // A rule on a sensor this device lacks keeps it: opening and saving the rule for
             // its name must not move it to the first sensor in the menu (review, 2026-10-01).
@@ -7254,6 +7298,14 @@ public final class KioskActivity extends Activity {
         }
         tagMenu.select(draft.tag);
         View tagBox = (View) tagMenu.box.getParent();
+        // The camera or group a camera's event names, in place of the tag.
+        MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group", cameraNames,
+                groupNames, Automations.CAMERAS.equals(draft.sensor) ? draft.tag : "");
+        View cameraBox = (View) cameraMenu.box.getParent();
+        EditText cooldownInput = themedInput(theme, Integer.toString(draft.cooldown), false);
+        cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(whenCard, theme, "Not again within (seconds)", cooldownInput);
+        View cooldownBox = (View) cooldownInput.getParent();
 
         Runnable paintEvent = () -> {
             View checked = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
@@ -7275,7 +7327,10 @@ public final class KioskActivity extends Activity {
             }
             minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
             boolean tag = event != null && event.tag;
-            tagBox.setVisibility(tag ? View.VISIBLE : View.GONE);
+            boolean camera = tag && Automations.CAMERAS.equals(sensor);
+            tagBox.setVisibility(tag && !camera ? View.VISIBLE : View.GONE);
+            cameraBox.setVisibility(camera ? View.VISIBLE : View.GONE);
+            cooldownBox.setVisibility(tag ? View.VISIBLE : View.GONE);
         };
         Runnable paintSensor = () -> {
             String sensor = sensorMenu.value();
@@ -7308,6 +7363,10 @@ public final class KioskActivity extends Activity {
         // A menu, like the web page's: seven actions, see MenuField.
         MenuField actionMenu = new MenuField(thenCard, theme, "Action");
         for (Automations.Action action : Automations.ACTIONS) {
+            // Show a camera once there is one to show.
+            if (action.id.equals("camera") && !anyCamera && !"camera".equals(draft.action)) {
+                continue;
+            }
             actionMenu.add(action.label, action.id);
         }
         actionMenu.select(draft.action.isEmpty() ? "display_on" : draft.action);
@@ -7316,9 +7375,41 @@ public final class KioskActivity extends Activity {
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         TextView argumentCaption = addField(thenCard, theme, "Sentence", argumentInput);
         View argumentBox = (View) argumentInput.getParent();
+        MenuField targetMenu = cameraTargetMenu(thenCard, theme, "Camera or group", cameraNames,
+                groupNames, "camera".equals(draft.action) ? draft.argument : "");
+        View targetBox = (View) targetMenu.box.getParent();
+        // Pop-up or full screen, as the editor's other choices: two radios.
+        RadioGroup showGroup = new RadioGroup(this);
+        radioChoice(theme, showGroup, "Pop-up", Automations.SHOW_POPUP);
+        radioChoice(theme, showGroup, "Full screen", Automations.SHOW_FULLSCREEN);
+        checkRadioIfChanged(showGroup, draft.show);
+        thenCard.addView(showGroup, matchWrapClose());
+        EditText secondsInput = themedInput(theme, Integer.toString(draft.seconds), false);
+        secondsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        TextView secondsCaption = addField(thenCard, theme, "For (seconds, 0 = until touched)",
+                secondsInput);
+        View secondsBox = (View) secondsInput.getParent();
+        CompoundButton chimeSwitch = themedSwitch(theme, "Chime", draft.chime);
+        thenCard.addView(chimeSwitch, matchWrap());
+        Runnable paintShows = () -> {
+            boolean fullscreen = "camera".equals(actionMenu.value())
+                    && showGroup.getCheckedRadioButtonId() != View.NO_ID
+                    && Automations.SHOW_FULLSCREEN.equals(showGroup.findViewById(
+                            showGroup.getCheckedRadioButtonId()).getTag());
+            secondsCaption.setText(fullscreen ? "For (seconds, 0 = until closed)"
+                    : "For (seconds, 0 = until touched)");
+        };
+        showGroup.setOnCheckedChangeListener((group, id) -> paintShows.run());
         Runnable paintAction = () -> {
             Automations.Action action = Automations.action(actionMenu.value());
-            boolean argument = action != null && action.argumentLabel != null;
+            boolean camera = action != null && action.id.equals("camera");
+            boolean shows = action != null && Automations.shows(action.id);
+            boolean argument = action != null && action.argumentLabel != null && !camera;
+            targetBox.setVisibility(camera ? View.VISIBLE : View.GONE);
+            showGroup.setVisibility(camera ? View.VISIBLE : View.GONE);
+            secondsBox.setVisibility(shows ? View.VISIBLE : View.GONE);
+            chimeSwitch.setVisibility(shows ? View.VISIBLE : View.GONE);
+            paintShows.run();
             argumentBox.setVisibility(argument ? View.VISIBLE : View.GONE);
             if (argument) {
                 argumentCaption.setText(action.argumentLabel);
@@ -7390,9 +7481,18 @@ public final class KioskActivity extends Activity {
             // as the web refuses it, rather than quietly meaning 0.
             draft.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
-            draft.tag = tagMenu.value();
+            draft.tag = Automations.CAMERAS.equals(draft.sensor) ? cameraMenu.value()
+                    : tagMenu.value();
+            String cooldown = cooldownInput.getText().toString().trim();
+            draft.cooldown = cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;
             draft.action = actionMenu.value();
-            draft.argument = argumentInput.getText().toString();
+            draft.argument = "camera".equals(draft.action) ? targetMenu.value()
+                    : argumentInput.getText().toString();
+            String seconds = secondsInput.getText().toString().trim();
+            draft.seconds = seconds.matches("\\d{1,4}") ? Integer.parseInt(seconds) : -1;
+            draft.chime = chimeSwitch.isChecked();
+            View shown = showGroup.findViewById(showGroup.getCheckedRadioButtonId());
+            draft.show = shown == null ? Automations.SHOW_POPUP : (String) shown.getTag();
             boolean only = onlySwitch.isChecked();
             draft.onlyFrom = only ? Automations.minutesOf(fromInput.getText().toString()) : -1;
             draft.onlyTo = only ? Automations.minutesOf(toInput.getText().toString()) : -1;
@@ -15349,6 +15449,46 @@ public final class KioskActivity extends Activity {
         }
         closePopup();
         KioskTheme theme = currentTheme();
+        FrameLayout shade = request.fullscreen ? fullscreenCameras(request)
+                : popupCard(request, theme);
+        if (overApp) {
+            if (!AppLock.showOver(this, shade, true)) {
+                if (popupWeb != null) {
+                    CameraView.close(popupWeb);
+                    popupWeb = null;
+                }
+                return;
+            }
+        } else {
+            content.addView(shade, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        popupOverApp = overApp;
+        popupView = shade;
+        if (!request.tiles.isEmpty()) {
+            // Cameras stream only while they are seen.
+            mainHandler.postDelayed(cameraWatch, CAMERA_WATCH_MS);
+        }
+        if (request.seconds > 0) {
+            mainHandler.postDelayed(popupEnd, request.seconds * 1000L);
+        }
+        if (request.chime) {
+            try {
+                android.media.Ringtone chime = android.media.RingtoneManager.getRingtone(this,
+                        android.media.RingtoneManager.getDefaultUri(
+                                android.media.RingtoneManager.TYPE_NOTIFICATION));
+                if (chime != null) {
+                    chime.play();
+                }
+            } catch (RuntimeException silent) {
+                Log.w(TAG, "The pop-up's chime could not play", silent);
+            }
+        }
+        Log.i(TAG, "Pop-up shown" + (request.seconds > 0 ? " for " + request.seconds + " s" : ""));
+    }
+
+    /** A pop-up's card on a shade over the screen, both closed by a touch. */
+    private FrameLayout popupCard(Popup.Request request, KioskTheme theme) {
         FrameLayout shade = new FrameLayout(this);
         shade.setBackgroundColor(Color.argb(150, 0, 0, 0));
         shade.setClickable(true);
@@ -15384,40 +15524,74 @@ public final class KioskActivity extends Activity {
                 Math.min(dp(720), metrics.widthPixels - dp(32)),
                 ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         shade.addView(box, boxParams);
-        if (overApp) {
-            if (!AppLock.showOver(this, shade, true)) {
-                if (popupWeb != null) {
-                    CameraView.close(popupWeb);
-                    popupWeb = null;
-                }
+        return shade;
+    }
+
+    /**
+     * Cameras over the whole screen: the grid on black, a single camera zoomable by pinching,
+     * and a close button in the corner, since a touch on the picture is for zooming. The corner
+     * taps of the way out still reach the activity around it.
+     */
+    private FrameLayout fullscreenCameras(Popup.Request request) {
+        FrameLayout shade = new FrameLayout(this);
+        shade.setBackgroundColor(Color.BLACK);
+        shade.setClickable(true);
+        WebView web = new WebView(this);
+        CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this),
+                request.tiles.size() == 1);
+        shade.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        popupWeb = web;
+        android.widget.ImageButton close = new android.widget.ImageButton(this);
+        close.setImageResource(R.drawable.ic_close);
+        close.setImageTintList(ColorStateList.valueOf(Color.WHITE));
+        android.graphics.drawable.GradientDrawable round =
+                new android.graphics.drawable.GradientDrawable();
+        round.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        round.setColor(Color.argb(150, 0, 0, 0));
+        close.setBackground(round);
+        close.setContentDescription("Close");
+        close.setOnClickListener(view -> closePopup());
+        // Inside the 64 dp corners of the way out, so a corner tap is never taken for Close.
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(56), dp(56),
+                Gravity.TOP | Gravity.END);
+        closeParams.topMargin = dp(80);
+        closeParams.rightMargin = dp(16);
+        shade.addView(close, closeParams);
+        return shade;
+    }
+
+    private static final long CAMERA_WATCH_MS = 2_000L;
+
+    /**
+     * A camera shown over the screen is closed once nobody can see it: the display went off (a
+     * real sleep or the black film), Ambient started, or Muralis left the front without App lock
+     * to draw over. A camera shown until closed would otherwise stream all night behind a dark
+     * screen.
+     */
+    private final Runnable cameraWatch = new Runnable() {
+        @Override
+        public void run() {
+            if (popupView == null || popupWeb == null) {
                 return;
             }
-        } else {
-            content.addView(shade, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        }
-        popupOverApp = overApp;
-        popupView = shade;
-        if (request.seconds > 0) {
-            mainHandler.postDelayed(popupEnd, request.seconds * 1000L);
-        }
-        if (request.chime) {
-            try {
-                android.media.Ringtone chime = android.media.RingtoneManager.getRingtone(this,
-                        android.media.RingtoneManager.getDefaultUri(
-                                android.media.RingtoneManager.TYPE_NOTIFICATION));
-                if (chime != null) {
-                    chime.play();
-                }
-            } catch (RuntimeException silent) {
-                Log.w(TAG, "The pop-up's chime could not play", silent);
+            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+            boolean asleep = power != null && !power.isInteractive();
+            boolean dark = blackout != null && blackout.getVisibility() == View.VISIBLE;
+            boolean ambient = screensaverStage != ScreensaverPolicy.Stage.DASHBOARD;
+            boolean away = !inFront && !popupOverApp;
+            if (asleep || dark || ambient || away) {
+                Log.i(TAG, "A camera on screen was closed: nobody can see it now");
+                closePopup();
+                return;
             }
+            mainHandler.postDelayed(this, CAMERA_WATCH_MS);
         }
-        Log.i(TAG, "Pop-up shown" + (request.seconds > 0 ? " for " + request.seconds + " s" : ""));
-    }
+    };
 
     private void closePopup() {
         mainHandler.removeCallbacks(popupEnd);
+        mainHandler.removeCallbacks(cameraWatch);
         View popup = popupView;
         popupView = null;
         if (popup != null && popupOverApp) {

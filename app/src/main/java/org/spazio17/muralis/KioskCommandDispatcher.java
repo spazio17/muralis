@@ -176,10 +176,16 @@ final class KioskCommandDispatcher {
         void showPopup(Popup.Request request);
 
         /**
-         * {@code camera.show} pops a camera up; {@code camera.trigger} is the camera's event, for
-         * the automations. Returns why nothing happens, or null.
+         * {@code camera.show}: a camera or a group shown at once, as a pop-up or full screen
+         * ({@code show}, "popup" or "fullscreen"). Returns why not, or null.
          */
-        String cameraPopup(String name, boolean trigger);
+        String cameraShow(String name, String show);
+
+        /**
+         * {@code camera.trigger}: the camera's event, for the automations that wait for it or
+         * for a group it is in. Returns why nothing ran, or null.
+         */
+        String cameraTrigger(String name);
 
         /**
          * Stores one browser option, already checked and canonical (a number as digits, the
@@ -385,13 +391,23 @@ final class KioskCommandDispatcher {
             case "light.off":
                 executor.setStatusLight(false, null, -1);
                 return accepted();
-            case "camera.show":
+            case "camera.show": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must name the camera or group");
+                }
+                String show = args.extra.get("as");
+                show = show == null || show.trim().isEmpty() ? "popup" : show.trim();
+                if (!show.equals("popup") && !show.equals("fullscreen")) {
+                    return rejected("as must be popup or fullscreen");
+                }
+                String problem = executor.cameraShow(args.value.trim(), show);
+                return problem == null ? accepted() : rejected(problem);
+            }
             case "camera.trigger": {
                 if (args.value == null || args.value.trim().isEmpty()) {
-                    return rejected("value must name the camera");
+                    return rejected("value must name the camera or group");
                 }
-                String problem = executor.cameraPopup(args.value.trim(),
-                        "camera.trigger".equals(command));
+                String problem = executor.cameraTrigger(args.value.trim());
                 return problem == null ? accepted() : rejected(problem);
             }
             case "panel.notify": {

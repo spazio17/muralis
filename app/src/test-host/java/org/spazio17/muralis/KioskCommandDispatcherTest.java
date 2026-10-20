@@ -1043,12 +1043,28 @@ public final class KioskCommandDispatcherTest {
         require(KioskCommandDispatcher.dispatch("camera.show",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
                 "camera.show needs a name");
+        java.util.Map<String, String> asFull = new java.util.HashMap<>();
+        asFull.put("as", "fullscreen");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door", null, asFull),
+                executor).status.equals("accepted") && "fullscreen".equals(executor.cameraAs)
+                && !executor.cameraTrigger, "camera.show as=fullscreen");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door"), executor)
+                .status.equals("accepted") && "popup".equals(executor.cameraAs),
+                "camera.show is a pop-up by default");
+        java.util.Map<String, String> asBad = new java.util.HashMap<>();
+        asBad.put("as", "sideways");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door", null, asBad),
+                executor).status.equals("rejected"), "a bad as is refused");
     }
 
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
         Popup.Request popup;
         String cameraName;
         boolean cameraTrigger;
+        String cameraAs;
         final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
                 new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
         Boolean lightOn;
@@ -1205,9 +1221,17 @@ public final class KioskCommandDispatcherTest {
         }
 
         @Override
-        public String cameraPopup(String name, boolean trigger) {
+        public String cameraShow(String name, String show) {
             cameraName = name;
-            cameraTrigger = trigger;
+            cameraTrigger = false;
+            cameraAs = show;
+            return null;
+        }
+
+        @Override
+        public String cameraTrigger(String name) {
+            cameraName = name;
+            cameraTrigger = true;
             return null;
         }
 

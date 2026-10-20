@@ -1,6 +1,7 @@
 // The automation editor shows only what the chosen sensor and action need: the events of the
 // sensor picked in the menu, the level and the minutes where the event has them, the tag menu
-// for a tag event, and the argument box named after the action (Sentence, Sound address).
+// for a tag event (the camera menu for a camera's event), the argument box named after the
+// action (Sentence, Sound address), and a camera, how and how long for Show a camera.
 // Without scripting every group is shown (the stylesheet hides them only under html.js) and
 // the server still reads the right one, since the event radios are named per sensor. One editor per rule stands on the wide page, so each form
 // is bound on its own, by the ids that carry its suffix.
@@ -14,7 +15,8 @@ form.dataset.bound='1';
 function by(prefix){return form.querySelector('[id^="'+prefix+'-"]');}
 var sensor=by('a-sensor'),action=by('a-action');
 var level=by('a-level'),at=by('a-at'),minutes=by('a-minutes'),tag=by('a-tag');
-var argument=by('a-argument');
+var camera=by('a-camera'),cooldown=by('a-cooldown');
+var argument=by('a-argument'),target=by('a-target'),shown=by('a-show'),seconds=by('a-seconds'),chime=by('a-chime');
 var only=by('a-only'),from=by('a-from'),to=by('a-to');
 // The note under the sensor for one that is not running while the display sleeps.
 var stops=form.querySelector('.stopsnote');
@@ -39,10 +41,14 @@ show(level,!!unit&&unit!=='time');
 show(at,unit==='time');
 if(unit&&unit!=='time'){label(level,'Level ('+unit+')');}
 show(minutes,!!(checked&&checked.getAttribute('data-holds')));
-show(tag,!!(checked&&checked.getAttribute('data-tag')));
+var tagged=!!(checked&&checked.getAttribute('data-tag')),cam=!!(checked&&checked.getAttribute('data-camera'));
+// A camera's event names a camera or group in place of a tag; both wait a while before again.
+show(tag,tagged&&!cam);show(camera,cam);show(cooldown,tagged);
 var opt=action&&action.options[action.selectedIndex];
 var arg=opt?opt.getAttribute('data-argument'):'';
 show(argument,!!arg);
+var shows=!!(opt&&opt.getAttribute('data-shows')),camAct=!!(opt&&opt.getAttribute('data-camera'));
+show(target,camAct);show(shown,camAct);show(seconds,shows);show(chime,shows);
 if(arg){label(argument,arg);}
 // The address keyboard for a sound address, as the panel's box has it.
 if(argument){if(opt&&(opt.value==='play_sound'||opt.value==='open_page'||opt.value==='call_url')){argument.setAttribute('inputmode','url');}else{argument.removeAttribute('inputmode');}}

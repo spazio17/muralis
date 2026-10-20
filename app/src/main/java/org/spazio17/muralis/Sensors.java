@@ -460,6 +460,7 @@ final class Sensors implements SensorEventListener {
         }
         // Not a sensor, but a When choice of its own.
         names.put(Automations.TIME, Automations.TIME_NAME);
+        names.put(Automations.CAMERAS, Automations.CAMERAS_NAME);
         return names;
     }
 
@@ -972,8 +973,19 @@ final class Sensors implements SensorEventListener {
             lastTagAtMs = System.currentTimeMillis();
         }
         if (engine != null) {
-            engine.event(NFC.id, id, minuteOfDay());
+            engine.event(NFC.id, java.util.Collections.singleton(id == null ? "" : id),
+                    minuteOfDay(), android.os.SystemClock.elapsedRealtime());
         }
+    }
+
+    /**
+     * A camera's event, {@code camera.trigger}: runs the rules waiting for any of {@code names},
+     * the camera and the groups it is in. Returns how many ran and how many waited out their
+     * "not again within"; nothing runs before the automations are loaded.
+     */
+    int[] cameraTriggered(java.util.Set<String> names) {
+        return engine == null ? new int[2] : engine.event(Automations.CAMERAS, names,
+                minuteOfDay(), android.os.SystemClock.elapsedRealtime());
     }
 
     /**

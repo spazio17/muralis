@@ -63,7 +63,8 @@ on purpose.
 - **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
   network and others), the camera as a network camera with motion detection, a sound level from
   the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
-  them on the panel itself, also at a time of day, with actions on the panel, an MQTT message or
+  them on the panel itself, also at a time of day or when a camera is triggered, with actions on
+  the panel (a camera or a group shown as a pop-up or full screen among them), an MQTT message or
   a call to an address (a charger's smart plug at 20 and 80 percent needs nothing else).
 - **Fleet.** Panels on one network trust each other by their own keys, and any panel's web admin
   manages all of them. No server, no cloud. Each panel has its fleet key and a member endpoint,
