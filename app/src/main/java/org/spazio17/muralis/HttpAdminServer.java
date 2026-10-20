@@ -7136,11 +7136,15 @@ final class HttpAdminServer {
 
     /** BoringSSL's words for "that was an HTTP request, not a handshake". */
     private static boolean looksLikePlainHttp(IOException handshakeFailure) {
-        // Conscrypt reports "Handshake failed" and keeps BoringSSL's reason in the cause.
+        // Conscrypt reports "Handshake failed" and keeps BoringSSL's reason in the cause. The
+        // Conscrypt of Android 16 (updated through the Play system updates) words it "Unable to
+        // parse TLS packet header" instead: measured on the Mi, 2026-10-20, where plain http://
+        // got an empty reply.
         for (Throwable step = handshakeFailure; step != null; step = step.getCause()) {
             String message = String.valueOf(step.getMessage()).toUpperCase(Locale.ROOT);
             if (message.contains("HTTP_REQUEST") || message.contains("HTTP REQUEST")
-                    || message.contains("WRONG_VERSION_NUMBER") || message.contains("WRONG VERSION")) {
+                    || message.contains("WRONG_VERSION_NUMBER") || message.contains("WRONG VERSION")
+                    || message.contains("UNABLE TO PARSE TLS PACKET HEADER")) {
                 return true;
             }
         }
