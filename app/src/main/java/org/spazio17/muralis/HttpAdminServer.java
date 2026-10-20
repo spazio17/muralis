@@ -4050,8 +4050,19 @@ final class HttpAdminServer {
                 + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
                 + (fresh ? "" : "<button type=\"submit\" name=\"what\" value=\"show\">Show"
                         + "</button><button type=\"submit\" class=\"danger\" name=\"what\""
-                        + " value=\"remove\">Remove</button>")
+                        + " value=\"remove\" data-confirm=\""
+                        + escapeHtml(removeQuestion("Remove \"" + camera.name + "\"?",
+                                Cameras.REMOVED))
+                        + "\">Remove</button>")
                 + "</div></form>";
+    }
+
+    /**
+     * The panel's removal question (KioskActivity.confirmRemove) in one string for the
+     * browser's confirm(): the title, a blank line, what changes.
+     */
+    private static String removeQuestion(String title, String consequence) {
+        return title + "\n\n" + consequence;
     }
 
     /** The file read for Import, waiting for Apply, with its token; one at a time. */
@@ -4335,7 +4346,10 @@ final class HttpAdminServer {
                 + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
                 + (fresh ? "" : "<button type=\"submit\" name=\"what\" value=\"show\">Show"
                         + "</button><button type=\"submit\" class=\"danger\" name=\"what\""
-                        + " value=\"remove\">Remove</button>")
+                        + " value=\"remove\" data-confirm=\""
+                        + escapeHtml(removeQuestion("Remove \"" + group.name + "\"?",
+                                Cameras.GROUP_REMOVED))
+                        + "\">Remove</button>")
                 + "</div></form>";
     }
 
@@ -4409,7 +4423,9 @@ final class HttpAdminServer {
         for (java.util.Map.Entry<String, String> pin : pins.entrySet()) {
             html.append("<p class=\"hint\">").append(escapeHtml(pin.getKey()))
                     .append("<br>SHA-256 ").append(escapeHtml(pin.getValue())).append("</p>")
-                    .append(certificateForm("forget", pin.getKey(), "", "Remove", "text"));
+                    .append(certificateForm("forget", pin.getKey(), "", "Remove", "text",
+                            removeQuestion("Remove the certificate for " + pin.getKey() + "?",
+                                    CertificatePins.REMOVED)));
         }
         if (!pins.isEmpty()) {
             html.append("<p class=\"hint\">A removed certificate is refused from the browser's"
@@ -4420,13 +4436,20 @@ final class HttpAdminServer {
 
     private static String certificateForm(String action, String host, String fingerprint,
             String label, String buttonClass) {
+        return certificateForm(action, host, fingerprint, label, buttonClass, null);
+    }
+
+    /** The same, its button asking {@code question} first; null asks nothing. */
+    private static String certificateForm(String action, String host, String fingerprint,
+            String label, String buttonClass, String question) {
         return "<form method=\"post\" action=\"/page-options\">"
                 + "<input type=\"hidden\" name=\"section\" value=\"certificates\">"
                 + "<input type=\"hidden\" name=\"action\" value=\"" + action + "\">"
                 + "<input type=\"hidden\" name=\"host\" value=\"" + escapeHtml(host) + "\">"
                 + "<input type=\"hidden\" name=\"sha256\" value=\"" + escapeHtml(fingerprint)
-                + "\"><div class=\"actions tight\"><button type=\"submit\" class=\""
-                + buttonClass + "\">" + escapeHtml(label) + "</button></div></form>";
+                + "\"><div class=\"actions tight\"><button type=\"submit\""
+                + (question == null ? "" : " data-confirm=\"" + escapeHtml(question) + "\"")
+                + " class=\"" + buttonClass + "\">" + escapeHtml(label) + "</button></div></form>";
     }
 
     /**
@@ -4497,8 +4520,11 @@ final class HttpAdminServer {
                     .append("\"><p class=\"hint").append(asking ? " bad" : "").append("\">")
                     .append(escapeHtml(asking ? MqttTls.waitingLine(refused)
                             : "Trusted broker certificate, SHA-256 " + config.mqttTlsPin))
-                    .append("</p><div class=\"actions tight\"><button type=\"submit\""
-                            + " class=\"text\">").append(asking ? "Trust" : "Remove")
+                    .append("</p><div class=\"actions tight\"><button type=\"submit\"")
+                    // Trust is a choice made on the line above; Remove takes the broker away.
+                    .append(asking ? "" : " data-confirm=\"" + escapeHtml(removeQuestion(
+                            "Remove the trusted broker certificate?", MqttTls.REMOVED)) + "\"")
+                    .append(" class=\"text\">").append(asking ? "Trust" : "Remove")
                     .append("</button></div></form>");
         }
         // The client certificate: uploaded here only, since files go through the web admin, and
@@ -6331,7 +6357,11 @@ final class HttpAdminServer {
                     + "<input type=\"hidden\" name=\"what\" value=\"remove_group\"><input"
                     + " type=\"hidden\" name=\"id\" value=\"").append(escapeHtml(group.getKey()))
                     .append("\"><span>").append(escapeHtml(group.getValue()))
-                    .append("</span><button class=\"text\" type=\"submit\">Remove</button></form>");
+                    .append("</span><button class=\"text\" type=\"submit\" data-confirm=\"")
+                    // The panel's question for it, in the same words.
+                    .append(escapeHtml("Remove the group " + group.getValue() + "?\n\nWhat it"
+                            + " shares is shared no more; the panels in it keep their settings."))
+                    .append("\">Remove</button></form>");
         }
         StringBuilder suggestions = new StringBuilder();
         for (String suggestion : FleetDocument.GROUP_SUGGESTIONS) {
@@ -6403,8 +6433,12 @@ final class HttpAdminServer {
                     ? "No change to the fleet's name, panels, groups or shared settings."
                     : escapeHtml(String.join("; ", entry.changes)) + ".").append("</p>");
             if (!entry.held) {
-                html.append("<div class=\"actions tight\"><button class=\"text\" type=\"submit\">"
-                        + "Restore as new</button></div>");
+                // The panel's question, in its words: it rewrites what every panel shares.
+                html.append("<div class=\"actions tight\"><button class=\"text\" type=\"submit\""
+                        + " data-confirm=\"" + escapeHtml("Restore version " + entry.version
+                                + " as new?\n\nIts fleet name, groups and shared settings are"
+                                + " written as a new version for every panel; the panels of the"
+                                + " fleet stay as they are now.") + "\">Restore as new</button></div>");
             }
             html.append("</form>");
         }
