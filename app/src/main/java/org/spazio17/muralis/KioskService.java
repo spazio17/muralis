@@ -1653,6 +1653,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
             org.json.JSONObject applied = new org.json.JSONObject();
             applied.put("dashboard_url", config.dashboardUrl);
             applied.put("dashboard_cameras", KioskConfig.dashboardCamerasOf(this));
+            applied.put("camera_layout", KioskConfig.cameraLayoutOf(this));
+            applied.put("camera_big", KioskConfig.cameraBigOf(this));
+            applied.put("camera_names", KioskConfig.cameraNamesOf(this));
             applied.put("device_id", config.deviceId);
             if (includeAdminDetail) {
                 applied.put("settings_sequence", config.settingsSequence);
@@ -1705,6 +1708,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     // An address can carry a token, so it stays off MQTT, like the escape
                     // combinations; of the sign-in only whether there is one, as for the page's.
                     one.put("url", camera.url);
+                    one.put("full", camera.full);
                     one.put("sign_in", logins.containsKey(
                             camera.name.toLowerCase(java.util.Locale.ROOT)));
                 }
@@ -2470,11 +2474,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * saved, otherwise the reason.
      */
     static String saveCamera(Context context, String was, String typedName, String typedUrl,
-            String typedUser, String typedPassword) {
+            String typedFull, String typedUser, String typedPassword) {
         String name = typedName == null ? "" : typedName.trim();
         Object[] split = Cameras.splitLogin(typedUrl == null ? "" : typedUrl.trim());
         String url = (String) split[0];
         Cameras.Login inUrl = (Cameras.Login) split[1];
+        // The bigger stream's address loses its sign-in the same way; the camera has one.
+        Object[] splitFull = Cameras.splitLogin(typedFull == null ? "" : typedFull.trim());
+        String full = (String) splitFull[0];
+        if (inUrl == null) {
+            inUrl = (Cameras.Login) splitFull[1];
+        }
         String user = inUrl != null ? inUrl.user : typedUser == null ? "" : typedUser.trim();
         String password = inUrl != null ? inUrl.password : typedPassword;
         java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
@@ -2482,7 +2492,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         String problem = was != null && !was.isEmpty() && Cameras.find(cameras, was) == null
                 ? "the camera was removed meanwhile" : null;
         if (problem == null) {
-            problem = Cameras.saveProblem(cameras, groups, was, name, url, user, password);
+            problem = Cameras.saveProblem(cameras, groups, was, name, url, full, user, password);
         }
         if (problem != null) {
             return problem;
@@ -2493,7 +2503,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // The main view follows its camera's new name.
             edit.dashboardCameras(name);
         }
-        edit.cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url)))
+        if (was != null && !was.isEmpty() && was.equalsIgnoreCase(KioskConfig.cameraBigOf(context))) {
+            // So does the big tile of the camera view's layout.
+            edit.cameraLayout(KioskConfig.cameraLayoutOf(context), name,
+                    KioskConfig.cameraNamesOf(context));
+        }
+        edit.cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url, full)))
                 .cameraGroups(was == null || was.isEmpty() ? groups
                         : Cameras.afterCamera(groups, was, name))
                 .cameraLogins(Cameras.withLogin(KioskConfig.cameraLoginsOf(context), was, name,
@@ -2508,7 +2523,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * A camera or group changed while cameras are the main view: the view is drawn again, so a
      * removed group stops streaming and a camera added to it appears.
      */
-    private static void cameraViewMayHaveChanged(Context context) {
+    static void cameraViewMayHaveChanged(Context context) {
         KioskService service = liveService();
         if (service != null && !KioskConfig.dashboardCamerasOf(context).isEmpty()) {
             service.sendUiCommand("dashboard.changed", -1, null);
@@ -2571,7 +2586,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         java.util.List<Cameras.Tile> tiles = new java.util.ArrayList<>();
         for (Cameras.Camera camera : Cameras.resolve(KioskConfig.camerasOf(context),
                 KioskConfig.cameraGroupsOf(context), name)) {
-            tiles.add(new Cameras.Tile(camera.name, camera.url,
+            tiles.add(new Cameras.Tile(camera.name, camera.url, camera.full,
                     logins.get(camera.name.toLowerCase(java.util.Locale.ROOT))));
         }
         return tiles;

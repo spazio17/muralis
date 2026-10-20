@@ -48,6 +48,10 @@ final class KioskConfig {
     private static final String CAMERA_GROUPS = "camera_groups";
     /** The camera or group the panel shows as its main view; empty for the web page. */
     private static final String DASHBOARD_CAMERAS = "dashboard_cameras";
+    /** How the camera view lays its cameras out: Cameras.LAYOUTS, the big tile's camera, names. */
+    private static final String CAMERA_LAYOUT = "camera_layout";
+    private static final String CAMERA_BIG = "camera_big";
+    private static final String CAMERA_NAMES = "camera_names";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -361,6 +365,14 @@ final class KioskConfig {
                     .putString(APP_LOCK_LABEL, chosen.isEmpty() ? ""
                             : AppLock.labelOf(storageContext, chosen))
                     .putString(DASHBOARD_CAMERAS, "");
+            return this;
+        }
+
+        /** The camera view's layout, the camera of its big tile (empty: the first) and names. */
+        Editor cameraLayout(String layout, String big, boolean names) {
+            plain.putString(CAMERA_LAYOUT, Cameras.isLayout(layout) ? layout : Cameras.LAYOUT_AUTO)
+                    .putString(CAMERA_BIG, big == null ? "" : big.trim())
+                    .putBoolean(CAMERA_NAMES, names);
             return this;
         }
 
@@ -1563,6 +1575,22 @@ final class KioskConfig {
         return Cameras.parse(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(CAMERAS, ""));
+    }
+
+    static String cameraLayoutOf(Context context) {
+        String layout = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CAMERA_LAYOUT, Cameras.LAYOUT_AUTO);
+        return Cameras.isLayout(layout) ? layout : Cameras.LAYOUT_AUTO;
+    }
+
+    static String cameraBigOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CAMERA_BIG, "");
+    }
+
+    static boolean cameraNamesOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(CAMERA_NAMES, false);
     }
 
     static String dashboardCamerasOf(Context context) {

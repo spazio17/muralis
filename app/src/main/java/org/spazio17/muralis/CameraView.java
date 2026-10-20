@@ -51,21 +51,32 @@ final class CameraView {
     private CameraView() {
     }
 
+    /** How a view draws its cameras; the defaults are a plain card's: no zoom, no opening. */
+    static final class Options {
+        /** The camera on show may be pinched up to four times, a double tap back. */
+        boolean zoom;
+        /** A tap opens one camera of a grid over the whole view, a tap brings the grid back. */
+        boolean focus;
+        /** The camera on show alone uses its full-screen address when it has one. */
+        boolean big;
+        /** "auto", or a fixed layout: "1+3", "1+5", "2x2", "3x3" ({@link Cameras#LAYOUTS}). */
+        String layout = "auto";
+        /** The camera of the big tile in "1+3" and "1+5", by its place in the list. */
+        int bigTile;
+        /** Each tile's name on it. */
+        boolean names;
+        /** The browser engine died under the view: what the owner does, close or rebuild. */
+        Runnable gone;
+    }
+
     /**
      * Sets {@code web} up for {@code sources} and starts drawing them; {@code pins} are the
      * certificates a person trusted, host to fingerprint, as for pages.
      */
-    static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins) {
-        show(web, sources, pins, false, false, null);
-    }
-
-    /**
-     * The same; {@code zoom} lets the camera on show be pinched up to four times and moved with
-     * one finger, a double tap back to the whole picture (a camera page by the view's own zoom);
-     * {@code focus} lets a tap open one camera of a grid over the whole view ({@link #page}).
-     */
     static void show(WebView web, List<Cameras.Tile> sources, Map<String, String> pins,
-            boolean zoom, boolean focus, Runnable gone) {
+            Options options) {
+        final Runnable gone = options.gone;
+        final boolean zoom = options.zoom;
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
@@ -103,7 +114,7 @@ final class CameraView {
                 return true;
             }
         });
-        web.loadDataWithBaseURL(BASE, page(list, zoom, focus), "text/html", "utf-8", null);
+        web.loadDataWithBaseURL(BASE, page(list, options), "text/html", "utf-8", null);
     }
 
     /** Clears what the view may hold, then destroys it. */
@@ -164,12 +175,15 @@ final class CameraView {
                 return text(404, "Not Found", "text/plain", "");
             }
             Cameras.Tile source = sources.get(index);
+            // The bigger address, asked for when the camera is on show alone.
+            String address = "1".equals(request.getUrl().getQueryParameter("full"))
+                    && !source.full.isEmpty() ? source.full : source.url;
             if (path.startsWith("/probe/")) {
-                return probe(source, pins);
+                return probe(source, address, pins);
             }
             if (path.startsWith("/stream/")) {
                 // The camera's own sign-in: an NVR's channels share a host, not always a user.
-                return fetch(Cameras.fill(source.url, source.login), source.login, null,
+                return fetch(Cameras.fill(address, source.login), source.login, null,
                         source.name, pins, connection -> streams.add(index, connection));
             }
             if (path.startsWith("/stop/")) {
@@ -209,7 +223,8 @@ final class CameraView {
     private static Cameras.Login loginFor(List<Cameras.Tile> sources, String url) {
         String host = Cameras.hostOf(url);
         for (Cameras.Tile source : sources) {
-            if (source.login != null && !host.isEmpty() && host.equals(Cameras.hostOf(source.url))) {
+            if (source.login != null && !host.isEmpty() && (host.equals(Cameras.hostOf(source.url))
+                    || host.equals(Cameras.hostOf(source.full)))) {
                 return source.login;
             }
         }
@@ -217,11 +232,12 @@ final class CameraView {
     }
 
     /** What a camera sends, as the tile's script needs it: mjpeg, image, page or none. */
-    private static WebResourceResponse probe(Cameras.Tile source, Map<String, String> pins) {
+    private static WebResourceResponse probe(Cameras.Tile source, String address,
+            Map<String, String> pins) {
         String kind;
         HttpURLConnection connection = null;
         try {
-            connection = open(Cameras.fill(source.url, source.login), source.login, null, pins);
+            connection = open(Cameras.fill(address, source.login), source.login, null, pins);
             int status = connection.getResponseCode();
             String type = connection.getContentType() == null ? ""
                     : connection.getContentType().toLowerCase(Locale.ROOT);
@@ -488,22 +504,25 @@ final class CameraView {
                 new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
     }
 
-    /** The view's own page: one tile a camera, drawn and kept alive by its script. */
     /**
-     * The view's own page: one tile a camera, drawn and kept alive by its script. {@code zoom}
-     * lets the one camera on show be pinched; {@code focus} lets a tap open one tile of a grid
-     * over the whole view, the other streams stopped, and a tap on it (not zoomed), or a minute
-     * without a touch, bring the grid back.
+     * The view's own page: one tile a camera, drawn and kept alive by its script, laid out and
+     * touched as {@code options} say ({@link Options}). Zoom lets the one camera on show be
+     * pinched; focus lets a tap open one tile of a grid over the whole view, the other streams
+     * stopped, and a tap on it (not zoomed), or a minute without a touch, bring the grid back.
      */
-    static String page(List<Cameras.Tile> sources, boolean zoom, boolean focus) {
+    static String page(List<Cameras.Tile> sources, Options options) {
         StringBuilder names = new StringBuilder("[");
         StringBuilder urls = new StringBuilder("[");
+        StringBuilder fulls = new StringBuilder("[");
         for (int i = 0; i < sources.size(); i++) {
             names.append(i == 0 ? "" : ",").append(jsString(sources.get(i).name));
             urls.append(i == 0 ? "" : ",").append(jsString(sources.get(i).url));
+            fulls.append(i == 0 ? "" : ",").append(jsString(sources.get(i).full));
         }
         names.append(']');
         urls.append(']');
+        fulls.append(']');
+        String layout = Cameras.isLayout(options.layout) ? options.layout : Cameras.LAYOUT_AUTO;
         return "<!doctype html><html><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                 + "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
@@ -515,29 +534,53 @@ final class CameraView {
                 + ".tile p{position:absolute;inset:0;margin:0;display:flex;flex-direction:column;"
                 + "align-items:center;justify-content:center;gap:6px;color:#c9cede;"
                 + "font:16px/1.3 system-ui,sans-serif;text-align:center}"
-                + ".tile p b{color:#fff}</style></head><body><div id=\"grid\"></div><script>"
-                + "var names=" + names + ",urls=" + urls + ",zoom=" + zoom + ",focus=" + focus
+                + ".tile p b{color:#fff}"
+                + ".names .tile::after{content:attr(data-name);position:absolute;left:8px;bottom:8px;"
+                + "padding:2px 8px;border-radius:4px;background:rgba(0,0,0,.6);color:#fff;"
+                + "font:14px/1.4 system-ui,sans-serif;pointer-events:none}"
+                + "</style></head><body" + (options.names ? " class=\"names\"" : "")
+                + "><div id=\"grid\"></div><script>"
+                + "var names=" + names + ",urls=" + urls + ",fulls=" + fulls
+                + ",zoom=" + options.zoom + ",focus=" + options.focus + ",big=" + options.big
+                + ",shape=" + jsString(layout) + ",bigTile=" + Math.max(0, options.bigTile)
                 + ";var grid=document.getElementById('grid'),tiles=[],focused=-1,idle=0;"
                 + "names.forEach(function(name,i){var t=document.createElement('div');"
-                + "t.className='tile';grid.appendChild(t);tiles.push(t);"
-                + "if(zoom||focus){gestures(t,i);}start(t,i,0);});"
+                + "t.className='tile';t.dataset.name=name;grid.appendChild(t);tiles.push(t);"
+                + "if(zoom||focus){gestures(t,i);}});"
+                // The full-screen address for the camera on show alone: the one camera of a
+                // full view, or the tile opened over the grid.
+                + "function full(i){return !!fulls[i]&&((big&&tiles.length===1)||focused===i);}"
                 // The grid by the number of cameras on show and the shape of the view, as
                 // recorders lay it out: two side by side or stacked, three as one big and two
                 // small, then 2x2, 3x2, 3x3 and 4x3, turned for an upright view.
-                + "function layout(){var n=focused<0?tiles.length:1,w=innerWidth>=innerHeight,c,r;"
-                + "if(n<=1){c=1;r=1;}else if(n===2){c=w?2:1;r=w?1:2;}else if(n<=4){c=2;r=2;}"
-                + "else if(n<=6){c=w?3:2;r=w?2:3;}else if(n<=9){c=3;r=3;}else{c=w?4:3;r=w?3:4;}"
+                // A fixed layout instead: 1+3 one big over three small, 1+5 one big with five
+                // around it, 2x2 and 3x3; cameras past its places are not shown.
+                + "function layout(){var n=focused<0?tiles.length:1,w=innerWidth>=innerHeight,c,r,"
+                + "first=focused<0?(shape==='1+3'||shape==='1+5'?Math.min(bigTile,tiles.length-1):0):focused,"
+                + "places=99,cs='',rs='';"
+                + "if(focused>=0||shape==='auto'){if(n<=1){c=1;r=1;}else if(n===2){c=w?2:1;r=w?1:2;}"
+                + "else if(n<=4){c=2;r=2;}else if(n<=6){c=w?3:2;r=w?2:3;}else if(n<=9){c=3;r=3;}"
+                + "else{c=w?4:3;r=w?3:4;}if(focused<0&&n===3){if(w){rs='span 2';}else{cs='span 2';}}}"
+                + "else if(shape==='1+3'){c=3;r=3;places=4;cs='span 3';rs='span 2';}"
+                + "else if(shape==='1+5'){c=3;r=3;places=6;cs='span 2';rs='span 2';}"
+                + "else if(shape==='2x2'){c=2;r=2;places=4;}else{c=3;r=3;places=9;}"
                 + "grid.style.gridTemplateColumns='repeat('+c+',1fr)';"
                 + "grid.style.gridTemplateRows='repeat('+r+',1fr)';"
-                + "tiles.forEach(function(t,i){t.style.display=focused<0||focused===i?'':'none';"
-                + "var big=focused<0&&n===3&&i===0;t.style.gridRow=big&&w?'span 2':'';"
-                + "t.style.gridColumn=big&&!w?'span 2':'';});}"
+                + "var shown=0;tiles.forEach(function(t,i){var lead=i===first;"
+                + "var on=focused>=0?focused===i:(lead||shown<places-1);if(on&&!lead&&focused<0){shown++;}"
+                + "t.style.display=on?'':'none';t.style.order=lead?-1:0;"
+                + "t.style.gridColumn=lead?cs:'';t.style.gridRow=lead?rs:'';"
+                + "if(!on&&t.firstChild&&focused<0){t.innerHTML='';fetch('/stop/'+i);}});}"
                 + "layout();addEventListener('resize',layout);"
+                // Laid out first, so a camera past a fixed layout's places never starts.
+                + "tiles.forEach(function(t,i){start(t,i,0);});"
                 + "function focusOn(i){focused=i;tiles.forEach(function(t,j){if(j!==i){t.innerHTML='';"
                 + "fetch('/stop/'+j);}});"
-                + "layout();arm();}"
+                // The opened tile changes to its bigger stream, and back on the grid.
+                + "if(fulls[i]){fetch('/stop/'+i);start(tiles[i],i,0);}layout();arm();}"
                 + "function unfocus(){var i=focused;if(i<0)return;focused=-1;clearTimeout(idle);"
-                + "unzoom(tiles[i]);tiles.forEach(function(t,j){if(j!==i){start(t,j,0);}});layout();}"
+                + "unzoom(tiles[i]);if(fulls[i]){fetch('/stop/'+i);start(tiles[i],i,0);}"
+                + "layout();tiles.forEach(function(t,j){if(j!==i&&t.style.display!=='none'){start(t,j,0);}});}"
                 + "function arm(){clearTimeout(idle);if(focused>=0){idle=setTimeout(unfocus,60000);}}"
                 + GESTURES
                 + "function none(t,i,tries,why){t.innerHTML='';var p=document.createElement('p');"
@@ -545,20 +588,23 @@ final class CameraView {
                 + "p.appendChild(document.createTextNode(why||'No picture'));t.appendChild(p);"
                 + "setTimeout(function(){start(t,i,tries+1);},Math.min(60,5*Math.pow(2,tries))*1000);}"
                 // A tile hidden behind an opened one fetches nothing until the grid is back.
-                + "function start(t,i,tries){if(focused>=0&&focused!==i)return;"
-                + "fetch('/probe/'+i).then(function(r){return r.json();})"
-                + ".then(function(a){if(focused>=0&&focused!==i)return;draw(t,i,a.kind,tries);})"
+                + "function start(t,i,tries){if((focused>=0&&focused!==i)||t.style.display==='none')return;"
+                + "fetch('/probe/'+i+(full(i)?'?full=1':'')).then(function(r){return r.json();})"
+                + ".then(function(a){if((focused>=0&&focused!==i)||t.style.display==='none')return;"
+                + "draw(t,i,a.kind,tries);})"
                 + ".catch(function(){none(t,i,tries);});}"
                 + "function draw(t,i,kind,tries){t.innerHTML='';"
-                + "if(kind==='page'){if(names.length===1){location.replace(urls[i]);return;}"
-                + "var f=document.createElement('iframe');f.src=urls[i];t.appendChild(f);return;}"
+                + "var page=full(i)?fulls[i]:urls[i];"
+                + "if(kind==='page'){if(names.length===1){location.replace(page);return;}"
+                + "var f=document.createElement('iframe');f.src=page;t.appendChild(f);return;}"
                 + "if(kind==='denied'){none(t,i,tries,'Sign-in refused');return;}"
                 + "if(kind==='untrusted'){none(t,i,tries,'Certificate not trusted');return;}"
                 + "if(kind!=='mjpeg'&&kind!=='image'){none(t,i,tries);return;}"
                 + "var img=document.createElement('img');img.alt=names[i];"
                 + "img.onerror=function(){none(t,i,tries);};"
                 + "if(kind==='image'){img.onload=function(){again(t,i,img,0);};}"
-                + "img.src='/stream/'+i+'?t='+Date.now();t.appendChild(img);}"
+                + "img.src=stream(i);t.appendChild(img);}"
+                + "function stream(i){return '/stream/'+i+'?'+(full(i)?'full=1&':'')+'t='+Date.now();}"
                 // A picture is fetched again every two seconds; the new one replaces the old
                 // only once it has arrived, so the tile never flickers empty.
                 // One failed refresh keeps the last picture and tries again at the next tick (a
@@ -568,7 +614,7 @@ final class CameraView {
                 + "n.onload=function(){if(img.isConnected){t.replaceChild(n,img);again(t,i,n,0);}};"
                 + "n.onerror=function(){if(!img.isConnected)return;"
                 + "if(fails<1){again(t,i,img,fails+1);}else{none(t,i,0);}};"
-                + "n.src='/stream/'+i+'?t='+Date.now();},2000);}"
+                + "n.src=stream(i);},2000);}"
                 + "</script></body></html>";
     }
 

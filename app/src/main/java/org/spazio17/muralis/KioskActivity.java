@@ -2663,8 +2663,57 @@ public final class KioskActivity extends Activity {
             Toast.makeText(this, value + " is the main view", Toast.LENGTH_SHORT).show();
         });
         card.addView(choices, matchWrapClose());
-        page.addView(card, matchWrap());
+        java.util.List<View> cards = new java.util.ArrayList<>();
+        cards.add(card);
+        // The layout is for a group of more than one camera.
+        if (Cameras.resolve(KioskConfig.camerasOf(this), KioskConfig.cameraGroupsOf(this), chosen)
+                .size() > 1) {
+            cards.add(cameraLayoutCard(theme, chosen));
+        }
+        page.addView(cardGrid(theme, cards), matchWrap());
         setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * The camera view's layout, applied at once: Auto or a fixed one, the camera of the big tile
+     * for a group in 1+3 or 1+5, and the names on the tiles; the web admin's is the same.
+     */
+    private LinearLayout cameraLayoutCard(KioskTheme theme, String chosen) {
+        LinearLayout card = card(theme, "Layout");
+        String layout = KioskConfig.cameraLayoutOf(this);
+        RadioGroup layouts = new RadioGroup(this);
+        for (String[] one : Cameras.LAYOUTS) {
+            radioChoice(theme, layouts, one[1], one[0]);
+        }
+        checkRadioIfChanged(layouts, layout);
+        card.addView(layouts, matchWrapClose());
+        // The big tile's camera, for a group in a layout that has one.
+        java.util.List<Cameras.Camera> members = Cameras.resolve(KioskConfig.camerasOf(this),
+                KioskConfig.cameraGroupsOf(this), chosen);
+        MenuField bigMenu = new MenuField(card, theme, "Big tile");
+        for (Cameras.Camera camera : members) {
+            bigMenu.add(camera.name, camera.name);
+        }
+        bigMenu.select(KioskConfig.cameraBigOf(this));
+        View bigBox = (View) bigMenu.box.getParent();
+        bigBox.setVisibility(members.size() > 1 && Cameras.hasBigTile(layout)
+                ? View.VISIBLE : View.GONE);
+        CompoundButton names = themedSwitch(theme, "Names on the tiles",
+                KioskConfig.cameraNamesOf(this));
+        card.addView(names, matchWrap());
+        Runnable store = () -> {
+            View checked = layouts.findViewById(layouts.getCheckedRadioButtonId());
+            String picked = checked == null ? Cameras.LAYOUT_AUTO : (String) checked.getTag();
+            KioskConfig.edit(this).cameraLayout(picked, bigMenu.value(), names.isChecked()).apply();
+            bigBox.setVisibility(members.size() > 1 && Cameras.hasBigTile(picked)
+                    ? View.VISIBLE : View.GONE);
+            KioskService.publishTelemetrySoon(this);
+            KioskService.cameraViewMayHaveChanged(this);
+        };
+        layouts.setOnCheckedChangeListener((group, id) -> store.run());
+        bigMenu.onChange = store;
+        names.setOnCheckedChangeListener((button, on) -> store.run());
+        return card;
     }
 
     /**
@@ -2831,6 +2880,11 @@ public final class KioskActivity extends Activity {
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         addField(card, theme, "Address", urlInput, "A snapshot, an MJPEG stream or a camera page.");
+        EditText fullInput = themedInput(theme, fresh ? "" : camera.full, false);
+        fullInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        addField(card, theme, "Full-screen address (optional)", fullInput,
+                "A bigger stream of the same camera, for full screen and zoom.");
         EditText userInput = themedInput(theme, login == null ? "" : login.user, false);
         addField(card, theme, "User", userInput);
         // Rendered empty, as every password box: empty keeps the stored one.
@@ -2841,8 +2895,8 @@ public final class KioskActivity extends Activity {
         String was = fresh ? "" : camera.name;
         save.setOnClickListener(view -> {
             String problem = KioskService.saveCamera(this, was, nameInput.getText().toString(),
-                    urlInput.getText().toString(), userInput.getText().toString(),
-                    passwordInput.getText().toString());
+                    urlInput.getText().toString(), fullInput.getText().toString(),
+                    userInput.getText().toString(), passwordInput.getText().toString());
             if (problem != null) {
                 Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
                 // A camera removed elsewhere meanwhile: the page shows what is stored. Any
@@ -14557,7 +14611,7 @@ public final class KioskActivity extends Activity {
             cameraDashboard = new WebView(this);
             cameraDashboard.setBackgroundColor(Color.BLACK);
             CameraView.show(cameraDashboard, cameraTiles, KioskConfig.certificatePinsOf(this),
-                    true, cameraTiles.size() > 1, this::rebuildCameraDashboard);
+                    cameraViewOptions(cameraTiles));
             cameraDashboardPaused = false;
             dashboard.addView(cameraDashboard, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -15617,8 +15671,9 @@ public final class KioskActivity extends Activity {
                 return true;
             });
             // Drawn from memory, never stored: a camera's stream as much as any picture or page.
-            CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this), false, false,
-                    this::closePopup);
+            CameraView.Options card = new CameraView.Options();
+            card.gone = this::closePopup;
+            CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this), card);
             LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, (int) (metrics.heightPixels * 0.55f));
             webParams.topMargin = dp(12);
@@ -15642,8 +15697,12 @@ public final class KioskActivity extends Activity {
         shade.setBackgroundColor(Color.BLACK);
         shade.setClickable(true);
         WebView web = new WebView(this);
-        CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this), true,
-                request.tiles.size() > 1, this::closePopup);
+        CameraView.Options full = new CameraView.Options();
+        full.zoom = true;
+        full.focus = request.tiles.size() > 1;
+        full.big = true;
+        full.gone = this::closePopup;
+        CameraView.show(web, request.tiles, KioskConfig.certificatePinsOf(this), full);
         shade.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         popupWeb = web;
@@ -15667,6 +15726,25 @@ public final class KioskActivity extends Activity {
     }
 
     private static final long CAMERA_WATCH_MS = 2_000L;
+
+    /** How the camera view draws: zoom, a tap to open one, and the layout chosen for it. */
+    private CameraView.Options cameraViewOptions(java.util.List<Cameras.Tile> tiles) {
+        CameraView.Options options = new CameraView.Options();
+        options.zoom = true;
+        options.focus = tiles.size() > 1;
+        options.big = true;
+        // A fixed layout is for a group: one camera always fills the view.
+        options.layout = tiles.size() > 1 ? KioskConfig.cameraLayoutOf(this) : Cameras.LAYOUT_AUTO;
+        String big = KioskConfig.cameraBigOf(this);
+        for (int i = 0; i < tiles.size(); i++) {
+            if (tiles.get(i).name.equalsIgnoreCase(big)) {
+                options.bigTile = i;
+            }
+        }
+        options.names = KioskConfig.cameraNamesOf(this);
+        options.gone = this::rebuildCameraDashboard;
+        return options;
+    }
 
     /** The cameras' browser engine died: the dashboard is built again, as for the page's. */
     private void rebuildCameraDashboard() {
@@ -15705,7 +15783,7 @@ public final class KioskActivity extends Activity {
                 if (!tiles.isEmpty()) {
                     cameraDashboardPaused = false;
                     CameraView.show(web, tiles, KioskConfig.certificatePinsOf(KioskActivity.this),
-                            true, tiles.size() > 1, KioskActivity.this::rebuildCameraDashboard);
+                            cameraViewOptions(tiles));
                 }
             }
             mainHandler.postDelayed(this, CAMERA_WATCH_MS);

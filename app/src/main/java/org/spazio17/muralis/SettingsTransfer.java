@@ -45,7 +45,7 @@ final class SettingsTransfer {
                 "orientation", "display_off_method", "screensaver_mode",
                 "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
                 "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {
+                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",
@@ -59,7 +59,7 @@ final class SettingsTransfer {
             keys.put(key, 'l');
         }
         for (String key : new String[] {"stats_overlay", "browser_dark", "browser_page_camera",
-                "browser_page_microphone", "status_light_on", "volume_buttons_disabled",
+                "browser_page_microphone", "status_light_on", "volume_buttons_disabled", "camera_names",
                 "screensaver_shuffle", "screensaver_one_per_cycle", "screensaver_credit",
                 "web_admin_enabled", "alert_page_error", "alert_combination_used",
                 "alert_pin_lockout", "mqtt_tls"}) {

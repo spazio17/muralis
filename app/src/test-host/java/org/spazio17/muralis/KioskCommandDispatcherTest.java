@@ -961,6 +961,18 @@ public final class KioskCommandDispatcherTest {
         require(Cameras.withLogin(logins, "Front", "Front", "", "x").isEmpty(),
                 "an emptied user removes the sign-in");
         require(Cameras.checkLogin("a:b", "x") != null, "a user with a colon is refused");
+        require(Cameras.check("None", "http://x") != null && Cameras.check("none", "http://x") != null,
+                "None is taken by the web page");
+        require(Cameras.checkFull("") == null && Cameras.checkFull("http://cam/main") == null
+                && Cameras.checkFull("rtsp://cam/main") != null, "the full-screen address");
+        java.util.List<Cameras.Camera> withFull = Cameras.parse(Cameras.format(
+                java.util.Collections.singletonList(new Cameras.Camera("D", "http://c/sub",
+                        "http://c/main"))));
+        require(withFull.get(0).full.equals("http://c/main")
+                && Cameras.parse(Cameras.format(back)).get(0).full.isEmpty(),
+                "the full-screen address round-trips, empty when none");
+        require(Cameras.isLayout("1+5") && !Cameras.isLayout("5x5") && Cameras.hasBigTile("1+3")
+                && !Cameras.hasBigTile("2x2"), "the layouts");
         java.util.List<Cameras.Camera> three = new java.util.ArrayList<>(back);
         three = Cameras.with(three, "", new Cameras.Camera("Drive", "http://cam/d"));
         java.util.List<Cameras.Group> groups = new java.util.ArrayList<>();
@@ -972,7 +984,7 @@ public final class KioskCommandDispatcherTest {
                 java.util.Arrays.asList("Drive", "Garden")));
         groups = Cameras.withGroup(groups, "", new Cameras.Group("Front",
                 java.util.Arrays.asList("Door", "Drive")));
-        require(Cameras.saveProblem(three, groups, "", "outside", "http://x", "", "") != null,
+        require(Cameras.saveProblem(three, groups, "", "outside", "http://x", "", "", "") != null,
                 "a camera may not take a group's name");
         java.util.List<Cameras.Group> again = Cameras.parseGroups(Cameras.formatGroups(groups));
         require(again.size() == 2 && again.get(1).cameras.get(1).equals("Drive"),

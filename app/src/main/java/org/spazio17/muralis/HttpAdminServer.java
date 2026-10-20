@@ -1007,8 +1007,16 @@ final class HttpAdminServer {
         } else if (path.equals("/camera-view") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
         } else if (path.equals("/camera-view") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
             String refused = kioskService.setDashboardCameras(
-                    parseFormBody(headers, body).getOrDefault("dashboard_cameras", ""));
+                    form.getOrDefault("dashboard_cameras", ""));
+            if (refused == null && form.containsKey("camera_layout")) {
+                KioskConfig.edit(context).cameraLayout(form.get("camera_layout"),
+                        form.getOrDefault("camera_big", ""),
+                        isTrue(form.getOrDefault("camera_names", "0"))).apply();
+                KioskService.publishTelemetrySoon(context);
+                KioskService.cameraViewMayHaveChanged(context);
+            }
             writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
                     bytes(buildCameraViewPage(refused == null ? "Saved." : "Not saved: " + refused
                             + ".")));
@@ -3941,6 +3949,9 @@ final class HttpAdminServer {
                         "", null).replace(MACHINE_TEXT, "")
                 + fieldWithId("c-url" + sfx, "text", "url", "Address", fresh ? "" : camera.url,
                         " inputmode=\"url\"", "A snapshot, an MJPEG stream or a camera page.")
+                + fieldWithId("c-full" + sfx, "text", "full", "Full-screen address (optional)",
+                        fresh ? "" : camera.full, " inputmode=\"url\"",
+                        "A bigger stream of the same camera, for full screen and zoom.")
                 + fieldWithId("c-user" + sfx, "text", "user", "User",
                         login == null ? "" : login.user, "", null)
                 + fieldWithId("c-password" + sfx, "password", "password", "Password", "", "",
@@ -4160,8 +4171,34 @@ final class HttpAdminServer {
             html.append(radioRow("cv-" + count++, group.name, group.name + " (group)", chosen));
         }
         html.append("</div>");
+        java.util.List<Cameras.Camera> shownNow = Cameras.resolve(KioskConfig.camerasOf(context),
+                KioskConfig.cameraGroupsOf(context), chosen);
         if (count == 0) {
             html.append("<p class=\"hint\">No cameras yet. Add one in Cameras, under Screen.</p>");
+        } else if (shownNow.size() > 1) {
+            // The layout is for a group of more than one camera, as on the panel.
+            // The layout, as on the panel: Auto or a fixed one, the big tile's camera for a
+            // group in 1+3 or 1+5, and the names on the tiles.
+            String layout = KioskConfig.cameraLayoutOf(context);
+            StringBuilder layouts = new StringBuilder();
+            for (String[] one : Cameras.LAYOUTS) {
+                layouts.append(selectOption(one[0], one[1], layout));
+            }
+            StringBuilder bigs = new StringBuilder();
+            java.util.List<Cameras.Camera> members = Cameras.resolve(KioskConfig.camerasOf(context),
+                    KioskConfig.cameraGroupsOf(context), chosen);
+            for (Cameras.Camera camera : members) {
+                bigs.append(selectOption(camera.name, camera.name, KioskConfig.cameraBigOf(context)));
+            }
+            html.append("<h2>Layout</h2>")
+                    .append(selectField("cv-layout", "camera_layout", "Layout", null,
+                            layouts.toString(), null));
+            if (members.size() > 1) {
+                html.append(selectField("cv-big", "camera_big", "Big tile (one big layouts)", null,
+                        bigs.toString(), null));
+            }
+            html.append(switchRow("cv-names", "Names on the tiles",
+                    " name=\"camera_names\" value=\"1\"", KioskConfig.cameraNamesOf(context)));
         }
         html.append("<div class=\"actions\"><button type=\"submit\" class=\"primary\">Save</button>"
                 + "</div></form>");
@@ -4268,8 +4305,8 @@ final class HttpAdminServer {
             return refused == null ? "Shown on the panel." : "Not shown: " + refused + ".";
         }
         String problem = KioskService.saveCamera(context, was, form.getOrDefault("name", ""),
-                form.getOrDefault("url", ""), form.getOrDefault("user", ""),
-                form.getOrDefault("password", ""));
+                form.getOrDefault("url", ""), form.getOrDefault("full", ""),
+                form.getOrDefault("user", ""), form.getOrDefault("password", ""));
         return problem == null ? null : "Not saved: " + problem + ".";
     }
 

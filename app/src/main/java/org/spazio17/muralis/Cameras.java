@@ -29,10 +29,20 @@ final class Cameras {
     static final class Camera {
         final String name;
         final String url;
+        /**
+         * The same camera's bigger stream, for full screen and zoom (a recorder's main stream
+         * beside its substream); empty when the one address serves both.
+         */
+        final String full;
 
         Camera(String name, String url) {
+            this(name, url, "");
+        }
+
+        Camera(String name, String url, String full) {
             this.name = name;
             this.url = url;
+            this.full = full == null ? "" : full;
         }
     }
 
@@ -51,15 +61,24 @@ final class Cameras {
         }
     }
 
-    /** One camera to draw, as a pop-up or the grid receives it: name, address and sign-in. */
+    /**
+     * One camera to draw, as a pop-up or the grid receives it: name, address, the bigger address
+     * for full screen (empty for none) and sign-in.
+     */
     static final class Tile {
         final String name;
         final String url;
+        final String full;
         final Login login;
 
         Tile(String name, String url, Login login) {
+            this(name, url, "", login);
+        }
+
+        Tile(String name, String url, String full, Login login) {
             this.name = name;
             this.url = url;
+            this.full = full == null ? "" : full;
             this.login = login == null || login.isEmpty() ? null : login;
         }
     }
@@ -87,6 +106,15 @@ final class Cameras {
             return "the address must name the camera's host";
         }
         return null;
+    }
+
+    /** Null when the full-screen address is empty or one a camera can have; otherwise the reason. */
+    static String checkFull(String full) {
+        if (full == null || full.isEmpty()) {
+            return null;
+        }
+        String problem = check("x", full);
+        return problem == null ? null : "the full-screen " + problem.substring(4);
     }
 
     /** Null when the sign-in can be stored; otherwise the reason. */
@@ -267,9 +295,10 @@ final class Cameras {
                 Map<String, Object> entry = TinyJson.object(one);
                 String name = TinyJson.string(entry, "name", "").trim();
                 String url = TinyJson.string(entry, "url", "").trim();
-                if (check(name, url) == null && find(cameras, name) == null
-                        && cameras.size() < MAX_CAMERAS) {
-                    cameras.add(new Camera(name, url));
+                String full = TinyJson.string(entry, "full", "").trim();
+                if (check(name, url) == null && checkFull(full) == null
+                        && find(cameras, name) == null && cameras.size() < MAX_CAMERAS) {
+                    cameras.add(new Camera(name, url, full));
                 }
             }
         } catch (IllegalArgumentException unreadable) {
@@ -284,6 +313,9 @@ final class Cameras {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("name", camera.name);
             entry.put("url", camera.url);
+            if (!camera.full.isEmpty()) {
+                entry.put("full", camera.full);
+            }
             out.add(entry);
         }
         return TinyJson.write(out);
@@ -401,13 +433,16 @@ final class Cameras {
      */
     static String saveProblem(List<Camera> cameras, String was, String name, String url,
             String user, String password) {
-        return saveProblem(cameras, new ArrayList<>(), was, name, url, user, password);
+        return saveProblem(cameras, new ArrayList<>(), was, name, url, "", user, password);
     }
 
     /** The same, a name also refused when a group has it, so a name always means one thing. */
     static String saveProblem(List<Camera> cameras, List<Group> groups, String was, String name,
-            String url, String user, String password) {
+            String url, String full, String user, String password) {
         String problem = check(name, url);
+        if (problem == null) {
+            problem = checkFull(full);
+        }
         if (problem == null && findGroup(groups, name) != null) {
             problem = "a group has that name";
         }
@@ -422,6 +457,30 @@ final class Cameras {
             problem = "there are " + MAX_CAMERAS + " cameras already";
         }
         return problem;
+    }
+
+    /** The camera view's layouts: Auto by the number of cameras, or a fixed one. */
+    static final String LAYOUT_AUTO = "auto";
+    static final String[][] LAYOUTS = {
+            {LAYOUT_AUTO, "Auto"},
+            {"1+3", "One big, three small"},
+            {"1+5", "One big, five small"},
+            {"2x2", "Four, 2 by 2"},
+            {"3x3", "Nine, 3 by 3"},
+    };
+
+    static boolean isLayout(String value) {
+        for (String[] layout : LAYOUTS) {
+            if (layout[0].equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a layout has a big tile to choose. */
+    static boolean hasBigTile(String layout) {
+        return "1+3".equals(layout) || "1+5".equals(layout);
     }
 
     static final int MAX_GROUPS = 10;
