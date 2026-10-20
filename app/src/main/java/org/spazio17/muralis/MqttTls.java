@@ -71,6 +71,16 @@ final class MqttTls {
      */
     static Connection connection(String host, String pin, CertificateUpload client)
             throws GeneralSecurityException {
+        return connection(host, pin, client, refused -> waiting = refused);
+    }
+
+    /**
+     * The same, handing a refused certificate to {@code refused} instead of the broker's slot:
+     * a camera's certificate waits where a page's does ({@code CertificatePins.waiting}).
+     */
+    static Connection connection(String host, String pin, CertificateUpload client,
+            java.util.function.Consumer<CertificatePins.Waiting> refused)
+            throws GeneralSecurityException {
         TrustManagerFactory system = TrustManagerFactory.getInstance(
                 TrustManagerFactory.getDefaultAlgorithm());
         system.init((KeyStore) null);
@@ -99,7 +109,7 @@ final class MqttTls {
             keys = factory.getKeyManagers();
         }
         SSLContext context = SSLContext.getInstance("TLS");
-        context.init(keys, new TrustManager[] {new Trust(android, pin, host)}, null);
+        context.init(keys, new TrustManager[] {new Trust(android, pin, host, refused)}, null);
         HostnameVerifier names = HttpsURLConnection.getDefaultHostnameVerifier();
         HostnameVerifier verifier = (name, session) -> {
             String leaf = leafFingerprint(session);
@@ -110,7 +120,7 @@ final class MqttTls {
                 return true;
             }
             // Trusted by Android, but issued for another name: shown for a person to decide.
-            waiting = waitingFor(session, host);
+            refused.accept(waitingFor(session, host));
             return false;
         };
         return new Connection(context.getSocketFactory(), verifier);
@@ -152,18 +162,21 @@ final class MqttTls {
         private final X509TrustManager android;
         private final String pin;
         private final String host;
+        private final java.util.function.Consumer<CertificatePins.Waiting> refused;
 
-        Trust(X509TrustManager android, String pin, String host) {
+        Trust(X509TrustManager android, String pin, String host,
+                java.util.function.Consumer<CertificatePins.Waiting> refused) {
             this.android = android;
             this.pin = pin;
             this.host = host;
+            this.refused = refused;
         }
 
         @Override
         public void checkServerTrusted(X509Certificate[] chain, String authType)
                 throws CertificateException {
             if (chain == null || chain.length == 0) {
-                throw new CertificateException("the broker sent no certificate");
+                throw new CertificateException("the server sent no certificate");
             }
             if (!pin.isEmpty() && pin.equals(CertificatePins.fingerprint(chain[0].getEncoded()))) {
                 return;
@@ -171,7 +184,7 @@ final class MqttTls {
             try {
                 android.checkServerTrusted(chain, authType);
             } catch (CertificateException notTrusted) {
-                waiting = describe(chain[0], host);
+                refused.accept(describe(chain[0], host));
                 throw notTrusted;
             }
         }

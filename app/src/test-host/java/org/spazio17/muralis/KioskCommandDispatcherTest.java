@@ -20,7 +20,7 @@ public final class KioskCommandDispatcherTest {
         testBrowserOptions();
         testCertificatePins();
         testPopups();
-        testPopupCameras();
+        testCameras();
         testPowerCommandsTellTheTruth();
         testWithdrawnRecycleCommands();
         testBrightnessRefusalIsReported();
@@ -912,44 +912,141 @@ public final class KioskCommandDispatcherTest {
                 executor).status.equals("rejected"), "a message past 500 characters");
     }
 
-    /** The pop-up cameras: the list, the checks, the modes and the cooldown. */
-    private static void testPopupCameras() {
-        require(PopupCameras.check("Door", "http://cam.local/snap.jpg", "trigger", 30, 60) == null,
-                "a camera");
-        require(PopupCameras.check("", "http://x", "trigger", 30, 60) != null
-                && PopupCameras.check("Door", "rtsp://x", "trigger", 30, 60) != null
-                && PopupCameras.check("Door", "http://x", "always", 30, 60) != null
-                && PopupCameras.check("Door", "http://x", "trigger", 301, 60) != null
-                && PopupCameras.check("Door", "http://x", "trigger", 30, 3601) != null,
+    /** The cameras: the list, the checks, the sign-ins kept apart. */
+    private static void testCameras() {
+        require(Cameras.check("Door", "http://cam.local/snap.jpg") == null, "a camera");
+        require(Cameras.check("", "http://x") != null
+                && Cameras.check("Door", "rtsp://x") != null
+                && Cameras.check("Door", "http://x y") != null
+                && Cameras.check("Door", "http://") != null,
                 "each check refuses");
-        java.util.List<PopupCameras.Camera> list = new java.util.ArrayList<>();
-        list = PopupCameras.with(list, new PopupCameras.Camera("Door", "http://cam/door", "alert", 20, 60));
-        list = PopupCameras.with(list, new PopupCameras.Camera("Garden", "http://cam/g", "on_demand", 0, 0));
-        java.util.List<PopupCameras.Camera> back = PopupCameras.parse(PopupCameras.format(list));
-        require(back.size() == 2 && back.get(0).mode.equals("alert") && back.get(1).seconds == 0,
-                "the list round-trips");
-        require(PopupCameras.parse("not json").isEmpty() && PopupCameras.parse("").isEmpty(),
+        java.util.List<Cameras.Camera> list = new java.util.ArrayList<>();
+        list = Cameras.with(list, "", new Cameras.Camera("Door", "http://cam/door"));
+        list = Cameras.with(list, "", new Cameras.Camera("Garden", "http://cam/g"));
+        java.util.List<Cameras.Camera> back = Cameras.parse(Cameras.format(list));
+        require(back.size() == 2 && back.get(1).url.equals("http://cam/g"), "the list round-trips");
+        require(Cameras.parse("not json").isEmpty() && Cameras.parse("").isEmpty(),
                 "an unreadable list is empty");
-        PopupCameras.Camera door = PopupCameras.find(back, "door");
-        require(door != null, "found by name, any case");
-        require(PopupCameras.refusal(door, true, 0, 100_000) == null, "a first trigger shows");
-        require(PopupCameras.refusal(door, true, 90_000, 100_000) != null, "inside the cooldown");
-        require(PopupCameras.refusal(door, true, 30_000, 100_000) == null, "after the cooldown");
-        PopupCameras.Camera garden = PopupCameras.find(back, "Garden");
-        require(PopupCameras.refusal(garden, true, 0, 1) != null
-                && PopupCameras.refusal(garden, false, 0, 1) == null, "on demand: shown, not triggered");
-        PopupCameras.Camera ignored = new PopupCameras.Camera("X", "http://x", "ignored", 5, 5);
-        require(PopupCameras.refusal(ignored, false, 0, 1) != null
-                && PopupCameras.refusal(null, false, 0, 1) != null, "ignored and unknown");
-        Popup.Request alert = PopupCameras.popup(door, true);
-        require(alert.wake && alert.chime && alert.url.equals("http://cam/door")
-                && alert.seconds == 20, "an alert wakes and chimes");
-        java.util.List<PopupCameras.Camera> full = new java.util.ArrayList<>();
-        for (int i = 0; i < PopupCameras.MAX_CAMERAS; i++) {
-            full = PopupCameras.with(full, new PopupCameras.Camera("c" + i, "http://x", "trigger", 1, 1));
+        require(Cameras.find(back, "door") != null, "found by name, any case");
+        java.util.List<Cameras.Camera> renamed = Cameras.with(back, "Door",
+                new Cameras.Camera("Front", "http://cam/door"));
+        require(renamed.size() == 2 && renamed.get(0).name.equals("Front"),
+                "a rename keeps the camera's place");
+        require(Cameras.saveProblem(back, "", "garden", "http://x", "", "") != null,
+                "a taken name is refused");
+        require(Cameras.saveProblem(back, "Garden", "garden", "http://x", "", "") == null,
+                "a camera keeps its own name");
+        java.util.List<Cameras.Camera> full = new java.util.ArrayList<>();
+        for (int i = 0; i < Cameras.MAX_CAMERAS; i++) {
+            full = Cameras.with(full, "", new Cameras.Camera("c" + i, "http://x"));
         }
-        require(PopupCameras.with(full, new PopupCameras.Camera("new", "http://x", "trigger", 1, 1))
-                == null, "an eleventh camera is refused");
+        require(Cameras.with(full, "", new Cameras.Camera("new", "http://x")) == null,
+                "an eleventh camera is refused");
+        Object[] split = Cameras.splitLogin("http://admin:p%40ss:w@192.0.2.30:8080/video?x=a@b");
+        Cameras.Login login = (Cameras.Login) split[1];
+        require("http://192.0.2.30:8080/video?x=a@b".equals(split[0]) && login != null
+                && login.user.equals("admin") && login.password.equals("p@ss:w"),
+                "a sign-in in the address is taken out of it");
+        require(Cameras.splitLogin("http://cam/a@b")[1] == null,
+                "an @ after the host is not a sign-in");
+        require(Cameras.hostOf("https://Cam.local/x").equals("cam.local:443")
+                && Cameras.hostOf("http://cam:81/").equals("cam:81"), "host and port");
+        java.util.Map<String, Cameras.Login> logins = Cameras.withLogin(
+                new java.util.LinkedHashMap<>(), "", "Door", "admin", "secret");
+        logins = Cameras.withLogin(logins, "Door", "Front", "admin", "");
+        require(logins.get("front") != null && logins.get("front").password.equals("secret")
+                && logins.get("door") == null, "a rename moves the sign-in; empty keeps it");
+        require(Cameras.parseLogins(Cameras.formatLogins(logins)).get("front").user.equals("admin"),
+                "the sign-ins round-trip");
+        require(Cameras.withLogin(logins, "Front", "Front", "", "x").isEmpty(),
+                "an emptied user removes the sign-in");
+        require(Cameras.checkLogin("a:b", "x") != null, "a user with a colon is refused");
+        require(Cameras.check("None", "http://x") != null && Cameras.check("none", "http://x") != null,
+                "None is taken by the web page");
+        require(Cameras.checkFull("") == null && Cameras.checkFull("http://cam/main") == null
+                && Cameras.checkFull("rtsp://cam/main") != null, "the full-screen address");
+        java.util.List<Cameras.Camera> withFull = Cameras.parse(Cameras.format(
+                java.util.Collections.singletonList(new Cameras.Camera("D", "http://c/sub",
+                        "http://c/main"))));
+        require(withFull.get(0).full.equals("http://c/main")
+                && Cameras.parse(Cameras.format(back)).get(0).full.isEmpty(),
+                "the full-screen address round-trips, empty when none");
+        require(Cameras.isLayout("1+5") && !Cameras.isLayout("5x5") && Cameras.hasBigTile("1+3")
+                && !Cameras.hasBigTile("2x2"), "the layouts");
+        java.util.List<Cameras.Camera> three = new java.util.ArrayList<>(back);
+        three = Cameras.with(three, "", new Cameras.Camera("Drive", "http://cam/d"));
+        java.util.List<Cameras.Group> groups = new java.util.ArrayList<>();
+        require(Cameras.groupProblem(three, groups, "", "door", java.util.Arrays.asList("Door"))
+                != null, "a group may not take a camera's name");
+        require(Cameras.groupProblem(three, groups, "", "Outside", new java.util.ArrayList<>())
+                != null, "a group needs a camera");
+        groups = Cameras.withGroup(groups, "", new Cameras.Group("Outside",
+                java.util.Arrays.asList("Drive", "Garden")));
+        groups = Cameras.withGroup(groups, "", new Cameras.Group("Front",
+                java.util.Arrays.asList("Door", "Drive")));
+        require(Cameras.saveProblem(three, groups, "", "outside", "http://x", "", "", "") != null,
+                "a camera may not take a group's name");
+        java.util.List<Cameras.Group> again = Cameras.parseGroups(Cameras.formatGroups(groups));
+        require(again.size() == 2 && again.get(1).cameras.get(1).equals("Drive"),
+                "the groups round-trip, a camera in two of them");
+        java.util.List<Cameras.Camera> outside = Cameras.resolve(three, again, "outside");
+        require(outside.size() == 2 && outside.get(0).name.equals("Garden"),
+                "a group shows its cameras in the list's order");
+        require(Cameras.resolve(three, again, "Door").size() == 1
+                && Cameras.resolve(three, again, "Nope").isEmpty(), "a camera, or nothing");
+        java.util.List<Cameras.Group> moved = Cameras.afterCamera(again, "Drive", "Driveway");
+        require(moved.get(0).cameras.contains("Driveway") && moved.get(1).cameras.contains("Driveway"),
+                "a renamed camera follows in every group");
+        require(!Cameras.afterCamera(again, "Drive", "").get(0).cameras.contains("Drive"),
+                "a removed camera leaves its groups");
+        Object[] named = Cameras.splitLogin("http://h/q.jpg?username=u&password=p%20w%26x");
+        require("http://h/q.jpg?username={user}&password={password}".equals(named[0])
+                && ((Cameras.Login) named[1]).user.equals("u")
+                && ((Cameras.Login) named[1]).password.equals("p w&x"),
+                "username= is read as the user, not skipped");
+        Object[] alone = Cameras.splitLogin("http://h/q.jpg?password=pw");
+        require(((Cameras.Login) alone[1]).user.isEmpty() && Cameras.saveProblem(
+                new java.util.ArrayList<>(), "", "X", (String) alone[0], "", "pw") != null,
+                "a password alone in the query is refused, not dropped");
+        require(Cameras.saveProblem(new java.util.ArrayList<>(), "", "X", "http://h/",
+                "", "pw") != null, "a password with no user is refused");
+        Object[] colon = Cameras.splitLogin("http://:pw@h/x.jpg");
+        require(Cameras.checkLogin(((Cameras.Login) colon[1]).user,
+                ((Cameras.Login) colon[1]).password) != null, "a :pw@ address is refused");
+        require(DigestAuth.parse(java.util.Collections.singletonList(
+                "Digest realm=\"r\", nonce=\"n\", stale=TRUE")).stale
+                && !DigestAuth.parse(java.util.Collections.singletonList(
+                "Digest realm=\"r\", nonce=\"n\"")).stale, "stale is read");
+        // RFC 2617's own example, then the same challenge with SHA-256 and with no qop.
+        DigestAuth.Challenge rfc = DigestAuth.parse(java.util.Collections.singletonList(
+                "Digest realm=\"testrealm@host.com\", qop=\"auth,auth-int\", "
+                        + "nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\", "
+                        + "opaque=\"5ccc069c403ebaf9f0171e9517f40e41\""));
+        String answer = DigestAuth.header(rfc, "GET", "/dir/index.html", "Mufasa",
+                "Circle Of Life", "0a4f113b", "00000001");
+        require(answer.contains("response=\"6629fae49393a05397450978507c4ef1\"")
+                && answer.contains("qop=auth, nc=00000001"), "the RFC 2617 digest");
+        require(DigestAuth.parse(java.util.Arrays.asList("Basic realm=\"x\"",
+                "Digest realm=\"r\", nonce=\"n\", algorithm=MD5",
+                "Digest realm=\"r\", nonce=\"n\", algorithm=SHA-256")).algorithm.equals("SHA-256"),
+                "the strongest algorithm is chosen");
+        require(DigestAuth.parse(java.util.Collections.singletonList(
+                "Digest realm=\"r\", nonce=\"n\", qop=\"auth-int\"")) == null,
+                "auth-int alone is not answered");
+        require(DigestAuth.parse(java.util.Collections.singletonList("Basic realm=\"x\"")) == null,
+                "Basic is not Digest");
+        Object[] reolink = Cameras.splitLogin(
+                "http://cam/cgi-bin/api.cgi?cmd=Snap&channel=0&user=admin&password=a%26b");
+        require("http://cam/cgi-bin/api.cgi?cmd=Snap&channel=0&user={user}&password={password}"
+                .equals(reolink[0]) && ((Cameras.Login) reolink[1]).password.equals("a&b"),
+                "a sign-in in the query becomes {user} and {password}");
+        require(Cameras.check("Door", (String) reolink[0]) == null, "placeholders pass the check");
+        require(Cameras.fill((String) reolink[0], (Cameras.Login) reolink[1])
+                .endsWith("&user=admin&password=a%26b"), "filled in, encoded, when fetched");
+        require(Cameras.splitLogin("http://cam/x?user={user}&password={password}")[1] == null,
+                "an address with placeholders is kept as it is");
+        require(Cameras.fill("http://cam/x?p=%7Bpassword%7D", new Cameras.Login("u", "p w"))
+                .equals("http://cam/x?p=p%20w"), "the browser's encoded placeholder is filled too");
         RecordingExecutor executor = new RecordingExecutor();
         require(KioskCommandDispatcher.dispatch("camera.trigger",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, " Door "), executor)
@@ -958,12 +1055,36 @@ public final class KioskCommandDispatcherTest {
         require(KioskCommandDispatcher.dispatch("camera.show",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
                 "camera.show needs a name");
+        java.util.Map<String, String> asFull = new java.util.HashMap<>();
+        asFull.put("as", "fullscreen");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door", null, asFull),
+                executor).status.equals("accepted") && "fullscreen".equals(executor.cameraAs)
+                && !executor.cameraTrigger, "camera.show as=fullscreen");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door"), executor)
+                .status.equals("accepted") && "popup".equals(executor.cameraAs),
+                "camera.show is a pop-up by default");
+        require(KioskCommandDispatcher.dispatch("kiosk.set_cameras",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, " Front "), executor)
+                .status.equals("accepted") && "Front".equals(executor.dashboardCameras),
+                "kiosk.set_cameras reaches the executor trimmed");
+        require(KioskCommandDispatcher.dispatch("kiosk.set_cameras",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
+                && "".equals(executor.dashboardCameras), "an empty name is the web page again");
+        java.util.Map<String, String> asBad = new java.util.HashMap<>();
+        asBad.put("as", "sideways");
+        require(KioskCommandDispatcher.dispatch("camera.show",
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door", null, asBad),
+                executor).status.equals("rejected"), "a bad as is refused");
     }
 
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
         Popup.Request popup;
         String cameraName;
         boolean cameraTrigger;
+        String cameraAs;
+        String dashboardCameras;
         final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
                 new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
         Boolean lightOn;
@@ -1120,9 +1241,23 @@ public final class KioskCommandDispatcherTest {
         }
 
         @Override
-        public String cameraPopup(String name, boolean trigger) {
+        public String cameraShow(String name, String show) {
             cameraName = name;
-            cameraTrigger = trigger;
+            cameraTrigger = false;
+            cameraAs = show;
+            return null;
+        }
+
+        @Override
+        public String setDashboardCameras(String name) {
+            dashboardCameras = name;
+            return null;
+        }
+
+        @Override
+        public String cameraTrigger(String name) {
+            cameraName = name;
+            cameraTrigger = true;
             return null;
         }
 

@@ -390,13 +390,17 @@ final class MqttController implements MqttCallbackExtended {
         });
     }
 
-    /** The pop-up cameras' names discovery last announced, one button each. */
+    /** The cameras' names discovery last announced, one button each. */
     private volatile String announcedCameras = null;
 
     private String camerasKey() {
         StringBuilder key = new StringBuilder();
-        for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
+        for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
             key.append(camera.name).append(',');
+        }
+        key.append('|');
+        for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
+            key.append(group.name).append(',');
         }
         return key.toString();
     }
@@ -1218,14 +1222,42 @@ final class MqttController implements MqttCallbackExtended {
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
-            // One button per pop-up camera, "Show <name>"; a doorbell's automation in
-            // Home Assistant sends camera.trigger itself.
-            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(appContext)) {
-                String name = "Show " + camera.name;
+            // One button per camera and per group, "Show <name>", which pops it up; a doorbell's automation
+            // in Home Assistant sends camera.trigger itself, for the panel's automations.
+            // The camera view: None for the web page, or a camera or group as the main view, the
+            // same choice as Dashboard's "The panel shows: Cameras". Once there is a camera.
+            org.json.JSONArray views = new org.json.JSONArray();
+            views.put(PLAYLIST_NONE);
+            for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
+                views.put(camera.name);
+            }
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
+                views.put(group.name);
+            }
+            if (views.length() > 1) {
+                components.put("camera_view", select("Camera view", "kiosk.set_cameras", views,
+                        "{{ value_json.config.dashboard_cameras if value_json.config is mapping"
+                                + " and value_json.config.dashboard_cameras else '"
+                                + PLAYLIST_NONE + "' }}"));
+            }
+            java.util.List<String> shown = new java.util.ArrayList<>();
+            for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
+                shown.add(camera.name);
+            }
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
+                shown.add(group.name);
+            }
+            for (String cameraName : shown) {
+                String name = "Show " + cameraName;
                 JSONObject show = button(name, new JSONObject().put("command", "camera.show")
-                        .put("args", new JSONObject().put("value", camera.name)).toString());
-                components.put(uniqueId(name).substring(config.deviceId.length() + 1)
-                        .replaceAll("[^a-z0-9_]", "_"), show);
+                        .put("args", new JSONObject().put("value", cameraName)).toString());
+                String key = uniqueId(name).substring(config.deviceId.length() + 1)
+                        .replaceAll("[^a-z0-9_]", "_");
+                // "Door 1" and "Door-1" squeeze to one key: the second keeps its own button.
+                for (int n = 2; components.has(key); n++) {
+                    key = key.replaceAll("_\\d+$", "") + "_" + n;
+                }
+                components.put(key, show);
             }
             JSONObject screen = new JSONObject();
             screen.put("p", "image");
@@ -1638,7 +1670,8 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * What the playlist select shows and sends when no playlist is in use.
+     * What the playlist select shows and sends when no playlist is in use, and the camera view
+     * select for the web page.
      *
      * <p>A select cannot hold an empty option, and Home Assistant renders a state that is not one
      * of the options as unknown, so the absence of a playlist needs a word of its own. The command

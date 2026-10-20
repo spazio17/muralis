@@ -42,8 +42,16 @@ final class KioskConfig {
     private static final String BROWSER_BACK_AFTER = "browser_back_after_s";
     /** The certificates a person trusted, one host and fingerprint a line (CertificatePins). */
     private static final String CERTIFICATE_PINS = "certificate_pins";
-    /** The cameras for pop-ups, as PopupCameras writes them. */
-    private static final String POPUP_CAMERAS = "popup_cameras";
+    /** The cameras, as Cameras writes them; their sign-ins are one secret apart. */
+    private static final String CAMERAS = "cameras";
+    private static final String CAMERA_LOGINS = "camera_logins";
+    private static final String CAMERA_GROUPS = "camera_groups";
+    /** The camera or group the panel shows as its main view; empty for the web page. */
+    private static final String DASHBOARD_CAMERAS = "dashboard_cameras";
+    /** How the camera view lays its cameras out: Cameras.LAYOUTS, the big tile's camera, names. */
+    private static final String CAMERA_LAYOUT = "camera_layout";
+    private static final String CAMERA_BIG = "camera_big";
+    private static final String CAMERA_NAMES = "camera_names";
     private static final String BROWSER_PAGE_CAMERA = "browser_page_camera";
     private static final String BROWSER_PAGE_MICROPHONE = "browser_page_microphone";
     private static final String BROWSER_USER = "browser_user";
@@ -347,12 +355,34 @@ final class KioskConfig {
             return this;
         }
 
-        /** The app App lock shows, a package name; empty switches App lock off. */
+        /**
+         * The app App lock shows, a package name, empty switches App lock off; the app the panel shows; one answer of "The panel shows", so choosing an app, or the
+         * web page (empty), also ends the cameras.
+         */
         Editor appLock(String packageName) {
             String chosen = packageName == null ? "" : packageName.trim();
             plain.putString(APP_LOCK, chosen)
                     .putString(APP_LOCK_LABEL, chosen.isEmpty() ? ""
-                            : AppLock.labelOf(storageContext, chosen));
+                            : AppLock.labelOf(storageContext, chosen))
+                    .putString(DASHBOARD_CAMERAS, "");
+            return this;
+        }
+
+        /** The camera view's layout, the camera of its big tile (empty: the first) and names. */
+        Editor cameraLayout(String layout, String big, boolean names) {
+            plain.putString(CAMERA_LAYOUT, Cameras.isLayout(layout) ? layout : Cameras.LAYOUT_AUTO)
+                    .putString(CAMERA_BIG, big == null ? "" : big.trim())
+                    .putBoolean(CAMERA_NAMES, names);
+            return this;
+        }
+
+        /** The camera or group the panel shows; choosing one ends App lock, empty is the page. */
+        Editor dashboardCameras(String name) {
+            String chosen = name == null ? "" : name.trim();
+            plain.putString(DASHBOARD_CAMERAS, chosen);
+            if (!chosen.isEmpty()) {
+                plain.putString(APP_LOCK, "").putString(APP_LOCK_LABEL, "");
+            }
             return this;
         }
 
@@ -480,8 +510,18 @@ final class KioskConfig {
             return this;
         }
 
-        Editor popupCameras(java.util.List<PopupCameras.Camera> cameras) {
-            plain.putString(POPUP_CAMERAS, PopupCameras.format(cameras));
+        Editor cameras(java.util.List<Cameras.Camera> cameras) {
+            plain.putString(CAMERAS, Cameras.format(cameras));
+            return this;
+        }
+
+        Editor cameraGroups(java.util.List<Cameras.Group> groups) {
+            plain.putString(CAMERA_GROUPS, Cameras.formatGroups(groups));
+            return this;
+        }
+
+        Editor cameraLogins(java.util.Map<String, Cameras.Login> logins) {
+            secrets.put(CAMERA_LOGINS, Cameras.formatLogins(logins));
             return this;
         }
 
@@ -1531,10 +1571,43 @@ final class KioskConfig {
         return secrets;
     }
 
-    static java.util.List<PopupCameras.Camera> popupCamerasOf(Context context) {
-        return PopupCameras.parse(storageContext(context)
+    static java.util.List<Cameras.Camera> camerasOf(Context context) {
+        return Cameras.parse(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(POPUP_CAMERAS, ""));
+                .getString(CAMERAS, ""));
+    }
+
+    static String cameraLayoutOf(Context context) {
+        String layout = storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CAMERA_LAYOUT, Cameras.LAYOUT_AUTO);
+        return Cameras.isLayout(layout) ? layout : Cameras.LAYOUT_AUTO;
+    }
+
+    static String cameraBigOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CAMERA_BIG, "");
+    }
+
+    static boolean cameraNamesOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(CAMERA_NAMES, false);
+    }
+
+    static String dashboardCamerasOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(DASHBOARD_CAMERAS, "");
+    }
+
+    static java.util.List<Cameras.Group> cameraGroupsOf(Context context) {
+        return Cameras.parseGroups(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CAMERA_GROUPS, ""));
+    }
+
+    /** The cameras' sign-ins, read only to fetch a camera or to save one; empty when none. */
+    static java.util.Map<String, Cameras.Login> cameraLoginsOf(Context context) {
+        return Cameras.parseLogins(new SecretStore(storageContext(context))
+                .getOrNull(CAMERA_LOGINS));
     }
 
     /** The trusted certificates, read for every certificate Android refuses. */

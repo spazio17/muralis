@@ -1652,6 +1652,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             KioskConfig config = KioskConfig.load(this);
             org.json.JSONObject applied = new org.json.JSONObject();
             applied.put("dashboard_url", config.dashboardUrl);
+            applied.put("dashboard_cameras", KioskConfig.dashboardCamerasOf(this));
+            applied.put("camera_layout", KioskConfig.cameraLayoutOf(this));
+            applied.put("camera_big", KioskConfig.cameraBigOf(this));
+            applied.put("camera_names", KioskConfig.cameraNamesOf(this));
             applied.put("device_id", config.deviceId);
             if (includeAdminDetail) {
                 applied.put("settings_sequence", config.settingsSequence);
@@ -1696,18 +1700,27 @@ public final class KioskService extends Service implements KioskCommandDispatche
             }
             applied.put("certificate_pins", pins);
             org.json.JSONArray cameras = new org.json.JSONArray();
-            for (PopupCameras.Camera camera : KioskConfig.popupCamerasOf(this)) {
-                org.json.JSONObject one = new org.json.JSONObject().put("name", camera.name)
-                        .put("mode", camera.mode)
-                        .put("seconds", camera.seconds).put("cooldown", camera.cooldown);
+            java.util.Map<String, Cameras.Login> logins = includeAdminDetail
+                    ? KioskConfig.cameraLoginsOf(this) : java.util.Collections.emptyMap();
+            for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
+                org.json.JSONObject one = new org.json.JSONObject().put("name", camera.name);
                 if (includeAdminDetail) {
-                    // A camera's address often carries its user and password or a token, so it
-                    // stays off MQTT, like the escape combinations.
+                    // An address can carry a token, so it stays off MQTT, like the escape
+                    // combinations; of the sign-in only whether there is one, as for the page's.
                     one.put("url", camera.url);
+                    one.put("full", camera.full);
+                    one.put("sign_in", logins.containsKey(
+                            camera.name.toLowerCase(java.util.Locale.ROOT)));
                 }
                 cameras.put(one);
             }
             applied.put("cameras", cameras);
+            org.json.JSONArray groups = new org.json.JSONArray();
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(this)) {
+                groups.put(new org.json.JSONObject().put("name", group.name)
+                        .put("cameras", new org.json.JSONArray(group.cameras)));
+            }
+            applied.put("camera_groups", groups);
             CertificatePins.Waiting waiting = CertificatePins.waiting;
             applied.put("certificate_waiting", waiting == null ? org.json.JSONObject.NULL
                     : new org.json.JSONObject().put("host", waiting.host)
@@ -2392,6 +2405,31 @@ public final class KioskService extends Service implements KioskCommandDispatche
         publishTelemetrySoon(this);
     }
 
+    @Override
+    public String setDashboardCameras(String name) {
+        String chosen = name == null ? "" : name.trim();
+        // "None" is what Home Assistant's select sends for the web page.
+        if (MqttController.PLAYLIST_NONE.equalsIgnoreCase(chosen)) {
+            chosen = "";
+        }
+        if (!chosen.isEmpty()) {
+            Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(this), chosen);
+            Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), chosen);
+            if (camera == null && group == null) {
+                return "no camera or group has that name";
+            }
+            chosen = camera != null ? camera.name : group.name;
+        }
+        KioskConfig.edit(this).dashboardCameras(chosen).apply();
+        // As set_url: not shown over the first-start screens, which show it when they are done.
+        if (KioskConfig.load(this).escapeSequencesConfigured()
+                && !KioskRuntimeState.wizardOnScreen()) {
+            sendUiCommand("dashboard.changed", -1, null);
+        }
+        publishTelemetrySoon(this);
+        return null;
+    }
+
     /**
      * Stores the orientation and tells the activity to turn.
      *
@@ -2429,28 +2467,188 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return true;
     }
 
-    /** When each camera last showed on this panel, for its cooldown; forgotten on a restart. */
-    private final java.util.Map<String, Long> cameraShownAt = new java.util.HashMap<>();
-
-    @Override
-    public String cameraPopup(String name, boolean trigger) {
-        PopupCameras.Camera camera = PopupCameras.find(KioskConfig.popupCamerasOf(this), name);
-        long now = android.os.SystemClock.elapsedRealtime();
-        String key = name.toLowerCase(java.util.Locale.ROOT);
-        synchronized (cameraShownAt) {
-            Long last = cameraShownAt.get(key);
-            String refused = PopupCameras.refusal(camera, trigger, last == null ? 0 : last, now);
-            if (refused != null) {
-                return refused;
-            }
-            cameraShownAt.put(key, now);
+    /**
+     * Stores one camera from either surface by the checks both share; a sign-in typed into the
+     * address is taken out of it and stored as the camera's secret, and an empty password keeps
+     * the stored one. {@code was} is the camera being edited, empty for a new one. Null when
+     * saved, otherwise the reason.
+     */
+    static String saveCamera(Context context, String was, String typedName, String typedUrl,
+            String typedFull, String typedUser, String typedPassword) {
+        String name = typedName == null ? "" : typedName.trim();
+        Object[] split = Cameras.splitLogin(typedUrl == null ? "" : typedUrl.trim());
+        String url = (String) split[0];
+        Cameras.Login inUrl = (Cameras.Login) split[1];
+        // The bigger stream's address loses its sign-in the same way; the camera has one.
+        Object[] splitFull = Cameras.splitLogin(typedFull == null ? "" : typedFull.trim());
+        String full = (String) splitFull[0];
+        if (inUrl == null) {
+            inUrl = (Cameras.Login) splitFull[1];
         }
-        Popup.Request request = PopupCameras.popup(camera, trigger);
-        if (request.wake) {
-            displayWake();
+        String user = inUrl != null ? inUrl.user : typedUser == null ? "" : typedUser.trim();
+        String password = inUrl != null ? inUrl.password : typedPassword;
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
+        String problem = was != null && !was.isEmpty() && Cameras.find(cameras, was) == null
+                ? "the camera was removed meanwhile" : null;
+        if (problem == null) {
+            problem = Cameras.saveProblem(cameras, groups, was, name, url, full, user, password);
         }
-        showPopup(request);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.Editor edit = KioskConfig.edit(context);
+        if (was != null && !was.isEmpty()
+                && was.equalsIgnoreCase(KioskConfig.dashboardCamerasOf(context))) {
+            // The main view follows its camera's new name.
+            edit.dashboardCameras(name);
+        }
+        if (was != null && !was.isEmpty() && was.equalsIgnoreCase(KioskConfig.cameraBigOf(context))) {
+            // So does the big tile of the camera view's layout.
+            edit.cameraLayout(KioskConfig.cameraLayoutOf(context), name,
+                    KioskConfig.cameraNamesOf(context));
+        }
+        edit.cameras(Cameras.with(cameras, was, new Cameras.Camera(name, url, full)))
+                .cameraGroups(was == null || was.isEmpty() ? groups
+                        : Cameras.afterCamera(groups, was, name))
+                .cameraLogins(Cameras.withLogin(KioskConfig.cameraLoginsOf(context), was, name,
+                        user, password))
+                .apply();
+        publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
         return null;
+    }
+
+    /**
+     * A camera or group changed while cameras are the main view: the view is drawn again, so a
+     * removed group stops streaming and a camera added to it appears.
+     */
+    static void cameraViewMayHaveChanged(Context context) {
+        KioskService service = liveService();
+        if (service != null && !KioskConfig.dashboardCamerasOf(context).isEmpty()) {
+            service.sendUiCommand("dashboard.changed", -1, null);
+        }
+    }
+
+    static void removeCamera(Context context, String name) {
+        KioskConfig.edit(context)
+                .cameras(Cameras.without(KioskConfig.camerasOf(context), name))
+                .cameraGroups(Cameras.afterCamera(KioskConfig.cameraGroupsOf(context), name, ""))
+                .cameraLogins(Cameras.withoutLogin(KioskConfig.cameraLoginsOf(context), name))
+                .apply();
+        publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
+    }
+
+    /** Stores one group from either surface; null when saved, otherwise the reason. */
+    static String saveCameraGroup(Context context, String was, String typedName,
+            java.util.List<String> members) {
+        String name = typedName == null ? "" : typedName.trim();
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
+        java.util.List<String> kept = new java.util.ArrayList<>();
+        for (Cameras.Camera camera : cameras) {
+            for (String member : members) {
+                if (camera.name.equalsIgnoreCase(member)) {
+                    kept.add(camera.name);
+                    break;
+                }
+            }
+        }
+        String problem = was != null && !was.isEmpty() && Cameras.findGroup(groups, was) == null
+                ? "the group was removed meanwhile"
+                : Cameras.groupProblem(cameras, groups, was, name, kept);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.Editor edit = KioskConfig.edit(context);
+        if (was != null && !was.isEmpty()
+                && was.equalsIgnoreCase(KioskConfig.dashboardCamerasOf(context))) {
+            edit.dashboardCameras(name);
+        }
+        edit.cameraGroups(Cameras.withGroup(groups, was, new Cameras.Group(name, kept))).apply();
+        publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
+        return null;
+    }
+
+    static void removeCameraGroup(Context context, String name) {
+        KioskConfig.edit(context)
+                .cameraGroups(Cameras.withoutGroup(KioskConfig.cameraGroupsOf(context), name))
+                .apply();
+        publishTelemetrySoon(context);
+        cameraViewMayHaveChanged(context);
+    }
+
+    /** What a camera's or a group's name shows, with each camera's sign-in; empty when unknown. */
+    static java.util.List<Cameras.Tile> cameraTiles(Context context, String name) {
+        java.util.Map<String, Cameras.Login> logins = KioskConfig.cameraLoginsOf(context);
+        java.util.List<Cameras.Tile> tiles = new java.util.ArrayList<>();
+        for (Cameras.Camera camera : Cameras.resolve(KioskConfig.camerasOf(context),
+                KioskConfig.cameraGroupsOf(context), name)) {
+            tiles.add(new Cameras.Tile(camera.name, camera.url, camera.full,
+                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT))));
+        }
+        return tiles;
+    }
+
+    /** {@code camera.show}: a camera or a group at once, 30 seconds, the screen woken. */
+    @Override
+    public String cameraShow(String name, String show) {
+        return showCamera(name, Automations.SHOW_FULLSCREEN.equals(show), Popup.DEFAULT_SECONDS,
+                false);
+    }
+
+    /**
+     * A camera or a group shown as a pop-up or full screen, for {@code seconds} (0 until
+     * touched or closed), the screen woken first; null when shown, otherwise why not.
+     */
+    String showCamera(String name, boolean fullscreen, int seconds, boolean chime) {
+        java.util.List<Cameras.Tile> tiles = cameraTiles(this, name);
+        Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name);
+        if (tiles.isEmpty()) {
+            return group != null ? "the group has no camera" : "no camera or group has that name";
+        }
+        displayWake();
+        showPopup(new Popup.Request(group != null && Cameras.find(KioskConfig.camerasOf(this),
+                name) == null ? group.name : tiles.get(0).name, tiles, seconds, true, chime,
+                fullscreen));
+        return null;
+    }
+
+    /**
+     * {@code camera.trigger}: the camera's event, which runs the automations waiting for it or
+     * for a group it is in (a group's own name runs the group's). Refused with the reason when
+     * nothing ran: no such name, no automation waiting, or each one inside its "not again
+     * within".
+     */
+    @Override
+    public String cameraTrigger(String name) {
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
+        Cameras.Camera camera = Cameras.find(cameras, name);
+        Cameras.Group named = Cameras.findGroup(groups, name);
+        if (camera == null && named == null) {
+            return "no camera or group has that name";
+        }
+        java.util.Set<String> names = new java.util.HashSet<>();
+        names.add(camera != null ? camera.name : named.name);
+        if (camera != null) {
+            for (Cameras.Group group : groups) {
+                for (String member : group.cameras) {
+                    if (member.equalsIgnoreCase(camera.name)) {
+                        names.add(group.name);
+                    }
+                }
+            }
+        }
+        Sensors watching = sensors;
+        int[] outcome = watching == null ? new int[2] : watching.cameraTriggered(names);
+        if (outcome[0] > 0) {
+            return null;
+        }
+        return outcome[1] > 0 ? "cooling down: an automation for it ran a moment ago"
+                : "no automation waits for this camera";
     }
 
     @Override
@@ -2945,9 +3143,18 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 problem = "accepted".equals(lit.status) ? null : lit.detail;
                 break;
             }
-            case "popup":
-                problem = refusalOf(dispatch("panel.notify",
-                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+            case "popup": {
+                // The rule's own time and chime; a pop-up always wakes the screen.
+                java.util.Map<String, String> named = new java.util.HashMap<>();
+                named.put("seconds", Integer.toString(rule.seconds));
+                named.put("chime", rule.chime ? "true" : "false");
+                problem = refusalOf(dispatch("panel.notify", new KioskCommandDispatcher.CommandArgs(
+                        -1, null, null, rule.argument, null, named)));
+                break;
+            }
+            case "camera":
+                problem = showCamera(rule.argument, Automations.SHOW_FULLSCREEN.equals(rule.show),
+                        rule.seconds, rule.chime);
                 break;
             case "light_off":
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);

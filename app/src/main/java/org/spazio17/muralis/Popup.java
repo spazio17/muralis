@@ -7,9 +7,10 @@ package org.spazio17.muralis;
 import java.util.Map;
 
 /**
- * A pop-up over the screen, {@code panel.notify}: a message with an optional title,
- * and optionally an address shown in the card (a picture, a camera's stream or a page), for a
- * number of seconds or until touched. Pure, so the arguments' checks are host-tested; the card
+ * A pop-up over the screen, {@code panel.notify} and {@code camera.show}: a message with an
+ * optional title, and optionally an address shown in the card (a picture, a camera's stream or a
+ * page, drawn by {@code CameraView}, so nothing it sends is stored), for a number of seconds or
+ * until touched. Pure, so the arguments' checks are host-tested; the card
  * is drawn by {@code KioskActivity}.
  */
 final class Popup {
@@ -26,11 +27,44 @@ final class Popup {
         final int seconds;
         final boolean wake;
         final boolean chime;
+        /** What the card draws below the message: the address, or a camera or a group's cameras. */
+        final java.util.List<Cameras.Tile> tiles;
+        /**
+         * Cameras over the whole screen instead of a card: closed by its own button, since a
+         * touch on the picture is for zooming, and 0 seconds means until closed.
+         */
+        final boolean fullscreen;
         /** When it was asked for, on a clock a change of the date cannot move. */
         final long madeAtMs = clock.getAsLong();
 
         Request(String title, String message, String url, int seconds, boolean wake,
                 boolean chime) {
+            this(title, message, url, url == null || url.isEmpty()
+                    ? java.util.Collections.<Cameras.Tile>emptyList()
+                    : java.util.Collections.singletonList(new Cameras.Tile(title, url, null)),
+                    seconds, wake, chime);
+        }
+
+        /**
+         * A camera's or a group's pop-up or full screen: the cameras drawn as one grid, with
+         * their sign-ins.
+         */
+        Request(String title, java.util.List<Cameras.Tile> tiles, int seconds, boolean wake,
+                boolean chime, boolean fullscreen) {
+            this(title, "", tiles.isEmpty() ? "" : tiles.get(0).url, tiles, seconds, wake, chime,
+                    fullscreen);
+        }
+
+        private Request(String title, String message, String url,
+                java.util.List<Cameras.Tile> tiles, int seconds, boolean wake, boolean chime) {
+            this(title, message, url, tiles, seconds, wake, chime, false);
+        }
+
+        private Request(String title, String message, String url,
+                java.util.List<Cameras.Tile> tiles, int seconds, boolean wake, boolean chime,
+                boolean fullscreen) {
+            this.fullscreen = fullscreen;
+            this.tiles = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(tiles));
             this.title = title;
             this.message = message;
             this.url = url;

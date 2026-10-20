@@ -997,14 +997,44 @@ final class HttpAdminServer {
             if (refusal == null) {
                 KioskService.reloadConfiguration(context);
             }
+        } else if (path.equals("/camera-groups") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String notice = saveCameraGroup(form);
+            writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
+                    "text/html; charset=utf-8", bytes(buildCamerasPage(notice,
+                            savedItem("g:", form, notice), false)));
+        } else if (path.equals("/camera-view") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
+        } else if (path.equals("/camera-view") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String refused = kioskService.setDashboardCameras(
+                    form.getOrDefault("dashboard_cameras", ""));
+            if (refused == null && form.containsKey("camera_layout")) {
+                KioskConfig.edit(context).cameraLayout(form.get("camera_layout"),
+                        form.getOrDefault("camera_big", ""),
+                        isTrue(form.getOrDefault("camera_names", "0"))).apply();
+                KioskService.publishTelemetrySoon(context);
+                KioskService.cameraViewMayHaveChanged(context);
+            }
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildCameraViewPage(refused == null ? "Saved." : "Not saved: " + refused
+                            + ".")));
         } else if (path.equals("/cameras") && method.equals("GET")) {
-            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildCamerasPage(null, queryValue(query, "id"), false)));
+        } else if (path.equals("/camera") && method.equals("GET")) {
+            String item = queryValue(query, "id");
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildCamerasPage(null, item == null ? "c:" : item, true)));
         } else if (path.equals("/adopt") && method.equals("POST")) {
             adoptByCode(parseFormBody(headers, body), output);
         } else if (path.equals("/cameras") && method.equals("POST")) {
-            String refused = saveCamera(parseFormBody(headers, body));
-            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
-                    bytes(buildCamerasPage(refused)));
+            // Show answers with a notice too; only a refusal ("Not ...") is a 400.
+            Map<String, String> form = parseFormBody(headers, body);
+            String notice = saveCamera(form);
+            writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
+                    "text/html; charset=utf-8", bytes(buildCamerasPage(notice,
+                            savedItem("c:", form, notice), false)));
         } else if (path.equals("/fleet") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(null, queryValue(query, "scope"))));
@@ -2077,9 +2107,9 @@ final class HttpAdminServer {
                 + "M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>");
         paths.put("saver", "<rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/>"
                 + "<path d=\"M3 15l5-5 4 4 3-3 6 6\"/><circle cx=\"16\" cy=\"9\" r=\"1.5\"/>");
-        // Pop-ups, a screen with a window over it; Integrations, a puzzle piece; the overflow
-        // menu's three dots: the panel's ic_popups, ic_integrations and Material's more_vert.
-        paths.put("popups", "<path d=\"M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zM12 11h6v6h-6z\"/>");
+        // Cameras, a video camera; Integrations, a puzzle piece; the overflow menu's three dots:
+        // the panel's ic_cameras, ic_integrations and Material's more_vert.
+        paths.put("cameras", "<path d=\"M4 7h10a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zM15 11l6-3.5v9L15 13z\"/>");
         paths.put("integrations", "<path d=\"M10 5V4a2 2 0 014 0v1h4a1 1 0 011 1v4h1a2 2 0 010 4h-1v4a1 1 0 01-1 1H6a1 1 0 01-1-1v-4h1a2 2 0 000-4H5V6a1 1 0 011-1z\"/>");
         paths.put("more", "<path d=\"M12 5h.01M12 12h.01M12 19h.01\" stroke-width=\"3\"/>");
         paths.put("stats", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
@@ -2178,8 +2208,8 @@ final class HttpAdminServer {
                 "Screen"});
         sections.add(new String[] {"ambient", "saver", "Ambient", screensaverSummary(),
                 screensaverBody(), "Screen"});
-        sections.add(new String[] {"popups", "popups", "Pop-ups",
-                PopupCameras.summary(KioskConfig.popupCamerasOf(context)), popupsBody(), "Screen"});
+        sections.add(new String[] {"cameras", "cameras", "Cameras",
+                Cameras.summary(KioskConfig.camerasOf(context)), camerasBody(), "Screen"});
         sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
                 sensorsSectionBody(), "Automation"});
         sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
@@ -2263,6 +2293,9 @@ final class HttpAdminServer {
         // An app instead of the page says so, as "The panel shows" does.
         if (!KioskConfig.appLockOf(context).isEmpty()) {
             return "App: " + KioskConfig.appLockLabelOf(context);
+        }
+        if (!KioskConfig.dashboardCamerasOf(context).isEmpty()) {
+            return "Cameras: " + KioskConfig.dashboardCamerasOf(context);
         }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
@@ -2389,10 +2422,16 @@ final class HttpAdminServer {
      * no wider than 640 px (2026-09-27).
      */
     private String listDetail(String kind, boolean detailPage, String nav, String detail) {
+        return listDetail(kind, detailPage, nav, detail, "");
+    }
+
+    /** The same, {@code attributes} telling the script a page's own addresses (Cameras). */
+    private String listDetail(String kind, boolean detailPage, String nav, String detail,
+            String attributes) {
         return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
                 + (detailPage ? "detail" : "list") + "\" data-title=\""
                 + escapeHtml(Character.toUpperCase(kind.charAt(0)) + kind.substring(1)) + "\""
-                + listsAttributes(kind + "_page") + ">"
+                + attributes + listsAttributes(kind + "_page") + ">"
                 + nav + "<div class=\"detail\">" + detail + "</div></div>" + listDetailScript;
     }
 
@@ -3018,6 +3057,21 @@ final class HttpAdminServer {
                 .append(Automations.TIME).append("\" value=\"at\" checked data-level=\"")
                 .append(Automations.TIME_UNIT).append("\" data-holds=\"\" data-tag=\"\">At</label>")
                 .append("</div>");
+        // A camera's event, once there is a camera or a group to wait for.
+        java.util.List<Cameras.Camera> cameraList = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groupList = KioskConfig.cameraGroupsOf(context);
+        boolean anyCamera = !cameraList.isEmpty() || !groupList.isEmpty();
+        if (anyCamera || Automations.CAMERAS.equals(rule.sensor)) {
+            offered |= Automations.CAMERAS.equals(chosenSensor);
+            sensorOptions.append(selectOption(Automations.CAMERAS, Automations.CAMERAS_NAME,
+                    chosenSensor));
+            events.append("<div class=\"radios events\" data-sensor=\"").append(Automations.CAMERAS)
+                    .append("\" role=\"radiogroup\" aria-label=\"").append(Automations.CAMERAS_NAME)
+                    .append(" events\"><label class=\"radio one\"><input type=\"radio\" name=\"event_")
+                    .append(Automations.CAMERAS).append("\" value=\"triggered\" checked data-level=\"\""
+                            + " data-holds=\"\" data-tag=\"1\" data-camera=\"1\">")
+                    .append("A camera is triggered</label></div>");
+        }
         if (!offered && !rule.sensor.isEmpty()) {
             // A rule on a sensor this device lacks keeps it: saving the rule for its name must
             // not move it to the first sensor of the menu (review, 2026-10-01).
@@ -3029,12 +3083,22 @@ final class HttpAdminServer {
         String chosenAction = rule.action.isEmpty() ? "display_on" : rule.action;
         StringBuilder actionOptions = new StringBuilder();
         for (Automations.Action action : Automations.ACTIONS) {
+            boolean camera = action.id.equals("camera");
+            // Show a camera once there is one to show.
+            if (camera && !anyCamera && !camera(chosenAction)) {
+                continue;
+            }
             actionOptions.append("<option value=\"").append(action.id).append("\"")
                     .append(action.id.equals(chosenAction) ? " selected" : "")
                     .append(" data-argument=\"")
-                    .append(action.argumentLabel == null ? "" : escapeHtml(action.argumentLabel))
+                    .append(action.argumentLabel == null || camera ? ""
+                            : escapeHtml(action.argumentLabel))
+                    .append("\" data-shows=\"").append(Automations.shows(action.id) ? "1" : "")
+                    .append("\" data-camera=\"").append(camera ? "1" : "")
                     .append("\">").append(escapeHtml(action.label)).append("</option>");
         }
+        String waitedFor = Automations.CAMERAS.equals(rule.sensor) ? rule.tag : "";
+        String shown = camera(rule.action) ? rule.argument : "";
         // Every tag read lately, by its id, newest first, as the panel's own editor has it.
         StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.tag));
         java.util.Set<String> tagsRead = KioskConfig.seenTags(context).keySet();
@@ -3067,11 +3131,27 @@ final class HttpAdminServer {
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
                 + selectField("a-tag" + sfx, "tag", "Tag", null, tags.toString(), null)
+                + selectField("a-camera" + sfx, "camera_tag", "Camera or group", null,
+                        cameraOptions(cameraList, groupList, waitedFor), null)
+                + fieldWithId("a-cooldown" + sfx, "number", "cooldown",
+                        "Not again within (seconds)", Integer.toString(rule.cooldown),
+                        " min=\"0\" max=\"" + Automations.MAX_COOLDOWN + "\"", null)
                 + "</section>"
                 + "<section class=\"card\"><h2>Then</h2>"
                 + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
-                + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence", rule.argument, "", null)
+                + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence",
+                        camera(rule.action) ? "" : rule.argument, "", null)
                         .replace(MACHINE_TEXT, "")
+                + selectField("a-target" + sfx, "target", "Camera or group", null,
+                        cameraOptions(cameraList, groupList, shown), null)
+                + selectField("a-show" + sfx, "show", "Show as", null,
+                        selectOption(Automations.SHOW_POPUP, "Pop-up", rule.show)
+                                + selectOption(Automations.SHOW_FULLSCREEN, "Full screen", rule.show),
+                        null)
+                + fieldWithId("a-seconds" + sfx, "number", "seconds",
+                        "For (seconds, 0 = until touched or closed)", Integer.toString(rule.seconds),
+                        " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
+                + switchRow("a-chime" + sfx, "Chime", " name=\"chime\" value=\"1\"", rule.chime)
                 + "</section>"
                 + "<section class=\"card\"><h2>Only</h2>"
                 + switchRow("a-only" + sfx, "Between these times", " name=\"only\" value=\"1\"",
@@ -3096,6 +3176,30 @@ final class HttpAdminServer {
                         + " data-confirm=\"" + escapeHtml(deleteQuestion(
                                 stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
+    }
+
+    private static boolean camera(String action) {
+        return "camera".equals(action);
+    }
+
+    /** The cameras, then the groups (marked as such), with {@code chosen} selected. */
+    private static String cameraOptions(java.util.List<Cameras.Camera> cameras,
+            java.util.List<Cameras.Group> groups, String chosen) {
+        StringBuilder options = new StringBuilder();
+        boolean found = false;
+        for (Cameras.Camera camera : cameras) {
+            options.append(selectOption(camera.name, camera.name, chosen));
+            found |= camera.name.equalsIgnoreCase(chosen);
+        }
+        for (Cameras.Group group : groups) {
+            options.append(selectOption(group.name, group.name + " (group)", chosen));
+            found |= group.name.equalsIgnoreCase(chosen);
+        }
+        if (!chosen.isEmpty() && !found) {
+            // Removed since: kept, so saving the rule does not move it to another camera.
+            options.append(selectOption(chosen, chosen + " (gone)", chosen));
+        }
+        return options.toString();
     }
 
     /** A "Time of day" rule's time box to its level, the minute of the day; NaN when it is none. */
@@ -3377,9 +3481,19 @@ final class HttpAdminServer {
         rule.level = Automations.TIME.equals(rule.sensor)
                 ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
-        rule.tag = form.getOrDefault("tag", "").trim();
+        rule.tag = (Automations.CAMERAS.equals(rule.sensor) ? form.getOrDefault("camera_tag", "")
+                : form.getOrDefault("tag", "")).trim();
+        String cooldown = form.getOrDefault("cooldown", "").trim();
+        rule.cooldown = cooldown.isEmpty() ? 0 : cooldown.matches("\\d{1,5}")
+                ? Integer.parseInt(cooldown) : -1;
         rule.action = form.getOrDefault("action", "");
-        rule.argument = form.getOrDefault("argument", "");
+        rule.argument = camera(rule.action) ? form.getOrDefault("target", "")
+                : form.getOrDefault("argument", "");
+        String seconds = form.getOrDefault("seconds", "").trim();
+        rule.seconds = seconds.isEmpty() ? Popup.DEFAULT_SECONDS : seconds.matches("\\d{1,4}")
+                ? Integer.parseInt(seconds) : -1;
+        rule.chime = isTrue(form.getOrDefault("chime", "0"));
+        rule.show = form.getOrDefault("show", Automations.SHOW_POPUP);
         boolean only = isTrue(form.getOrDefault("only", "0"));
         String typedFrom = form.getOrDefault("only_from", "");
         String typedTo = form.getOrDefault("only_to", "");
@@ -3676,13 +3790,26 @@ final class HttpAdminServer {
         // chosen on its own page. "A web page" switches App lock off and comes back here.
         String app = KioskConfig.appLockOf(context);
         boolean showsApp = !app.isEmpty();
+        // Cameras, the third answer, once there is a camera or a group to show.
+        String cameras = KioskConfig.dashboardCamerasOf(context);
+        boolean showsCameras = !showsApp && !cameras.isEmpty();
+        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(context).isEmpty();
+        boolean showsPage = !showsApp && !showsCameras;
         String shows = "<p class=\"label\" id=\"opt-shows-label\">The panel shows</p>"
                 + "<div class=\"segmented\" role=\"group\" aria-labelledby=\"opt-shows-label\">"
                 + "<form method=\"post\" action=\"/app-lock\"><input type=\"hidden\""
                 + " name=\"app_lock\" value=\"\"><button type=\"submit\" aria-pressed=\""
-                + !showsApp + "\">" + (showsApp ? "" : glyph("check")) + "A web page</button></form>"
+                + showsPage + "\">" + (showsPage ? glyph("check") : "") + "A web page</button></form>"
                 + "<a href=\"/app-lock\" role=\"button\" aria-pressed=\"" + showsApp + "\">"
-                + (showsApp ? glyph("check") : "") + "An app</a></div>";
+                + (showsApp ? glyph("check") : "") + "An app</a>"
+                + (offerCameras ? "<a href=\"/camera-view\" role=\"button\" aria-pressed=\""
+                        + showsCameras + "\">" + (showsCameras ? glyph("check") : "") + "Cameras</a>"
+                        : "")
+                + "</div>";
+        if (showsCameras) {
+            return shows + "<ul class=\"list\">" + linkRow("/camera-view", "cameras", cameras,
+                    "Shown as the main view", null, "") + "</ul>";
+        }
         if (showsApp) {
             String problem = AppLock.problem(context, app);
             return shows
@@ -3802,35 +3929,107 @@ final class HttpAdminServer {
     }
 
     /**
-     * The pop-up cameras, a page of their own: each camera's form with Save and
-     * Remove, then an empty one to add a camera. The panel's Pop-up cameras page is the same.
+     * The Cameras page, as Automations is: the cameras, then the groups under their own head
+     * when there are any, Add a camera and Add a group under them, and beside them from 840 px the chosen one's
+     * form; below 840 px the list, and a form is a page of its own ({@code detailPage}). The
+     * panel's Cameras page is the same. {@code selected} is "c:" or "g:" and a name, empty to
+     * add one.
      */
-    private String buildCamerasPage(String notice) {
-        StringBuilder html = new StringBuilder(pageStart("Pop-up cameras", null,
-                settingsAt("popups")));
-        if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+    private String buildCamerasPage(String notice, String selected, boolean detailPage) {
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
+        java.util.Map<String, Cameras.Login> logins = KioskConfig.cameraLoginsOf(context);
+        String chosen = cameraItemOrFirst(selected, cameras, groups);
+        StringBuilder rows = new StringBuilder();
+        for (Cameras.Camera camera : cameras) {
+            String id = "c:" + camera.name;
+            rows.append(navRow(linkRow("/camera?id=" + urlEncode(id), "cameras", camera.name,
+                    camera.url, null, ""), id, id.equals(chosen)));
         }
-        html.append("<div class=\"card\"><p class=\"hint\">A camera pops up on demand"
-                + " (camera.show) or on a doorbell's trigger (camera.trigger), by its mode on this"
-                + " panel.</p></div>");
-        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(context);
-        for (PopupCameras.Camera camera : cameras) {
-            html.append(cameraForm(camera));
+        StringBuilder groupRows = new StringBuilder();
+        for (Cameras.Group group : groups) {
+            String id = "g:" + group.name;
+            int members = Cameras.resolve(cameras, groups, group.name).size();
+            groupRows.append(navRow(linkRow("/camera?id=" + urlEncode(id), "cameras", group.name,
+                    members == 1 ? "1 camera" : members + " cameras", null, ""),
+                    id, id.equals(chosen)));
         }
-        if (cameras.size() < PopupCameras.MAX_CAMERAS) {
-            html.append(cameraForm(null));
+        String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Cameras</h2>"
+                + "<span class=\"count\">" + escapeHtml(Cameras.summary(cameras)) + "</span></div>"
+                + (rows.length() == 0 ? "<p class=\"hint\">No cameras yet.</p>"
+                        : "<ul class=\"list seg\">" + rows + "</ul>")
+                // The groups under a head of their own, as the cameras, only when there are any.
+                + (groupRows.length() == 0 ? "" : "<div class=\"cardhead groups\"><h2>Groups</h2>"
+                        + "<span class=\"count\">" + escapeHtml(Cameras.groupsSummary(groups))
+                        + "</span></div><ul class=\"list seg\">" + groupRows + "</ul>")
+                + "<div class=\"actions\">"
+                + (cameras.size() >= Cameras.MAX_CAMERAS ? ""
+                        : "<a class=\"btn tonal\" href=\"/camera?id=c%3A\" data-pane=\"c:\">"
+                                + glyph("plus") + "Add a camera</a>")
+                + (cameras.isEmpty() || groups.size() >= Cameras.MAX_GROUPS ? ""
+                        : "<a class=\"btn tonal\" href=\"/camera?id=g%3A\" data-pane=\"g:\">"
+                                + glyph("plus") + "Add a group</a>")
+                + "</div></section>";
+        // One form per camera and per group, and one to add each, every one in its pane, so
+        // choosing at the left is a switch of panes.
+        StringBuilder detail = new StringBuilder();
+        for (Cameras.Camera camera : cameras) {
+            detail.append(pane("c:" + camera.name, chosen, cameraForm(camera,
+                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT)))));
         }
-        return html.append(pageEnd()).toString();
+        if (cameras.size() < Cameras.MAX_CAMERAS) {
+            detail.append(pane("c:", chosen, cameraForm(null, null)));
+        }
+        for (Cameras.Group group : groups) {
+            detail.append(pane("g:" + group.name, chosen, cameraGroupForm(cameras, group)));
+        }
+        if (!cameras.isEmpty() && groups.size() < Cameras.MAX_GROUPS) {
+            detail.append(pane("g:", chosen, cameraGroupForm(cameras, null)));
+        }
+        boolean group = chosen.startsWith("g:");
+        boolean fresh = chosen.length() == 2;
+        return pageStart(!detailPage ? "Cameras" : fresh ? (group ? "New group" : "New camera")
+                        : (group ? "Edit group" : "Edit camera"),
+                null, detailPage ? "/cameras" : settingsAt("cameras"))
+                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + listDetail("cameras", detailPage, nav, detail.toString(),
+                        " data-base=\"/cameras?id=\" data-list=\"/cameras\"")
+                + pageEnd();
     }
 
-    private static String cameraForm(PopupCameras.Camera camera) {
-        boolean fresh = camera == null;
-        StringBuilder modes = new StringBuilder();
-        for (String[] mode : PopupCameras.MODES) {
-            modes.append(selectOption(mode[0], mode[1],
-                    fresh ? PopupCameras.TRIGGER : camera.mode));
+    private static String pane(String id, String chosen, String content) {
+        return "<div class=\"pane\" data-id=\"" + escapeHtml(id) + "\""
+                + (id.equals(chosen) ? "" : " hidden") + ">" + content + "</div>";
+    }
+
+    /** The item to show: the one asked for when it still exists, else the first camera. */
+    private static String cameraItemOrFirst(String item, java.util.List<Cameras.Camera> cameras,
+            java.util.List<Cameras.Group> groups) {
+        if (item != null) {
+            if (item.equals("c:") || (item.equals("g:") && !cameras.isEmpty())) {
+                return item;
+            }
+            if (item.startsWith("c:") && Cameras.find(cameras, item.substring(2)) != null) {
+                return "c:" + Cameras.find(cameras, item.substring(2)).name;
+            }
+            if (item.startsWith("g:") && Cameras.findGroup(groups, item.substring(2)) != null) {
+                return "g:" + Cameras.findGroup(groups, item.substring(2)).name;
+            }
         }
+        return cameras.isEmpty() ? "c:" : "c:" + cameras.get(0).name;
+    }
+
+    /** What the page shows after a form's post: the saved one, or the one that was being edited. */
+    private static String savedItem(String kind, Map<String, String> form, String notice) {
+        if (notice == null || !notice.startsWith("Not ")) {
+            return "remove".equals(form.get("what")) ? null
+                    : kind + form.getOrDefault("name", form.getOrDefault("was", "")).trim();
+        }
+        return kind + form.getOrDefault("was", "").trim();
+    }
+
+    private static String cameraForm(Cameras.Camera camera, Cameras.Login login) {
+        boolean fresh = camera == null;
         String sfx = fresh ? "-new" : "-" + Integer.toHexString(camera.name.hashCode());
         return "<form method=\"post\" action=\"/cameras\" class=\"card\">"
                 + "<h2>" + (fresh ? "Add a camera" : escapeHtml(camera.name)) + "</h2>"
@@ -3840,18 +4039,17 @@ final class HttpAdminServer {
                         "", null).replace(MACHINE_TEXT, "")
                 + fieldWithId("c-url" + sfx, "text", "url", "Address", fresh ? "" : camera.url,
                         " inputmode=\"url\"", "A snapshot, an MJPEG stream or a camera page.")
-                + selectField("c-mode" + sfx, "mode", "Mode on this panel", null,
-                        modes.toString(), null)
-                + fieldWithId("c-seconds" + sfx, "number", "seconds",
-                        "Shows for (seconds, 0 = until touched)",
-                        String.valueOf(fresh ? Popup.DEFAULT_SECONDS : camera.seconds),
-                        " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
-                + fieldWithId("c-cooldown" + sfx, "number", "cooldown", "Cooldown (seconds)",
-                        String.valueOf(fresh ? PopupCameras.DEFAULT_COOLDOWN : camera.cooldown),
-                        " min=\"0\" max=\"" + PopupCameras.MAX_COOLDOWN + "\"", null)
+                + fieldWithId("c-full" + sfx, "text", "full", "Full-screen address (optional)",
+                        fresh ? "" : camera.full, " inputmode=\"url\"",
+                        "A bigger stream of the same camera, for full screen and zoom.")
+                + fieldWithId("c-user" + sfx, "text", "user", "User",
+                        login == null ? "" : login.user, "", null)
+                + fieldWithId("c-password" + sfx, "password", "password", "Password", "", "",
+                        login != null && !login.password.isEmpty() ? BLANK_KEEPS : null)
                 + "<div class=\"actions\"><button type=\"submit\" class=\"primary\" name=\"what\""
                 + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
-                + (fresh ? "" : "<button type=\"submit\" class=\"danger\" name=\"what\""
+                + (fresh ? "" : "<button type=\"submit\" name=\"what\" value=\"show\">Show"
+                        + "</button><button type=\"submit\" class=\"danger\" name=\"what\""
                         + " value=\"remove\">Remove</button>")
                 + "</div></form>";
     }
@@ -4040,43 +4238,145 @@ final class HttpAdminServer {
                 bytes(buildSettingsFilePage("Not done: nothing to do.", null)));
     }
 
-    /** One camera form's post: saved by the checks both surfaces share, or removed. */
-    private String saveCamera(Map<String, String> form) {
-        java.util.List<PopupCameras.Camera> cameras = KioskConfig.popupCamerasOf(context);
+    /**
+     * The camera view, a page of its own as App lock is: the camera or group the panel shows as
+     * its main view. The panel's Camera view page is the same.
+     */
+    private String buildCameraViewPage(String notice) {
+        StringBuilder html = new StringBuilder(pageStart("Camera view", null,
+                settingsAt("dashboard")));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        String chosen = KioskConfig.dashboardCamerasOf(context);
+        html.append("<form method=\"post\" action=\"/camera-view\" class=\"card\">"
+                + "<h2>The cameras this panel shows</h2><p class=\"hint\">A camera, or a group as"
+                + " a grid, instead of the web page. A tap opens one camera of a grid, pinch to"
+                + " zoom; a tap brings the grid back.</p><div class=\"radios\">");
+        int count = 0;
+        for (Cameras.Camera camera : KioskConfig.camerasOf(context)) {
+            html.append(radioRow("cv-" + count++, camera.name, camera.name, chosen));
+        }
+        for (Cameras.Group group : KioskConfig.cameraGroupsOf(context)) {
+            html.append(radioRow("cv-" + count++, group.name, group.name + " (group)", chosen));
+        }
+        html.append("</div>");
+        java.util.List<Cameras.Camera> shownNow = Cameras.resolve(KioskConfig.camerasOf(context),
+                KioskConfig.cameraGroupsOf(context), chosen);
+        if (count == 0) {
+            html.append("<p class=\"hint\">No cameras yet. Add one in Cameras, under Screen.</p>");
+        } else if (shownNow.size() > 1) {
+            // The layout is for a group of more than one camera, as on the panel.
+            // The layout, as on the panel: Auto or a fixed one, the big tile's camera for a
+            // group in 1+3 or 1+5, and the names on the tiles.
+            String layout = KioskConfig.cameraLayoutOf(context);
+            StringBuilder layouts = new StringBuilder();
+            for (String[] one : Cameras.LAYOUTS) {
+                layouts.append(selectOption(one[0], one[1], layout));
+            }
+            StringBuilder bigs = new StringBuilder();
+            java.util.List<Cameras.Camera> members = Cameras.resolve(KioskConfig.camerasOf(context),
+                    KioskConfig.cameraGroupsOf(context), chosen);
+            for (Cameras.Camera camera : members) {
+                bigs.append(selectOption(camera.name, camera.name, KioskConfig.cameraBigOf(context)));
+            }
+            html.append("<h2>Layout</h2>")
+                    .append(selectField("cv-layout", "camera_layout", "Layout", null,
+                            layouts.toString(), null));
+            if (members.size() > 1) {
+                html.append(selectField("cv-big", "camera_big", "Big tile (one big layouts)", null,
+                        bigs.toString(), null));
+            }
+            html.append(switchRow("cv-names", "Names on the tiles",
+                    " name=\"camera_names\" value=\"1\"", KioskConfig.cameraNamesOf(context)));
+        }
+        html.append("<div class=\"actions\"><button type=\"submit\" class=\"primary\">Save</button>"
+                + "</div></form>");
+        return html.append(pageEnd()).toString();
+    }
+
+    private static String radioRow(String id, String value, String label, String chosen) {
+        return "<label class=\"radio\" for=\"" + id + "\"><input type=\"radio\" id=\"" + id
+                + "\" name=\"dashboard_cameras\" value=\"" + escapeHtml(value) + "\""
+                + (value.equalsIgnoreCase(chosen) ? " checked" : "") + ">" + escapeHtml(label)
+                + "</label>";
+    }
+
+    private static String cameraGroupForm(java.util.List<Cameras.Camera> cameras,
+            Cameras.Group group) {
+        boolean fresh = group == null;
+        String sfx = fresh ? "-new" : "-" + Integer.toHexString(group.name.hashCode());
+        String labelId = "g-cams" + sfx;
+        StringBuilder ticks = new StringBuilder("<div role=\"group\" aria-labelledby=\"" + labelId
+                + "\"><p class=\"label\" id=\"" + labelId + "\">Cameras</p>");
+        for (int i = 0; i < cameras.size(); i++) {
+            Cameras.Camera camera = cameras.get(i);
+            boolean member = false;
+            if (!fresh) {
+                for (String one : group.cameras) {
+                    member |= one.equalsIgnoreCase(camera.name);
+                }
+            }
+            String id = "g-cam" + sfx + "-" + i;
+            ticks.append("<label class=\"check\" for=\"").append(id).append("\"><input type=\"checkbox\" id=\"")
+                    .append(id).append("\" name=\"cam").append(i).append("\" value=\"")
+                    .append(escapeHtml(camera.name)).append("\"").append(member ? " checked" : "")
+                    .append("> ").append(escapeHtml(camera.name)).append("</label>");
+        }
+        ticks.append("</div>");
+        return "<form method=\"post\" action=\"/camera-groups\" class=\"card\">"
+                + "<h2>" + (fresh ? "Add a group" : escapeHtml(group.name)) + "</h2>"
+                + "<input type=\"hidden\" name=\"was\" value=\""
+                + (fresh ? "" : escapeHtml(group.name)) + "\">"
+                + fieldWithId("g-name" + sfx, "text", "name", "Name", fresh ? "" : group.name,
+                        "", null).replace(MACHINE_TEXT, "")
+                + ticks
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\" name=\"what\""
+                + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
+                + (fresh ? "" : "<button type=\"submit\" name=\"what\" value=\"show\">Show"
+                        + "</button><button type=\"submit\" class=\"danger\" name=\"what\""
+                        + " value=\"remove\">Remove</button>")
+                + "</div></form>";
+    }
+
+    /** One group form's post: saved, shown or removed. */
+    private String saveCameraGroup(Map<String, String> form) {
         String was = form.getOrDefault("was", "").trim();
         if ("remove".equals(form.get("what"))) {
-            KioskConfig.edit(context).popupCameras(PopupCameras.without(cameras, was)).apply();
-            KioskService.publishTelemetrySoon(context);
+            KioskService.removeCameraGroup(context, was);
             return null;
         }
-        String name = form.getOrDefault("name", "").trim();
-        String url = form.getOrDefault("url", "").trim();
-        String mode = form.getOrDefault("mode", "");
-        int seconds;
-        int cooldown;
-        try {
-            seconds = Integer.parseInt(form.getOrDefault("seconds", "").trim());
-            cooldown = Integer.parseInt(form.getOrDefault("cooldown", "").trim());
-        } catch (NumberFormatException notANumber) {
-            return "Not saved: the time and the cooldown must be whole numbers.";
+        if ("show".equals(form.get("what"))) {
+            String refused = kioskService.cameraShow(was, Automations.SHOW_POPUP);
+            return refused == null ? "Shown on the panel." : "Not shown: " + refused + ".";
         }
-        String problem = PopupCameras.check(name, url, mode, seconds, cooldown);
-        if (problem != null) {
-            return "Not saved: " + problem + ".";
+        java.util.List<String> members = new java.util.ArrayList<>();
+        for (int i = 0; i < Cameras.MAX_CAMERAS; i++) {
+            String member = form.get("cam" + i);
+            if (member != null && !member.trim().isEmpty()) {
+                members.add(member.trim());
+            }
         }
-        java.util.List<PopupCameras.Camera> base = was.isEmpty() ? cameras
-                : PopupCameras.without(cameras, was);
-        if (!name.equalsIgnoreCase(was) && PopupCameras.find(base, name) != null) {
-            return "Not saved: another camera has that name.";
+        String problem = KioskService.saveCameraGroup(context, was, form.getOrDefault("name", ""),
+                members);
+        return problem == null ? null : "Not saved: " + problem + ".";
+    }
+
+    /** One camera form's post: saved by the checks both surfaces share, shown, or removed. */
+    private String saveCamera(Map<String, String> form) {
+        String was = form.getOrDefault("was", "").trim();
+        if ("remove".equals(form.get("what"))) {
+            KioskService.removeCamera(context, was);
+            return null;
         }
-        java.util.List<PopupCameras.Camera> next = PopupCameras.with(base,
-                new PopupCameras.Camera(name, url, mode, seconds, cooldown));
-        if (next == null) {
-            return "Not saved: there are " + PopupCameras.MAX_CAMERAS + " cameras already.";
+        if ("show".equals(form.get("what"))) {
+            String refused = kioskService.cameraShow(was, Automations.SHOW_POPUP);
+            return refused == null ? "Shown on the panel." : "Not shown: " + refused + ".";
         }
-        KioskConfig.edit(context).popupCameras(next).apply();
-        KioskService.publishTelemetrySoon(context);
-        return null;
+        String problem = KioskService.saveCamera(context, was, form.getOrDefault("name", ""),
+                form.getOrDefault("url", ""), form.getOrDefault("full", ""),
+                form.getOrDefault("user", ""), form.getOrDefault("password", ""));
+        return problem == null ? null : "Not saved: " + problem + ".";
     }
 
     /**
@@ -4697,10 +4997,20 @@ final class HttpAdminServer {
                 + "</div>";
     }
 
-    /** Pop-ups (the UI round, 2026-10-15): the cameras, moved here from Dashboard. */
-    private static String popupsBody() {
-        return "<div class=\"actions\"><a class=\"onward\" href=\"/cameras\">Pop-up cameras</a>"
-                + "</div>";
+    /**
+     * Cameras: one row a camera, then More camera settings, as Automations lists its rules; a
+     * row opens the Cameras page on that camera, as on the panel.
+     */
+    private String camerasBody() {
+        StringBuilder rows = new StringBuilder();
+        for (Cameras.Camera camera : KioskConfig.camerasOf(context)) {
+            rows.append(linkRow("/cameras?id=" + urlEncode("c:" + camera.name), "cameras",
+                    camera.name, camera.url, null, ""));
+        }
+        return (rows.length() == 0 ? "" : "<ul class=\"list seg\">" + rows + "</ul>")
+                + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                + "<a class=\"btn text\" href=\"/cameras\">More camera settings" + glyph("next")
+                + "</a></div>";
     }
 
     /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */
@@ -6890,11 +7200,15 @@ final class HttpAdminServer {
 
     /** BoringSSL's words for "that was an HTTP request, not a handshake". */
     private static boolean looksLikePlainHttp(IOException handshakeFailure) {
-        // Conscrypt reports "Handshake failed" and keeps BoringSSL's reason in the cause.
+        // Conscrypt reports "Handshake failed" and keeps BoringSSL's reason in the cause. The
+        // Conscrypt of Android 16 (updated through the Play system updates) words it "Unable to
+        // parse TLS packet header" instead: measured on the Mi, 2026-10-20, where plain http://
+        // got an empty reply.
         for (Throwable step = handshakeFailure; step != null; step = step.getCause()) {
             String message = String.valueOf(step.getMessage()).toUpperCase(Locale.ROOT);
             if (message.contains("HTTP_REQUEST") || message.contains("HTTP REQUEST")
-                    || message.contains("WRONG_VERSION_NUMBER") || message.contains("WRONG VERSION")) {
+                    || message.contains("WRONG_VERSION_NUMBER") || message.contains("WRONG VERSION")
+                    || message.contains("UNABLE TO PARSE TLS PACKET HEADER")) {
                 return true;
             }
         }

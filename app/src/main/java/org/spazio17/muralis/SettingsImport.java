@@ -88,6 +88,11 @@ final class SettingsImport {
                 refused.add("escape_pin_hash: not a PIN this app wrote");
                 continue;
             }
+            if ("camera_logins".equals(secret.getKey())) {
+                // In the form the panel writes it, anything unreadable left out.
+                editor.cameraLogins(Cameras.parseLogins(secret.getValue()));
+                continue;
+            }
             editor.importedSecret(secret.getKey(), secret.getValue());
         }
         editor.apply();
@@ -104,8 +109,10 @@ final class SettingsImport {
     /** A JSON text value in the form the panel writes it, so a reformatted file stores the same. */
     private static Object normalised(String key, Object value) {
         switch (key) {
-            case "popup_cameras":
-                return PopupCameras.format(PopupCameras.parse((String) value));
+            case "cameras":
+                return Cameras.format(Cameras.parse((String) value));
+            case "camera_groups":
+                return Cameras.formatGroups(Cameras.parseGroups((String) value));
             case "certificate_pins":
                 return CertificatePins.format(CertificatePins.parse((String) value));
             default:
@@ -238,9 +245,12 @@ final class SettingsImport {
                 }
                 return text.isEmpty() || !rules.isEmpty() ? null : "not a list of rules";
             }
-            case "popup_cameras":
-                return PopupCameras.parse(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
+            case "cameras":
+                return Cameras.parse(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
                         ? "not a list of cameras" : null;
+            case "camera_groups":
+                return Cameras.parseGroups(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
+                        ? "not a list of camera groups" : null;
             case "beacon_names":
             case "certificate_pins":
                 return null;

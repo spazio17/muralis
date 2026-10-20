@@ -17,7 +17,7 @@ import java.util.Map;
 public final class AutomationsTest {
     private static final long T0 = 1_000_000L;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         testStoreRoundTrip();
         testChangeTimesAndMarkers();
         testValidateRefusals();
@@ -30,6 +30,7 @@ public final class AutomationsTest {
         testEngineSeedLetsTheFirstEventFire();
         testIdShape();
         testTagEvents();
+        testCameraEvents();
         testTimeOfDay();
         testBatteryAboveAndNewActions();
         System.out.println("AutomationsTest passed");
@@ -42,6 +43,7 @@ public final class AutomationsTest {
         names.put("nfc", "NFC");
         names.put("battery", "Battery");
         names.put(Automations.TIME, Automations.TIME_NAME);
+        names.put(Automations.CAMERAS, Automations.CAMERAS_NAME);
         return names;
     }
 
@@ -384,11 +386,71 @@ public final class AutomationsTest {
         Automations.Rule one = rule("nfc", "tag", "reload");
         one.id = "r2";
         one.tag = "04A32B9C";
+        any.cooldown = 0;
+        one.cooldown = 0;
         engine.rules(java.util.Arrays.asList(any, one));
         engine.event("nfc", "FFFF", 600);
         require(runs.ran.equals(Collections.singletonList("r1")), "any tag runs the open rule alone");
         engine.event("nfc", "04a32b9c", 600);
         require(runs.ran.size() == 3 && runs.ran.get(2).equals("r2"), "the named tag runs both, id case-blind");
+    }
+
+    /** A camera's event: named, a group's rules too, the "not again within", the sentence. */
+    private static void testCameraEvents() throws org.json.JSONException {
+        Automations.Rule door = rule(Automations.CAMERAS, "triggered", "camera");
+        door.tag = "Door";
+        door.argument = "Front";
+        door.show = Automations.SHOW_FULLSCREEN;
+        door.seconds = 20;
+        door.chime = true;
+        require(Automations.validate(door, names()) == null, "a camera rule validates");
+        require(door.cooldown == Automations.DEFAULT_COOLDOWN, "a new rule waits 60 s by default");
+        require(door.name.equals("Test") && Automations.sentence(door).equals(
+                "A camera is triggered: Door, then Show a camera \"Front\" full screen for 20 s"
+                        + " with a chime, not again within 60 s"), Automations.sentence(door));
+        Automations.Rule none = rule(Automations.CAMERAS, "triggered", "display_on");
+        require(Automations.validate(none, names()) != null, "a camera rule names its camera");
+        Automations.Rule bad = rule(Automations.CAMERAS, "triggered", "camera");
+        bad.tag = "Door";
+        bad.argument = "Front";
+        bad.show = "sideways";
+        require(Automations.validate(bad, names()) != null, "show is pop-up or full screen");
+        bad.show = Automations.SHOW_POPUP;
+        bad.seconds = 301;
+        require(Automations.validate(bad, names()) != null, "the time is 0 to 300 s");
+        Automations.Rule light = rule("light", "darker", "display_on");
+        light.level = 5;
+        light.cooldown = 30;
+        light.chime = true;
+        require(Automations.validate(light, names()) == null && light.cooldown == 0
+                && !light.chime, "not again within and chime only where they apply");
+        Automations.Rule group = rule(Automations.CAMERAS, "triggered", "reload");
+        group.id = "r2";
+        group.tag = "Outside";
+        group.cooldown = 0;
+        Runs runs = new Runs();
+        Automations.Engine engine = new Automations.Engine(runs);
+        engine.rules(java.util.Arrays.asList(door, group));
+        java.util.Set<String> doorAndGroups = new java.util.HashSet<>(
+                java.util.Arrays.asList("Door", "outside"));
+        int[] first = engine.event(Automations.CAMERAS, doorAndGroups, 600, 1_000);
+        require(first[0] == 2 && runs.ran.size() == 2, "the camera's rule and its group's run");
+        int[] again = engine.event(Automations.CAMERAS, doorAndGroups, 600, 30_000);
+        require(again[0] == 1 && again[1] == 1, "inside its 60 s the camera's rule waits");
+        int[] later = engine.event(Automations.CAMERAS, doorAndGroups, 600, 62_000);
+        require(later[0] == 2, "after it, it runs again");
+        int[] other = engine.event(Automations.CAMERAS,
+                java.util.Collections.singleton("Garden"), 600, 200_000);
+        require(other[0] == 0 && other[1] == 0, "another camera runs neither");
+        org.json.JSONObject stored = Automations.toJson(java.util.Collections.singletonList(door), false)
+                .optJSONObject(0);
+        Automations.Rule back = Automations.parseRule(stored);
+        require(back.show.equals("fullscreen") && back.seconds == 20 && back.chime
+                && back.cooldown == 60, "the new fields round-trip");
+        org.json.JSONObject older = new org.json.JSONObject(
+                stored.toString().replace("\"cooldown\":60,", ""));
+        require(!older.has("cooldown") && Automations.parseRule(older).cooldown == 0,
+                "a rule stored before the field runs every time, as it did");
     }
 
     private static void require(boolean condition, String message) {

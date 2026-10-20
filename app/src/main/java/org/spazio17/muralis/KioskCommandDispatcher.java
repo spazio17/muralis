@@ -149,6 +149,12 @@ final class KioskCommandDispatcher {
         void setDashboardUrl(String url);
 
         /**
+         * {@code kiosk.set_cameras}: a camera or a group as the panel's main view, or the web
+         * page again for an empty name. Returns why not, or null.
+         */
+        String setDashboardCameras(String name);
+
+        /**
          * Shows {@code url} now without storing it, so the next reload of the *kiosk* (a restart,
          * a reboot, the nightly clean) returns to the stored dashboard. For a URL with one-off
          * query parameters, which is what a stored dashboard URL must not become.
@@ -176,10 +182,16 @@ final class KioskCommandDispatcher {
         void showPopup(Popup.Request request);
 
         /**
-         * A camera's pop-up: shown on demand, or for a doorbell's trigger by the
-         * camera's mode and cooldown. Returns why it does not show, or null.
+         * {@code camera.show}: a camera or a group shown at once, as a pop-up or full screen
+         * ({@code show}, "popup" or "fullscreen"). Returns why not, or null.
          */
-        String cameraPopup(String name, boolean trigger);
+        String cameraShow(String name, String show);
+
+        /**
+         * {@code camera.trigger}: the camera's event, for the automations that wait for it or
+         * for a group it is in. Returns why nothing ran, or null.
+         */
+        String cameraTrigger(String name);
 
         /**
          * Stores one browser option, already checked and canonical (a number as digits, the
@@ -310,6 +322,11 @@ final class KioskCommandDispatcher {
                 executor.openUrlOnce(args.url.trim());
                 return accepted();
             }
+            case "kiosk.set_cameras": {
+                String problem = executor.setDashboardCameras(
+                        args.value == null ? "" : args.value.trim());
+                return problem == null ? accepted() : rejected(problem);
+            }
             case "kiosk.home":
                 executor.showMainDashboard();
                 return accepted();
@@ -385,13 +402,23 @@ final class KioskCommandDispatcher {
             case "light.off":
                 executor.setStatusLight(false, null, -1);
                 return accepted();
-            case "camera.show":
+            case "camera.show": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must name the camera or group");
+                }
+                String show = args.extra.get("as");
+                show = show == null || show.trim().isEmpty() ? "popup" : show.trim();
+                if (!show.equals("popup") && !show.equals("fullscreen")) {
+                    return rejected("as must be popup or fullscreen");
+                }
+                String problem = executor.cameraShow(args.value.trim(), show);
+                return problem == null ? accepted() : rejected(problem);
+            }
             case "camera.trigger": {
                 if (args.value == null || args.value.trim().isEmpty()) {
-                    return rejected("value must name the camera");
+                    return rejected("value must name the camera or group");
                 }
-                String problem = executor.cameraPopup(args.value.trim(),
-                        "camera.trigger".equals(command));
+                String problem = executor.cameraTrigger(args.value.trim());
                 return problem == null ? accepted() : rejected(problem);
             }
             case "panel.notify": {
