@@ -515,3 +515,5 @@ dialog.qr-full::backdrop{background:#fff}
 .qr-full-left[hidden]{display:none}
 dialog.qr-full .qr-full-close{position:absolute;top:8px;inset-inline-start:8px;min-height:48px;color:rgba(0,0,0,.87);background:transparent;border-color:transparent}
 dialog.qr-full .qr-full-close svg{color:rgba(0,0,0,.87)}
+/* The Cameras page's left list: the groups under a head of their own, 24 px below the cameras. */
+.ld .nav .cardhead.groups{margin-top:16px}

@@ -2848,29 +2848,186 @@ public final class KioskActivity extends Activity {
         overlayWatch = null;
     }
 
-    /**
-     * The cameras, a page under the Cameras section: each camera's card with Save, Show and
-     * Remove, then one to add a camera; the web admin's Cameras page is the same.
-     */
+    /** The camera or group chosen on the Cameras page: "c:" or "g:" and its name, empty to add. */
+    private String selectedCameraItem;
+
     private void showCamerasPage() {
+        showCamerasPage(null);
+    }
+
+    /**
+     * The Cameras page, as Automations is: from 840 dp the cameras stand at the left, then the
+     * groups under their own head when there are any, Add a camera and Add a group under them, and
+     * the chosen one's box at the right; below that one list, and a box is a page of its own.
+     * {@code select} is "c:" or "g:" and a name (empty to add one), or null for the last chosen.
+     */
+    private void showCamerasPage(String select) {
+        boolean wide = widthClass() == 2;
+        if (!wide && select != null) {
+            showCameraItemPage(select);
+            return;
+        }
         currentScreen = this::showCamerasPage;
         LinearLayout page = subPage("Cameras", this::showSettings);
         KioskTheme theme = currentTheme();
         java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
-        java.util.Map<String, Cameras.Login> logins = KioskConfig.cameraLoginsOf(this);
-        java.util.List<View> cards = new java.util.ArrayList<>();
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
+        String chosen = null;
+        if (wide) {
+            chosen = cameraItemOrFirst(select != null ? select : selectedCameraItem, cameras,
+                    groups);
+            selectedCameraItem = chosen;
+        }
+        LinearLayout list = wide ? navPanel(theme) : card(theme, null);
+        TextView count = new FlushText(this);
+        count.setText(camerasSummary());
+        list.addView(listHead(theme, "Cameras", count), listHeadParams(wide));
+        if (cameras.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setText("No cameras yet.");
+            none.setTextColor(theme.subtext);
+            none.setTextSize(14);
+            if (wide) {
+                none.setPadding(dp(12), dp(12), dp(12), dp(12));
+            }
+            list.addView(none, matchWrap());
+        }
         for (Cameras.Camera camera : cameras) {
-            cards.add(cameraCard(theme, camera,
-                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT))));
+            addCameraItemRow(list, theme, wide, "c:" + camera.name, camera.name, camera.url,
+                    camera == cameras.get(0), chosen);
         }
+        if (!groups.isEmpty()) {
+            // The groups under a head of their own, as the cameras: two lists of the same rank
+            // (Emmet's UI review, 2026-10-20: a bare line said nothing and drew a third edge).
+            TextView groupCount = new FlushText(this);
+            groupCount.setText(Cameras.groupsSummary(groups));
+            LinearLayout.LayoutParams groupHead = listHeadParams(wide);
+            groupHead.topMargin = dp(24);
+            list.addView(listHead(theme, "Groups", groupCount), groupHead);
+            list.setTag(null);
+            for (Cameras.Group group : groups) {
+                int members = Cameras.resolve(cameras, groups, group.name).size();
+                addCameraItemRow(list, theme, wide, "g:" + group.name, group.name,
+                        members == 1 ? "1 camera" : members + " cameras",
+                        group == groups.get(0), chosen);
+            }
+        }
+        java.util.List<Button> adds = new java.util.ArrayList<>();
         if (cameras.size() < Cameras.MAX_CAMERAS) {
-            cards.add(cameraCard(theme, null, null));
+            Button addCamera = tonalButton(theme, "Add a camera");
+            addCamera.setOnClickListener(view -> openCameraItem(wide, "c:"));
+            adds.add(addCamera);
         }
-        page.addView(cardGrid(theme, cards), matchWrap());
+        // A group once there is a camera to put in one.
+        if (!cameras.isEmpty() && groups.size() < Cameras.MAX_GROUPS) {
+            Button addGroup = tonalButton(theme, "Add a group");
+            addGroup.setOnClickListener(view -> openCameraItem(wide, "g:"));
+            adds.add(addGroup);
+        }
+        if (!adds.isEmpty()) {
+            LinearLayout addRow = fittingButtonRow(adds.toArray(new Button[0]));
+            if (wide) {
+                addRow.setPadding(dp(12), dp(8), dp(12), dp(4));
+            }
+            list.addView(addRow, matchWrap());
+        }
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        if (wide) {
+            final String shown = chosen;
+            currentScreen = () -> showCamerasPage(shown);
+            page.addView(listDetailPair(list, cameraItemBox(theme, chosen, true)), params);
+        } else {
+            page.addView(paneOf(list), params);
+        }
         setContentView(scrollPage(theme, page));
     }
 
-    private LinearLayout cameraCard(KioskTheme theme, Cameras.Camera camera, Cameras.Login login) {
+    /** A camera's or a group's row at the left, chosen beside its box or opening its page. */
+    private void addCameraItemRow(LinearLayout list, KioskTheme theme, boolean wide, String item,
+            String name, String sub, boolean first, String chosen) {
+        Runnable open = () -> openCameraItem(wide, item);
+        LinearLayout row = glyphRow(theme, R.drawable.ic_cameras, name, sub, null, open, false,
+                !wide);
+        if (wide) {
+            addMenuRow(list, theme, row, first, item.equals(chosen), open);
+        } else {
+            addListRow(list, theme, row, first);
+        }
+    }
+
+    private void openCameraItem(boolean wide, String item) {
+        hideKeyboardIfShown();
+        if (wide) {
+            redrawInPlace(() -> showCamerasPage(item));
+        } else {
+            showCameraItemPage(item);
+        }
+    }
+
+    /**
+     * The item to show: the one asked for when it still exists (or "c:" / "g:" to add one), else
+     * the first camera, else a new camera.
+     */
+    private static String cameraItemOrFirst(String item, java.util.List<Cameras.Camera> cameras,
+            java.util.List<Cameras.Group> groups) {
+        if (item != null) {
+            if (item.equals("c:") || (item.equals("g:") && !cameras.isEmpty())) {
+                return item;
+            }
+            if (item.startsWith("c:") && Cameras.find(cameras, item.substring(2)) != null) {
+                return "c:" + Cameras.find(cameras, item.substring(2)).name;
+            }
+            if (item.startsWith("g:") && Cameras.findGroup(groups, item.substring(2)) != null) {
+                return "g:" + Cameras.findGroup(groups, item.substring(2)).name;
+            }
+        }
+        return cameras.isEmpty() ? "c:" : "c:" + cameras.get(0).name;
+    }
+
+    /** Below 840 dp, a camera's or a group's box as a page of its own, back to the list. */
+    private void showCameraItemPage(String select) {
+        if (widthClass() == 2) {
+            showCamerasPage(select);
+            return;
+        }
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        String item = cameraItemOrFirst(select, cameras, KioskConfig.cameraGroupsOf(this));
+        currentScreen = () -> showCameraItemPage(item);
+        boolean group = item.startsWith("g:");
+        boolean fresh = item.length() == 2;
+        LinearLayout page = subPage(fresh ? (group ? "New group" : "New camera")
+                : (group ? "Edit group" : "Edit camera"), () -> showCamerasPage(null));
+        KioskTheme theme = currentTheme();
+        page.addView(paneOf(cameraItemBox(theme, item, false)), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** The box for {@code item}: a camera's, or a group's; empty names add one. */
+    private LinearLayout cameraItemBox(KioskTheme theme, String item, boolean wide) {
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        String name = item.substring(2);
+        if (item.startsWith("g:")) {
+            return cameraGroupCard(theme, cameras,
+                    name.isEmpty() ? null : Cameras.findGroup(KioskConfig.cameraGroupsOf(this), name),
+                    wide);
+        }
+        Cameras.Camera camera = name.isEmpty() ? null : Cameras.find(cameras, name);
+        return cameraCard(theme, camera, camera == null ? null : KioskConfig.cameraLoginsOf(this)
+                .get(camera.name.toLowerCase(java.util.Locale.ROOT)), wide);
+    }
+
+    /** After a save or a removal: the page again, on {@code item}. */
+    private void afterCameraChange(boolean wide, String item) {
+        if (wide) {
+            redrawInPlace(() -> showCamerasPage(item));
+        } else {
+            showCamerasPage(null);
+        }
+    }
+
+    private LinearLayout cameraCard(KioskTheme theme, Cameras.Camera camera, Cameras.Login login,
+            boolean wide) {
         boolean fresh = camera == null;
         LinearLayout card = card(theme, fresh ? "Add a camera" : camera.name);
         // A name, not a machine value: the prose box, as for a beacon's name.
@@ -2902,14 +3059,14 @@ public final class KioskActivity extends Activity {
                 // A camera removed elsewhere meanwhile: the page shows what is stored. Any
                 // other refusal keeps what was typed, to be corrected.
                 if (problem.endsWith("removed meanwhile")) {
-                    redrawInPlace(this::showCamerasPage);
+                    afterCameraChange(wide, null);
                 }
                 return;
             }
-            redrawInPlace(this::showCamerasPage);
+            afterCameraChange(wide, "c:" + nameInput.getText().toString().trim());
         });
         if (fresh) {
-            card.addView(buttonRow(save), matchWrap());
+            card.addView(fittingButtonRow(save), matchWrap());
         } else {
             Button show = textButton(theme, "Show");
             show.setOnClickListener(view -> {
@@ -2926,37 +3083,15 @@ public final class KioskActivity extends Activity {
             Button remove = textButton(theme, "Remove");
             remove.setOnClickListener(view -> {
                 KioskService.removeCamera(this, was);
-                redrawInPlace(this::showCamerasPage);
+                afterCameraChange(wide, null);
             });
-            card.addView(buttonRow(save, show, remove), matchWrap());
+            card.addView(fittingButtonRow(save, show, remove), matchWrap());
         }
         return card;
     }
 
-    /**
-     * The camera groups, a page under the Cameras section: each group's card with its name, a
-     * tick for each camera, Save, Show and Remove, then one to add a group; the web admin's
-     * Camera groups page is the same.
-     */
-    private void showCameraGroupsPage() {
-        currentScreen = this::showCameraGroupsPage;
-        LinearLayout page = subPage("Camera groups", this::showSettings);
-        KioskTheme theme = currentTheme();
-        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
-        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
-        java.util.List<View> cards = new java.util.ArrayList<>();
-        for (Cameras.Group group : groups) {
-            cards.add(cameraGroupCard(theme, cameras, group));
-        }
-        if (groups.size() < Cameras.MAX_GROUPS) {
-            cards.add(cameraGroupCard(theme, cameras, null));
-        }
-        page.addView(cardGrid(theme, cards), matchWrap());
-        setContentView(scrollPage(theme, page));
-    }
-
     private LinearLayout cameraGroupCard(KioskTheme theme, java.util.List<Cameras.Camera> cameras,
-            Cameras.Group group) {
+            Cameras.Group group, boolean wide) {
         boolean fresh = group == null;
         LinearLayout card = card(theme, fresh ? "Add a group" : group.name);
         // A name, not a machine value: the prose box, as for a beacon's name.
@@ -2996,14 +3131,14 @@ public final class KioskActivity extends Activity {
             if (problem != null) {
                 Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
                 if (problem.endsWith("removed meanwhile")) {
-                    redrawInPlace(this::showCameraGroupsPage);
+                    afterCameraChange(wide, null);
                 }
                 return;
             }
-            redrawInPlace(this::showCameraGroupsPage);
+            afterCameraChange(wide, "g:" + nameInput.getText().toString().trim());
         });
         if (fresh) {
-            card.addView(buttonRow(save), matchWrap());
+            card.addView(fittingButtonRow(save), matchWrap());
         } else {
             Button show = textButton(theme, "Show");
             show.setOnClickListener(view -> {
@@ -3019,9 +3154,9 @@ public final class KioskActivity extends Activity {
             Button remove = textButton(theme, "Remove");
             remove.setOnClickListener(view -> {
                 KioskService.removeCameraGroup(this, was);
-                redrawInPlace(this::showCameraGroupsPage);
+                afterCameraChange(wide, null);
             });
-            card.addView(buttonRow(save, show, remove), matchWrap());
+            card.addView(fittingButtonRow(save, show, remove), matchWrap());
         }
         return card;
     }
@@ -3956,31 +4091,18 @@ public final class KioskActivity extends Activity {
         volumeButtonsParams.topMargin = dp(14);
         escapeCard.addView(volumeButtonsInput, volumeButtonsParams);
 
-        // Cameras: one row a camera, nothing but Add a camera until the first one exists, as
-        // Automations lists its rules; each opens the Cameras page.
+        // Cameras: one row a camera, then More camera settings, as Automations lists its rules;
+        // a row opens the Cameras page on that camera.
         LinearLayout camerasCard = sectionBody(theme);
-        java.util.List<Cameras.Camera> cameraList = KioskConfig.camerasOf(this);
-        for (Cameras.Camera camera : cameraList) {
+        for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
+            String item = "c:" + camera.name;
             addListRow(camerasCard, theme, glyphRow(theme, R.drawable.ic_cameras, camera.name,
-                    camera.url, null, this::showCamerasPage, false, false),
+                    camera.url, null, () -> showCamerasPage(item), false, false),
                     camerasCard.getChildCount() == 0);
         }
-        java.util.List<Button> cameraButtons = new java.util.ArrayList<>();
-        if (cameraList.size() < Cameras.MAX_CAMERAS) {
-            Button camerasMore = textButtonOnward(theme, "Add a camera");
-            camerasMore.setOnClickListener(view -> showCamerasPage());
-            cameraButtons.add(camerasMore);
-        }
-        // Groups once there is a camera to put in one.
-        if (!cameraList.isEmpty()) {
-            Button groupsMore = textButtonOnward(theme, "Groups");
-            groupsMore.setOnClickListener(view -> showCameraGroupsPage());
-            cameraButtons.add(groupsMore);
-        }
-        if (!cameraButtons.isEmpty()) {
-            camerasCard.addView(fittingButtonRow(cameraButtons.toArray(new Button[0])),
-                    matchWrap());
-        }
+        Button camerasMore = textButtonOnward(theme, "More camera settings");
+        camerasMore.setOnClickListener(view -> showCamerasPage());
+        camerasCard.addView(buttonRow(camerasMore), matchWrap());
 
         // Integrations (2026-10-15): in the menu already, empty until the first ones come.
         LinearLayout integrationsCard = sectionBody(theme);

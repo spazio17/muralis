@@ -997,13 +997,12 @@ final class HttpAdminServer {
             if (refusal == null) {
                 KioskService.reloadConfiguration(context);
             }
-        } else if (path.equals("/camera-groups") && method.equals("GET")) {
-            writeResponse(output, 200, "text/html; charset=utf-8",
-                    bytes(buildCameraGroupsPage(null)));
         } else if (path.equals("/camera-groups") && method.equals("POST")) {
-            String notice = saveCameraGroup(parseFormBody(headers, body));
+            Map<String, String> form = parseFormBody(headers, body);
+            String notice = saveCameraGroup(form);
             writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
-                    "text/html; charset=utf-8", bytes(buildCameraGroupsPage(notice)));
+                    "text/html; charset=utf-8", bytes(buildCamerasPage(notice,
+                            savedItem("g:", form, notice), false)));
         } else if (path.equals("/camera-view") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
         } else if (path.equals("/camera-view") && method.equals("POST")) {
@@ -1021,14 +1020,21 @@ final class HttpAdminServer {
                     bytes(buildCameraViewPage(refused == null ? "Saved." : "Not saved: " + refused
                             + ".")));
         } else if (path.equals("/cameras") && method.equals("GET")) {
-            writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCamerasPage(null)));
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildCamerasPage(null, queryValue(query, "id"), false)));
+        } else if (path.equals("/camera") && method.equals("GET")) {
+            String item = queryValue(query, "id");
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildCamerasPage(null, item == null ? "c:" : item, true)));
         } else if (path.equals("/adopt") && method.equals("POST")) {
             adoptByCode(parseFormBody(headers, body), output);
         } else if (path.equals("/cameras") && method.equals("POST")) {
             // Show answers with a notice too; only a refusal ("Not ...") is a 400.
-            String notice = saveCamera(parseFormBody(headers, body));
+            Map<String, String> form = parseFormBody(headers, body);
+            String notice = saveCamera(form);
             writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
-                    "text/html; charset=utf-8", bytes(buildCamerasPage(notice)));
+                    "text/html; charset=utf-8", bytes(buildCamerasPage(notice,
+                            savedItem("c:", form, notice), false)));
         } else if (path.equals("/fleet") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildFleetPage(null, queryValue(query, "scope"))));
@@ -2416,10 +2422,16 @@ final class HttpAdminServer {
      * no wider than 640 px (2026-09-27).
      */
     private String listDetail(String kind, boolean detailPage, String nav, String detail) {
+        return listDetail(kind, detailPage, nav, detail, "");
+    }
+
+    /** The same, {@code attributes} telling the script a page's own addresses (Cameras). */
+    private String listDetail(String kind, boolean detailPage, String nav, String detail,
+            String attributes) {
         return "<div class=\"ld\" id=\"ld-" + kind + "\" data-kind=\"" + kind + "\" data-page=\""
                 + (detailPage ? "detail" : "list") + "\" data-title=\""
                 + escapeHtml(Character.toUpperCase(kind.charAt(0)) + kind.substring(1)) + "\""
-                + listsAttributes(kind + "_page") + ">"
+                + attributes + listsAttributes(kind + "_page") + ">"
                 + nav + "<div class=\"detail\">" + detail + "</div></div>" + listDetailScript;
     }
 
@@ -3917,25 +3929,103 @@ final class HttpAdminServer {
     }
 
     /**
-     * The cameras, a page of their own: each camera's form with Save, Show and Remove, then an
-     * empty one to add a camera. The panel's Cameras page is the same.
+     * The Cameras page, as Automations is: the cameras, then the groups under their own head
+     * when there are any, Add a camera and Add a group under them, and beside them from 840 px the chosen one's
+     * form; below 840 px the list, and a form is a page of its own ({@code detailPage}). The
+     * panel's Cameras page is the same. {@code selected} is "c:" or "g:" and a name, empty to
+     * add one.
      */
-    private String buildCamerasPage(String notice) {
-        StringBuilder html = new StringBuilder(pageStart("Cameras", null,
-                settingsAt("cameras")));
-        if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
-        }
+    private String buildCamerasPage(String notice, String selected, boolean detailPage) {
         java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
         java.util.Map<String, Cameras.Login> logins = KioskConfig.cameraLoginsOf(context);
+        String chosen = cameraItemOrFirst(selected, cameras, groups);
+        StringBuilder rows = new StringBuilder();
         for (Cameras.Camera camera : cameras) {
-            html.append(cameraForm(camera,
-                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT))));
+            String id = "c:" + camera.name;
+            rows.append(navRow(linkRow("/camera?id=" + urlEncode(id), "cameras", camera.name,
+                    camera.url, null, ""), id, id.equals(chosen)));
+        }
+        StringBuilder groupRows = new StringBuilder();
+        for (Cameras.Group group : groups) {
+            String id = "g:" + group.name;
+            int members = Cameras.resolve(cameras, groups, group.name).size();
+            groupRows.append(navRow(linkRow("/camera?id=" + urlEncode(id), "cameras", group.name,
+                    members == 1 ? "1 camera" : members + " cameras", null, ""),
+                    id, id.equals(chosen)));
+        }
+        String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Cameras</h2>"
+                + "<span class=\"count\">" + escapeHtml(Cameras.summary(cameras)) + "</span></div>"
+                + (rows.length() == 0 ? "<p class=\"hint\">No cameras yet.</p>"
+                        : "<ul class=\"list seg\">" + rows + "</ul>")
+                // The groups under a head of their own, as the cameras, only when there are any.
+                + (groupRows.length() == 0 ? "" : "<div class=\"cardhead groups\"><h2>Groups</h2>"
+                        + "<span class=\"count\">" + escapeHtml(Cameras.groupsSummary(groups))
+                        + "</span></div><ul class=\"list seg\">" + groupRows + "</ul>")
+                + "<div class=\"actions\">"
+                + (cameras.size() >= Cameras.MAX_CAMERAS ? ""
+                        : "<a class=\"btn tonal\" href=\"/camera?id=c%3A\" data-pane=\"c:\">"
+                                + glyph("plus") + "Add a camera</a>")
+                + (cameras.isEmpty() || groups.size() >= Cameras.MAX_GROUPS ? ""
+                        : "<a class=\"btn tonal\" href=\"/camera?id=g%3A\" data-pane=\"g:\">"
+                                + glyph("plus") + "Add a group</a>")
+                + "</div></section>";
+        // One form per camera and per group, and one to add each, every one in its pane, so
+        // choosing at the left is a switch of panes.
+        StringBuilder detail = new StringBuilder();
+        for (Cameras.Camera camera : cameras) {
+            detail.append(pane("c:" + camera.name, chosen, cameraForm(camera,
+                    logins.get(camera.name.toLowerCase(java.util.Locale.ROOT)))));
         }
         if (cameras.size() < Cameras.MAX_CAMERAS) {
-            html.append(cameraForm(null, null));
+            detail.append(pane("c:", chosen, cameraForm(null, null)));
         }
-        return html.append(pageEnd()).toString();
+        for (Cameras.Group group : groups) {
+            detail.append(pane("g:" + group.name, chosen, cameraGroupForm(cameras, group)));
+        }
+        if (!cameras.isEmpty() && groups.size() < Cameras.MAX_GROUPS) {
+            detail.append(pane("g:", chosen, cameraGroupForm(cameras, null)));
+        }
+        boolean group = chosen.startsWith("g:");
+        boolean fresh = chosen.length() == 2;
+        return pageStart(!detailPage ? "Cameras" : fresh ? (group ? "New group" : "New camera")
+                        : (group ? "Edit group" : "Edit camera"),
+                null, detailPage ? "/cameras" : settingsAt("cameras"))
+                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + listDetail("cameras", detailPage, nav, detail.toString(),
+                        " data-base=\"/cameras?id=\" data-list=\"/cameras\"")
+                + pageEnd();
+    }
+
+    private static String pane(String id, String chosen, String content) {
+        return "<div class=\"pane\" data-id=\"" + escapeHtml(id) + "\""
+                + (id.equals(chosen) ? "" : " hidden") + ">" + content + "</div>";
+    }
+
+    /** The item to show: the one asked for when it still exists, else the first camera. */
+    private static String cameraItemOrFirst(String item, java.util.List<Cameras.Camera> cameras,
+            java.util.List<Cameras.Group> groups) {
+        if (item != null) {
+            if (item.equals("c:") || (item.equals("g:") && !cameras.isEmpty())) {
+                return item;
+            }
+            if (item.startsWith("c:") && Cameras.find(cameras, item.substring(2)) != null) {
+                return "c:" + Cameras.find(cameras, item.substring(2)).name;
+            }
+            if (item.startsWith("g:") && Cameras.findGroup(groups, item.substring(2)) != null) {
+                return "g:" + Cameras.findGroup(groups, item.substring(2)).name;
+            }
+        }
+        return cameras.isEmpty() ? "c:" : "c:" + cameras.get(0).name;
+    }
+
+    /** What the page shows after a form's post: the saved one, or the one that was being edited. */
+    private static String savedItem(String kind, Map<String, String> form, String notice) {
+        if (notice == null || !notice.startsWith("Not ")) {
+            return "remove".equals(form.get("what")) ? null
+                    : kind + form.getOrDefault("name", form.getOrDefault("was", "")).trim();
+        }
+        return kind + form.getOrDefault("was", "").trim();
     }
 
     private static String cameraForm(Cameras.Camera camera, Cameras.Login login) {
@@ -4210,27 +4300,6 @@ final class HttpAdminServer {
                 + "\" name=\"dashboard_cameras\" value=\"" + escapeHtml(value) + "\""
                 + (value.equalsIgnoreCase(chosen) ? " checked" : "") + ">" + escapeHtml(label)
                 + "</label>";
-    }
-
-    /**
-     * The camera groups, a page of their own: each group's form with its name, a tick for each
-     * camera, Save, Show and Remove, then an empty one to add a group. The panel's is the same.
-     */
-    private String buildCameraGroupsPage(String notice) {
-        StringBuilder html = new StringBuilder(pageStart("Camera groups", null,
-                settingsAt("cameras")));
-        if (notice != null) {
-            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
-        }
-        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(context);
-        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
-        for (Cameras.Group group : groups) {
-            html.append(cameraGroupForm(cameras, group));
-        }
-        if (groups.size() < Cameras.MAX_GROUPS) {
-            html.append(cameraGroupForm(cameras, null));
-        }
-        return html.append(pageEnd()).toString();
     }
 
     private static String cameraGroupForm(java.util.List<Cameras.Camera> cameras,
@@ -4929,24 +4998,19 @@ final class HttpAdminServer {
     }
 
     /**
-     * Cameras: one row a camera, nothing but Add a camera until the first one exists, as
-     * Automations lists its rules; each opens the Cameras page, as on the panel.
+     * Cameras: one row a camera, then More camera settings, as Automations lists its rules; a
+     * row opens the Cameras page on that camera, as on the panel.
      */
     private String camerasBody() {
         StringBuilder rows = new StringBuilder();
-        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(context);
-        for (Cameras.Camera camera : cameras) {
-            rows.append(linkRow("/cameras", "cameras", camera.name, camera.url, null, ""));
+        for (Cameras.Camera camera : KioskConfig.camerasOf(context)) {
+            rows.append(linkRow("/cameras?id=" + urlEncode("c:" + camera.name), "cameras",
+                    camera.name, camera.url, null, ""));
         }
         return (rows.length() == 0 ? "" : "<ul class=\"list seg\">" + rows + "</ul>")
-                + ("<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
-                        + (cameras.size() >= Cameras.MAX_CAMERAS ? ""
-                                : "<a class=\"btn text\" href=\"/cameras\">Add a camera"
-                                        + glyph("next") + "</a>")
-                        // Groups once there is a camera to put in one.
-                        + (cameras.isEmpty() ? "" : "<a class=\"btn text\" href=\"/camera-groups\">"
-                                + "Groups" + glyph("next") + "</a>")
-                        + "</div>");
+                + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
+                + "<a class=\"btn text\" href=\"/cameras\">More camera settings" + glyph("next")
+                + "</a></div>";
     }
 
     /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */
