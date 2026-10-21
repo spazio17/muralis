@@ -2570,7 +2570,11 @@ public final class KioskActivity extends Activity {
             pinsCard.addView(row, matchWrapClose());
             Button remove = textButton(theme, "Remove");
             String host = pin.getKey();
-            remove.setOnClickListener(view -> KioskService.forgetCertificate(this, host));
+            remove.setOnClickListener(view -> confirmRemove("Remove the certificate for " + host + "?",
+                    CertificatePins.REMOVED, () -> {
+                        KioskService.forgetCertificate(this, host);
+                        showBrowserOptionsPage();
+                    }));
             pinsCard.addView(buttonRow(remove), matchWrap());
         }
         if (!pins.isEmpty()) {
@@ -3081,10 +3085,11 @@ public final class KioskActivity extends Activity {
                 showDashboard(KioskConfig.load(this).dashboardUrl);
             });
             Button remove = textButton(theme, "Remove");
-            remove.setOnClickListener(view -> {
-                KioskService.removeCamera(this, was);
-                afterCameraChange(wide, null);
-            });
+            remove.setOnClickListener(view -> confirmRemove("Remove \"" + was + "\"?",
+                    Cameras.REMOVED, () -> {
+                        KioskService.removeCamera(this, was);
+                        afterCameraChange(wide, null);
+                    }));
             card.addView(fittingButtonRow(save, show, remove), matchWrap());
         }
         return card;
@@ -3152,10 +3157,11 @@ public final class KioskActivity extends Activity {
                 showDashboard(KioskConfig.load(this).dashboardUrl);
             });
             Button remove = textButton(theme, "Remove");
-            remove.setOnClickListener(view -> {
-                KioskService.removeCameraGroup(this, was);
-                afterCameraChange(wide, null);
-            });
+            remove.setOnClickListener(view -> confirmRemove("Remove \"" + was + "\"?",
+                    Cameras.GROUP_REMOVED, () -> {
+                        KioskService.removeCameraGroup(this, was);
+                        afterCameraChange(wide, null);
+                    }));
             card.addView(fittingButtonRow(save, show, remove), matchWrap());
         }
         return card;
@@ -8082,7 +8088,7 @@ public final class KioskActivity extends Activity {
                     : "Trusted broker certificate, SHA-256 " + config.mqttTlsPin);
             card.addView(line, matchWrapClose());
             Button act = textButton(theme, asking ? "Trust" : "Remove");
-            act.setOnClickListener(view -> {
+            Runnable store = () -> {
                 KioskConfig.edit(this).mqttTlsPin(asking ? refused.fingerprint : "").apply();
                 MqttTls.waiting = null;
                 KioskService.reloadConfiguration(this);
@@ -8090,6 +8096,20 @@ public final class KioskActivity extends Activity {
                 if (currentScreen != null) {
                     currentScreen.run();
                 }
+            };
+            // Trust is a choice made on the line it shows; Remove takes the broker away, asked.
+            // What is on screen is taken at the tap: the settings, built by then.
+            act.setOnClickListener(view -> {
+                if (asking) {
+                    store.run();
+                    return;
+                }
+                Runnable screen = currentScreen;
+                confirmRemove("Remove the trusted broker certificate?", MqttTls.REMOVED, () -> {
+                    currentScreen = screen != null ? screen
+                            : () -> showConfiguration(KioskConfig.load(this));
+                    store.run();
+                });
             });
             card.addView(fittingButtonRow(act), matchWrapClose());
         }
@@ -9837,6 +9857,32 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
         currentScreen = () ->
                 showConfirm(title, message, confirmLabel, destructive, onConfirm, onCancel);
+    }
+
+    /**
+     * Asks before removing something kept in the settings (a camera, a group, a trusted
+     * certificate): {@code title} such as {@code Remove "Door"?}, what changes after it, and the
+     * button Remove, in red. Cancel puts back the screen exactly as it was, what was typed in it
+     * included; {@code onRemove} redraws whatever it changed.
+     */
+    private void confirmRemove(String title, String consequence, Runnable onRemove) {
+        ViewGroup content = findViewById(android.R.id.content);
+        View shown = content != null && content.getChildCount() > 0 ? content.getChildAt(0) : null;
+        Runnable screen = currentScreen;
+        Runnable back = pageBack;
+        int width = widthClass();
+        showConfirm(title, consequence, "Remove", true, onRemove, () -> {
+            // Turned meanwhile to another width, the screen is drawn again for it instead.
+            if (shown != null && widthClass() == width) {
+                pendingBack = back;
+                setContentView(shown);
+                currentScreen = screen;
+            } else if (screen != null) {
+                screen.run();
+            } else {
+                showConfiguration(KioskConfig.load(this));
+            }
+        });
     }
 
     /**

@@ -240,6 +240,8 @@ details.box>summary .chev{color:var(--subtext);display:inline-flex;transition:tr
 details.box[open]>summary{background:var(--card-high)}
 details.box[open]>summary .chev{transform:rotate(180deg)}
 details.box>.body{padding:8px 16px 24px 68px}
+/* A phone has no width for the indent past the glyph: the full row, as the panel's accordion. */
+@media (max-width:599px){details.box>.body{padding-left:16px}}
 details.box>.body .field label{background:var(--card)}
 header.appbar .field label{background:var(--base)}
 .sections{background:var(--card);border-radius:var(--radius);padding:8px}

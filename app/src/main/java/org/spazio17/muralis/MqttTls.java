@@ -35,6 +35,10 @@ final class MqttTls {
     /** The broker's certificate last refused, waiting for a person's answer; null when none. */
     static volatile CertificatePins.Waiting waiting;
 
+    /** What the question before removing the trusted broker certificate adds, on both surfaces. */
+    static final String REMOVED = "The broker is refused from the next connection until its"
+            + " certificate is trusted again.";
+
     private MqttTls() {
     }
 
