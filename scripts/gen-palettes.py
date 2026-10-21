@@ -45,7 +45,7 @@ def scheme(seed, dark):
 
 CSS_NAMES = ['base', 'mantle', 'surface', 'surface-alt', 'border', 'text', 'subtext', 'accent',
              'accent-alt', 'ok', 'warn', 'bad', 'ink-alt', 'on-accent', 'lowest']
-java = ['/*', ' * Copyright 2026 Muralis contributors', ' * Fair Core License, FCL-1.0-ALv2: see LICENSE.md at the repository root.', ' */',
+java = ['/*', ' * Copyright 2026 Muralis contributors', ' * Licensed under the PolyForm Shield License 1.0.0: see LICENSE.md at the repository root.', ' */',
         'package org.spazio17.muralis;', '',
         '/**', ' * Muralis\'s colour scheme, Material 3 from the ultramarine seed, dark and light, fifteen colours:',
         ' * the thirteen of KioskTheme\'s constructor, then on-primary and surface-container-lowest.',
