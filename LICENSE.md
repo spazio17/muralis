@@ -1,120 +1,95 @@
-# Fair Core License, Version 1.0, ALv2 Future License
+# PolyForm Shield License 1.0.0
 
-## Abbreviation
+<https://polyformproject.org/licenses/shield/1.0.0>
 
-FCL-1.0-ALv2
+## Acceptance
 
-## Notice
+In order to get any license under these terms, you must agree to them as both strict obligations and conditions to all your licenses.
 
-Copyright 2026 Juri Calleri (spazio17)
+## Copyright License
 
-## Terms and Conditions
+The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose.  However, you may only distribute the software according to [Distribution License](#distribution-license) and make changes or new works based on the software according to [Changes and New Works License](#changes-and-new-works-license).
 
-### Licensor ("We")
+## Distribution License
 
-The party offering the Software under these Terms and Conditions.
+The licensor grants you an additional copyright license to distribute copies of the software.  Your license to distribute covers distributing the software with changes and new works permitted by [Changes and New Works License](#changes-and-new-works-license).
 
-### The Software
+## Notices
 
-The "Software" is each version of the software that we make available under
-these Terms and Conditions, as indicated by our inclusion of these Terms and
-Conditions with the Software.
+You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them above, as well as copies of any plain-text lines beginning with `Required Notice:` that the licensor provided with the software.  For example:
 
-### License Grant
+> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
 
-Subject to your compliance with this License Grant and the Limitations,
-Patents, Redistribution and Trademark clauses below, we hereby grant you the
-right to use, copy, modify, create derivative works, publicly perform, publicly
-display and redistribute the Software for any Permitted Purpose identified
-below.
+## Changes and New Works License
 
-### Permitted Purpose
+The licensor grants you an additional copyright license to make changes and new works based on the software for any permitted purpose.
 
-A Permitted Purpose is any purpose other than a Competing Use. A Competing Use
-means making the Software available to others in a commercial product or
-service that:
+## Patent License
 
-1. substitutes for the Software;
+The licensor grants you a patent license for the software that covers patent claims the licensor can license, or becomes able to license, that you would infringe by using the software.
 
-2. substitutes for any other product or service we offer using the Software
-   that exists as of the date we make the Software available; or
+## Noncompete
 
-3. offers the same or substantially similar functionality as the Software.
+Any purpose is a permitted purpose, except for providing any product that competes with the software or any product the licensor or any of its affiliates provides using the software.
 
-Permitted Purposes specifically include using the Software:
+## Competition
 
-1. for your internal use and access;
+Goods and services compete even when they provide functionality through different kinds of interfaces or for different technical platforms.  Applications can compete with services, libraries with plugins, frameworks with development tools, and so on, even if they're written in different programming languages or for different computer architectures.  Goods and services compete even when provided free of charge.  If you market a product as a practical substitute for the software or another product, it definitely competes.
 
-2. for non-commercial education;
+## New Products
 
-3. for non-commercial research; and
+If you are using the software to provide a product that does not compete, but the licensor or any of its affiliates brings your product into competition by providing a new version of the software or another product using the software, you may continue using versions of the software available under these terms beforehand to provide your competing product, but not any later versions.
 
-4. in connection with professional services that you provide to a licensee
-   using the Software in accordance with these Terms and Conditions.
+## Discontinued Products
 
-### Limitations
+You may begin using the software to compete with a product or service that the licensor or any of its affiliates has stopped providing, unless the licensor includes a plain-text line beginning with `Licensor Line of Business:` with the software that mentions that line of business.  For example:
 
-You must not move, change, disable, or circumvent the license key functionality
-in the Software; or modify any portion of the Software protected by the license
-key to:
+> Licensor Line of Business: YoyodyneCMS Content Management System (http://example.com/cms)
 
-1. enable access to the protected functionality without a valid license key; or
+## Sales of Business
 
-2. remove the protected functionality.
+If the licensor or any of its affiliates sells a line of business developing the software or using the software to provide a product, the buyer can also enforce [Noncompete](#noncompete) for that product.
 
-### Patents
+## Fair Use
 
-To the extent your use for a Permitted Purpose would necessarily infringe our
-patents, the license grant above includes a license under our patents. If you
-make a claim against any party that the Software infringes or contributes to
-the infringement of any patent, then your patent license to the Software ends
-immediately.
+You may have "fair use" rights for the software under the law. These terms do not limit them.
 
-### Redistribution
+## No Other Rights
 
-The Terms and Conditions apply to all copies, modifications and derivatives of
-the Software.
+These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else.  These terms do not imply any other licenses.
 
-If you redistribute any copies, modifications or derivatives of the Software,
-you must include a copy of or a link to these Terms and Conditions and not
-remove any copyright or other proprietary notices provided in or with the
-Software.
+## Patent Defense
 
-### Disclaimer
+If you make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
 
-THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF FITNESS FOR A PARTICULAR
-PURPOSE, MERCHANTABILITY, TITLE OR NON-INFRINGEMENT.
+## Violations
 
-IN NO EVENT WILL WE HAVE ANY LIABILITY TO YOU ARISING OUT OF OR RELATED TO THE
-SOFTWARE, INCLUDING INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES,
-EVEN IF WE HAVE BEEN INFORMED OF THEIR POSSIBILITY IN ADVANCE.
+The first time you are notified in writing that you have violated any of these terms, or done anything with the software not covered by your licenses, your licenses can nonetheless continue if you come into full compliance with these terms, and take practical steps to correct past violations, within 32 days of receiving notice.  Otherwise, all your licenses end immediately.
 
-In the event the provision of this Disclaimer section is unenforceable under
-applicable law, the licenses granted herein are void.
+## No Liability
 
-### Trademarks
+***As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising out of these terms or the use or nature of the software, under any kind of legal claim.***
 
-Except for displaying the License Details and identifying us as the origin of
-the Software, you have no right under these Terms and Conditions to use our
-trademarks, trade names, service marks or product names.
+## Definitions
 
-## Grant of Future License
+The **licensor** is the individual or entity offering these terms, and the **software** is the software the licensor makes available under these terms.
 
-We hereby irrevocably grant you an additional license to use the Software,
-under the Apache License, Version 2.0, that is effective on the second
-anniversary of the date we make the Software available. On or after that date,
-you may use the Software under the Apache License, Version 2.0, in which case
-the following will apply:
+A **product** can be a good or service, or a combination of them.
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-this file except in compliance with the License.
+**You** refers to the individual or entity agreeing to these terms.
 
-You may obtain a copy of the License at
+**Your company** is any legal entity, sole proprietorship, or other kind of organization that you work for, plus all its affiliates.
 
-http://www.apache.org/licenses/LICENSE-2.0
+**Affiliates** means the other organizations than an organization has control over, is under the control of, or is under common control with.
 
-Unless required by applicable law or agreed to in writing, software distributed
-under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied. See the License for the
-specific language governing permissions and limitations under the License.
+**Control** means ownership of substantially all the assets of an entity, or the power to direct its management and policies by vote, contract, or otherwise.  Control can be direct or indirect.
+
+**Your licenses** are all the licenses granted to you for the software under these terms.
+
+**Use** means anything you do with the software requiring one of your licenses.
+
+---
+
+Required Notice: Copyright 2026 Juri Calleri (spazio17) (https://github.com/spazio17/muralis)
+
+Licensor Line of Business: Muralis, the kiosk app for Android tablets and screens, with Muralis Pro and Muralis Business (https://muralis.spazio17.org)

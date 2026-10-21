@@ -1,7 +1,7 @@
 # Third-party notices
 
 Muralis includes the following software and artwork made by others. Each keeps its own licence;
-the Fair Core License in `LICENSE.md` covers Muralis's own code only.
+the PolyForm Shield License in `LICENSE.md` covers Muralis's own code only.
 
 | Component | Used for | Licence |
 |---|---|---|

@@ -1,9 +1,9 @@
 # Contributing to Muralis
 
-Thank you for wanting to help. Muralis is **source available**, not open source: anyone may read the
-code, use it, change it for themselves and send changes back, under the Fair Core License in
-`LICENSE.md`. Nobody may sell Muralis or a product made from it, or remove or work around the Pro
-lock, not even for their own use. Each version becomes Apache 2.0 two years after its release.
+Thank you for wanting to help. Muralis is **source available**, not open source, under the
+PolyForm Shield License 1.0.0 in `LICENSE.md`: anyone may read the code, use it, change it and send
+changes back, but nobody may use it for a product that competes with Muralis or with Muralis Pro and
+Business. The app's terms do not allow removing or working around the Pro and Business lock.
 
 ## How
 
@@ -20,9 +20,10 @@ By opening a pull request you agree to the following, for everything you contrib
 1. You wrote the contribution yourself, or you have the right to give it under these terms.
 2. You keep the copyright of your contribution.
 3. You give Juri Calleri (spazio17), who publishes Muralis, a perpetual, worldwide, non-exclusive,
-   free, irrevocable licence to use, change, copy, publish and sublicense your contribution, and
-   to distribute it under the Fair Core License, under the Apache License 2.0 that each version
-   becomes, and as part of the paid Muralis Pro and Muralis Business.
+   free, irrevocable, transferable licence to use, change, copy, publish, distribute and sublicense
+   your contribution under any licence terms, including the PolyForm Shield License, other
+   source-available or open-source licences, and proprietary or commercial terms such as those of
+   the paid Muralis Pro and Muralis Business.
 4. You give a licence to any patent of yours that your contribution needs, on the same terms.
 5. Your contribution comes as it is, without any warranty.
 

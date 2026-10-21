@@ -32,9 +32,14 @@ does is free; Muralis Pro, one purchase on Google Play, adds the fleet.
 
 ## Licence
 
-Muralis is **source available** under the Fair Core License, [`LICENSE.md`](LICENSE.md)
-(FCL-1.0-ALv2). In plain words: you may read the code, use Muralis, change it for yourself and
-contribute; you may not sell Muralis or a product made from it, offer it as a service, or remove or
-work around the Pro lock, not even for your own use. Each version becomes Apache 2.0 two years
-after its release. Contributions come under the agreement in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Muralis is **source available**, not open source, under the
+[PolyForm Shield License 1.0.0](LICENSE.md). In plain words: you may read the code, learn from it,
+use Muralis on as many devices as you like, at home or in a business, change it, use parts of it in
+your own projects, and be paid to install and set it up for someone else. You may not use Muralis,
+or any part of it, for a product that competes with Muralis or with Muralis Pro and Business, even
+a free one. Removing or working around the Pro and Business lock is not allowed by the app's
+[terms](https://muralis.spazio17.org/terms/). The licence gives no right to use the name Muralis or
+its icon for another product. This summary does not replace the licence; read
+[`LICENSE.md`](LICENSE.md) before you reuse the code. Contributions come under the agreement in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 Third-party code and artwork keep their own licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
