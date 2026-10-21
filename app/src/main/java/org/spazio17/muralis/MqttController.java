@@ -513,6 +513,8 @@ final class MqttController implements MqttCallbackExtended {
     @Override
     public void connectComplete(boolean reconnect, String serverUri) {
         int failedAttempts = connectFailures.getAndSet(0);
+        // Connected, so no broker certificate is waiting to be trusted any more.
+        MqttTls.waiting = null;
         Log.i(TAG, reconnect ? "MQTT reconnected"
                 : failedAttempts > 0 ? "MQTT connected after " + failedAttempts + " failed attempt(s)"
                 : "MQTT connected");
