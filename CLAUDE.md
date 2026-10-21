@@ -1,8 +1,9 @@
 # Muralis
 
-This file tells an AI assistant what Muralis is and which rules the code keeps. It describes the
-app, not its history, its tests or anyone's setup. Keep it general: when a feature is added or
-removed, add or remove a line here; leave the details in the code and its comments.
+This file tells an AI assistant what Muralis is and which rules the code keeps. It is a map, not a
+specification and not a logbook: one line per feature area, no history, no tests, nobody's setup.
+When a feature is added, extend the line of its area only if the area itself changes; the details
+belong in the code and its comments.
 
 ## What Muralis is
 
@@ -11,7 +12,7 @@ itself: a smart-home dashboard, an office board, a menu, any page on the local n
 the device to that page, recovers when the page or the network fails, and can be controlled from a
 browser or from home automation. It needs no cloud, no account and no server of its own.
 
-It is an ordinary Android app built on the public SDK only (no platform signature, no privileged
+It is an ordinary Android app on the public SDK only (no platform signature, no privileged
 permissions), installed from Google Play or by a QR code during the device's first setup. The
 strongest lock-down needs the app to be the device owner; without that it still runs, visibly with
 fewer protections. Package `org.spazio17.muralis`. Internal class names keep an old `Kiosk` prefix
@@ -19,169 +20,76 @@ on purpose.
 
 ## What it does
 
-- **Kiosk.** One page full screen, held by lock task with no system bars when the app is device
-  owner.
-  The way out is a combination of corner taps the person records, one for the settings and one for
-  the system launcher, optionally behind a PIN. A panel with no page shows a parking screen that
-  says what to do next, as does one whose App lock app is gone; over a dashboard that cannot be
-  reached the same screen says so while the page is retried underneath. App lock shows one installed app the person chose instead of the
-  page (the page is not loaded behind it), opened again whenever it closes, with the escape combinations read in four small
-  corner windows over it (display over other apps), pop-ups and Identify drawn straight over
-  it, Ambient and the dark brought over it on Muralis's own screen, and never Android's
-  Settings, a home screen or the Play Store as the app. The page's browser options: a sign-in for a page behind HTTP basic
-  auth, the user agent, text size, page zoom, a dark look, the way back to the dashboard
-  after a while, and the camera and microphone for the page when allowed (the camera handed
-  over by the camera sensor). A page certificate Android does not trust is asked about once,
-  then pinned by its fingerprint for that host and removable on both surfaces; never every
-  certificate.
-- **Self-recovery.** Retries a page that failed, notices a page that froze or a server that
-  restarted and reloads once, rebuilds a crashed browser engine, rebuilds it when memory runs low,
-  and restarts itself (or rebuilds its browser engine) once at night. None of this has a setting
-  to switch it off.
-- **Display.** Display off (a real sleep where the device can be trusted, a black overlay
-  otherwise), brightness, orientation, and Ambient, the optional screen while nobody uses the
-  panel: a dimmed page, black, another web page, or the panel's own pictures from named
-  playlists, then display off after a second delay. A status light for panels with none of
-  their own: a coloured frame around the screen, set like a Home Assistant light.
-  Pop-ups over the screen (a message, a picture, a camera's stream or a page, for some seconds
-  or until touched), from HTTP, MQTT, Home Assistant's notify and the automations. Cameras, a
-  list of snapshots, MJPEG streams or camera pages with an optional sign-in kept as a secret,
-  put in groups, shown on request or as the panel's main view instead of the page (a group as a
-  grid, automatic or in a fixed layout, a tap opening one camera on its bigger stream if it has
-  one, pinch to zoom, nothing fetched while it is not seen); a camera
-  is only streamed, what it sends is drawn from memory and never written to the device.
-- **Remote control.** A web admin served by the panel over HTTPS (its own certificate or an
-  uploaded one, password required), an HTTP API, and MQTT with Home Assistant discovery, plain
-  or over TLS (the broker trusted by Android or by the certificate a person trusted on the panel,
-  a client certificate optional). The
-  panel and the web admin offer the same settings and show the same thing, except what needs a
-  hand at the panel (calibrations) or a file (uploads, web admin only). A picture of the screen
-  as the wall shows it, on request from the web admin, the HTTP API and MQTT (a Home Assistant
-  image and button), the web admin's password or the broker's credentials being the gate; and a diagnostics file (device, permissions,
-  status, counters, log) downloaded from the web admin, never uploaded. A settings file exported
-  and imported in the web admin (passwords only when asked, then encrypted with a passphrase),
-  and a setup QR for a new tablet that carries the settings without passwords; both carry the
-  escape combinations and the page addresses as written.
-- **Sensors and automations.** The device's sensors (light, proximity, movement, battery, power,
-  network and others), the camera as a network camera with motion detection, a sound level from
-  the microphone, Bluetooth beacons and NFC tags, and small "when this, then that" rules that act on
-  them on the panel itself, also at a time of day or when a camera is triggered, with actions on
-  the panel (a camera or a group shown as a pop-up or full screen among them), an MQTT message or
-  a call to an address (a charger's smart plug at 20 and 80 percent needs nothing else).
-- **Fleet.** Panels on one network trust each other by their own keys, and any panel's web admin
-  manages all of them. No server, no cloud. Each panel has its fleet key and a member endpoint,
-  announces itself on the local network (mDNS) while it is in a fleet or shows its Join code, joins
-  a fleet with a single-use code shown on its Join screen (proven by both sides with SPAKE2, never
-  sent), or leaves it (telling one member, which takes it off the list for all), removes another
-  panel that cannot leave by itself, and creates a fleet or adds another panel by reading that code
-  with its camera, or by typing it on a device with none (the panels announce whether they are ready
-  to be joined); every member holds the fleet's signed list of panels, the members tell each other
-  every few minutes that they are there and which version they hold, so one that fell behind fetches
-  the list, and sections of settings (the dashboard, MQTT, the web admin, the display, Ambient, the
-  alerts) can be shared, each by a switch on the Fleet page, in a group of panels or with the whole
-  fleet: groups are sets of panels with the same job, made with a name the person gives; a panel
-  ticks the groups it belongs to and may stop following what the whole fleet shares; a shared
-  section is applied on every panel of its scope, a group winning over the whole fleet, and a change
-  to it on any of them reaches all of them. A panel at its welcome screen can be joined before
-  anything locks: it takes the adding panel's escape combinations and PIN as its own, once, at that
-  moment, and goes to the dashboard; a panel that has combinations keeps them, they are never shared
-  afterwards. A page address may carry `{panel.name}`, `{panel.group}` and `{fleet.name}`, filled by
-  each panel when it loads the page, so one shared address shows each panel its own page. Alerts are
-  a shared section too (a panel offline, a page error, battery or temperature past a threshold, a
-  combination used, a PIN lockout): each panel judges itself and one panel judges the fleet's
-  offline, each alert is said once, on and off, as a notification on the panel, on a plain MQTT
-  topic and to a web address; every member keeps the last versions of the fleet's list, with what
-  each changed, and can restore one as a new version, membership kept as it is now. The Fleet page
-  shows a picture of every panel's screen on request, fetched from each panel over the fleet's own
-  link and never stored, and Identify shows a panel's name on its screen. A Pro panel can invite a
-  new tablet: a QR valid for ten minutes and for one tablet, which sets a factory-reset tablet up as
-  device owner and joins it to the fleet by itself (the tablet opens its Join code with the
-  invitation's code and asks the inviting panel to add it). Every QR opens full screen, dark on
-  white, at most 12 cm wide. A panel knows itself in the list by its key and keeps its own entry
-  current (name, address, member port); names are unique within a fleet. A member that does not
-  answer is looked for by its key among the announcements, which carry each panel's address.
-- **Free and Pro.** Everything a single panel does is free, with no device limit. Muralis Pro, a
-  one-time purchase through Google Play, is the fleet and what only makes sense across panels:
-  adding panels (at most six to a Pro fleet), the Fleet page and the fleet's alerts. A panel whose
-  account owns Pro writes it into the fleet's signed list, and the members without Google lease it
-  for thirty days from each confirmation; a refund ends it, a lapse makes the fleet free until a
-  panel with the account confirms again: what it shares stays applied, but a change on one panel
-  no longer reaches the others and no alert is raised.
+- **Kiosk.** One page full screen under lock task, or one chosen app (App lock), or cameras as the
+  main view. The way out is a recorded combination of corner taps, optionally behind a PIN.
+- **Self-recovery.** Failed, frozen and crashed pages and browser engines come back by themselves,
+  and the app refreshes itself once at night.
+- **Display.** Display off, brightness, orientation, Ambient (what shows while nobody uses the
+  panel), a status light drawn as a coloured frame, pop-ups over the screen, and network cameras.
+- **Remote control.** A web admin over HTTPS, an HTTP API and MQTT with Home Assistant discovery,
+  a screenshot and a diagnostics file on request, a settings file and a setup QR.
+- **Sensors and automations.** The device's sensors, its camera and microphone, Bluetooth beacons
+  and NFC, and "when this, then that" rules that act on the panel itself.
+- **Fleet.** Panels on one network trust each other by their own keys and manage each other from
+  any web admin: joining by a one-time code, shared settings, groups, alerts and an invitation QR
+  for a new tablet. No server.
+- **Free and Pro.** Everything one panel does is free, with no device limit. Muralis Pro, bought
+  once through Google Play, is the fleet.
 
 ## How the code is shaped
 
 - **One command set, several surfaces.** `KioskCommandDispatcher` holds the commands that HTTP and
   MQTT share (`HttpAdminServer`, `MqttController`), so a command and a refusal behave the same
-  wherever they arrive, and the validators for inputs that more than one surface accepts, which the
-  panel's screens and the web admin's forms call before they store anything. Feature-specific
-  rules live beside their feature (automations, sensors, the look, certificates).
+  wherever they arrive, and the validators that more than one surface calls before storing
+  anything. Feature-specific rules live beside their feature.
 - **Activity and service.** `KioskActivity` draws every screen of the panel; `KioskService` runs the
-  remote surfaces, telemetry, sensors and the supervision that brings the dashboard back if it
-  disappears. `MuralisApplication` starts the service on a device-owner install whatever started
-  the process.
+  remote surfaces, telemetry, sensors and the supervision that brings the dashboard back.
+  `MuralisApplication` starts the service on a device-owner install whatever started the process.
 - **Decisions in pure classes.** Recovery, restart scheduling, display off, the Ambient clock,
-  escape sequences, the provisioning check and similar decisions live in classes with no Android
-  imports (`RecoveryPolicy`, `RecyclePolicy`, `RelaunchPolicy`, `DisplayOffPolicy`,
-  `ScreensaverPolicy`, `EscapeSequence`, `Provisioning` and others), covered by host tests that run
-  without a device. Keep new decision logic in that shape.
-- **Settings and secrets.** `KioskConfig` reads and writes settings; writes go only through its
-  editor, which touches just the fields it is given, so one surface can never revert another's
-  change from a stale copy. Forms that save several fields carry a baseline and are refused when
-  the stored values changed meanwhile. Secrets live encrypted in `SecretStore` under a key that
-  stays in the Android Keystore. Settings and secrets are kept in device-protected storage, because
-  the service starts before the first unlock; pictures and playlists are files of the app's normal
-  storage, read only once the device is unlocked.
-- **Fleet.** `FleetIdentity` (each panel's own key and certificate), `FleetTls` (mutual TLS that
-  admits a peer by the hash of its public key), `FleetServer` (the member endpoint on its own
-  port, separate from the web admin) and `FleetDocument` (the signed list every member holds,
-  and how two lists changed apart merge into one) and `FleetProfile` (a shared group's values on
-  this panel, applied through the same commands and checks a person's change takes).
+  escape sequences, provisioning and similar decisions live in classes with no Android imports,
+  covered by host tests that run without a device. Keep new decision logic in that shape.
+- **Settings and secrets.** `KioskConfig` reads and writes settings through an editor that touches
+  only the fields it is given, so one surface never reverts another's change from a stale copy;
+  forms that save several fields carry a baseline and are refused when it changed meanwhile.
+  Secrets live encrypted in `SecretStore` under a key in the Android Keystore. Settings and
+  secrets are in device-protected storage, because the service starts before the first unlock.
+- **Fleet.** `FleetIdentity` (the panel's key), `FleetTls` (mutual TLS that admits a peer by its
+  key's hash), `FleetServer` (the member endpoint, on its own port), `FleetDocument` (the signed
+  list every member holds) and `FleetProfile` (shared settings, applied through the same commands
+  and checks as a person's change).
 
 ## Rules the code keeps
 
 - **Never lock someone in.** Lock task and the home-screen role engage only after both escape
-  combinations exist: recorded on the panel, or brought by a settings file, a setup QR or the
-  fleet that adds it, from a panel where they were recorded. The escape works from every screen, the chosen app of App lock
-  included. Only this app is allowed under lock task, and in App lock the one app the person
-  chose; any other app is reached by releasing lock task first, never by widening that list. Accessibility services and foreign keyboards are restricted where the app is device
-  owner, and the page cannot hand control to another app through non-web links.
+  combinations exist. The escape works from every screen, App lock's app included. Only this app,
+  and in App lock the one app chosen, is allowed under lock task; anything else is reached by
+  releasing lock task, never by widening that list.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
   password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
-  endpoint is the one exception: it listens on every panel and admits only keys the panel trusts,
-  plus, while a person keeps a join code open, an unknown key on the join routes alone, while an
-  invitation is open, an unknown key on the knock route alone, and a removed key on the check-in
-  route alone, to be told it was removed.
-  Request sizes are bounded. A refusal is always answered with a reason (the one silence is an
-  empty MQTT payload, which is how a retained command is cleared), and a command never claims a
-  success it did not have (there is no "shutdown" command, because Android offers no way to do it).
+  endpoint listens on every panel but admits only keys the panel trusts, apart from the narrow
+  join, invitation and check-in routes while they are open. Request sizes are bounded.
+- **A refusal always has a reason,** and a command never claims a success it did not have.
 - **Secrets are never in plain text,** neither stored nor drawn on screen: password boxes render
   empty, and empty means "keep the current one".
-- **Ports.** The app's own ports (web admin, fleet member port) are settings between 1024 and 65535,
-  checked before they are stored, refused when taken, never newly set to each other's port (a pair
-  that already collides still saves unchanged), and never silently replaced by another value.
-- **A change shows everywhere.** A change made on the panel, in the web admin or over MQTT shows
-  up on the others within seconds; a change applied outside the dispatcher asks for a telemetry
-  publish itself. Values whose validity depends on the device (a port, an address)
-  are checked against the device when the field is left, with a coloured border.
-- **No backlog.** A panel acts at the moment something arrives, or drops it once it is stale;
-  it never replays in one go what it missed while it was asleep, stopped or behind another app
-  (a pop-up waits a minute at most, a time rule slept through is skipped).
-- **Self-healing has no user switch** and no memory threshold: the app cannot measure the browser
-  engine's memory, so it reacts to the system's own signals and restarts nightly.
-- **Home Assistant discovery.** An entity's key, id and name say the same thing. A panel removes from
-  Home Assistant only what it announced itself, so a fresh install starts with nothing to remove.
-- **One design on both surfaces.** The panel and the web admin are one Material 3 design in one
-  scheme from the ultramarine seed, with segmented lists, light and dark (a toggle in the settings
-  page's app bar: follow the device, light or dark; the wall's own screens are always dark),
-  with the same sections, words and behaviour. Plain words for
-  the person in front of the panel; a familiar glyph or control before an explanatory sentence.
-- **Legal texts** are copies of the canonical texts kept in the website repository; the release
+- **Ports.** The app's own ports are settings between 1024 and 65535, checked before they are
+  stored, refused when taken, and never silently replaced.
+- **A change shows everywhere.** A change made on the panel, in the web admin or over MQTT shows on
+  the others within seconds.
+- **No backlog.** A panel acts when something arrives or drops it once it is stale; it never
+  replays in one go what it missed while asleep or stopped.
+- **Self-healing has no user switch** and no memory threshold.
+- **Home Assistant discovery.** An entity's key, id and name say the same thing, and a panel
+  removes from Home Assistant only what it announced itself.
+- **One design on both surfaces.** The panel and the web admin are one Material 3 design from the
+  ultramarine seed, light and dark, with the same sections, words and behaviour. Plain words; a
+  familiar glyph or control before an explanatory sentence.
+- **Cameras are only streamed,** never written to the device.
+- **Legal texts** are copies of the canonical texts in the website repository; the release
   workflow fails when they differ.
-- **Play's automatic integrity protection must stay off.** It makes the app refuse to run unless
-  Play installed it, which breaks the QR installation.
-- **QR setup on Android 12 and newer** needs the app to answer two setup requests (which kind of
-  management, and policy compliance); Muralis asks for a fully managed device and answers at once,
-  and leaves the lock-down to its own first-start screens.
+- **Play's automatic integrity protection stays off.** It makes the app refuse to run unless Play
+  installed it, which breaks the QR installation.
+- **QR setup on Android 12 and newer** needs the app to answer the two setup requests (management
+  mode and policy compliance); it asks for a fully managed device and answers at once.
 
 ## Platform
 
@@ -189,15 +97,13 @@ on purpose.
   check. targetSdk follows Google Play's yearly floor.
 - Device owner (by QR during setup, or over adb on a fresh device) is the highest privilege the
   app can reach. Features that need it degrade visibly without it.
-- Three kinds of window to keep in mind: a device-owner panel (full screen), an ordinary install
-  with system bars, and recent Android, which draws apps edge to edge under transparent bars.
-- Boxes for machine values (addresses, ports, ids) switch off the keyboard's corrections; boxes
-  for names and captions stay ordinary text.
+- Three kinds of window: a device-owner panel (full screen), an ordinary install with system bars,
+  and recent Android, which draws apps edge to edge.
+- Boxes for machine values (addresses, ports, ids) switch off the keyboard's corrections.
 
 ## Building
 
-The build runs in a container with pinned tools (`scripts/build-app.sh`), and the host tests too
-(`scripts/test-host.sh`). The version comes from git (`git describe` against the latest `v*` tag,
-the commit count as version code); nothing in the project is edited to set it. CI builds every push;
-a manual workflow tags a release and attaches the signed bundle, never a debug APK. A pull request's
-title is its line in the release notes.
+The build and the host tests run in a container with pinned tools (`scripts/build-app.sh`,
+`scripts/test-host.sh`). The version comes from git (`git describe` against the latest `v*` tag,
+the commit count as version code). CI builds every push; a manual workflow tags a release and
+attaches the signed bundle. A pull request's title is its line in the release notes.
