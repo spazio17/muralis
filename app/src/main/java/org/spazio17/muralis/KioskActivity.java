@@ -2945,6 +2945,9 @@ public final class KioskActivity extends Activity {
             page.addView(paneOf(list), params);
         }
         setContentView(scrollPage(theme, page));
+        // A camera or group added, renamed or removed in the web admin shows here too.
+        Runnable redraw = currentScreen;
+        watchLists("cameras", page, () -> redrawInPlace(redraw));
     }
 
     /** A camera's or a group's row at the left, chosen beside its box or opening its page. */
@@ -3288,7 +3291,8 @@ public final class KioskActivity extends Activity {
     private static String connectionBaselineOf(KioskConfig config) {
         return config.dashboardUrl + '\u0000' + config.deviceId + '\u0000' + config.mqttHost
                 + '\u0000' + config.mqttPort + '\u0000' + config.mqttUsername + '\u0000'
-                + config.mqttPassword + '\u0000' + config.httpPort + '\u0000' + config.fleetPort;
+                + config.mqttPassword + '\u0000' + config.mqttTls + '\u0000' + config.httpPort
+                + '\u0000' + config.fleetPort;
     }
 
     private void showConfiguration(KioskConfig config) {
@@ -4712,14 +4716,14 @@ public final class KioskActivity extends Activity {
                 // reachable is told and leaves.
                 String name = TinyJson.string(member, FleetDocument.NAME, id);
                 Button remove = textButton(theme, "Remove");
-                remove.setOnClickListener(view -> showConfirm("Remove " + name + "?",
+                remove.setOnClickListener(view -> confirmRemove("Remove " + name + "?",
                         "It is taken off the fleet's list on every panel and its key is no"
                                 + " longer trusted. It can join again with a new code.",
-                        "Remove", true, () -> fleetWork(app, () -> {
+                        () -> fleetWork(app, () -> {
                             String refused = FleetServer.removeMember(app, spki, true);
                             mainHandler.post(() -> showFleetPage(scope));
                             return refused;
-                        }), () -> showFleetPage(scope)));
+                        })));
                 panels.addView(fittingButtonRow(identify, remove), matchWrapClose());
             }
         }
@@ -4768,13 +4772,13 @@ public final class KioskActivity extends Activity {
             row.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,
                     1));
             Button remove = textButton(theme, "Remove");
-            remove.setOnClickListener(view -> showConfirm("Remove the group " + group.getValue()
+            remove.setOnClickListener(view -> confirmRemove("Remove the group " + group.getValue()
                     + "?", "What it shares is shared no more; the panels in it keep their"
-                    + " settings.", "Remove", true, () -> fleetWork(app, () -> {
+                    + " settings.", () -> fleetWork(app, () -> {
                         String refused = FleetServer.removeGroup(app, id);
                         mainHandler.post(() -> showFleetPage(scope));
                         return refused;
-                    }), () -> showFleetPage(scope)));
+                    })));
             row.addView(remove, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
             groupsCard.addView(row, matchWrapClose());
@@ -4902,14 +4906,14 @@ public final class KioskActivity extends Activity {
             if (!entry.held) {
                 Button restore = textButton(theme, "Restore as new");
                 long version = entry.version;
-                restore.setOnClickListener(view -> showConfirm("Restore version " + version
-                        + " as new?", "Its fleet name, groups and shared settings are written as"
-                        + " a new version for every panel; the panels of the fleet stay as they"
-                        + " are now.", "Restore", false, () -> fleetWork(app, () -> {
+                restore.setOnClickListener(view -> confirmKeepingScreen("Restore version "
+                        + version + " as new?", "Its fleet name, groups and shared settings are"
+                        + " written as a new version for every panel; the panels of the fleet"
+                        + " stay as they are now.", "Restore", false, () -> fleetWork(app, () -> {
                             String refused = FleetServer.restoreVersion(app, version);
                             mainHandler.post(() -> showFleetPage(scope));
                             return refused;
-                        }), () -> showFleetPage(scope)));
+                        })));
                 into.addView(fittingButtonRow(restore), matchWrapClose());
             }
         }
@@ -5845,6 +5849,17 @@ public final class KioskActivity extends Activity {
     }
 
     private String currentListsKey(String kind) {
+        if ("cameras".equals(kind)) {
+            StringBuilder key = new StringBuilder();
+            for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
+                key.append(camera.name).append('\n').append(camera.url).append('\n')
+                        .append(camera.full).append('\n');
+            }
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(this)) {
+                key.append(group.name).append('\t').append(group.cameras).append('\n');
+            }
+            return key.toString();
+        }
         org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors(),
                 Automations.toJson(KioskConfig.automationsOf(this), true));
         return "home".equals(kind)
@@ -8078,7 +8093,9 @@ public final class KioskActivity extends Activity {
      */
     private void addMqttTrust(LinearLayout card, KioskTheme theme, KioskConfig config) {
         CertificatePins.Waiting refused = MqttTls.waiting;
-        boolean asking = refused != null && refused.host.equalsIgnoreCase(config.mqttHost)
+        // Only while TLS is on: a certificate refused before TLS was switched off asks nothing.
+        boolean asking = config.mqttTls && refused != null
+                && refused.host.equalsIgnoreCase(config.mqttHost)
                 && !refused.fingerprint.equals(config.mqttTlsPin);
         if (asking || !config.mqttTlsPin.isEmpty()) {
             TextView line = new FlushText(this);
@@ -9866,12 +9883,21 @@ public final class KioskActivity extends Activity {
      * included; {@code onRemove} redraws whatever it changed.
      */
     private void confirmRemove(String title, String consequence, Runnable onRemove) {
+        confirmKeepingScreen(title, consequence, "Remove", true, onRemove);
+    }
+
+    /**
+     * A question whose Cancel puts back the screen it was asked from exactly as it was, what was
+     * typed in it included: removals, and the fleet's Restore as new.
+     */
+    private void confirmKeepingScreen(String title, String message, String confirmLabel,
+            boolean destructive, Runnable onConfirm) {
         ViewGroup content = findViewById(android.R.id.content);
         View shown = content != null && content.getChildCount() > 0 ? content.getChildAt(0) : null;
         Runnable screen = currentScreen;
         Runnable back = pageBack;
         int width = widthClass();
-        showConfirm(title, consequence, "Remove", true, onRemove, () -> {
+        showConfirm(title, message, confirmLabel, destructive, onConfirm, () -> {
             // Turned meanwhile to another width, the screen is drawn again for it instead.
             if (shown != null && widthClass() == width) {
                 pendingBack = back;

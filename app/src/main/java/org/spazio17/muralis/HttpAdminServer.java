@@ -4505,7 +4505,9 @@ final class HttpAdminServer {
 
     private String mqttBody(KioskConfig config, String notice, String noticeSection) {
         CertificatePins.Waiting refused = MqttTls.waiting;
-        boolean asking = refused != null && refused.host.equalsIgnoreCase(config.mqttHost)
+        // Only while TLS is on, as on the panel (KioskActivity.addMqttTrust).
+        boolean asking = config.mqttTls && refused != null
+                && refused.host.equalsIgnoreCase(config.mqttHost)
                 && !refused.fingerprint.equals(config.mqttTlsPin);
         StringBuilder trust = new StringBuilder();
         // The broker's certificate: one refused, with Trust; or the one trusted, with Remove.
@@ -4547,8 +4549,8 @@ final class HttpAdminServer {
                             + " value=\"mqtt\"><input type=\"hidden\" name=\"mqtt_action\""
                             + " value=\"client_delete\"><button type=\"submit\" class=\"danger\""
                             + " data-confirm=\"")
-                    .append(escapeHtml(deleteQuestion("the client certificate")
-                            + " The broker is then reached without one."))
+                    .append(escapeHtml("Delete the client certificate?\n\nThe broker is then"
+                            + " reached without one."))
                     .append("\">Delete</button></form>");
         }
         return sharedLine("mqtt") + sectionFormStart("mqtt", notice, noticeSection)
