@@ -2852,6 +2852,13 @@ public final class KioskActivity extends Activity {
         overlayWatch = null;
     }
 
+    /** The Network speaker section's line, the web's words. */
+    private static String speakerSummary(KioskConfig config) {
+        String state = KioskRuntimeState.speakerState();
+        return !config.networkSpeaker ? "Off" : "on".equals(state)
+                ? "On · port " + config.networkSpeakerPort : "Not on: " + state;
+    }
+
     /** The camera or group chosen on the Cameras page: "c:" or "g:" and its name, empty to add. */
     private String selectedCameraItem;
 
@@ -3976,6 +3983,28 @@ public final class KioskActivity extends Activity {
         // The volume buttons, applied the moment the switch is touched, as on the web admin. A
         // lock-down choice, so it stands under Way out (the UI round, 2026-10-15); built here so
         // the sync below can follow it.
+        // The network speaker (a DLNA renderer): the switch applies at once, as on the web; off
+        // by default, since DLNA has no password. On only while its port can be had.
+        CompoundButton speakerInput = themedSwitch(theme, "Network speaker", config.networkSpeaker);
+        TextView speakerState = new FlushText(this);
+        speakerState.setTextSize(14);
+        speakerState.setTextColor(theme.bad);
+        speakerInput.setOnCheckedChangeListener((button, checked) -> {
+            if (syncingLiveControls) {
+                return;
+            }
+            String refused = KioskService.setNetworkSpeaker(this, checked);
+            if (refused != null) {
+                Toast.makeText(this, "Not switched on: " + refused + ".", Toast.LENGTH_LONG)
+                        .show();
+                syncingLiveControls = true;
+                button.setChecked(false);
+                syncingLiveControls = false;
+            }
+        });
+        EditText speakerPortInput = themedInput(theme,
+                Integer.toString(config.networkSpeakerPort), false);
+        speakerPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         CompoundButton volumeButtonsInput = themedSwitch(theme, "Disable volume buttons",
                 config.volumeButtonsDisabled);
         volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
@@ -4032,6 +4061,14 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(volumeButtonsInput,
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
+                    // A change made on the web shows here within a second, and why it is not on.
+                    boolean speakerOn = KioskConfig.load(KioskActivity.this).networkSpeaker;
+                    setCheckedIfChanged(speakerInput, speakerOn);
+                    String speaking = KioskRuntimeState.speakerState();
+                    speakerState.setText(speakerOn && !"on".equals(speaking)
+                            ? "Not on: " + speaking + "." : "");
+                    speakerState.setVisibility(speakerState.getText().length() == 0
+                            ? View.GONE : View.VISIBLE);
                     paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton,
                             fleetAddButton, theme);
                     paintInviteLine();
@@ -4113,6 +4150,27 @@ public final class KioskActivity extends Activity {
         Button camerasMore = textButtonOnward(theme, "More camera settings");
         camerasMore.setOnClickListener(view -> showCamerasPage());
         camerasCard.addView(buttonRow(camerasMore), matchWrap());
+
+        LinearLayout speakerCard = sectionBody(theme);
+        speakerCard.addView(speakerInput, matchWrap());
+        TextView speakerNote = new FlushText(this);
+        speakerNote.setText("Smart-home systems and apps that play to a speaker on the network find"
+                + " the panel by themselves and can play on it."
+                + " While it is on, anyone on your network can play sound on this panel.");
+        speakerNote.setTextColor(theme.subtext);
+        speakerNote.setTextSize(14);
+        speakerCard.addView(speakerNote, matchWrapClose());
+        speakerState.setVisibility(View.GONE);
+        speakerCard.addView(speakerState, matchWrapClose());
+        addField(speakerCard, theme, "Port", speakerPortInput);
+        Button speakerSave = primaryButton(theme, "Save");
+        speakerSave.setOnClickListener(view -> {
+            String refused = KioskService.saveNetworkSpeakerPort(this,
+                    speakerPortInput.getText().toString());
+            Toast.makeText(this, refused == null ? "Saved." : "Not saved: " + refused + ".",
+                    refused == null ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+        });
+        speakerCard.addView(fittingButtonRow(speakerSave), matchWrap());
 
         // Integrations (2026-10-15): in the menu already, empty until the first ones come.
         LinearLayout integrationsCard = sectionBody(theme);
@@ -4402,6 +4460,8 @@ public final class KioskActivity extends Activity {
                                 : config.mqttHost + ":" + config.mqttPort, mqttCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_web, "Web admin",
                         webAdminSummary(config), httpCard),
+                new Section(GROUP_CONNECTIONS, R.drawable.ic_sensor_audio, "Network speaker",
+                        speakerSummary(config), speakerCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_fleet, "Fleet",
                         FleetServer.summaryOf(config.fleetPort), fleetCard),
                 new Section(GROUP_SECURITY, R.drawable.ic_escape, "Way out",

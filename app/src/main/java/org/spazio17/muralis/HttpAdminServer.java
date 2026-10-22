@@ -1568,6 +1568,11 @@ final class HttpAdminServer {
                 editor.apply();
                 return null;
             }
+            case "speaker": {
+                String refused = KioskService.saveNetworkSpeakerPort(context,
+                        form.get("network_speaker_port"));
+                return refused == null ? null : "Not saved: " + refused + ".";
+            }
             case "webadmin": {
                 String stale = staleFormRefusal(form, Integer.toString(fresh.httpPort));
                 if (stale != null) {
@@ -1737,6 +1742,13 @@ final class HttpAdminServer {
                             ? isTrue(form.get("status_light"))
                             : KioskConfig.statusLightOf(context).on, color, -1);
                 }
+                if (form.containsKey("network_speaker")) {
+                    String refused = KioskService.setNetworkSpeaker(context,
+                            isTrue(form.get("network_speaker")));
+                    if (refused != null) {
+                        return "Not switched on: " + refused + ".";
+                    }
+                }
                 if (form.containsKey("stats_overlay")) {
                     KioskConfig.edit(context)
                             .statsOverlay(isTrue(form.get("stats_overlay")))
@@ -1874,7 +1886,7 @@ final class HttpAdminServer {
                 || key.equals("fleet_follows") || key.equals("volume_buttons_disabled")
                 || key.equals("status_light") || key.equals("stats_overlay")
                 || key.equals("ambient_shuffle") || key.equals("ambient_one_per_cycle")
-                || key.equals("ambient_credit");
+                || key.equals("ambient_credit") || key.equals("network_speaker");
     }
 
     /**
@@ -2244,6 +2256,8 @@ final class HttpAdminServer {
                 "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
                         + (config.webAdminEnabled ? "" : " · off"),
                 webAdminBody(config, notice, noticeSection), "Connections"});
+        sections.add(new String[] {"speaker", "audio", "Network speaker", speakerSummary(config),
+                speakerBody(config, notice, noticeSection), "Connections"});
         sections.add(new String[] {"fleet", "fleet", "Fleet", FleetServer.summaryOf(config.fleetPort),
                 fleetBody(config, notice, noticeSection), "Connections"});
         sections.add(new String[] {"sequences", "esc", "Way out",
@@ -4805,6 +4819,34 @@ final class HttpAdminServer {
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */
     private static final String BLANK_KEEPS = "Blank keeps the current one.";
+
+    /** The Network speaker section's line: off, on with its port, or why it is not on. */
+    private static String speakerSummary(KioskConfig config) {
+        String state = KioskRuntimeState.speakerState();
+        return !config.networkSpeaker ? "Off" : "on".equals(state)
+                ? "On · port " + config.networkSpeakerPort : "Not on: " + state;
+    }
+
+    /**
+     * The network speaker (a DLNA renderer): the switch, applied the moment it is touched as on
+     * the panel, what it means, and its port with Save. Off by default: DLNA has no password.
+     */
+    private String speakerBody(KioskConfig config, String notice, String noticeSection) {
+        String state = KioskRuntimeState.speakerState();
+        return "<div class=\"switches\">"
+                + switchRow("network-speaker", "Network speaker",
+                        " data-setting=\"network_speaker\"", config.networkSpeaker)
+                + "</div>"
+                + "<p class=\"hint\">Smart-home systems and apps that play to a speaker on the"
+                + " network find the panel by themselves and can play on it. While it is on,"
+                + " anyone on your network can play sound on this panel.</p>"
+                + (config.networkSpeaker && !"on".equals(state)
+                        ? "<p class=\"hint bad\">Not on: " + escapeHtml(state) + ".</p>" : "")
+                + sectionFormStart("speaker", notice, noticeSection)
+                + field("number", "network_speaker_port", "Port",
+                        Integer.toString(config.networkSpeakerPort))
+                + sectionFormEnd("Save");
+    }
 
     private String webAdminBody(KioskConfig config, String notice, String noticeSection) {
         return sharedLine("web_admin") + sectionFormStart("webadmin", notice, noticeSection)

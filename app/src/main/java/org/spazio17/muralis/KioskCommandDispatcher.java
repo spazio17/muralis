@@ -811,6 +811,17 @@ final class KioskCommandDispatcher {
         return ownPortProblem(port, currentPort, adminPort, "member port", "web admin port");
     }
 
+    /**
+     * The network speaker's port, by the rule of {@link #validateAdminPort}, against both other
+     * own ports: a new choice equal to either is refused.
+     */
+    static String validateSpeakerPort(int port, int currentPort, int adminPort, int memberPort) {
+        String problem = ownPortProblem(port, currentPort, adminPort, "network speaker port",
+                "web admin port");
+        return problem != null ? problem : ownPortProblem(port, currentPort, memberPort,
+                "network speaker port", "member port");
+    }
+
     private static String ownPortProblem(int port, int current, int other, String name,
             String otherName) {
         if (port < 1024 || port > 65535) {
