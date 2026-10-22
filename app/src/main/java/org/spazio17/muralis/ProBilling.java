@@ -137,6 +137,20 @@ final class ProBilling implements PurchasesUpdatedListener {
     private StatusListener listener;
     private boolean connecting;
     /**
+     * The quiet after Play could not be asked (no account, no Play, a service that drops): until
+     * then a wake, a return from Ambient or a settings screen does not ask again. Google's guidance
+     * for these answers (Handle BillingResult response codes): automatic retries of
+     * BILLING_UNAVAILABLE "are unlikely to help", and background retries of a disconnected service
+     * use exponential backoff. Each failed round doubles the quiet, from a minute up to an hour;
+     * an answer that works ends it, and so does Buy, a person's own retry. Static, so it holds for
+     * the life of the process whichever activity holds the client; a new start of the app asks at
+     * once. On elapsedRealtime, which a change of the clock cannot move. Main thread only.
+     */
+    private static long quietUntilMs;
+    private static long quietMs;
+    static final long QUIET_FIRST_MS = 60_000L;
+    static final long QUIET_MAX_MS = 60 * 60_000L;
+    /**
      * Purchase tokens with an acknowledgement in flight, so the same purchase is never
      * acknowledged twice at once.
      *
@@ -180,6 +194,9 @@ final class ProBilling implements PurchasesUpdatedListener {
 
     /** Re-asks Play for the account's purchases. Main thread; safe to repeat. */
     void refresh() {
+        if (android.os.SystemClock.elapsedRealtime() < quietUntilMs) {
+            return;
+        }
         if (client.isReady()) {
             askPlay();
             return;
@@ -193,6 +210,7 @@ final class ProBilling implements PurchasesUpdatedListener {
             public void onBillingSetupFinished(BillingResult result) {
                 mainHandler.post(() -> {
                     connecting = false;
+                    noteUnavailable(result);
                     if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
                         askPlay();
                     } else {
@@ -265,6 +283,8 @@ final class ProBilling implements PurchasesUpdatedListener {
      * The purchase arrives at {@link #onPurchasesUpdated}, not here.
      */
     void buy(Activity activity) {
+        // A person asking is the manual retry Google's guidance allows after BILLING_UNAVAILABLE.
+        quietUntilMs = 0;
         client.queryProductDetailsAsync(productQuery(), (result, detailsResult) ->
                 mainHandler.post(() -> {
                     if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
@@ -373,12 +393,34 @@ final class ProBilling implements PurchasesUpdatedListener {
         client.endConnection();
     }
 
+    /**
+     * Notes how Play answered, whichever call it was: with automatic reconnection the setup may
+     * succeed and a later query be the one that finds no Play to ask (on the Huawei tablet without
+     * an account the queries come back SERVICE_DISCONNECTED after the library's own retries).
+     */
+    private static void noteUnavailable(BillingResult result) {
+        int code = result.getResponseCode();
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (code == BillingClient.BillingResponseCode.OK) {
+            quietMs = 0;
+            quietUntilMs = 0;
+        } else if ((code == BillingClient.BillingResponseCode.BILLING_UNAVAILABLE
+                || code == BillingClient.BillingResponseCode.SERVICE_DISCONNECTED
+                || code == BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE
+                || code == BillingClient.BillingResponseCode.ERROR) && now >= quietUntilMs) {
+            // Once a round: the price and the purchases fail together and count as one.
+            quietMs = quietMs == 0 ? QUIET_FIRST_MS : Math.min(quietMs * 2, QUIET_MAX_MS);
+            quietUntilMs = now + quietMs;
+        }
+    }
+
     private void queryPurchases() {
         client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder()
                         .setProductType(BillingClient.ProductType.INAPP)
                         .build(),
                 (result, purchases) -> mainHandler.post(() -> {
+                    noteUnavailable(result);
                     if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
                         // owned stays, same reasoning as the setup failure above: a query that
                         // could not run says nothing about the purchase.
