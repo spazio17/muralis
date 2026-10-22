@@ -33,7 +33,7 @@ final class SettingsImport {
                     ? ((Number) now).longValue() == ((Number) next).longValue() : now.equals(next));
             if (!same) {
                 String text = String.valueOf(next);
-                changes.put(SettingsTransfer.publicName(entry.getKey()),
+                changes.put(entry.getKey(),
                         text.length() > 80 ? text.substring(0, 80) + "…" : text);
             }
         }
@@ -79,7 +79,7 @@ final class SettingsImport {
                 }
             }
             if (problem != null) {
-                refused.add(SettingsTransfer.publicName(key) + ": " + problem);
+                refused.add(key + ": " + problem);
             }
         }
         for (Map.Entry<String, String> secret : contents.secrets.entrySet()) {
@@ -189,6 +189,8 @@ final class SettingsImport {
                 return text.isEmpty()
                         || context.getPackageManager().getLaunchIntentForPackage(text) != null
                         ? null : "no installed app " + text + " has anything to open";
+            case "dashboard_shows":
+                return dashboardShowsProblem(context, text, imported);
             case "mqtt_tls_pin":
                 return text.isEmpty() || CertificatePins.isFingerprint(text) ? null
                         : "not a certificate's SHA-256";
@@ -241,27 +243,27 @@ final class SettingsImport {
                 }
                 return DisplayOffPolicy.SLEEP.equals(text) && !KioskService.isDeviceOwner(context)
                         ? "a real screen-off needs the device-owner install" : null;
-            case "screensaver_mode":
+            case "ambient_mode":
                 return ScreensaverPolicy.isMode(text) ? null
                         : "must be off, dim, film, url or pictures";
-            case "screensaver_on_wake":
+            case "ambient_on_wake":
                 return ScreensaverPolicy.isOnWake(text) ? null : "must be ambient or dashboard";
-            case "screensaver_transition":
-                return ScreensaverPolicy.isTransition(text) ? null : "must be none, fade or slide";
-            case "screensaver_picture_fit":
+            case "ambient_transition":
+                return ScreensaverPolicy.isTransition(text) ? null : "must be cut, fade or slide";
+            case "ambient_picture_fit":
                 return ScreensaverPolicy.isFit(text) ? null : "must be fit, fill, stretch or actual";
-            case "screensaver_credit_corner":
+            case "ambient_credit_corner":
                 return ScreensaverPolicy.isCorner(text) ? null : "not a corner";
-            case "screensaver_url":
+            case "ambient_url":
                 return text.isEmpty() ? null : KioskCommandDispatcher.validateDashboardUrl(text);
-            case "screensaver_idle_s":
-            case "screensaver_off_s":
+            case "ambient_start_after_s":
+            case "ambient_off_s":
                 return ScreensaverPolicy.parseSeconds(String.valueOf(number)) == null
                         ? ScreensaverPolicy.SECONDS_RULE : null;
-            case "screensaver_picture_s":
+            case "ambient_picture_s":
                 return ScreensaverPolicy.parsePictureSeconds(String.valueOf(number)) == null
                         ? ScreensaverPolicy.PICTURE_SECONDS_RULE : null;
-            case "screensaver_dim_percent":
+            case "ambient_dim_percent":
                 return number >= 1 && number <= 100 ? null : ScreensaverPolicy.DIM_RULE;
             case "settings_sequence":
             case "launcher_sequence": {
@@ -347,6 +349,32 @@ final class SettingsImport {
                 }
                 return null;
         }
+    }
+
+    /**
+     * What the dashboard shows, by the rule dashboard.show keeps: the app and the cameras it
+     * names must be chosen, in the file or on the panel already. A refused app or camera in
+     * the same file is not checked again here; the panel then reads the choice as the page.
+     */
+    private static String dashboardShowsProblem(Context context, String value,
+            Map<String, Object> imported) {
+        if (!KioskConfig.isDashboardShows(value)) {
+            return "must be page, app or cameras";
+        }
+        String app = imported.get("app_lock") instanceof String
+                ? ((String) imported.get("app_lock")).trim() : KioskConfig.chosenAppOf(context);
+        List<Cameras.Camera> cameras = imported.get("cameras") instanceof String
+                ? Cameras.parse((String) imported.get("cameras")) : KioskConfig.camerasOf(context);
+        List<Cameras.Group> groups = imported.get("camera_groups") instanceof String
+                ? Cameras.parseGroups((String) imported.get("camera_groups"))
+                : KioskConfig.cameraGroupsOf(context);
+        String chosen = imported.get("dashboard_cameras") instanceof String
+                ? ((String) imported.get("dashboard_cameras")).trim()
+                : KioskConfig.dashboardCamerasOf(context);
+        boolean exists = !chosen.isEmpty() && (Cameras.find(cameras, chosen) != null
+                || Cameras.findGroup(groups, chosen) != null);
+        return KioskCommandDispatcher.dashboardShowProblem(value, app,
+                !cameras.isEmpty() || !groups.isEmpty(), exists);
     }
 
     private static String permitted(Context context, Object value, String permission) {

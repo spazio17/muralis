@@ -11,11 +11,15 @@ import java.util.Map;
 public final class SettingsTransferTest {
     public static void main(String[] args) {
         Map<String, Object> stored = new HashMap<>();
-        stored.put("dashboard_url", "https://ha.local:8123/");
+        stored.put("dashboard_url", "https://home.local:8123/");
         stored.put("mqtt_port", 1883);
         stored.put("alert_battery_below", 15L);
-        stored.put("screensaver_mode", "pictures");
-        stored.put("sensor_light", true);
+        stored.put("ambient_mode", "pictures");
+        stored.put("ambient_start_after_s", 45);
+        stored.put("ambient_one_per_start", true);
+        stored.put("dashboard_shows", "cameras");
+        stored.put("screensaver_mode", "dim");
+        stored.put("sensor_illuminance", true);
         stored.put("sensor_option_camera_name", "Door");
         stored.put("device_id", "kiosk-1234");
         stored.put("fleet_id", "fleet-ab");
@@ -27,17 +31,23 @@ public final class SettingsTransferTest {
         secrets.put("something_else", "never");
 
         String plain = SettingsTransfer.export(stored, null, null, "0.7.0");
-        require(plain.contains("\"ambient_mode\":\"pictures\"") && !plain.contains("screensaver_"),
-                "Ambient's settings under their own name: " + plain);
+        require(plain.contains("\"ambient_mode\":\"pictures\"")
+                && plain.contains("\"ambient_start_after_s\":45")
+                && plain.contains("\"ambient_one_per_start\":true")
+                && plain.contains("\"dashboard_shows\":\"cameras\"")
+                && !plain.contains("screensaver_"),
+                "Ambient's settings under their own name, a retired name left out: " + plain);
         require(!plain.contains("kiosk-1234") && !plain.contains("fleet-ab")
                 && !plain.contains("uploaded") && !plain.contains("kiosk_stopped")
                 && !plain.contains("secret") && !plain.contains("\"secrets\""),
                 "never the name, the fleet, certificates, state or passwords: " + plain);
         SettingsTransfer.Contents back = SettingsTransfer.read(plain, null);
-        require(back.problem == null && "pictures".equals(back.settings.get("screensaver_mode"))
+        require(back.problem == null && "pictures".equals(back.settings.get("ambient_mode"))
+                && Integer.valueOf(45).equals(back.settings.get("ambient_start_after_s"))
+                && "cameras".equals(back.settings.get("dashboard_shows"))
                 && Integer.valueOf(1883).equals(back.settings.get("mqtt_port"))
                 && Long.valueOf(15).equals(back.settings.get("alert_battery_below"))
-                && Boolean.TRUE.equals(back.settings.get("sensor_light"))
+                && Boolean.TRUE.equals(back.settings.get("sensor_illuminance"))
                 && "Door".equals(back.settings.get("sensor_option_camera_name"))
                 && !back.hasSecrets, "the settings come back with their stored types: "
                 + back.settings);

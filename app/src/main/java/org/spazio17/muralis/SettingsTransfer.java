@@ -42,17 +42,17 @@ final class SettingsTransfer {
     private static Map<String, Character> keys() {
         Map<String, Character> keys = new LinkedHashMap<>();
         for (String key : new String[] {"dashboard_url", "mqtt_host", "browser_user_agent",
-                "screensaver_url", "alert_mqtt_topic", "alert_webhook_url",
-                "orientation", "display_off_method", "screensaver_mode",
-                "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
-                "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock", "integrations"}) {
+                "ambient_url", "alert_mqtt_topic", "alert_webhook_url",
+                "orientation", "display_off_method", "ambient_mode",
+                "ambient_on_wake", "ambient_transition", "ambient_picture_fit",
+                "ambient_credit_corner", "settings_sequence", "launcher_sequence",
+                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "dashboard_shows", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock", "integrations"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",
                 "browser_text_size", "browser_page_zoom", "browser_back_after_s",
-                "status_light_color", "status_light_percent", "screensaver_idle_s",
-                "screensaver_off_s", "screensaver_dim_percent", "screensaver_picture_s"}) {
+                "status_light_color", "status_light_percent", "ambient_start_after_s",
+                "ambient_off_s", "ambient_dim_percent", "ambient_picture_s"}) {
             keys.put(key, 'i');
         }
         for (String key : new String[] {"alert_offline_minutes", "alert_battery_below",
@@ -61,7 +61,7 @@ final class SettingsTransfer {
         }
         for (String key : new String[] {"stats_overlay", "browser_dark", "browser_page_camera",
                 "browser_page_microphone", "status_light_on", "volume_buttons_disabled", "camera_names",
-                "screensaver_shuffle", "screensaver_one_per_cycle", "screensaver_credit",
+                "ambient_shuffle", "ambient_one_per_start", "ambient_credit",
                 "web_admin_enabled", "alert_page_error", "alert_combination_used",
                 "alert_pin_lockout", "mqtt_tls"}) {
             keys.put(key, 'b');
@@ -86,15 +86,6 @@ final class SettingsTransfer {
             return 'b';
         }
         return null;
-    }
-
-    /** The name a person reads in the file: Ambient's settings as Ambient, the rest as stored. */
-    static String publicName(String key) {
-        return key.startsWith("screensaver_") ? "ambient_" + key.substring(12) : key;
-    }
-
-    static String storedName(String name) {
-        return name.startsWith("ambient_") ? "screensaver_" + name.substring(8) : name;
     }
 
     /**
@@ -168,7 +159,7 @@ final class SettingsTransfer {
             Character type = typeOf(entry.getKey());
             Object value = entry.getValue();
             if (type != null && fits(type, value)) {
-                settings.put(publicName(entry.getKey()),
+                settings.put(entry.getKey(),
                         value instanceof Integer ? (long) (Integer) value : value);
             }
         }
@@ -219,7 +210,7 @@ final class SettingsTransfer {
         }
         Map<String, Object> settings = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : TinyJson.object(root.get("settings")).entrySet()) {
-            String key = storedName(entry.getKey());
+            String key = entry.getKey();
             Character type = typeOf(key);
             Object value = entry.getValue();
             if (type == null) {

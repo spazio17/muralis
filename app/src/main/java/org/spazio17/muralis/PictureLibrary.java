@@ -86,7 +86,6 @@ final class PictureLibrary {
         browser = new PictureBrowser(app);
         playlists = new PicturePlaylists(app);
         run(this::ensurePlaylist);
-        run(this::dropOldDownloads);
     }
 
     static PictureLibrary get(Context context) {
@@ -225,26 +224,6 @@ final class PictureLibrary {
             return hex.toString();
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
-        }
-    }
-
-    /**
-     * The folder where the online pictures of the day were cached by older versions: removed at
-     * every start, which costs nothing once it is gone.
-     */
-    private void dropOldDownloads() {
-        deleteTree(new File(app.getCacheDir(), "screensaver"));
-    }
-
-    private static void deleteTree(File file) {
-        File[] children = file.listFiles();
-        if (children != null) {
-            for (File child : children) {
-                deleteTree(child);
-            }
-        }
-        if (file.exists() && !file.delete()) {
-            Log.w(TAG, "Could not remove an old download: " + file.getName());
         }
     }
 
@@ -445,7 +424,7 @@ final class PictureLibrary {
      * One edit of the stored playlists, under this library's own lock.
      *
      * <p>Every surface came through a load-modify-store path of its own before 2026-09-19: the
-     * web admin on an HTTP worker, Home Assistant on the MQTT thread, the panel on the library
+     * web admin on an HTTP worker, the smart home on the MQTT thread, the panel on the library
      * worker. Two of them at once each stored a copy that lacked the other's change, so a tick
      * in the browser could quietly undo a playlist switch from a card. They all come through
      * here now, one at a time.

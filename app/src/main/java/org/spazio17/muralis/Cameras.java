@@ -85,8 +85,8 @@ final class Cameras {
 
     /** What the question before removing a camera or a group adds, on both surfaces. */
     static final String REMOVED = "It is taken out of every group it is in, and its sign-in is"
-            + " deleted. An automation or the camera view that shows it then has nothing to show.";
-    static final String GROUP_REMOVED = "Its cameras stay. An automation or the camera view that"
+            + " deleted. An automation or the dashboard that shows it then has nothing to show.";
+    static final String GROUP_REMOVED = "Its cameras stay. An automation or the dashboard that"
             + " shows it then has nothing to show.";
 
     private Cameras() {
@@ -551,17 +551,10 @@ final class Cameras {
         return TinyJson.write(out);
     }
 
-    /** The camera view's word for the web page, on the panel's choice and Home Assistant's select. */
-    static final String CAMERA_VIEW_PAGE = "Web page";
-
     private static String checkName(String name) {
         if (name == null || name.trim().isEmpty() || name.trim().length() > MAX_NAME
                 || name.chars().anyMatch(Character::isISOControl)) {
             return "the name must be one line of 1 to " + MAX_NAME + " characters";
-        }
-        // "Web page" is the web page in the camera view's choice (Home Assistant's select too).
-        if (name.trim().equalsIgnoreCase(CAMERA_VIEW_PAGE)) {
-            return "Web page is taken: it means the web page in the camera view";
         }
         return null;
     }
