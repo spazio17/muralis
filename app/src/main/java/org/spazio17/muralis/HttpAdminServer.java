@@ -1650,6 +1650,13 @@ final class HttpAdminServer {
                 // applies on its own, in this order: a hand-built request carrying several keys
                 // gets the earlier ones applied and the first refusal reported. Ambient
                 // keys are the exception, checked as a set before any of them is stored.
+                for (Map.Entry<String, String> entry : form.entrySet()) {
+                    if (isSwitchKey(entry.getKey())
+                            && KioskCommandDispatcher.parseEnabledFlag(entry.getValue()) == null) {
+                        return "Not saved: " + entry.getKey() + " must be 1 or 0 (true or false,"
+                                + " on or off).";
+                    }
+                }
                 for (String key : form.keySet()) {
                     if (key.startsWith("sensor_") && !key.startsWith("sensor_option_")
                             && Sensors.byId(key.substring("sensor_".length())) == null) {
@@ -1853,7 +1860,21 @@ final class HttpAdminServer {
 
     /** The spellings a browser form, a shell or a hand-written client is likely to send. */
     private static boolean isTrue(String value) {
-        return "1".equals(value) || "true".equalsIgnoreCase(value) || "on".equalsIgnoreCase(value);
+        return Boolean.TRUE.equals(KioskCommandDispatcher.parseEnabledFlag(value));
+    }
+
+    /**
+     * The on/off keys of POST /api/setting's behaviour section. Their value is checked with the
+     * commands' parser before any is stored: isTrue read every other word as "off" and the
+     * answer said saved (pre-release device pass, 2026-10-22).
+     */
+    private static boolean isSwitchKey(String key) {
+        return (key.startsWith("sensor_") && !key.startsWith("sensor_option_"))
+                || key.startsWith("automation_") || key.startsWith("fleet_group_")
+                || key.equals("fleet_follows") || key.equals("volume_buttons_disabled")
+                || key.equals("status_light") || key.equals("stats_overlay")
+                || key.equals("ambient_shuffle") || key.equals("ambient_one_per_cycle")
+                || key.equals("ambient_credit");
     }
 
     /**

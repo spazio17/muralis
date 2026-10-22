@@ -17466,6 +17466,50 @@ public final class KioskActivity extends Activity {
             runOnUiThread(KioskActivity.this::releaseCameraFromPage);
         }
 
+        /*
+         * A page's alert, confirm, prompt and leave-page dialogs are answered at once and never
+         * shown. The WebView's own dialog is a system window over the panel: while it is up the
+         * corner taps never reach this activity, and a page that repeats alert() keeps everyone
+         * out of the settings and stalls Home and Reload (pre-release device pass, 2026-10-22).
+         * Nobody may be there to tap OK, so the answers are the ones that change nothing: an
+         * alert is acknowledged, a question is declined, and leaving the page is allowed.
+         */
+        @Override
+        public boolean onJsAlert(WebView view, String url, String message,
+                android.webkit.JsResult result) {
+            logPageDialog("alert", message);
+            result.confirm();
+            return true;
+        }
+
+        @Override
+        public boolean onJsConfirm(WebView view, String url, String message,
+                android.webkit.JsResult result) {
+            logPageDialog("confirm", message);
+            result.cancel();
+            return true;
+        }
+
+        @Override
+        public boolean onJsPrompt(WebView view, String url, String message, String defaultValue,
+                android.webkit.JsPromptResult result) {
+            logPageDialog("prompt", message);
+            result.cancel();
+            return true;
+        }
+
+        @Override
+        public boolean onJsBeforeUnload(WebView view, String url, String message,
+                android.webkit.JsResult result) {
+            result.confirm();
+            return true;
+        }
+
+        private void logPageDialog(String kind, String message) {
+            Log.i(TAG, "The page's " + kind + " was answered without showing it: "
+                    + AppLog.secretsCut(message));
+        }
+
         @Override
         public boolean onConsoleMessage(ConsoleMessage message) {
             if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
