@@ -1019,6 +1019,14 @@ final class HttpAdminServer {
             writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
                     bytes(buildCameraViewPage(refused == null ? "Saved." : "Not saved: " + refused
                             + ".")));
+        } else if (path.equals("/integrations") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildIntegrationsPage(null, queryValue(query, "id"), false, null)));
+        } else if (path.equals("/integration") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildIntegrationsPage(null, queryValue(query, "id"), true, null)));
+        } else if (path.equals("/integrations") && method.equals("POST")) {
+            postIntegration(parseFormBody(headers, body), output);
         } else if (path.equals("/cameras") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildCamerasPage(null, queryValue(query, "id"), false)));
@@ -2235,8 +2243,8 @@ final class HttpAdminServer {
                 sensorsSectionBody(), "Automation"});
         sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
                 automationsSectionBody(), "Automation"});
-        sections.add(new String[] {"integrations", "integrations", "Integrations", "Coming soon",
-                integrationsBody(), "Automation"});
+        sections.add(new String[] {"integrations", "integrations", "Integrations",
+                integrationsSummary(), integrationsBody(), "Automation"});
         sections.add(new String[] {"mqtt", "mqtt", "MQTT",
                 config.mqttHost.isEmpty() ? "Not configured" : config.mqttHost + ":" + config.mqttPort,
                 mqttBody(config, notice, noticeSection), "Connections"});
@@ -2462,8 +2470,11 @@ final class HttpAdminServer {
      * Sensors.listKeys; the rules as stored, as the pages draw them.
      */
     private String listsAttributes(String kind) {
-        String key = Sensors.listKeys(KioskRuntimeState.sensors(),
-                Automations.toJson(KioskConfig.automationsOf(context), true)).optString(kind, "");
+        String key = kind.startsWith("integrations_")
+                ? IntegrationRunner.listKey(KioskRuntimeState.integrations())
+                : Sensors.listKeys(KioskRuntimeState.sensors(),
+                        Automations.toJson(KioskConfig.automationsOf(context), true))
+                        .optString(kind, "");
         return " data-lists-kind=\"" + kind + "\" data-lists=\"" + escapeHtml(key) + "\"";
     }
 
@@ -3095,6 +3106,34 @@ final class HttpAdminServer {
                             + " data-holds=\"\" data-tag=\"1\" data-camera=\"1\">")
                     .append("A camera is triggered</label></div>");
         }
+        // The integrations' values, each a sensor of its own, with the events its type has.
+        for (java.util.Map.Entry<String, String> value : IntegrationRunner.sensorNames(
+                KioskRuntimeState.integrations()).entrySet()) {
+            java.util.List<Automations.Event> list = Automations.events(value.getKey());
+            if (list == null || list.isEmpty()) {
+                continue;
+            }
+            offered |= value.getKey().equals(chosenSensor);
+            sensorOptions.append(selectOption(value.getKey(), value.getValue(), chosenSensor));
+            events.append("<div class=\"radios events\" data-sensor=\"")
+                    .append(escapeHtml(value.getKey()))
+                    .append("\" role=\"radiogroup\" aria-label=\"")
+                    .append(escapeHtml(value.getValue())).append(" events\">");
+            for (Automations.Event event : list) {
+                boolean checked = value.getKey().equals(rule.sensor)
+                        && event.id.equals(rule.event);
+                events.append("<label class=\"radio\"><input type=\"radio\" name=\"event_")
+                        .append(escapeHtml(value.getKey())).append("\" value=\"")
+                        .append(event.id).append("\"").append(checked ? " checked" : "")
+                        .append(event.levelUnit == null ? "" : " data-level=\""
+                                + escapeHtml(event.levelUnit) + "\"")
+                        .append(" data-holds=\"").append(event.holds ? "1" : "")
+                        .append("\" data-tag=\"\" data-text=\"")
+                        .append(event.matches && !event.oneShot ? "1" : "").append("\">")
+                        .append(escapeHtml(event.label)).append("</label>");
+            }
+            events.append("</div>");
+        }
         if (!offered && !rule.sensor.isEmpty()) {
             // A rule on a sensor this device lacks keeps it: saving the rule for its name must
             // not move it to the first sensor of the menu (review, 2026-10-01).
@@ -3154,6 +3193,11 @@ final class HttpAdminServer {
                         rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
                 + selectField("a-tag" + sfx, "tag", "Tag", null, tags.toString(), null)
+                // The text an integration's value must become ("Busy"), upper and lower case
+                // alike.
+                + fieldWithId("a-text" + sfx, "text", "match_text", "Text",
+                        Integrations.isSensorId(rule.sensor) ? rule.match : "", "",
+                        "Upper and lower case count the same.").replace(MACHINE_TEXT, "")
                 + selectField("a-camera" + sfx, "camera_tag", "Camera or group", null,
                         cameraOptions(cameraList, groupList, waitedFor), null)
                 + fieldWithId("a-cooldown" + sfx, "number", "cooldown",
@@ -3505,6 +3549,7 @@ final class HttpAdminServer {
                 ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
         rule.match = (Automations.CAMERAS.equals(rule.sensor) ? form.getOrDefault("camera_tag", "")
+                : Integrations.isSensorId(rule.sensor) ? form.getOrDefault("match_text", "")
                 : form.getOrDefault("tag", "")).trim();
         String cooldown = form.getOrDefault("cooldown", "").trim();
         rule.cooldown = cooldown.isEmpty() ? 0 : cooldown.matches("\\d{1,5}")
@@ -5064,11 +5109,363 @@ final class HttpAdminServer {
                 + "</a></div>";
     }
 
-    /** Integrations (2026-10-15): in the menu already, empty until the first ones come. */
-    private static String integrationsBody() {
-        return "<div class=\"empty\"><p class=\"h\">No integrations yet</p><p class=\"s\">Muralis"
-                + " will show and act on data from other services. The first integrations come"
-                + " in an update.</p></div>";
+    /** The Integrations section's line: how many are added and how many answer. */
+    private static String integrationsSummary() {
+        org.json.JSONArray block = KioskRuntimeState.integrations();
+        if (block.length() == 0) {
+            return "None yet";
+        }
+        int running = 0;
+        for (int index = 0; index < block.length(); index++) {
+            org.json.JSONObject entry = block.optJSONObject(index);
+            if (entry != null && entry.optBoolean("enabled")) {
+                running++;
+            }
+        }
+        return running + " of " + block.length() + " on";
+    }
+
+    /**
+     * Integrations: one row an added integration, with its status line, then More integration
+     * settings, as Cameras lists its cameras; a row opens the Integrations page on it.
+     */
+    private String integrationsBody() {
+        org.json.JSONArray block = KioskRuntimeState.integrations();
+        StringBuilder rows = new StringBuilder();
+        for (int index = 0; index < block.length(); index++) {
+            org.json.JSONObject entry = block.optJSONObject(index);
+            if (entry == null) {
+                continue;
+            }
+            rows.append(linkRow("/integrations?id=" + urlEncode("i:" + entry.optString("id")),
+                    "integrations", entry.optString("name"), integrationLine(entry), null, ""));
+        }
+        return "<div id=\"integrations-body\"" + listsAttributes("integrations_home") + ">"
+                + (rows.length() == 0 ? "<div class=\"empty\"><p class=\"h\">No integrations"
+                        + " yet</p><p class=\"s\">An integration brings data from another service"
+                        + " to the panel, for the automations and MQTT.</p></div>"
+                        : "<ul class=\"list seg\">" + rows + "</ul>")
+                + "<div class=\"actions\"><a class=\"btn text\" href=\"/integrations\">"
+                + (rows.length() == 0 ? "Add an integration" : "More integration settings")
+                + glyph("next") + "</a></div></div>";
+    }
+
+    /** A row's line: the values in words while it answers, else its status line. */
+    private static String integrationLine(org.json.JSONObject entry) {
+        if (!"ok".equals(entry.optString("state"))) {
+            return entry.optString("status");
+        }
+        org.json.JSONObject values = entry.optJSONObject("values");
+        StringBuilder line = new StringBuilder();
+        java.util.Iterator<String> ids = values == null
+                ? java.util.Collections.emptyIterator() : values.keys();
+        while (ids.hasNext()) {
+            org.json.JSONObject value = values.optJSONObject(ids.next());
+            if (value == null) {
+                continue;
+            }
+            if (line.length() > 0) {
+                line.append(", ");
+            }
+            if (values.length() > 1) {
+                line.append(value.optString("name")).append(' ');
+            }
+            line.append(valueWords(value));
+        }
+        return line.length() == 0 ? entry.optString("status") : line.toString();
+    }
+
+    /** One value of the status block in words, as IntegrationSettings.describe says it. */
+    private static String valueWords(org.json.JSONObject value) {
+        if (!value.optBoolean("available") || value.isNull("value")) {
+            return "unknown";
+        }
+        switch (value.optString("type")) {
+            case "flag":
+                return value.optBoolean("value") ? "on" : "off";
+            case "text":
+                return "\"" + value.optString("value") + "\"";
+            default: {
+                double number = value.optDouble("value");
+                String figure = number == Math.rint(number) && Math.abs(number) < 1e15
+                        ? Long.toString((long) number) : Double.toString(number);
+                String unit = value.optString("unit");
+                return unit.isEmpty() ? figure : figure + " " + unit;
+            }
+        }
+    }
+
+    /**
+     * The Integrations page, as Cameras is: the added integrations at the left with their status
+     * lines, then the ones this version offers to add, and the chosen one's box at the right;
+     * below 840 dp one list, and a box is a page of its own. {@code selected} is "i:" and an
+     * instance id, or "d:" and a definition id to add one. {@code typed} refills the box that
+     * was posted (a try before saving, a refusal), so nothing typed is lost.
+     */
+    private String buildIntegrationsPage(String notice, String selected, boolean detailPage,
+            Map<String, String> typed) {
+        java.util.List<Integrations.Instance> instances = KioskConfig.integrationsOf(context);
+        org.json.JSONArray block = KioskRuntimeState.integrations();
+        java.util.Map<String, org.json.JSONObject> status = new java.util.HashMap<>();
+        for (int index = 0; index < block.length(); index++) {
+            org.json.JSONObject entry = block.optJSONObject(index);
+            if (entry != null) {
+                status.put(entry.optString("id"), entry);
+            }
+        }
+        String chosen = integrationItemOrFirst(selected, instances);
+        StringBuilder rows = new StringBuilder();
+        for (Integrations.Instance instance : instances) {
+            String id = "i:" + instance.id;
+            org.json.JSONObject entry = status.get(instance.id);
+            rows.append(navRow(linkRow("/integration?id=" + urlEncode(id), "integrations",
+                    instance.name, entry == null ? "" : integrationLine(entry), null, ""),
+                    id, id.equals(chosen)));
+        }
+        StringBuilder offered = new StringBuilder();
+        for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+            if ("business".equals(definition.edition)) {
+                // Business does not exist yet: nothing of it is offered.
+                continue;
+            }
+            String id = "d:" + definition.id;
+            offered.append(navRow(linkRow("/integration?id=" + urlEncode(id), "integrations",
+                    definition.name, definition.summary, null, ""), id, id.equals(chosen)));
+        }
+        String nav = "<section class=\"card nav\" id=\"integrations-nav\""
+                + listsAttributes("integrations_page") + "><div class=\"cardhead\">"
+                + "<h2>Integrations</h2><span class=\"count\">"
+                + escapeHtml(integrationsSummary()) + "</span></div>"
+                + (rows.length() == 0 ? "<p class=\"hint\">None added yet.</p>"
+                        : "<ul class=\"list seg\">" + rows + "</ul>")
+                + (instances.size() >= Integrations.MAX_INSTANCES ? ""
+                        : "<div class=\"cardhead groups\"><h2>Add</h2></div>"
+                                + "<ul class=\"list seg\">" + offered + "</ul>")
+                + "</section>";
+        StringBuilder detail = new StringBuilder();
+        for (Integrations.Instance instance : instances) {
+            String id = "i:" + instance.id;
+            detail.append(pane(id, chosen, integrationForm(instance,
+                    Integrations.DEFINITIONS.get(instance.definition), status.get(instance.id),
+                    id.equals(chosen) ? typed : null)));
+        }
+        if (instances.size() < Integrations.MAX_INSTANCES) {
+            for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+                if ("business".equals(definition.edition)) {
+                    continue;
+                }
+                String id = "d:" + definition.id;
+                detail.append(pane(id, chosen, integrationForm(null, definition, null,
+                        id.equals(chosen) ? typed : null)));
+            }
+        }
+        boolean fresh = chosen.startsWith("d:");
+        return pageStart(!detailPage ? "Integrations" : fresh ? "New integration"
+                        : "Edit integration",
+                null, detailPage ? "/integrations" : settingsAt("integrations"))
+                + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
+                + listDetail("integrations", detailPage, nav, detail.toString(),
+                        " data-base=\"/integrations?id=\" data-list=\"/integrations\"")
+                + pageEnd();
+    }
+
+    /** The item to show: the one asked for when it exists, else the first added, else the first offered. */
+    private static String integrationItemOrFirst(String item,
+            java.util.List<Integrations.Instance> instances) {
+        if (item != null) {
+            if (item.startsWith("d:") && Integrations.DEFINITIONS.containsKey(item.substring(2))
+                    && instances.size() < Integrations.MAX_INSTANCES) {
+                return item;
+            }
+            for (Integrations.Instance instance : instances) {
+                if (item.equals("i:" + instance.id)) {
+                    return item;
+                }
+            }
+        }
+        if (!instances.isEmpty()) {
+            return "i:" + instances.get(0).id;
+        }
+        return "d:" + Integrations.DEFINITIONS.keySet().iterator().next();
+    }
+
+    /**
+     * One integration's box: its name, its settings drawn from the definition's fields, its
+     * status and values while added, and Try, Save or Add, Switch off or on, Remove. A secret
+     * box renders empty, as every password box: empty keeps the stored one.
+     */
+    private static String integrationForm(Integrations.Instance instance,
+            Integrations.Definition definition, org.json.JSONObject entry,
+            Map<String, String> typed) {
+        boolean fresh = instance == null;
+        if (definition == null) {
+            return "<section class=\"card\"><h2>" + escapeHtml(instance.name) + "</h2>"
+                    + "<p class=\"hint\">This version of Muralis does not have the "
+                    + escapeHtml(instance.definition) + " integration. A newer version added it."
+                    + "</p><form method=\"post\" action=\"/integrations\"><input type=\"hidden\""
+                    + " name=\"id\" value=\"" + escapeHtml(instance.id) + "\"><div class=\"actions\">"
+                    + "<button type=\"submit\" class=\"danger\" name=\"what\" value=\"remove\""
+                    + " data-confirm=\"" + escapeHtml(removeQuestion("Remove \"" + instance.name
+                            + "\"?", IntegrationSettings.REMOVED)) + "\">Remove</button></div>"
+                    + "</form></section>";
+        }
+        String sfx = fresh ? "-" + definition.id : "-" + instance.id;
+        StringBuilder form = new StringBuilder();
+        form.append("<form method=\"post\" action=\"/integrations\" class=\"card\">")
+                .append("<h2>").append(escapeHtml(fresh ? definition.name : instance.name))
+                .append("</h2>");
+        if (fresh) {
+            form.append("<p class=\"hint\">").append(escapeHtml(definition.summary))
+                    .append("</p>");
+        } else if (entry != null) {
+            form.append("<p class=\"hint\">").append(escapeHtml(definition.name)).append(". ")
+                    .append(escapeHtml(entry.optString("status"))).append("</p>");
+            org.json.JSONObject values = entry.optJSONObject("values");
+            if (values != null && values.length() > 0 && "ok".equals(entry.optString("state"))) {
+                StringBuilder list = new StringBuilder();
+                java.util.Iterator<String> ids = values.keys();
+                while (ids.hasNext()) {
+                    org.json.JSONObject value = values.optJSONObject(ids.next());
+                    if (value != null) {
+                        list.append("<li class=\"two\"><span class=\"text\"><span class=\"h\">")
+                                .append(escapeHtml(valueWords(value)))
+                                .append("</span><span class=\"s\">")
+                                .append(escapeHtml(value.optString("name") + " · "
+                                        + value.optString("sensor")))
+                                .append("</span></span></li>");
+                    }
+                }
+                form.append("<ul class=\"list seg values\">").append(list).append("</ul>");
+            }
+        }
+        form.append("<input type=\"hidden\" name=\"id\" value=\"")
+                .append(fresh ? "" : escapeHtml(instance.id)).append("\">")
+                .append("<input type=\"hidden\" name=\"definition\" value=\"")
+                .append(escapeHtml(definition.id)).append("\">");
+        String name = typed != null ? typed.getOrDefault("name", "")
+                : fresh ? definition.name : instance.name;
+        form.append(fieldWithId("n" + sfx, "text", "name", "Name", name, "", null)
+                .replace(MACHINE_TEXT, ""));
+        for (Integrations.Field field : definition.fields) {
+            String id = "f" + sfx + "-" + field.id;
+            String key = "f_" + field.id;
+            // A secret box renders empty, also after a Try or a refusal: what was typed into it
+            // is never sent back to the browser.
+            String value = field.secret ? "" : typed != null ? typed.getOrDefault(key, "")
+                    : fresh ? "" : instance.settings.getOrDefault(field.id, "");
+            boolean stored = !fresh && entry != null && jsonArrayHas(
+                    entry.optJSONArray("secrets_set"), field.id);
+            String support = field.secret && stored ? BLANK_KEEPS
+                    : !field.hint.isEmpty() ? field.hint
+                    : field.kind == Integrations.Kind.NUMBER && !field.fallback.isEmpty()
+                            ? "Empty means " + field.fallback + "." : null;
+            if (field.kind == Integrations.Kind.CHOICE) {
+                String current = value.isEmpty() ? field.fallback : value;
+                StringBuilder options = new StringBuilder();
+                for (String option : field.options) {
+                    options.append("<option value=\"").append(escapeHtml(option)).append("\"")
+                            .append(option.equals(current) ? " selected" : "").append(">")
+                            .append(escapeHtml(option)).append("</option>");
+                }
+                form.append(selectField(id, key, field.label, null, options.toString(),
+                        support));
+            } else {
+                String type = field.secret ? "password"
+                        : field.kind == Integrations.Kind.NUMBER ? "number" : "text";
+                String extra = field.kind == Integrations.Kind.URL ? " inputmode=\"url\""
+                        : field.kind == Integrations.Kind.NUMBER
+                                ? " min=\"" + field.min + "\" max=\"" + field.max + "\"" : "";
+                // "(optional)" only where empty means nothing; a fallback is said below.
+                boolean optional = !field.required && field.fallback.isEmpty();
+                form.append(fieldWithId(id, type, key, field.label
+                        + (optional ? " (optional)" : ""), value, extra, support));
+            }
+        }
+        form.append("<div class=\"actions\"><button type=\"submit\" class=\"primary\""
+                + " name=\"what\" value=\"save\">").append(fresh ? "Add" : "Save")
+                .append("</button><button type=\"submit\" name=\"what\" value=\"test\">Try"
+                        + "</button>");
+        if (!fresh) {
+            form.append("<button type=\"submit\" name=\"what\" value=\"")
+                    .append(instance.enabled ? "off\">Switch off" : "on\">Switch on")
+                    .append("</button><button type=\"submit\" class=\"danger\" name=\"what\""
+                            + " value=\"remove\" data-confirm=\"")
+                    .append(escapeHtml(removeQuestion("Remove \"" + instance.name + "\"?",
+                            IntegrationSettings.REMOVED)))
+                    .append("\">Remove</button>");
+        }
+        return form.append("</div></form>").toString();
+    }
+
+    private static boolean jsonArrayHas(org.json.JSONArray array, String value) {
+        for (int index = 0; array != null && index < array.length(); index++) {
+            if (value.equals(array.optString(index))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A post from an integration's box: Add or Save, Try, Switch on or off, Remove. Answers the
+     * page again with what happened, on the integration it concerned; a try or a refusal keeps
+     * what was typed.
+     */
+    private void postIntegration(Map<String, String> form, OutputStream output)
+            throws IOException {
+        String what = form.getOrDefault("what", "");
+        String id = form.getOrDefault("id", "").trim();
+        String definition = form.getOrDefault("definition", "").trim();
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : form.entrySet()) {
+            if (entry.getKey().startsWith("f_")) {
+                values.put(entry.getKey().substring(2), entry.getValue());
+            }
+        }
+        String item = id.isEmpty() ? "d:" + definition : "i:" + id;
+        String notice;
+        boolean refused;
+        Map<String, String> keep = null;
+        switch (what) {
+            case "save": {
+                IntegrationSettings.Saved saved = IntegrationSettings.save(context, id,
+                        definition, form.getOrDefault("name", ""), values);
+                refused = saved.problem != null;
+                notice = refused ? "Not saved: " + saved.problem + "." : id.isEmpty()
+                        ? "Added. It asks its service now." : "Saved.";
+                if (refused) {
+                    keep = form;
+                } else {
+                    item = "i:" + saved.id;
+                }
+                break;
+            }
+            case "test":
+                notice = IntegrationSettings.test(context, id, definition, values);
+                refused = notice.startsWith("Not ");
+                keep = form;
+                break;
+            case "on":
+            case "off": {
+                String problem = IntegrationSettings.setEnabled(context, id, what.equals("on"));
+                refused = problem != null;
+                notice = refused ? "Not changed: " + problem + "."
+                        : what.equals("on") ? "Switched on." : "Switched off.";
+                break;
+            }
+            case "remove": {
+                String problem = IntegrationSettings.remove(context, id);
+                refused = problem != null;
+                notice = refused ? "Not removed: " + problem + "." : "Removed.";
+                item = null;
+                break;
+            }
+            default:
+                notice = "Not done: unknown action.";
+                refused = true;
+        }
+        writeResponse(output, refused ? 400 : 200, "text/html; charset=utf-8",
+                bytes(buildIntegrationsPage(notice, item, false, keep)));
     }
 
     /**

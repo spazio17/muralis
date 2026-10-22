@@ -238,6 +238,13 @@ final class SettingsImport {
             case "automations": {
                 List<Automations.Rule> rules = Automations.parse(text);
                 for (Automations.Rule rule : rules) {
+                    if (Integrations.isSensorId(rule.sensor)
+                            && Integrations.lookup.valueOf(rule.sensor) == null) {
+                        // A rule on an integration this panel does not hold (yet) is kept as
+                        // it came, as one is when its integration is removed: it waits, and
+                        // never fires until the integration is added here.
+                        continue;
+                    }
                     String problem = Automations.validate(rule, Sensors.names());
                     if (problem != null) {
                         return "the rule \"" + rule.name + "\": " + problem;

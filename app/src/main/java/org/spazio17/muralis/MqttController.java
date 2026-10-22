@@ -382,7 +382,9 @@ final class MqttController implements MqttCallbackExtended {
                         || (names != null && !names.equals(announcedPlaylists))
                         || !sensorsKey(KioskRuntimeState.sensors(),
                                 KioskRuntimeState.automations()).equals(announcedSensors)
-                        || !camerasKey().equals(announcedCameras)) {
+                        || !camerasKey().equals(announcedCameras)
+                        || !integrationsKey(KioskRuntimeState.integrations())
+                                .equals(announcedIntegrations)) {
                     runDiscovery();
                 }
             });
@@ -403,6 +405,45 @@ final class MqttController implements MqttCallbackExtended {
             key.append(group.name).append(',');
         }
         return key.toString();
+    }
+
+    /** The integration values discovery last announced; see {@link #integrationsKey}. */
+    private volatile String announcedIntegrations = null;
+
+    /**
+     * What discovery announces for the integrations: every value of every running instance, with
+     * the name, type and unit its entity carries, so a rename or a new type announces again.
+     */
+    private static String integrationsKey(org.json.JSONArray block) {
+        StringBuilder key = new StringBuilder();
+        for (int index = 0; index < block.length(); index++) {
+            JSONObject entry = block.optJSONObject(index);
+            if (!announces(entry)) {
+                continue;
+            }
+            JSONObject values = entry.optJSONObject("values");
+            java.util.Iterator<String> ids = values == null
+                    ? java.util.Collections.emptyIterator() : values.keys();
+            while (ids.hasNext()) {
+                JSONObject value = values.optJSONObject(ids.next());
+                if (value != null) {
+                    key.append(value.optString("sensor")).append('=')
+                            .append(entry.optString("name")).append('/')
+                            .append(value.optString("type")).append('/')
+                            .append(value.optString("unit")).append(',');
+                }
+            }
+        }
+        return key.toString();
+    }
+
+    /** Whether an instance's values have entities: it runs, whatever its service says now. */
+    private static boolean announces(JSONObject entry) {
+        if (entry == null || !entry.optBoolean("enabled")) {
+            return false;
+        }
+        String state = entry.optString("state");
+        return !"off".equals(state) && !"unknown".equals(state) && !"blocked".equals(state);
     }
 
     /** The playlist names discovery last announced, joined as PicturePlaylists.namesKey is. */
@@ -844,6 +885,7 @@ final class MqttController implements MqttCallbackExtended {
         try {
             org.json.JSONObject sensorBlock = KioskRuntimeState.sensors();
             org.json.JSONArray rules = KioskRuntimeState.automations();
+            org.json.JSONArray integrationBlock = KioskRuntimeState.integrations();
             JSONObject discovery = new JSONObject();
             JSONObject device = new JSONObject();
             device.put("ids", new JSONArray().put(config.deviceId));
@@ -1195,6 +1237,52 @@ final class MqttController implements MqttCallbackExtended {
                 }
                 components.put(key, entity);
             }
+            // The integrations' values, one entity each under the panel's device, named after
+            // the instance (and the value, where an instance reports several). An instance that
+            // is switched off or removed loses its entities at this publish, as a sensor does;
+            // one whose service does not answer keeps them, reading unknown (a null value).
+            for (int index = 0; index < integrationBlock.length(); index++) {
+                JSONObject entry = integrationBlock.optJSONObject(index);
+                if (!announces(entry)) {
+                    continue;
+                }
+                JSONObject values = entry.optJSONObject("values");
+                if (values == null) {
+                    continue;
+                }
+                boolean several = values.length() > 1;
+                java.util.Iterator<String> ids = values.keys();
+                while (ids.hasNext()) {
+                    JSONObject value = values.optJSONObject(ids.next());
+                    if (value == null) {
+                        continue;
+                    }
+                    String sensorId = value.optString("sensor");
+                    String reading = "value_json.integration_values." + sensorId;
+                    JSONObject entity = new JSONObject();
+                    entity.put("name", entry.optString("name")
+                            + (several ? " " + value.optString("name") : ""));
+                    entity.put("unique_id", config.deviceId + "_" + sensorId);
+                    if ("flag".equals(value.optString("type"))) {
+                        entity.put("p", "binary_sensor");
+                        entity.put("payload_on", "ON");
+                        entity.put("payload_off", "OFF");
+                        // None, not OFF, while the service does not answer: unknown to whoever
+                        // reads it, never "all up".
+                        entity.put("value_template", "{{ 'ON' if " + reading + " == true else ("
+                                + "'OFF' if " + reading + " == false else 'None') }}");
+                    } else {
+                        entity.put("p", "sensor");
+                        entity.put("value_template", "{{ " + reading + " }}");
+                        String unit = value.optString("unit");
+                        if ("number".equals(value.optString("type")) && !unit.isEmpty()) {
+                            entity.put("unit_of_measurement", unit);
+                            entity.put("state_class", "measurement");
+                        }
+                    }
+                    components.put(sensorId, entity);
+                }
+            }
             // The camera's controls and its picture, the set Frigate and Blue Iris publish:
             // motion detection as a switch, a snapshot button, and the last picture on motion
             // as a camera entity, all only while the camera is on.
@@ -1299,6 +1387,7 @@ final class MqttController implements MqttCallbackExtended {
                 components.put("automation_" + id, ruleSwitch);
             }
             announcedSensors = sensorsKey(sensorBlock, rules);
+            announcedIntegrations = integrationsKey(integrationBlock);
             announcedCameras = camerasKey();
             // The Web admin switch reflects the operator's flag, not whether a socket is bound:
             // with no admin password stored, "on" is an honest description of intent while the

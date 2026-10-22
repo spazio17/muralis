@@ -174,6 +174,7 @@ javac -d "${test_dir}/automations" \
     "${pure_java_dir}/BrowserOptions.java" \
     "${pure_java_dir}/CertificatePins.java" \
     "${pure_java_dir}/Integrations.java" \
+    "${pure_java_dir}/WebValueIntegration.java" \
     "${pure_java_dir}/StatusLight.java" \
     "${pure_java_dir}/ScreensaverPolicy.java" \
     "${pure_java_dir}/TinyJson.java" \

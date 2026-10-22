@@ -1150,6 +1150,24 @@ final class KioskConfig {
                 .getString(AUTOMATIONS_DELETED, "[]");
     }
 
+    private static final String INTEGRATIONS = "integrations";
+    /** Held by everyone who reads the stored integrations, changes them and writes them back. */
+    static final Object INTEGRATIONS_STORE = new Object();
+
+    /** The integrations added on this panel (Integrations.Instance), without their secrets. */
+    static java.util.List<Integrations.Instance> integrationsOf(Context context) {
+        return Integrations.parseInstances(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(INTEGRATIONS, null));
+    }
+
+    /** Stores the whole list; the caller holds INTEGRATIONS_STORE across its read and this write. */
+    static void storeIntegrations(Context context, java.util.List<Integrations.Instance> list) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(INTEGRATIONS, Integrations.storeInstances(list))
+                .apply();
+    }
+
     /** The stored automations; the shipped default until something is stored. */
     static java.util.List<Automations.Rule> automationsOf(Context context) {
         return Automations.parse(storageContext(context)
