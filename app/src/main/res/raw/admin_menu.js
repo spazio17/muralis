@@ -9,7 +9,7 @@
 // closed, except where the address names a section, "/#box-<section>" after a save (its form
 // posts there) or a page's back arrow, "/?open=<section>" after the certificate choice's reload,
 // and a message about a refused save, which arrives with its section open.
-// The app bar's overflow menu (Reload, Restart kiosk, Reboot): opens under its button, closes on
+// The app bar's overflow menu (Reload dashboard, Restart app, Reboot): opens under its button, closes on
 // a choice, a click elsewhere or Escape; the arrows move along it.
 (function(){
 var button=document.getElementById('commands-button'),menu=document.getElementById('commands-menu');

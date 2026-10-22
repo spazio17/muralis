@@ -44,7 +44,7 @@ final class ScreensaverPolicy {
     static final String PICTURES = "pictures";
 
     /** How one picture gives way to the next. */
-    static final String TRANSITION_NONE = "none";
+    static final String TRANSITION_CUT = "cut";
     static final String TRANSITION_FADE = "fade";
     static final String TRANSITION_SLIDE = "slide";
 
@@ -148,7 +148,7 @@ final class ScreensaverPolicy {
     }
 
     static boolean isTransition(String value) {
-        return TRANSITION_NONE.equals(value) || TRANSITION_FADE.equals(value)
+        return TRANSITION_CUT.equals(value) || TRANSITION_FADE.equals(value)
                 || TRANSITION_SLIDE.equals(value);
     }
 

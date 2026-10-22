@@ -26,9 +26,9 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Bluetooth beacons, the companion app's Beacon Monitor: the panel listens for iBeacons around
- * it and reports how many are in reach, each with its distance. It only listens and never sends
- * a beacon of its own (2026-10-01: "Only listen for beacons, never send a beacon").
+ * Bluetooth beacons, a smart-home companion app's Beacon Monitor: the panel listens for iBeacons
+ * around it and reports how many are in reach, each with its distance. It only listens and never
+ * sends a beacon of its own (2026-10-01: "Only listen for beacons, never send a beacon").
  *
  * <p>A beacon is in reach while it has been heard within the "out of reach after" time; the
  * automations see the count. Beacons are named on the sensor's page, by their
@@ -243,7 +243,7 @@ final class Beacons implements Sensors.Reading {
 
     /**
      * What a kept step did, for the caller that asked for it alone: shared fields named the
-     * beacon of whichever caller came last, a Home Assistant automation's or the panel's
+     * beacon of whichever caller came last, a smart-home automation's or the panel's
      * (review, 2026-10-04).
      */
     static final class Outcome {

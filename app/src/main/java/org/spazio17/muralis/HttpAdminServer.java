@@ -828,7 +828,7 @@ final class HttpAdminServer {
             // dashboard blinks out and every uptime counter resets. That is unacceptable here for
             // any input, and it was reachable from a single malformed query string -- URLDecoder
             // throws IllegalArgumentException on a truncated escape like "100%", which the
-            // documented `?cmnd=kiosk.set_url&url=...` workflow makes easy to send by accident.
+            // documented `?cmnd=dashboard.url&url=...` workflow makes easy to send by accident.
             //
             // OutOfMemoryError is caught with it since 2026-09-09: the upload path allocates a
             // body of its own size, and a panel that dies rather than refusing one request is
@@ -966,13 +966,23 @@ final class HttpAdminServer {
                 writeResponse(output, 200, "image/svg+xml", bytes(svg),
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
+        } else if (path.equals("/dashboard-shows") && method.equals("POST")) {
+            String refused = kioskService.setDashboardShows(
+                    parseFormBody(headers, body).getOrDefault("dashboard_shows", ""));
+            if (refused == null) {
+                writeResponse(output, 303, "text/plain", bytes("saved"),
+                        Collections.singletonMap("Location", settingsAt("dashboard")));
+            } else {
+                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsPage(
+                        "Not changed: " + refused + ".", "dashboard")));
+            }
         } else if (path.equals("/app-lock") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppLockPage(null,
                     "1".equals(queryValue(query, "system")))));
         } else if (path.equals("/app-lock") && method.equals("POST")) {
             String refused = saveAppLock(parseFormBody(headers, body));
             if (refused == null) {
-                // Back to Dashboard, which now says what the panel shows.
+                // Back to Dashboard, which now says what the dashboard shows.
                 writeResponse(output, 303, "text/plain", bytes("saved"),
                         Collections.singletonMap("Location", settingsAt("dashboard")));
             } else {
@@ -1007,8 +1017,12 @@ final class HttpAdminServer {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
         } else if (path.equals("/camera-view") && method.equals("POST")) {
             Map<String, String> form = parseFormBody(headers, body);
+            // Chosen here, from the Dashboard choice's Cameras: stored and shown, as on the panel.
             String refused = kioskService.setDashboardCameras(
                     form.getOrDefault("dashboard_cameras", ""));
+            if (refused == null) {
+                refused = kioskService.setDashboardShows(KioskCommandDispatcher.DASHBOARD_CAMERAS);
+            }
             if (refused == null && form.containsKey("camera_layout")) {
                 KioskConfig.edit(context).cameraLayout(form.get("camera_layout"),
                         form.getOrDefault("camera_big", ""),
@@ -1136,7 +1150,7 @@ final class HttpAdminServer {
             // GET used to be accepted here and it was the worst hole in this surface. Commands
             // change state, Basic-auth credentials are attached by the browser automatically, and a
             // browser sends neither Origin nor a usable Referer for a subresource load, so
-            // <img src="http://panel:8080/api/command?cmnd=kiosk.restart"> on any page the operator
+            // <img src="http://panel:8080/api/command?cmnd=app.restart"> on any page the operator
             // happened to visit fired a real command with their credentials. No token scheme fixes
             // that while the verb stays GET, because the request never carries anything the page
             // could have put in it. So the verb is gone.
@@ -1318,7 +1332,7 @@ final class HttpAdminServer {
         } else {
             // Query first, then the form body on top. Both are accepted so that dropping GET costs
             // a scripted caller exactly one flag: `curl -X POST 'http://panel:8080/api/command?
-            // cmnd=kiosk.reload'` still works untouched, while the page's own forms and fetch send
+            // cmnd=dashboard.reload'` still works untouched, while the page's own forms and fetch send
             // the same names in a urlencoded body.
             Map<String, String> params = new java.util.HashMap<>(parseQuery(query));
             String formType = headers.getOrDefault("content-type", "");
@@ -1335,7 +1349,7 @@ final class HttpAdminServer {
                 }
             }
             url = params.get("url");
-            if (url == null && "kiosk.open_url".equals(command)) {
+            if (url == null && "dashboard.open_once".equals(command)) {
                 // The Dashboard box's Open once button posts the whole box, whose input is the
                 // stored dashboard's field. Same value, read under its own name.
                 url = params.get("dashboard_url");
@@ -1403,7 +1417,7 @@ final class HttpAdminServer {
         if (refusal == null) {
             // The mirror of what KioskService.dispatch does after an accepted command, and needed
             // for the same reason: these controls bypass the dispatcher, so without this the change
-            // reaches storage and the tablet but not Home Assistant, whose switch then disagrees
+            // reaches storage and the tablet but not the smart home, whose switch then disagrees
             // with the panel until the next telemetry tick, up to five minutes at the longest
             // interval preset.
             KioskService.publishTelemetrySoon(context);
@@ -1442,7 +1456,7 @@ final class HttpAdminServer {
                 }
                 String url = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
                 // The dispatcher's rules, not local ones: this box used to store what
-                // kiosk.set_url would refuse with a reason, so a schemeless address was retried
+                // dashboard.url would refuse with a reason, so a schemeless address was retried
                 // every ten seconds forever, and a bad device id was stored, answered with a
                 // success page, and then refused by MQTT with only a logcat line to show for it.
                 String urlProblem = KioskCommandDispatcher.validateDashboardUrl(url);
@@ -1455,7 +1469,7 @@ final class HttpAdminServer {
                 if (!url.equals(fresh.dashboardUrl)) {
                     // Saving a new URL must also navigate to it; the form path used to only save,
                     // so the panel sat on the old page until something else reloaded it, while the
-                    // command path (kiosk.set_url) always did both. Route through the same method
+                    // command path (dashboard.url) always did both. Route through the same method
                     // the dispatcher uses, so the two paths cannot disagree again.
                     kioskService.setDashboardUrl(url);
                 }
@@ -1535,7 +1549,7 @@ final class HttpAdminServer {
                 return null;
             }
             case "panel": {
-                // The panel's name: what Home Assistant and MQTT call it, out of the Dashboard
+                // The panel's name: what the smart home and MQTT call it, out of the Dashboard
                 // box since 2026-09-27 (the owner: the id is the panel's identity, not the page's).
                 String stale = staleFormRefusal(form, fresh.deviceId);
                 if (stale != null) {
@@ -1881,7 +1895,7 @@ final class HttpAdminServer {
                 || key.startsWith("automation_") || key.startsWith("fleet_group_")
                 || key.equals("fleet_follows") || key.equals("volume_buttons_disabled")
                 || key.equals("status_light") || key.equals("stats_overlay")
-                || key.equals("ambient_shuffle") || key.equals("ambient_one_per_cycle")
+                || key.equals("ambient_shuffle") || key.equals("ambient_one_per_start")
                 || key.equals("ambient_credit");
     }
 
@@ -2319,12 +2333,12 @@ final class HttpAdminServer {
      * bar's subtitle, the uptime is in the stats readout.
      */
     private String dashboardSummary(KioskConfig config) {
-        // An app instead of the page says so, as "The panel shows" does.
+        // An app or cameras instead of the page say so, as the Dashboard choice does.
         if (!KioskConfig.appLockOf(context).isEmpty()) {
             return "App: " + KioskConfig.appLockLabelOf(context);
         }
-        if (!KioskConfig.dashboardCamerasOf(context).isEmpty()) {
-            return "Cameras: " + KioskConfig.dashboardCamerasOf(context);
+        if (!KioskConfig.shownCamerasOf(context).isEmpty()) {
+            return "Cameras: " + KioskConfig.shownCamerasOf(context);
         }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
@@ -2877,7 +2891,7 @@ final class HttpAdminServer {
 
     /**
      * The tags read lately, newest first, by their id and when; a tag is named and used in
-     * Home Assistant, as the panel's own page has it.
+     * the smart home, as the panel's own page has it.
      */
     private String tagRows() {
         Map<String, Long> seen = KioskConfig.seenTags(context);
@@ -3033,7 +3047,7 @@ final class HttpAdminServer {
     private String automationEditor(Automations.Rule rule, String typedFrom, String typedTo) {
         boolean fresh = rule.id.isEmpty();
         // The stored rule as the baseline, so a page left open cannot overwrite a change made
-        // on the panel or in Home Assistant meanwhile: the Save-button forms' rule.
+        // on the panel or in the smart home meanwhile: the Save-button forms' rule.
         Automations.Rule stored = Automations.find(KioskConfig.automationsOf(context), rule.id);
         String baseline = stored == null ? "" : Automations.baseline(stored);
         // Ids of its own per editor: several stand on one page, one per rule.
@@ -3853,30 +3867,31 @@ final class HttpAdminServer {
     // ---- the bodies, each the section's essentials in the texts the page has always had
 
     private String dashboardBody(KioskConfig config, String notice, String noticeSection) {
-        // What the panel shows, first and as a choice, as on the panel (the UI round,
-        // 2026-10-15): a web page, its address and its options below, or an app, App lock,
-        // chosen on its own page. "A web page" switches App lock off and comes back here.
+        // What the dashboard shows, first and as a choice, as on the panel (the UI round,
+        // 2026-10-15): the web page, its address and its options below, an app (App lock) or
+        // cameras. The app and the cameras are kept when the choice moves away, so their
+        // segment shows the last one chosen; with none chosen yet it opens its page instead.
         String app = KioskConfig.appLockOf(context);
         boolean showsApp = !app.isEmpty();
+        String cameras = KioskConfig.shownCamerasOf(context);
+        boolean showsCameras = !cameras.isEmpty();
         // Cameras, the third answer, once there is a camera or a group to show.
-        String cameras = KioskConfig.dashboardCamerasOf(context);
-        boolean showsCameras = !showsApp && !cameras.isEmpty();
-        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(context).isEmpty();
+        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(context).isEmpty()
+                || !KioskConfig.cameraGroupsOf(context).isEmpty();
         boolean showsPage = !showsApp && !showsCameras;
-        String shows = "<p class=\"label\" id=\"opt-shows-label\">The panel shows</p>"
+        String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
+        String shows = "<p class=\"label\" id=\"opt-shows-label\">Dashboard</p>"
                 + "<div class=\"segmented\" role=\"group\" aria-labelledby=\"opt-shows-label\">"
-                + "<form method=\"post\" action=\"/app-lock\"><input type=\"hidden\""
-                + " name=\"app_lock\" value=\"\"><button type=\"submit\" aria-pressed=\""
-                + showsPage + "\">" + (showsPage ? glyph("check") : "") + "A web page</button></form>"
-                + "<a href=\"/app-lock\" role=\"button\" aria-pressed=\"" + showsApp + "\">"
-                + (showsApp ? glyph("check") : "") + "An app</a>"
-                + (offerCameras ? "<a href=\"/camera-view\" role=\"button\" aria-pressed=\""
-                        + showsCameras + "\">" + (showsCameras ? glyph("check") : "") + "Cameras</a>"
+                + dashboardSegment(words[0], showsPage, null)
+                + dashboardSegment(words[1], showsApp,
+                        KioskConfig.chosenAppOf(context).isEmpty() ? "/app-lock" : null)
+                + (offerCameras ? dashboardSegment(words[2], showsCameras,
+                        KioskConfig.dashboardCamerasOf(context).isEmpty() ? "/camera-view" : null)
                         : "")
                 + "</div>";
         if (showsCameras) {
             return shows + "<ul class=\"list\">" + linkRow("/camera-view", "cameras", cameras,
-                    "Shown as the main view", null, "") + "</ul>";
+                    "Shown as the dashboard", null, "") + "</ul>";
         }
         if (showsApp) {
             String problem = AppLock.problem(context, app);
@@ -3898,16 +3913,31 @@ final class HttpAdminServer {
                 + urlField("dashboard_url", "Dashboard URL", config.dashboardUrl)
                 // Two buttons on one input, the shape the tablet's Dashboard card has had since
                 // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it until
-                // the next kiosk restart and stores nothing (kiosk.open_url, never set_url). Open
+                // the next kiosk restart and stores nothing (dashboard.open_once, never set_url). Open
                 // once is a submit button with its own formaction, so with scripting unavailable
                 // the browser still posts the box to /api/command (which reads dashboard_url for
                 // it, see handleCommand); with scripting, commandScript intercepts the click.
                 + sectionFormEnd("Save",
                         "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
-                                + "value=\"kiosk.open_url\" formaction=\"/api/command\" "
+                                + "value=\"dashboard.open_once\" formaction=\"/api/command\" "
                                 + "formmethod=\"post\">Open once</button>")
                 + "<div class=\"actions\"><a class=\"onward\" href=\"/page-options\">Page options"
                 + "</a></div>";
+    }
+
+    /**
+     * One segment of the Dashboard choice: a form that switches to {@code word}'s key, or, while
+     * nothing is chosen for it yet, a link to {@code choose}, the page that chooses it.
+     */
+    private static String dashboardSegment(String[] word, boolean on, String choose) {
+        String label = (on ? glyph("check") : "") + escapeHtml(word[1]);
+        if (choose != null) {
+            return "<a href=\"" + choose + "\" role=\"button\" aria-pressed=\"" + on + "\">"
+                    + label + "</a>";
+        }
+        return "<form method=\"post\" action=\"/dashboard-shows\"><input type=\"hidden\""
+                + " name=\"dashboard_shows\" value=\"" + word[0] + "\"><button type=\"submit\""
+                + " aria-pressed=\"" + on + "\">" + label + "</button></form>";
     }
 
     /**
@@ -3923,16 +3953,16 @@ final class HttpAdminServer {
     }
 
     /**
-     * App lock, a page of its own as on the panel: Off or one installed app, and
+     * Dashboard app (App lock), a page of its own as on the panel: one installed app, and
      * whether Muralis may display over other apps, which only the panel itself can allow.
      */
     private String buildAppLockPage(String notice, boolean withSystem) {
-        StringBuilder html = new StringBuilder(pageStart("App lock", null,
+        StringBuilder html = new StringBuilder(pageStart("Dashboard app", null,
                 settingsAt("dashboard")));
         if (notice != null) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
-        String chosen = KioskConfig.appLockOf(context);
+        String chosen = KioskConfig.chosenAppOf(context);
         html.append("<form method=\"post\" action=\"/app-lock\" class=\"card\">"
                 + "<h2>The app this panel shows</h2><p class=\"hint\">One app instead of the web"
                 + " page, opened again whenever it closes. Your corner combinations work over it."
@@ -3940,12 +3970,12 @@ final class HttpAdminServer {
         if (!AppLock.canDrawOver(context)) {
             html.append("<p class=\"hint bad\">Muralis needs to display over other apps, or"
                     + " your corner taps cannot reach it over the app. Allow it on the panel:"
-                    + " Dashboard, An app, Allow.</p>");
+                    + " Dashboard, App, Allow.</p>");
         }
         html.append("<p><a href=\"/app-lock").append(withSystem ? "" : "?system=1")
                 .append("\">").append(withSystem ? "Hide the apps that came with the device"
                         : "Show the apps that came with the device").append("</a></p>");
-        // No "Off" here: the web page is the other half of Dashboard's "The panel shows".
+        // No "Off" here: the web page is another answer of the Dashboard choice.
         StringBuilder radios = new StringBuilder();
         boolean listed = chosen.isEmpty();
         for (AppLock.App app : AppLock.launchable(context, withSystem)) {
@@ -3976,21 +4006,27 @@ final class HttpAdminServer {
                 + escapeHtml(label) + "</label>";
     }
 
-    /** Stores App lock's choice: Off, or an installed app with something to open. */
+    /**
+     * Stores the dashboard's app, an installed app with something to open, and shows it: the
+     * page is reached from the Dashboard choice's App.
+     */
     private String saveAppLock(Map<String, String> form) {
         String chosen = form.getOrDefault("app_lock", "").trim();
+        if (chosen.isEmpty()) {
+            return "Not saved: choose an app.";
+        }
         if (context.getPackageName().equals(chosen)) {
             return "Not saved: Muralis cannot lock the panel to itself.";
         }
-        if (!chosen.isEmpty()
-                && context.getPackageManager().getLaunchIntentForPackage(chosen) == null) {
+        if (context.getPackageManager().getLaunchIntentForPackage(chosen) == null) {
             return "Not saved: no installed app " + chosen + " has anything to open.";
         }
         if (AppLock.doors(context).contains(chosen)) {
             return "Not saved: " + chosen + " opens Android's settings, a home screen or the"
                     + " Play Store, which would hand the panel's whole device to anyone.";
         }
-        KioskConfig.edit(context).appLock(chosen).apply();
+        KioskConfig.edit(context).appLock(chosen)
+                .dashboardShows(KioskCommandDispatcher.DASHBOARD_APP).apply();
         KioskService.appLockChanged();
         KioskService.publishTelemetrySoon(context);
         return null;
@@ -4318,11 +4354,11 @@ final class HttpAdminServer {
     }
 
     /**
-     * The camera view, a page of its own as App lock is: the camera or group the panel shows as
-     * its main view. The panel's Camera view page is the same.
+     * Dashboard cameras, a page of its own as the app's is: the camera or group the dashboard
+     * shows. The panel's page is the same.
      */
     private String buildCameraViewPage(String notice) {
-        StringBuilder html = new StringBuilder(pageStart("Camera view", null,
+        StringBuilder html = new StringBuilder(pageStart("Dashboard cameras", null,
                 settingsAt("dashboard")));
         if (notice != null) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
@@ -5502,7 +5538,7 @@ final class HttpAdminServer {
     /**
      * The status light: the switch and the colour by name, applied as they are touched, the same
      * two controls as on the panel. The brightness and any other colour are set over HTTP, MQTT
-     * and Home Assistant; a stored colour that has no name is offered as it is.
+     * and the smart home; a stored colour that has no name is offered as it is.
      */
     private String statusLightControl() {
         StatusLight.State light = KioskConfig.statusLightOf(context);
@@ -5529,7 +5565,7 @@ final class HttpAdminServer {
         // A menu here and radios on the Ambient page, deliberately: this is one section among
         // nine, while the page's chooser decides what the rest of that page says.
         return sharedLine("ambient")
-                + selectField("ambient-mode", null, "Mode", "ambient_mode",
+                + selectField("ambient-mode", null, "Ambient mode", "ambient_mode",
                 screensaverModeOptions(saver), null)
                 + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"ambient-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
@@ -5589,8 +5625,8 @@ final class HttpAdminServer {
      * The commands a person at a browser has where one at the panel has Open dashboard and the
      * combinations: Material's overflow menu at the end of the settings page's app bar (the UI
      * round, 2026-10-15; a section of their own, Quick actions, until then). There is no "Main
-     * dashboard" (kiosk.home) action, dropped 2026-09-07; the way back from a one-off URL is
-     * Restart kiosk, and Home Assistant keeps its kiosk.home button. Without scripting the menu
+     * dashboard" (dashboard.open) action, dropped 2026-09-07; the way back from a one-off URL is
+     * Restart app, and the smart home keeps its Open dashboard button. Without scripting the menu
      * cannot open, so it is shown as its three buttons in a row.
      */
     private static String commandsMenu() {
@@ -5599,9 +5635,9 @@ final class HttpAdminServer {
                 + " title=\"Reload, restart, reboot\" aria-label=\"Reload, restart, reboot\">"
                 + glyph("more") + "</button>"
                 + "<div class=\"m3menu\" id=\"commands-menu\" role=\"menu\">"
-                + quickAction("kiosk.reload", "Reload the page", "", "reload")
-                + quickAction("kiosk.restart", "Restart kiosk", "", "power")
-                + quickAction("system.reboot", "Reboot the device", "", "reboot")
+                + quickAction("dashboard.reload", "Reload dashboard", "", "reload")
+                + quickAction("app.restart", "Restart app", "", "power")
+                + quickAction("system.reboot", "Reboot", "", "reboot")
                 + "</div></div>";
     }
 
@@ -5761,11 +5797,12 @@ final class HttpAdminServer {
         StringBuilder options = new StringBuilder();
         // "auto" only where an accelerometer exists to drive it, the same gate the
         // auto-brightness switch above sits behind.
-        if (KioskService.hasAccelerometer(context)) {
-            options.append(selectOption("auto", "Auto-rotate", current));
+        for (String[] choice : KioskCommandDispatcher.ORIENTATION_WORDS) {
+            if (!KioskConfig.ORIENTATION_AUTO.equals(choice[0])
+                    || KioskService.hasAccelerometer(context)) {
+                options.append(selectOption(choice[0], choice[1], current));
+            }
         }
-        options.append(selectOption("landscape", "Landscape", current));
-        options.append(selectOption("portrait", "Portrait", current));
         return selectField("orientation", null, "Orientation", null, options.toString(), null);
     }
 
@@ -5842,19 +5879,17 @@ final class HttpAdminServer {
     private String pictureOptions(ScreensaverPolicy.Settings saver) {
         PictureLibrary library = PictureLibrary.get(context);
         StringBuilder transitions = new StringBuilder();
-        transitions.append(selectOption(ScreensaverPolicy.TRANSITION_NONE, "Cut", saver.transition));
-        transitions.append(selectOption(ScreensaverPolicy.TRANSITION_FADE, "Fade", saver.transition));
-        transitions.append(selectOption(ScreensaverPolicy.TRANSITION_SLIDE, "Slide", saver.transition));
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS) {
+            transitions.append(selectOption(choice[0], choice[1], saver.transition));
+        }
         StringBuilder fits = new StringBuilder();
-        fits.append(selectOption(ScreensaverPolicy.FIT_WHOLE, "Fit", saver.pictureFit));
-        fits.append(selectOption(ScreensaverPolicy.FIT_FILL, "Fill", saver.pictureFit));
-        fits.append(selectOption(ScreensaverPolicy.FIT_STRETCH, "Stretch", saver.pictureFit));
-        fits.append(selectOption(ScreensaverPolicy.FIT_ACTUAL, "Actual size", saver.pictureFit));
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_FIT_WORDS) {
+            fits.append(selectOption(choice[0], choice[1], saver.pictureFit));
+        }
         StringBuilder corners = new StringBuilder();
-        corners.append(selectOption(ScreensaverPolicy.CORNER_BOTTOM_LEFT, "Bottom left", saver.creditCorner));
-        corners.append(selectOption(ScreensaverPolicy.CORNER_BOTTOM_RIGHT, "Bottom right", saver.creditCorner));
-        corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_LEFT, "Top left", saver.creditCorner));
-        corners.append(selectOption(ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right", saver.creditCorner));
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_CORNER_WORDS) {
+            corners.append(selectOption(choice[0], choice[1], saver.creditCorner));
+        }
 
         String picturesProblem = library.problem();
         return "<div id=\"ambient-pictures\""
@@ -5862,24 +5897,24 @@ final class HttpAdminServer {
                 + "<p class=\"hint" + (picturesProblem != null ? " bad" : "") + "\" id=\"ambient-pictures-note\">"
                 + escapeHtml(library.state()) + "</p>"
                 + fieldWithId("ambient-picture-s", "number", null,
-                        "Each picture stays for (seconds)", String.valueOf(saver.pictureSeconds),
+                        "Ambient picture duration (seconds)", String.valueOf(saver.pictureSeconds),
                         " data-setting=\"ambient_picture_s\" min=\"1\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
-                + selectField("ambient-transition", null, "Change of picture",
+                + selectField("ambient-transition", null, "Ambient transition",
                         "ambient_transition", transitions.toString(), null)
-                + selectField("ambient-fit", null, "How a picture fills the screen",
+                + selectField("ambient-fit", null, "Ambient picture fit",
                         "ambient_picture_fit", fits.toString(),
                         "Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
                         + "it out of shape, Actual size does not scale it.")
                 + "<div class=\"switches\">"
-                + switchRow("ambient-shuffle", "Shuffle the order",
+                + switchRow("ambient-shuffle", "Ambient shuffle",
                         " data-setting=\"ambient_shuffle\"", saver.shuffle)
-                + switchRow("ambient-one", "One picture per cycle",
-                        " data-setting=\"ambient_one_per_cycle\"", saver.onePerCycle)
-                + switchRow("ambient-credit", "Show the title and credit line",
+                + switchRow("ambient-one", "Ambient one picture per start",
+                        " data-setting=\"ambient_one_per_start\"", saver.onePerCycle)
+                + switchRow("ambient-credit", "Ambient credit line",
                         " data-setting=\"ambient_credit\"", saver.credit)
                 + "</div>"
-                + selectField("ambient-corner", null, "Credit line in the corner",
+                + selectField("ambient-corner", null, "Ambient credit corner",
                         "ambient_credit_corner", corners.toString(), null)
                 + "</div>";
     }
@@ -6505,7 +6540,7 @@ final class HttpAdminServer {
                 return;
         }
         // Under the library's lock, with the other two surfaces' edits: a load-modify-store of
-        // its own here lost whichever edit Home Assistant or the panel made meanwhile.
+        // its own here lost whichever edit the smart home or the panel made meanwhile.
         String refusal = library.editPlaylists(change);
         KioskService.publishTelemetrySoon(context);
         if (path.equals("/api/playlists/delete")
@@ -6678,11 +6713,11 @@ final class HttpAdminServer {
      * chosen: Ambient page stopped repeating it on 2026-09-28.
      */
     private String screensaverModeOptions(ScreensaverPolicy.Settings saver) {
-        return selectOption(ScreensaverPolicy.OFF, "Off", saver.mode)
-                + selectOption(ScreensaverPolicy.DIM, "Dimmed page", saver.mode)
-                + selectOption(ScreensaverPolicy.FILM, "Black film", saver.mode)
-                + selectOption(ScreensaverPolicy.URL, "Web page", saver.mode)
-                + selectOption(ScreensaverPolicy.PICTURES, "Pictures", saver.mode);
+        StringBuilder options = new StringBuilder();
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_MODE_WORDS) {
+            options.append(selectOption(choice[0], choice[1], saver.mode));
+        }
+        return options.toString();
     }
 
     /**
@@ -7023,9 +7058,10 @@ final class HttpAdminServer {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
-        String onWake = selectOption(ScreensaverPolicy.WAKE_SCREENSAVER,
-                "Show Ambient first, a touch opens the page", saver.onWake)
-                + selectOption(ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once", saver.onWake);
+        StringBuilder onWake = new StringBuilder();
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS) {
+            onWake.append(selectOption(choice[0], choice[1], saver.onWake));
+        }
         StringBuilder html = new StringBuilder(pageStart("Ambient", null,
                 settingsAt("ambient")));
         if (notice != null && !notice.isEmpty()) {
@@ -7058,9 +7094,9 @@ final class HttpAdminServer {
                 .append("\" id=\"ambient-options\"><h2 id=\"ambient-options-title\">")
                 .append(escapeHtml(ScreensaverPolicy.optionsTitle(saver.mode))).append("</h2>")
                 .append(fieldWithId("ambient-idle", "number", null,
-                        "Idle before Ambient (seconds, 0 = off)",
+                        "Ambient start after (seconds, 0 = never)",
                         String.valueOf(saver.idleSeconds),
-                        " data-setting=\"ambient_idle_s\" min=\"0\" max=\""
+                        " data-setting=\"ambient_start_after_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append(fieldWithId("ambient-off", "number", null,
                         "Ambient before display off (seconds, 0 = never)",
@@ -7069,13 +7105,13 @@ final class HttpAdminServer {
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append("<div id=\"ambient-url-field\"")
                 .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("ambient-url", "text", null, "Web page to show", saver.url,
+                .append(fieldWithId("ambient-url", "text", null, "Ambient web page", saver.url,
                         " data-setting=\"ambient_url\" inputmode=\"url\"", null))
                 .append("</div>")
                 .append("<div id=\"ambient-dim-field\"")
                 .append(ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
                 .append(fieldWithId("ambient-dim", "number", null,
-                        "Brightness while dimmed (percent)", String.valueOf(saver.dimPercent),
+                        "Ambient dim brightness (percent)", String.valueOf(saver.dimPercent),
                         " data-setting=\"ambient_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
                         null))
                 .append("</div>")
@@ -7084,8 +7120,8 @@ final class HttpAdminServer {
                 .append("<div id=\"ambient-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
                 .append(">")
-                .append(selectField("ambient-on-wake", null, "After a wake from display off",
-                        "ambient_on_wake", onWake, null))
+                .append(selectField("ambient-on-wake", null, "Ambient on wake",
+                        "ambient_on_wake", onWake.toString(), null))
                 .append("</div>")
                 .append(pictureOptions(saver))
                 // The sentence it all adds up to, last in the panel, which is where the owner put it:
@@ -7125,10 +7161,10 @@ final class HttpAdminServer {
             editor.screensaverMode(mode);
             changed = true;
         }
-        if (form.containsKey("ambient_idle_s")) {
-            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_idle_s"));
+        if (form.containsKey("ambient_start_after_s")) {
+            Integer seconds = ScreensaverPolicy.parseSeconds(form.get("ambient_start_after_s"));
             if (seconds == null) {
-                return "Not saved: the idle time " + ScreensaverPolicy.SECONDS_RULE + ".";
+                return "Not saved: Ambient start after " + ScreensaverPolicy.SECONDS_RULE + ".";
             }
             editor.screensaverIdleSeconds(seconds);
             changed = true;
@@ -7180,7 +7216,7 @@ final class HttpAdminServer {
         if (form.containsKey("ambient_transition")) {
             String transition = form.get("ambient_transition");
             if (!ScreensaverPolicy.isTransition(transition)) {
-                return "Not saved: the transition must be none, fade or slide.";
+                return "Not saved: the transition must be cut, fade or slide.";
             }
             editor.screensaverTransition(transition);
             changed = true;
@@ -7197,8 +7233,8 @@ final class HttpAdminServer {
             editor.screensaverShuffle(isTrue(form.get("ambient_shuffle")));
             changed = true;
         }
-        if (form.containsKey("ambient_one_per_cycle")) {
-            editor.screensaverOnePerCycle(isTrue(form.get("ambient_one_per_cycle")));
+        if (form.containsKey("ambient_one_per_start")) {
+            editor.screensaverOnePerCycle(isTrue(form.get("ambient_one_per_start")));
             changed = true;
         }
         if (form.containsKey("ambient_credit")) {
@@ -7239,13 +7275,15 @@ final class HttpAdminServer {
         boolean deviceOwner = KioskService.isDeviceOwner(context);
         StringBuilder options = new StringBuilder();
         if (deviceOwner) {
-            options.append(selectOption(DisplayOffPolicy.AUTO, "Automatic", current));
-            options.append(selectOption(DisplayOffPolicy.SLEEP, "Turn the screen off", current));
-            options.append(selectOption(DisplayOffPolicy.FILM, "Black film", current));
+            for (String[] choice : KioskCommandDispatcher.DISPLAY_OFF_WORDS) {
+                options.append(selectOption(choice[0], choice[1], current));
+            }
         } else {
-            options.append(selectOption(DisplayOffPolicy.FILM, "Black film", DisplayOffPolicy.FILM));
+            options.append(selectOption(DisplayOffPolicy.FILM, KioskCommandDispatcher.wordOf(
+                    KioskCommandDispatcher.DISPLAY_OFF_WORDS, DisplayOffPolicy.FILM),
+                    DisplayOffPolicy.FILM));
         }
-        return selectField("display-off-method", null, "Display off",
+        return selectField("display-off-method", null, "Display off method",
                 deviceOwner ? "display_off_method" : null, options.toString(), null, !deviceOwner)
                 + "<p class=\"hint bad\" id=\"display-off-note\""
                 + (KioskService.displayOffWarning(context) ? "" : " hidden") + ">"
@@ -7269,7 +7307,7 @@ final class HttpAdminServer {
         if (!KioskService.hasLightSensor(context)) {
             return "";
         }
-        return switchRow("auto-brightness", "Adjust brightness automatically", "",
+        return switchRow("auto-brightness", "Automatic brightness", "",
                 KioskService.isAutoBrightnessOn(context));
     }
 
