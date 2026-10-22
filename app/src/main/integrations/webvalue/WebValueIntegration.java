@@ -2,7 +2,10 @@
  * Copyright 2026 Muralis contributors
  * Licensed under the PolyForm Shield License 1.0.0: see LICENSE.md at the repository root.
  */
-package org.spazio17.muralis;
+package org.spazio17.muralis.integrations;
+
+import org.spazio17.muralis.Integrations;
+import org.spazio17.muralis.TinyJson;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -18,7 +21,7 @@ import java.util.Map;
  * <p>Pure, with no Android imports, so the reading of the answer is host-tested; the request goes
  * through the runner's {@link Integrations.Http}, with its limits.
  */
-final class WebValueIntegration implements Integrations.Source {
+public final class WebValueIntegration implements Integrations.Source {
     static final String ID = "webvalue";
     static final String VALUE = "value";
     static final String NUMBER = "Number";
@@ -27,7 +30,7 @@ final class WebValueIntegration implements Integrations.Source {
     /** The longest text value kept, what a state published over MQTT discovery takes. */
     static final int MAX_TEXT = 255;
 
-    static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
+    public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
             "Value from a web address", "free",
             "Reads one number, text or on/off from a web address, for the automations and MQTT.",
             Arrays.asList(

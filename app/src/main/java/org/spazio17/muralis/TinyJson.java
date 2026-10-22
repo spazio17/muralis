@@ -19,7 +19,7 @@ import java.util.Map;
  * {@code null}. Malformed input throws {@link IllegalArgumentException}; the callers treat that as
  * unreadable and keep what they had.
  */
-final class TinyJson {
+public final class TinyJson {
     /**
      * How deep an answer may nest. A service answer is a handful of levels; thousands are a
      * stack overflow, which is an Error no caller catches, so it is refused as malformed instead
@@ -36,7 +36,7 @@ final class TinyJson {
         this.text = text;
     }
 
-    static Object parse(String text) {
+    public static Object parse(String text) {
         if (text == null) {
             throw new IllegalArgumentException("no JSON");
         }
@@ -51,30 +51,30 @@ final class TinyJson {
 
     /** The map at {@code value}, or an empty one when it is not an object. */
     @SuppressWarnings("unchecked")
-    static Map<String, Object> object(Object value) {
+    public static Map<String, Object> object(Object value) {
         return value instanceof Map ? (Map<String, Object>) value : new LinkedHashMap<>();
     }
 
     /** The list at {@code value}, or an empty one when it is not an array. */
     @SuppressWarnings("unchecked")
-    static List<Object> array(Object value) {
+    public static List<Object> array(Object value) {
         return value instanceof List ? (List<Object>) value : new ArrayList<>();
     }
 
     /** The string at {@code key}, or {@code fallback} when absent or not a string. */
-    static String string(Map<String, Object> object, String key, String fallback) {
+    public static String string(Map<String, Object> object, String key, String fallback) {
         Object value = object.get(key);
         return value instanceof String ? (String) value : fallback;
     }
 
     /** The number at {@code key} as a long, or {@code fallback} when absent or not a number. */
-    static long number(Map<String, Object> object, String key, long fallback) {
+    public static long number(Map<String, Object> object, String key, long fallback) {
         Object value = object.get(key);
         return value instanceof Double ? (long) (double) (Double) value : fallback;
     }
 
     /** The boolean at {@code key}, or {@code fallback} when absent or not a boolean. */
-    static boolean flag(Map<String, Object> object, String key, boolean fallback) {
+    public static boolean flag(Map<String, Object> object, String key, boolean fallback) {
         Object value = object.get(key);
         return value instanceof Boolean ? (Boolean) value : fallback;
     }
@@ -88,7 +88,7 @@ final class TinyJson {
      * {@code org.json} would do this on a device and is absent on the host, which is the same
      * reason the reader exists.
      */
-    static String write(Object value) {
+    public static String write(Object value) {
         StringBuilder out = new StringBuilder();
         writeValue(out, value, 0, false);
         return out.toString();
