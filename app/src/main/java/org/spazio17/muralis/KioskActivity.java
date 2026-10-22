@@ -14785,10 +14785,11 @@ public final class KioskActivity extends Activity {
         // already the largest process and gets killed for memory.
         applyBrowserOptions(webView, browser);
 
-        // On a userdebug/eng ROM, expose the renderer to chrome://inspect over adb. A blank or
-        // half-rendered Home Assistant dashboard is otherwise almost unfalsifiable from outside the
-        // device, which is exactly the situation this project keeps paying for.
-        if ("userdebug".equals(Build.TYPE) || "eng".equals(Build.TYPE)) {
+        // In a debug build only, expose the renderer to chrome://inspect over adb: a blank or
+        // half-rendered dashboard is otherwise almost unfalsifiable from outside the device. Never
+        // in a release, whatever the ROM: on a userdebug ROM (LineageOS) it would let anyone with
+        // adb read the dashboard's cookies and stored logins.
+        if (BuildConfig.DEBUG) {
             WebView.setWebContentsDebuggingEnabled(true);
         }
 

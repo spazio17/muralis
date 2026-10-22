@@ -625,7 +625,9 @@ final class MqttController implements MqttCallbackExtended {
                     arguments = args;
                 }
             } catch (JSONException malformed) {
-                Log.w(TAG, "Rejected malformed MQTT command", malformed);
+                // Not the exception itself: its message quotes the whole payload, which can carry
+                // an address with a token.
+                Log.w(TAG, "Rejected malformed MQTT command: not valid JSON");
                 // No id is available, since the envelope is what failed to parse, so the reply carries
                 // an empty one. Still worth publishing: silence is indistinguishable from a broker
                 // problem or an offline device, which is the wrong thing to tell a caller that in fact
@@ -1038,7 +1040,7 @@ final class MqttController implements MqttCallbackExtended {
                     screensaverModes,
                     "{{ value_json.ambient.mode }}"));
             // The playlists by name, so a card can switch a panel's pictures without knowing an
-            // id. "None" is a real option because a playlist can be deleted while it is in use,
+            // id. "No playlist" is a real option because a playlist can be deleted while it is in use,
             // and an entity that cannot express the state it is in reads as broken.
             org.json.JSONArray playlistNames = new org.json.JSONArray();
             playlistNames.put(PLAYLIST_NONE);
@@ -1082,14 +1084,21 @@ final class MqttController implements MqttCallbackExtended {
                     1, 100, "%",
                     "{{ value_json.ambient.dim_percent }}"));
             org.json.JSONArray transitions = new org.json.JSONArray();
-            transitions.put(ScreensaverPolicy.TRANSITION_NONE);
+            transitions.put(TRANSITION_NONE_OPTION);
             transitions.put(ScreensaverPolicy.TRANSITION_FADE);
             transitions.put(ScreensaverPolicy.TRANSITION_SLIDE);
-            components.put("ambient_transition", select(
+            JSONObject transition = select(
                     "Ambient transition",
                     "ambient.transition",
                     transitions,
-                    "{{ value_json.ambient.transition }}"));
+                    "{{ '" + TRANSITION_NONE_OPTION + "' if value_json.ambient.transition == '"
+                            + ScreensaverPolicy.TRANSITION_NONE + "' else"
+                            + " value_json.ambient.transition }}");
+            // The option's words go back to the panel's own value, which stays "none".
+            transition.put("command_template", "{% set v = '" + ScreensaverPolicy.TRANSITION_NONE
+                    + "' if value == '" + TRANSITION_NONE_OPTION + "' else value %}"
+                    + "{\"command\":\"ambient.transition\",\"args\":{\"value\":{{ v | tojson }}}}");
+            components.put("ambient_transition", transition);
             org.json.JSONArray fits = new org.json.JSONArray();
             fits.put(ScreensaverPolicy.FIT_WHOLE);
             fits.put(ScreensaverPolicy.FIT_FILL);
@@ -1226,10 +1235,10 @@ final class MqttController implements MqttCallbackExtended {
             components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
             // One button per camera and per group, "Show <name>", which pops it up; a doorbell's automation
             // in Home Assistant sends camera.trigger itself, for the panel's automations.
-            // The camera view: None for the web page, or a camera or group as the main view, the
+            // The camera view: "Web page" for the web page, or a camera or group as the main view, the
             // same choice as Dashboard's "The panel shows: Cameras". Once there is a camera.
             org.json.JSONArray views = new org.json.JSONArray();
-            views.put(PLAYLIST_NONE);
+            views.put(CAMERA_VIEW_PAGE);
             for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
                 views.put(camera.name);
             }
@@ -1240,7 +1249,7 @@ final class MqttController implements MqttCallbackExtended {
                 components.put("camera_view", select("Camera view", "kiosk.set_cameras", views,
                         "{{ value_json.config.dashboard_cameras if value_json.config is mapping"
                                 + " and value_json.config.dashboard_cameras else '"
-                                + PLAYLIST_NONE + "' }}"));
+                                + CAMERA_VIEW_PAGE + "' }}"));
             }
             java.util.List<String> shown = new java.util.ArrayList<>();
             for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
@@ -1672,14 +1681,18 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * What the playlist select shows and sends when no playlist is in use, and the camera view
-     * select for the web page.
+     * What the playlist select shows and sends when no playlist is in use, and what the camera
+     * view select shows and sends for the web page.
      *
      * <p>A select cannot hold an empty option, and Home Assistant renders a state that is not one
-     * of the options as unknown, so the absence of a playlist needs a word of its own. The command
-     * side treats it as "none" because {@code setScreensaverPlaylist} trims it to nothing.
+     * of the options as unknown, so these need words of their own; never "None", which Home
+     * Assistant's MQTT select reads as no state at all and shows as unknown. The command side
+     * turns them back into nothing.
      */
-    static final String PLAYLIST_NONE = "None";
+    static final String PLAYLIST_NONE = "No playlist";
+    static final String CAMERA_VIEW_PAGE = Cameras.CAMERA_VIEW_PAGE;
+    /** The Ambient transition select's word for no transition, for the same reason. */
+    static final String TRANSITION_NONE_OPTION = "No transition";
 
     /** A press. Stateless, so it needs no template and reads nothing. */
     private JSONObject button(String name, String command) throws JSONException {

@@ -961,8 +961,9 @@ public final class KioskCommandDispatcherTest {
         require(Cameras.withLogin(logins, "Front", "Front", "", "x").isEmpty(),
                 "an emptied user removes the sign-in");
         require(Cameras.checkLogin("a:b", "x") != null, "a user with a colon is refused");
-        require(Cameras.check("None", "http://x") != null && Cameras.check("none", "http://x") != null,
-                "None is taken by the web page");
+        require(Cameras.check("Web page", "http://x") != null
+                && Cameras.check("web PAGE", "http://x") != null
+                && Cameras.check("None", "http://x") == null, "Web page is taken by the web page");
         require(Cameras.checkFull("") == null && Cameras.checkFull("http://cam/main") == null
                 && Cameras.checkFull("rtsp://cam/main") != null, "the full-screen address");
         java.util.List<Cameras.Camera> withFull = Cameras.parse(Cameras.format(

@@ -2408,8 +2408,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public String setDashboardCameras(String name) {
         String chosen = name == null ? "" : name.trim();
-        // "None" is what Home Assistant's select sends for the web page.
-        if (MqttController.PLAYLIST_NONE.equalsIgnoreCase(chosen)) {
+        // "Web page" is what Home Assistant's select sends for the web page.
+        if (MqttController.CAMERA_VIEW_PAGE.equalsIgnoreCase(chosen)) {
             chosen = "";
         }
         if (!chosen.isEmpty()) {
@@ -3041,10 +3041,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
         String refusal = library.editPlaylists(document -> {
             String wanted = asked;
             PlaylistDocument.Playlist named = wanted.isEmpty() ? null : document.byName(wanted);
-            // The Home Assistant select's own "no playlist" option is the word None, because a
+            // The Home Assistant select's own "no playlist" option is the words No playlist, because a
             // select cannot hold an empty option, so the word has to mean what the entity says
             // it means or clearing the playlist from a card is refused (measured over MQTT
-            // 2026-09-10). A playlist actually called "None" still wins, which is why the lookup
+            // 2026-09-10). A playlist actually called "No playlist" still wins, which is why the lookup
             // comes first.
             if (named == null && MqttController.PLAYLIST_NONE.equalsIgnoreCase(wanted)) {
                 wanted = "";

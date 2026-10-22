@@ -291,7 +291,9 @@ final class TelemetryCollector {
                 number(KioskRuntimeState.lastPageFinishedAgoMs()));
         runtime.put("last_page_error_ago_ms", number(KioskRuntimeState.lastPageErrorAgoMs()));
         runtime.put("last_page_error", KioskRuntimeState.lastPageError());
-        runtime.put("last_page_url", KioskRuntimeState.lastPageUrl());
+        // Without its query or sign-in, as in the diagnostics file: a page's address can carry a
+        // token, and the broker is not the place for it.
+        runtime.put("last_page_url", AppLog.withoutSecrets(KioskRuntimeState.lastPageUrl()));
         runtime.put("auth_lockouts", KioskRuntimeState.authLockouts());
         runtime.put("last_auth_lockout_ago_ms",
                 number(KioskRuntimeState.lastAuthLockoutAgoMs()));
