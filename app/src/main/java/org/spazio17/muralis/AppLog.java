@@ -23,7 +23,7 @@ import java.util.Locale;
  * including the WebView's page errors that {@code KioskActivity} sends there. Fully Kiosk Browser
  * offers the same through its {@code cmd=logcat}, which is what this was asked to match
  * (2026-09-25), only it is a plain page there and a block with a level filter, a search and colours
- * here, the way Home Assistant's own log page and every logcat reader do it.
+ * here, the way a smart-home system's own log page and every logcat reader do it.
  *
  * <p>What it is for: a panel on a wall that is doing something odd, read from the sofa. Nothing is
  * stored or sent anywhere; every call reads the daemon's ring buffer afresh, and logd prunes that

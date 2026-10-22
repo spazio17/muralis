@@ -1,0 +1,7 @@
+{
+  "id": "calendar",
+  "class": "CalendarLinkIntegration",
+  "name": "Calendar from a link",
+  "kind": "cloud",
+  "codeowners": ["@Nihvel"]
+}

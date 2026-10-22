@@ -22,27 +22,27 @@ public final class DiscoveryWithdrawalsTest {
         // The rule of 2026-10-06: a panel starts on MQTT as new, so with nothing announced before
         // it must not send a single removal, whatever is off or missing on it.
         DiscoveryWithdrawals.Plan plan = DiscoveryWithdrawals.plan(map(),
-                map("battery", "sensor", "reload", "button"));
+                map("battery_level", "sensor", "reload_dashboard", "button"));
         require(plan.removed.isEmpty() && plan.replaced.isEmpty(), "a new panel removed something");
     }
 
     private static void testSwitchedOffIsRemovedOnce() {
-        Map<String, String> now = map("reload", "button");
+        Map<String, String> now = map("reload_dashboard", "button");
         DiscoveryWithdrawals.Plan plan = DiscoveryWithdrawals.plan(
-                map("sensor_light", "sensor", "camera_motion", "switch", "automation_ab12cd", "switch",
-                        "reload", "button"), now);
-        require(plan.removed.equals(map("sensor_light", "sensor", "camera_motion", "switch",
+                map("illuminance", "sensor", "camera_motion_detection", "switch", "automation_ab12cd", "switch",
+                        "reload_dashboard", "button"), now);
+        require(plan.removed.equals(map("illuminance", "sensor", "camera_motion_detection", "switch",
                 "automation_ab12cd", "switch")), "wrong removals: " + plan.removed);
         // Once the payload without them was announced, the next one removes nothing again.
         require(DiscoveryWithdrawals.plan(now, now).removed.isEmpty(), "a removal was repeated");
     }
 
     private static void testUnchangedAndAddedRemoveNothing() {
-        Map<String, String> both = map("battery", "sensor", "web_admin", "switch");
+        Map<String, String> both = map("battery_level", "sensor", "web_admin", "switch");
         require(DiscoveryWithdrawals.plan(both, new LinkedHashMap<>(both)).removed.isEmpty(),
                 "an unchanged payload removed something");
         require(DiscoveryWithdrawals.plan(both,
-                map("battery", "sensor", "web_admin", "switch", "sensor_movement", "binary_sensor"))
+                map("battery_level", "sensor", "web_admin", "switch", "sensor_movement", "binary_sensor"))
                 .removed.isEmpty(), "an addition removed something");
     }
 
@@ -55,7 +55,7 @@ public final class DiscoveryWithdrawalsTest {
     }
 
     private static void testPlatformChange() {
-        // Home Assistant identifies a component by key and platform, so the old platform's entity
+        // MQTT discovery identifies a component by key and platform, so the old platform's entity
         // must go under its old platform.
         DiscoveryWithdrawals.Plan plan = DiscoveryWithdrawals.plan(map("portrait", "switch"),
                 map("portrait", "select"));

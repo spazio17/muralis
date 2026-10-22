@@ -11,7 +11,7 @@ package org.spazio17.muralis;
 final class KioskCommandDispatcher {
     private static final int MAX_URL_LENGTH = 2_048;
     /**
-     * MQTT's alphabet, not taste: the id becomes the topic prefix and every Home Assistant
+     * MQTT's alphabet, not taste: the id becomes the topic prefix and every MQTT discovery
      * unique_id, so anything a topic cannot carry must never be stored as an id.
      */
     private static final java.util.regex.Pattern DEVICE_ID =
@@ -27,8 +27,8 @@ final class KioskCommandDispatcher {
      * one {@code KioskConfig.edit} call.
      */
     enum ScreensaverSetting {
-        MODE, IDLE_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
-        PICTURE_FIT, CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_CYCLE, CREDIT
+        MODE, START_AFTER_SECONDS, OFF_SECONDS, PICTURE_SECONDS, DIM_PERCENT, URL, TRANSITION,
+        PICTURE_FIT, CREDIT_CORNER, ON_WAKE, SHUFFLE, ONE_PER_START, CREDIT
     }
 
     /** The page's browser options a command sets, checked here against BrowserOptions. */
@@ -55,7 +55,7 @@ final class KioskCommandDispatcher {
         final Boolean enabled;
         /** A named choice, for commands whose argument is a vocabulary rather than a flag. */
         final String value;
-        /** A beacon's uuid:major:minor, for beacons.calibrate; null when not given. */
+        /** A beacon's uuid:major:minor, for bluetooth_beacons.calibrate; null when not given. */
         final String beacon;
 
         CommandArgs(int brightnessPercent, String url) {
@@ -149,10 +149,18 @@ final class KioskCommandDispatcher {
         void setDashboardUrl(String url);
 
         /**
-         * {@code kiosk.set_cameras}: a camera or a group as the panel's main view, or the web
-         * page again for an empty name. Returns why not, or null.
+         * {@code dashboard.cameras}: the camera or group the dashboard shows when it shows
+         * cameras; stored always, shown at once only while the dashboard shows cameras. Returns
+         * why not, or null.
          */
         String setDashboardCameras(String name);
+
+        /**
+         * {@code dashboard.show}: what the dashboard shows, {@code page}, {@code app} or
+         * {@code cameras}, already checked against the vocabulary. Returns why not, or null:
+         * the app or the cameras it would show have not been chosen.
+         */
+        String setDashboardShows(String value);
 
         /**
          * Shows {@code url} now without storing it, so the next reload of the *kiosk* (a restart,
@@ -294,19 +302,19 @@ final class KioskCommandDispatcher {
 
     static Result dispatch(String command, CommandArgs args, Executor executor) {
         switch (command) {
-            case "kiosk.start":
+            case "dashboard.start":
                 executor.kioskStart();
                 return accepted();
-            case "kiosk.stop":
+            case "dashboard.stop":
                 executor.kioskStop();
                 return accepted();
-            case "kiosk.reload":
+            case "dashboard.reload":
                 executor.kioskReload();
                 return accepted();
-            case "kiosk.restart":
+            case "app.restart":
                 executor.kioskRestart();
                 return accepted();
-            case "kiosk.set_url": {
+            case "dashboard.url": {
                 String error = validateDashboardUrl(args.url);
                 if (error != null) {
                     return rejected(error);
@@ -314,7 +322,7 @@ final class KioskCommandDispatcher {
                 executor.setDashboardUrl(args.url.trim());
                 return accepted();
             }
-            case "kiosk.open_url": {
+            case "dashboard.open_once": {
                 String error = validateDashboardUrl(args.url);
                 if (error != null) {
                     return rejected(error);
@@ -322,12 +330,22 @@ final class KioskCommandDispatcher {
                 executor.openUrlOnce(args.url.trim());
                 return accepted();
             }
-            case "kiosk.set_cameras": {
-                String problem = executor.setDashboardCameras(
-                        args.value == null ? "" : args.value.trim());
+            case "dashboard.show": {
+                if (!DASHBOARD_PAGE.equals(args.value) && !DASHBOARD_APP.equals(args.value)
+                        && !DASHBOARD_CAMERAS.equals(args.value)) {
+                    return rejected("value must be page, app or cameras");
+                }
+                String problem = executor.setDashboardShows(args.value);
                 return problem == null ? accepted() : rejected(problem);
             }
-            case "kiosk.home":
+            case "dashboard.cameras": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must name the camera or group");
+                }
+                String problem = executor.setDashboardCameras(args.value.trim());
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "dashboard.open":
                 executor.showMainDashboard();
                 return accepted();
             case "display.wake":
@@ -384,7 +402,7 @@ final class KioskCommandDispatcher {
                 }
                 return accepted();
             case "light.on": {
-                // The Home Assistant light's three values in one call: the colour in value as
+                // The MQTT light's three values in one call: the colour in value as
                 // r,g,b and the brightness in percent, each optional and each kept when absent.
                 Integer color = null;
                 if (args.value != null && !args.value.trim().isEmpty()) {
@@ -510,7 +528,7 @@ final class KioskCommandDispatcher {
                 executor.setScreensaverSetting(ScreensaverSetting.MODE, args.value);
                 return accepted();
             case "ambient.playlist":
-                // By name, not by id: a name is what a person and a Home Assistant card know, and
+                // By name, not by id: a name is what a person and a smart-home card know, and
                 // an id is an implementation detail nobody types. An empty value means "none",
                 // which is a real state since a playlist can be deleted while it is in use.
                 if (args.value == null) {
@@ -521,14 +539,14 @@ final class KioskCommandDispatcher {
                     return rejected(refusal);
                 }
                 return accepted();
-            case "ambient.idle_seconds":
+            case "ambient.start_after_seconds":
             case "ambient.off_seconds": {
                 Integer seconds = ScreensaverPolicy.parseSeconds(args.value);
                 if (seconds == null) {
                     return rejected("value " + ScreensaverPolicy.SECONDS_RULE);
                 }
-                executor.setScreensaverSetting(command.endsWith("idle_seconds")
-                        ? ScreensaverSetting.IDLE_SECONDS : ScreensaverSetting.OFF_SECONDS,
+                executor.setScreensaverSetting(command.endsWith("start_after_seconds")
+                        ? ScreensaverSetting.START_AFTER_SECONDS : ScreensaverSetting.OFF_SECONDS,
                         String.valueOf(seconds));
                 return accepted();
             }
@@ -573,7 +591,7 @@ final class KioskCommandDispatcher {
                 return accepted();
             case "ambient.transition":
                 if (!ScreensaverPolicy.isTransition(args.value)) {
-                    return rejected("value must be none, fade or slide");
+                    return rejected("value must be cut, fade or slide");
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.TRANSITION, args.value);
                 return accepted();
@@ -591,14 +609,14 @@ final class KioskCommandDispatcher {
                 executor.setScreensaverSetting(ScreensaverSetting.CREDIT_CORNER, args.value);
                 return accepted();
             case "ambient.shuffle":
-            case "ambient.one_per_cycle":
+            case "ambient.one_per_start":
             case "ambient.credit": {
                 if (args.enabled == null) {
                     return rejected("enabled must be true or false");
                 }
                 ScreensaverSetting which = command.endsWith("shuffle") ? ScreensaverSetting.SHUFFLE
                         : command.endsWith("credit") ? ScreensaverSetting.CREDIT
-                                : ScreensaverSetting.ONE_PER_CYCLE;
+                                : ScreensaverSetting.ONE_PER_START;
                 executor.setScreensaverSetting(which, args.enabled ? "true" : "false");
                 return accepted();
             }
@@ -635,11 +653,11 @@ final class KioskCommandDispatcher {
                 String problem = executor.cameraSnapshot();
                 return problem == null ? accepted() : rejected(problem);
             }
-            case "kiosk.screenshot": {
+            case "panel.screenshot": {
                 String problem = executor.screenshot();
                 return problem == null ? accepted() : rejected(problem);
             }
-            case "kiosk.identify": {
+            case "panel.identify": {
                 String problem = executor.identify();
                 return problem == null ? accepted() : rejected(problem);
             }
@@ -647,11 +665,11 @@ final class KioskCommandDispatcher {
                 String problem = executor.calibrateProximity(args.value);
                 return problem == null ? accepted() : rejected(problem);
             }
-            case "microphone.calibrate": {
+            case "sound_level.calibrate": {
                 String problem = executor.calibrateMicrophone(args.value);
                 return problem == null ? accepted() : rejected(problem);
             }
-            case "beacons.calibrate": {
+            case "bluetooth_beacons.calibrate": {
                 String problem = executor.calibrateBeacons(args.value, args.beacon);
                 return problem == null ? accepted() : rejected(problem);
             }
@@ -717,18 +735,147 @@ final class KioskCommandDispatcher {
      * The example both settings surfaces show for the dashboard URL, and they show it as a hint,
      * never as a value.
      *
-     * <p>It was {@code http://homeassistant.local:8123/}, prefilled into the tablet's box as real
-     * text, and on a fresh panel the first press of the save button stored it and loaded it,
-     * landing on an error page for a host that does not exist (seen 2026-09-07). Two things
-     * were wrong with that, and this fixes both. A value nobody typed must never be one press
-     * from being stored: the form-design literature is unanimous that example text belongs in
-     * the hint, alongside a visible label, where it shows the shape of a valid entry and cannot
-     * be mistaken for data or submitted by accident. And Muralis is not a Home Assistant app: it
-     * runs any dashboard, so the example must not name one product. {@code example.com} is
-     * reserved for exactly this use (RFC 2606), resolves to nothing anyone runs, and reads as
-     * "put yours here" to everyone.
+     * <p>It was one smart-home product's default {@code .local} address on port 8123, prefilled
+     * into the tablet's box as real text, and on a fresh panel the first press of the save button
+     * stored it and loaded it, landing on an error page for a host that does not exist (seen
+     * 2026-09-07). Two things were wrong with that, and this fixes both. A value nobody typed must
+     * never be one press from being stored: the form-design literature is unanimous that example
+     * text belongs in the hint, alongside a visible label, where it shows the shape of a valid
+     * entry and cannot be mistaken for data or submitted by accident. And Muralis is not an app for
+     * one smart-home system: it runs any dashboard, so the example must not name one product.
+     * {@code example.com} is reserved for exactly this use (RFC 2606), resolves to nothing anyone
+     * runs, and reads as "put yours here" to everyone.
      */
     static final String EXAMPLE_DASHBOARD_URL = "https://example.com/dashboard";
+
+    /**
+     * What the dashboard shows, the stored {@code dashboard_shows}: the web page, the app App
+     * lock chose, or the cameras chosen. The app and the cameras are stored apart from this and
+     * kept when the dashboard shows something else, so switching back shows the last choice.
+     */
+    static final String DASHBOARD_PAGE = "page";
+    static final String DASHBOARD_APP = "app";
+    static final String DASHBOARD_CAMERAS = "cameras";
+
+    static final String NO_APP_CHOSEN = "choose an app on the panel or in the web admin first";
+    static final String NO_CAMERA = "add a camera first";
+    static final String NO_CAMERA_CHOSEN = "choose the dashboard cameras first";
+
+    /**
+     * Why the dashboard cannot show {@code value} now, or null when it can: the app needs one
+     * chosen, the cameras need a camera or group chosen that still exists. The page always can.
+     *
+     * @param chosenApp          App lock's chosen package, empty when none was ever chosen
+     * @param anyCamera          whether at least one camera or group exists
+     * @param chosenCameraExists whether the chosen camera or group exists
+     */
+    static String dashboardShowProblem(String value, String chosenApp, boolean anyCamera,
+            boolean chosenCameraExists) {
+        if (DASHBOARD_APP.equals(value) && (chosenApp == null || chosenApp.isEmpty())) {
+            return NO_APP_CHOSEN;
+        }
+        if (DASHBOARD_CAMERAS.equals(value) && !anyCamera) {
+            return NO_CAMERA;
+        }
+        if (DASHBOARD_CAMERAS.equals(value) && !chosenCameraExists) {
+            return NO_CAMERA_CHOSEN;
+        }
+        return null;
+    }
+
+    // ---- The words of every choice. One table each, key then word, read by the panel, the web
+    // admin and MQTT discovery alike, so a choice says the same on every surface. Commands, the
+    // state document and the settings file carry the keys; people read the words.
+
+    static final String[][] DASHBOARD_WORDS = {
+            {DASHBOARD_PAGE, "Web page"}, {DASHBOARD_APP, "App"}, {DASHBOARD_CAMERAS, "Cameras"}};
+    /** The keys mirror KioskConfig's ORIENTATION_* constants, which need Android to compile. */
+    static final String[][] ORIENTATION_WORDS = {
+            {"auto", "Auto-rotate"}, {"landscape", "Landscape"}, {"portrait", "Portrait"}};
+    static final String[][] DISPLAY_OFF_WORDS = {
+            {DisplayOffPolicy.AUTO, "Automatic"}, {DisplayOffPolicy.SLEEP, "Turn the screen off"},
+            {DisplayOffPolicy.FILM, "Black film"}};
+    static final String[][] AMBIENT_MODE_WORDS = {
+            {ScreensaverPolicy.OFF, "Off"}, {ScreensaverPolicy.DIM, "Dimmed page"},
+            {ScreensaverPolicy.FILM, "Black film"}, {ScreensaverPolicy.URL, "Web page"},
+            {ScreensaverPolicy.PICTURES, "Pictures"}};
+    static final String[][] AMBIENT_ON_WAKE_WORDS = {
+            {ScreensaverPolicy.WAKE_SCREENSAVER, "Ambient first"},
+            {ScreensaverPolicy.WAKE_DASHBOARD, "Dashboard at once"}};
+    static final String[][] AMBIENT_TRANSITION_WORDS = {
+            {ScreensaverPolicy.TRANSITION_CUT, "Cut"}, {ScreensaverPolicy.TRANSITION_FADE, "Fade"},
+            {ScreensaverPolicy.TRANSITION_SLIDE, "Slide"}};
+    static final String[][] AMBIENT_FIT_WORDS = {
+            {ScreensaverPolicy.FIT_WHOLE, "Fit"}, {ScreensaverPolicy.FIT_FILL, "Fill"},
+            {ScreensaverPolicy.FIT_STRETCH, "Stretch"}, {ScreensaverPolicy.FIT_ACTUAL, "Actual size"}};
+    static final String[][] AMBIENT_CORNER_WORDS = {
+            {ScreensaverPolicy.CORNER_BOTTOM_LEFT, "Bottom left"},
+            {ScreensaverPolicy.CORNER_BOTTOM_RIGHT, "Bottom right"},
+            {ScreensaverPolicy.CORNER_TOP_LEFT, "Top left"},
+            {ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right"}};
+
+    /**
+     * An MQTT discovery component's key for the entity {@code name}: the name snake-cased, so
+     * the key, the unique_id built on it and the name say the same thing ("Ambient start
+     * after" is {@code ambient_start_after}). A name with nothing to keep has the key
+     * {@code entity}.
+     */
+    static String entityKey(String name) {
+        String key = name.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]+", "_")
+                .replaceAll("^_+|_+$", "");
+        return key.isEmpty() ? "entity" : key;
+    }
+
+    /** The word a person reads for {@code key}, or the key itself when the table has none. */
+    static String wordOf(String[][] words, String key) {
+        for (String[] pair : words) {
+            if (pair[0].equals(key)) {
+                return pair[1];
+            }
+        }
+        return key;
+    }
+
+    /** The key behind {@code word}, or null when the table has no such word. */
+    static String keyOf(String[][] words, String word) {
+        for (String[] pair : words) {
+            if (pair[1].equals(word)) {
+                return pair[0];
+            }
+        }
+        return null;
+    }
+
+    /** The table as Jinja's dictionary literal, from {@code from} (0 key, 1 word) to the other. */
+    private static String jinjaMap(String[][] words, int from) {
+        StringBuilder map = new StringBuilder("{");
+        for (String[] pair : words) {
+            if (map.length() > 1) {
+                map.append(", ");
+            }
+            map.append('\'').append(pair[from]).append("': '").append(pair[1 - from]).append('\'');
+        }
+        return map.append('}').toString();
+    }
+
+    /**
+     * An MQTT select's command template: the word picked goes back to its key inside the
+     * command envelope; a word the table does not know is sent as it is, for the panel to refuse.
+     */
+    static String selectCommandTemplate(String command, String[][] words) {
+        return "{% set m = " + jinjaMap(words, 1) + " %}{% set v = m[value] if value in m"
+                + " else value %}{\"command\":\"" + command
+                + "\",\"args\":{\"value\":{{ v | tojson }}}}";
+    }
+
+    /**
+     * An MQTT select's value template: the key the state document holds at {@code field} (a
+     * Jinja expression such as {@code value_json.config.orientation}) shown as its word.
+     */
+    static String selectValueTemplate(String field, String[][] words) {
+        return "{% set m = " + jinjaMap(words, 0) + " %}{% set k = " + field + " %}"
+                + "{{ m[k] if k in m else k }}";
+    }
 
     /** Returns null when {@code url} is an acceptable dashboard URL, an error message otherwise. */
     static String validateDashboardUrl(String url) {
@@ -830,7 +977,7 @@ final class KioskCommandDispatcher {
      * whole answer was one logcat line: a space or a {@code /} typed into either settings surface
      * was stored, answered with success, and MQTT then never started. An empty id is refused for a
      * different reason: {@code KioskConfig.load} treats an empty id as "never provisioned" and
-     * mints a fresh one, which orphans every Home Assistant entity the old id had announced and
+     * mints a fresh one, which orphans every MQTT discovery entity the old id had announced and
      * leaves its retained topics behind.
      */
     static String validateDeviceId(String id) {

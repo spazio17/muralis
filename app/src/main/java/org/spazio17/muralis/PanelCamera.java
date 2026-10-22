@@ -42,7 +42,7 @@ import java.util.List;
 /**
  * The panel's camera as an IP camera (2026-09-27): a live MJPEG stream and a snapshot on
  * the web admin, behind its password; the picture's name and the time drawn into it as a
- * watermark; and motion detection, the one thing the automations and Home Assistant see of it.
+ * watermark; and motion detection, the one thing the automations and MQTT see of it.
  * The settings follow a camera firmware's: which lens, the size, the frame rate, mirror,
  * upside down, the watermark, the sensitivity. Over MQTT only what Frigate and Blue Iris
  * publish: the motion sensor, and a picture on motion when asked for.

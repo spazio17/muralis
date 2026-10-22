@@ -6,7 +6,7 @@ package org.spazio17.muralis;
 
 /**
  * The status light's vocabulary: a coloured frame around the edge of the screen, for panels
- * with no light of their own, set the way a Home Assistant light is (on or off, a colour, a
+ * with no light of their own, set the way an MQTT light is (on or off, a colour, a
  * brightness). Pure, so the parsing and the refusals are host-tested; the frame itself is drawn
  * by {@code KioskActivity}.
  */

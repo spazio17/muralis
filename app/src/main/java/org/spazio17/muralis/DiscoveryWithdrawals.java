@@ -8,20 +8,20 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Which Home Assistant entities a panel must remove: the ones it announced before and does not
+ * Which MQTT discovery entities a panel must remove: the ones it announced before and does not
  * announce now, and only those.
  *
- * <p>Home Assistant keeps an entity it discovered until the panel says otherwise: a component left
+ * <p>The smart home keeps an entity it discovered until the panel says otherwise: a component left
  * out of the device payload stays, "unavailable", forever. The documented removal is the component
  * once more with only its platform ({@code "p"}), then an update without it. A removal is only for
  * something this panel announced, so a fresh install starts on MQTT with nothing to remove, unlike
  * the fixed-list way (an empty entry for every sensor off or missing, on every connect, so a panel
- * that never had a humidity sensor tells Home Assistant to remove one). That is zigbee2mqtt's
+ * that never had a humidity sensor tells the smart home to remove one). That is zigbee2mqtt's
  * way: it remembers what it published and, at its start, reads its own retained configs back from
  * the broker; {@code MqttController} does both and asks this class what to remove.
  *
  * <p>A component is the pair key and platform: a key announced under another platform before is
- * removed under the old one, or Home Assistant keeps the old entity beside the new.
+ * removed under the old one, or the smart home keeps the old entity beside the new.
  *
  * <p>Pure, with no Android imports, so the rule is covered by host tests.
  */

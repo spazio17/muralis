@@ -177,7 +177,7 @@
         android:usesCleartextTraffic="true">
         <!-- usesCleartextTraffic is app-wide and stays that way, a decision rather than an
              omission. What actually needs it is the dashboard WebView and the server probe: a
-             typical Home Assistant install on a home LAN is plain http, and the host is whatever
+             typical smart-home install on a home LAN is plain http, and the host is whatever
              the operator types at runtime; the same holds for the alerts' web address, the
              automations' Call an address and the sounds the panel is asked to play, so a network-security-config allowlist (which is
              static XML, resolved at install) cannot express it; scoping to specific domains

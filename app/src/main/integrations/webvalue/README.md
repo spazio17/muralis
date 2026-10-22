@@ -30,7 +30,7 @@ fall below a level, turn on or off, or become a text.
 
 ## Limits
 
-- An answer larger than 256 KB, or slower than 30 seconds, is a failure.
+- An answer larger than 4 MB, or slower than 30 seconds, is a failure.
 - After three failures in a row the value is unavailable and no rule fires on it.
 - A 401 or 403 with a key set stops the asking until a new key is saved; without a key it is a
   failure like any other.

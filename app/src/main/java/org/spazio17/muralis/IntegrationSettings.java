@@ -103,6 +103,11 @@ final class IntegrationSettings {
             if (problem != null) {
                 return new Saved(problem, null);
             }
+            if (fresh) {
+                // Ids are reused once free: a key some path left under this one is not the
+                // new integration's.
+                clearSecrets(store, id, definitionId);
+            }
             for (Map.Entry<String, String> secret : secrets.entrySet()) {
                 store.put(Integrations.secretName(id, secret.getKey()), secret.getValue());
             }
@@ -162,6 +167,19 @@ final class IntegrationSettings {
         return null;
     }
 
+    /** Clears every secret an instance of this kind keeps under this id. */
+    static void clearSecrets(SecretStore store, String instanceId, String definitionId) {
+        Integrations.Definition definition = Integrations.DEFINITIONS.get(definitionId);
+        if (definition == null) {
+            return;
+        }
+        for (Integrations.Field field : definition.fields) {
+            if (field.secret) {
+                store.clear(Integrations.secretName(instanceId, field.id));
+            }
+        }
+    }
+
     /**
      * Removes an instance and its secrets. Its values leave the automations and MQTT;
      * a rule that waited for one stays, and never fires again until it is changed.
@@ -182,15 +200,8 @@ final class IntegrationSettings {
                 return "that integration was removed meanwhile";
             }
             KioskConfig.storeIntegrations(context, list);
-            Integrations.Definition definition = Integrations.DEFINITIONS.get(gone.definition);
-            SecretStore store = new SecretStore(KioskConfig.storageContext(context));
-            if (definition != null) {
-                for (Integrations.Field field : definition.fields) {
-                    if (field.secret) {
-                        store.clear(Integrations.secretName(gone.id, field.id));
-                    }
-                }
-            }
+            clearSecrets(new SecretStore(KioskConfig.storageContext(context)), gone.id,
+                    gone.definition);
         }
         KioskService.refreshIntegrationsSoon(context, null);
         KioskService.publishTelemetrySoon(context);
@@ -318,16 +329,8 @@ final class IntegrationSettings {
                 kept.add(instance.id);
             }
             for (Integrations.Instance gone : own) {
-                if (kept.contains(gone.id)) {
-                    continue;
-                }
-                Integrations.Definition definition = Integrations.DEFINITIONS.get(gone.definition);
-                if (definition != null) {
-                    for (Integrations.Field field : definition.fields) {
-                        if (field.secret) {
-                            store.clear(Integrations.secretName(gone.id, field.id));
-                        }
-                    }
+                if (!kept.contains(gone.id)) {
+                    clearSecrets(store, gone.id, gone.definition);
                 }
             }
             if (secrets != null) {
@@ -434,7 +437,7 @@ final class IntegrationSettings {
             case TEXT:
                 return "\"" + value.text + "\"";
             case TIME:
-                return new java.util.Date((long) value.number).toString();
+                return timeWords((long) value.number);
             default: {
                 double number = value.number;
                 String figure = number == Math.rint(number) && Math.abs(number) < 1e15
@@ -442,6 +445,15 @@ final class IntegrationSettings {
                 return spec.unit.isEmpty() ? figure : figure + " " + spec.unit;
             }
         }
+    }
+
+    /** A time as a row says it: "14:00", or "Thu 14:00" when it is not today. */
+    static String timeWords(long epochMs) {
+        java.time.ZonedDateTime at = java.time.Instant.ofEpochMilli(epochMs)
+                .atZone(java.time.ZoneId.systemDefault());
+        boolean today = at.toLocalDate().equals(java.time.LocalDate.now());
+        return at.format(java.time.format.DateTimeFormatter.ofPattern(today ? "HH:mm"
+                : "EEE d MMM HH:mm", java.util.Locale.ENGLISH));
     }
 
     /** Why this panel's edition cannot run the definition, or null. */
