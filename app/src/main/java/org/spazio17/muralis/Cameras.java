@@ -551,14 +551,17 @@ final class Cameras {
         return TinyJson.write(out);
     }
 
+    /** The camera view's word for the web page, on the panel's choice and Home Assistant's select. */
+    static final String CAMERA_VIEW_PAGE = "Web page";
+
     private static String checkName(String name) {
         if (name == null || name.trim().isEmpty() || name.trim().length() > MAX_NAME
                 || name.chars().anyMatch(Character::isISOControl)) {
             return "the name must be one line of 1 to " + MAX_NAME + " characters";
         }
-        // "None" is the web page in the camera view's choice (Home Assistant's select too).
-        if (name.trim().equalsIgnoreCase("None")) {
-            return "None is taken: it means the web page in the camera view";
+        // "Web page" is the web page in the camera view's choice (Home Assistant's select too).
+        if (name.trim().equalsIgnoreCase(CAMERA_VIEW_PAGE)) {
+            return "Web page is taken: it means the web page in the camera view";
         }
         return null;
     }

@@ -81,7 +81,7 @@ final class Automations {
                 new Event("picked_up", "Picked up", null, false, false),
                 new Event("still", "Still again", null, false, false)));
         map.put("bluetooth", Arrays.asList(
-                new Event("in_reach", "A beacon comes in reach", null, false, false),
+                new Event("in_reach", "The first beacon comes in reach", null, false, false),
                 new Event("out_of_reach", "The last beacon goes out of reach", null, false, false)));
         map.put("nfc", Collections.singletonList(
                 new Event("tag", "A tag is read", null, false, true)));
