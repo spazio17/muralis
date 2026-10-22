@@ -192,6 +192,7 @@ final class HttpAdminServer {
     private final String playlistScript;
     private final String menuScript;
     private final String fleetScript;
+    private final String speakersScript;
     private final String qrScript;
     private final String pageCss;
 
@@ -277,6 +278,7 @@ final class HttpAdminServer {
         playlistScript = script(R.raw.admin_playlists);
         menuScript = script(R.raw.admin_menu);
         fleetScript = script(R.raw.admin_fleet);
+        speakersScript = script(R.raw.admin_speakers);
         qrScript = script(R.raw.admin_qr);
         // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
@@ -1188,12 +1190,23 @@ final class HttpAdminServer {
             writeResponse(output, 200, "application/json",
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.startsWith("/api/fleet/") && !FleetServer.proStatus(context).pro
-                && (path.equals("/api/fleet/screenshot") || path.equals("/api/fleet/identify"))) {
+                && (path.equals("/api/fleet/screenshot") || path.equals("/api/fleet/identify")
+                        || path.equals("/api/fleet/speaker"))) {
             // The Fleet page's own requests, refused like the page itself without Pro.
             writeResponse(output, 403, "application/json", bytes(rejectedJson(
                     "the Fleet page is Muralis Pro. " + FleetServer.proLine(context))));
         } else if (path.equals("/api/fleet/screenshot") && method.equals("GET")) {
             serveFleetScreenshot(queryValue(query, "panel"), output);
+        } else if (path.equals("/api/fleet/speaker") && method.equals("GET")) {
+            writeResponse(output, 200, "application/json",
+                    bytes(FleetSpeakers.states(context).toString()));
+        } else if (path.equals("/api/fleet/speaker") && method.equals("POST")) {
+            Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
+            form.putAll(parseFormBody(headers, body));
+            org.json.JSONObject done = FleetSpeakers.act(context, form.getOrDefault("target", ""),
+                    form.getOrDefault("action", ""), form.get("value"));
+            writeResponse(output, done.has("error") ? 400 : 200, "application/json",
+                    bytes(done.toString()));
         } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
             Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
             form.putAll(parseFormBody(headers, body));
@@ -4833,7 +4846,7 @@ final class HttpAdminServer {
      */
     private String speakerBody(KioskConfig config, String notice, String noticeSection) {
         String state = KioskRuntimeState.speakerState();
-        return "<div class=\"switches\">"
+        return sharedLine("speaker") + "<div class=\"switches\">"
                 + switchRow("network-speaker", "Network speaker",
                         " data-setting=\"network_speaker\"", config.networkSpeaker)
                 + "</div>"
@@ -6332,6 +6345,70 @@ final class HttpAdminServer {
      * shown and edited here, as the fleet products do. Plain forms, posted to this page: a
      * person managing a fleet sits at a laptop, and nothing here needs to apply as it is typed.
      */
+    /**
+     * The Speakers card (sketch agreed 2026-10-22): the panels as speakers, as multi-room audio
+     * lists its rooms, for announcements. Where it goes (all panels, a group, chosen panels), a
+     * sentence to say, a sound or stream to play, Stop all, the volume of all, and one row a
+     * panel with its state, its volume and its network speaker's switch. The rows' states come
+     * from each panel through /api/fleet/speaker (admin_speakers.js), never with the page, since
+     * each is a call to that panel. Only a panel with its network speaker on takes sound.
+     */
+    private static String speakersCard(java.util.Map<String, Object> list,
+            java.util.Map<String, String> groups) {
+        StringBuilder rows = new StringBuilder();
+        for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
+            String id = TinyJson.string(member, FleetDocument.ID, "");
+            String name = TinyJson.string(member, FleetDocument.NAME, id);
+            rows.append("<li class=\"two speaker\" data-id=\"").append(escapeHtml(id))
+                    .append("\"><label class=\"tick\" hidden><input type=\"checkbox\""
+                            + " data-tick aria-label=\"").append(escapeHtml(name))
+                    .append("\"></label><span class=\"lead\">").append(glyph("audio"))
+                    .append("</span><span class=\"text\"><span class=\"h\">")
+                    .append(escapeHtml(name)).append("</span><span class=\"s\" data-state>"
+                            + "Asking the panel...</span><label class=\"slider small\">"
+                            + "<span class=\"sr\">Volume of ").append(escapeHtml(name))
+                    .append("</span><input type=\"range\" min=\"0\" max=\"100\" value=\"0\""
+                            + " data-volume disabled></label></span>"
+                            + "<span class=\"trail\"><input type=\"checkbox\" class=\"sw\""
+                            + " data-switch disabled aria-label=\"Network speaker of ")
+                    .append(escapeHtml(name)).append("\"></span></li>");
+        }
+        StringBuilder groupOptions = new StringBuilder();
+        for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+            groupOptions.append("<option value=\"").append(escapeHtml(group.getKey()))
+                    .append("\">").append(escapeHtml(group.getValue())).append("</option>");
+        }
+        return "<div class=\"card\" id=\"speakers\"><div class=\"cardhead\"><h2>Speakers</h2>"
+                + "<span class=\"count\" id=\"speakers-count\"></span></div>"
+                + "<div class=\"segmented\" role=\"group\" aria-label=\"Send to\">"
+                + "<button type=\"button\" data-target=\"all\" aria-pressed=\"true\">All panels"
+                + "</button>"
+                + (groups.isEmpty() ? "" : "<button type=\"button\" data-target=\"group\""
+                        + " aria-pressed=\"false\">A group</button>")
+                + "<button type=\"button\" data-target=\"panels\" aria-pressed=\"false\">Choose"
+                + "</button></div>"
+                + (groups.isEmpty() ? "" : "<div id=\"speakers-group\" hidden>"
+                        + selectField("speakers-group-menu", null, "Group", null,
+                                groupOptions.toString(), null) + "</div>")
+                + "<div class=\"row-field\">" + fieldWithId("speakers-sentence", "text", null,
+                        "Sentence", "", "", null).replace(MACHINE_TEXT, "")
+                + "<button type=\"button\" class=\"primary\" data-action=\"say\">Say</button>"
+                + "</div><div class=\"row-field\">" + fieldWithId("speakers-sound", "text", null,
+                        "Sound or stream address", "", " inputmode=\"url\"", null)
+                + "<button type=\"button\" class=\"tonal\" data-action=\"play\">Play</button>"
+                + "<button type=\"button\" class=\"text\" data-action=\"stop\">Stop all"
+                + "</button></div>"
+                + "<label class=\"slider\">Volume of all<span class=\"readout\"><output"
+                + " id=\"speakers-volume-value\">50%</output></span><input type=\"range\""
+                + " id=\"speakers-volume\" min=\"0\" max=\"100\" value=\"50\"></label>"
+                + "<p class=\"hint\" id=\"speakers-result\" hidden></p>"
+                + "<ul class=\"list seg\" id=\"speakers-list\">" + rows + "</ul>"
+                + "<p class=\"hint\">The switch is each panel's network speaker, switched here for"
+                + " that panel. Only a panel with it on takes Say, Play and the volume; Stop all"
+                + " reaches every panel. A panel that is not reached does not play it later.</p>"
+                + "</div>";
+    }
+
     private String buildFleetPage(String notice, String scopeAsked) {
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
         StringBuilder html = new StringBuilder(pageStart("Fleet",
@@ -6409,6 +6486,7 @@ final class HttpAdminServer {
         }
         html.append("<p class=\"hint\">A panel is added with Add a panel in the Fleet section: by"
                 + " a panel's camera, or by typing the code under its Join QR.</p></div>");
+        html.append(speakersCard(list, groups));
         // Groups: make one, remove one.
         html.append("<div class=\"card\"><h2>Groups</h2>");
         if (groups.isEmpty()) {
@@ -6513,7 +6591,7 @@ final class HttpAdminServer {
         html.append("<p class=\"hint\">The last ").append(KioskConfig.FLEET_HISTORY_SIZE)
                 .append(" versions. Restore as new brings back a version's name, groups and shared"
                 + " settings; the panels stay.</p></div>");
-        html.append(fleetScript);
+        html.append(fleetScript).append(speakersScript);
         return html.append(pageEnd()).toString();
     }
 

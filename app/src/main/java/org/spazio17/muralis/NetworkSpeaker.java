@@ -322,6 +322,13 @@ final class NetworkSpeaker implements DlnaProtocol.Renderer {
         }
     }
 
+    /** Whether the speaker is playing now, for the fleet's Speakers card. */
+    boolean playing() {
+        synchronized (playerLock) {
+            return player != null && DlnaProtocol.PLAYING.equals(transport);
+        }
+    }
+
     void stopPlayback() {
         boolean stopped;
         synchronized (playerLock) {
