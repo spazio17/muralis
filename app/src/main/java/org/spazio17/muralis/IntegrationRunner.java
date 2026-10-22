@@ -301,10 +301,12 @@ final class IntegrationRunner {
                 one.fleetStale = false;
                 Log.i(TAG, "Integration " + one.instance.id + ": asked by " + askedBy);
             } else if (askedBy == null && one.askedBy != null) {
-                // Asks from now on, as soon as its schedule lets it (floor and Retry-After).
+                // Asks from now on, at once as far as its floor and Retry-After let it: the
+                // values it was passed may already be nearly an interval old.
                 one.fleetState = null;
                 one.fleetProblem = null;
                 one.fleetStale = false;
+                one.schedule.pollNow(now);
                 Log.i(TAG, "Integration " + one.instance.id + ": asking "
                         + (forFleet ? "for the fleet" : "for this panel"));
             }

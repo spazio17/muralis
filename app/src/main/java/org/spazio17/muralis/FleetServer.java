@@ -2227,16 +2227,21 @@ final class FleetServer {
         return new IntegrationsFleet(self, instances, members);
     }
 
-    /** Pushes under way, by member key and instance; see pushValues. */
-    private static final java.util.Set<String> pushing =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * The values waiting for each member, by member key then instance: only the latest of each
+     * instance, so a newer read replaces one not yet sent and nothing piles up. See pushValues.
+     */
+    private static final java.util.Map<String, java.util.LinkedHashMap<String, JSONObject>>
+            waiting = new java.util.HashMap<>();
+    /** Members with a sender under way; at most one each, see pushValues. */
+    private static final java.util.Set<String> sending = new java.util.HashSet<>();
 
     /**
      * Passes one shared integration's values, as this panel just read them, to every other member
-     * that takes the integrations from the same group ({@code POST /fleet/values}): each on its own
-     * thread within the call's deadline, never retried and never queued, since the next read
-     * replaces it. A member that still has the previous push under way skips this one. A panel
-     * too old to know the route answers 404, which is only logged.
+     * that takes the integrations from the same group ({@code POST /fleet/values}). One sender a
+     * member delivers the latest values of each instance one after another, so pushes never open
+     * more connections than a member admits from one host; a failed one is not retried, since the
+     * next read replaces it. A panel too old to know the route answers 404, which is only logged.
      */
     static void pushValues(Context context, String instanceId, JSONObject body) {
         int size = body.toString().getBytes(StandardCharsets.UTF_8).length;
@@ -2251,29 +2256,53 @@ final class FleetServer {
         }
         for (java.util.Map<String, Object> member : fleet.members) {
             String spki = TinyJson.string(member, FleetDocument.SPKI, "");
-            String key = spki + "/" + instanceId;
-            if (spki.equals(fleet.self) || !pushing.add(key)) {
+            if (spki.equals(fleet.self)) {
                 continue;
             }
-            new Thread(() -> {
-                try {
-                    String address = addressOf(member, spki);
-                    if (address.isEmpty()) {
-                        return;
-                    }
-                    Reply reply = call(context, address, portOf(member, spki), spki, "POST",
-                            "/fleet/values", body);
-                    if (reply.status != 200) {
-                        Log.d(TAG, "Values of " + instanceId + " not taken by key "
-                                + FleetTls.shortForm(spki) + ": " + reply.reason());
-                    }
-                } catch (IOException | RuntimeException failed) {
-                    Log.d(TAG, "Values of " + instanceId + " did not reach key "
-                            + FleetTls.shortForm(spki) + ": " + failed.getMessage());
-                } finally {
-                    pushing.remove(key);
+            synchronized (waiting) {
+                waiting.computeIfAbsent(spki, key -> new java.util.LinkedHashMap<>())
+                        .put(instanceId, body);
+                if (!sending.add(spki)) {
+                    continue;
                 }
-            }, "MuralisFleetValues").start();
+            }
+            new Thread(() -> sendWaiting(context, member, spki), "MuralisFleetValues").start();
+        }
+    }
+
+    /** One member's sender: the waiting values one after another until none is left. */
+    private static void sendWaiting(Context context, java.util.Map<String, Object> member,
+            String spki) {
+        while (true) {
+            String instanceId;
+            JSONObject body;
+            synchronized (waiting) {
+                java.util.LinkedHashMap<String, JSONObject> mine = waiting.get(spki);
+                if (mine == null || mine.isEmpty()) {
+                    waiting.remove(spki);
+                    sending.remove(spki);
+                    return;
+                }
+                java.util.Map.Entry<String, JSONObject> next = mine.entrySet().iterator().next();
+                instanceId = next.getKey();
+                body = next.getValue();
+                mine.remove(instanceId);
+            }
+            try {
+                String address = addressOf(member, spki);
+                if (address.isEmpty()) {
+                    continue;
+                }
+                Reply reply = call(context, address, portOf(member, spki), spki, "POST",
+                        "/fleet/values", body);
+                if (reply.status != 200) {
+                    Log.d(TAG, "Values of " + instanceId + " not taken by key "
+                            + FleetTls.shortForm(spki) + ": " + reply.reason());
+                }
+            } catch (IOException | RuntimeException failed) {
+                Log.d(TAG, "Values of " + instanceId + " did not reach key "
+                        + FleetTls.shortForm(spki) + ": " + failed.getMessage());
+            }
         }
     }
 
