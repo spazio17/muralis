@@ -319,6 +319,17 @@ public final class Integrations {
      * only when it carries no address, since a message like "FileNotFoundException:
      * https://...?appid=" would put a key from the address where everyone reads it.
      */
+    /**
+     * The time now for an integration, which names no clock of the platform itself
+     * (scripts/integration-registry.py): settable, so a host test reads a calendar at a fixed
+     * moment.
+     */
+    public static volatile java.util.function.LongSupplier clock = System::currentTimeMillis;
+
+    public static long now() {
+        return clock.getAsLong();
+    }
+
     public static String why(java.io.IOException failed) {
         String message = failed.getMessage();
         return message == null || message.isEmpty() || message.contains("://")

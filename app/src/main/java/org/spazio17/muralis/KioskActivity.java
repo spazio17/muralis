@@ -2902,6 +2902,8 @@ public final class KioskActivity extends Activity {
                 return value.optBoolean("value") ? "on" : "off";
             case "text":
                 return "\"" + value.optString("value") + "\"";
+            case "time":
+                return IntegrationSettings.timeWords((long) value.optDouble("value"));
             default: {
                 double number = value.optDouble("value");
                 String figure = number == Math.rint(number) && Math.abs(number) < 1e15

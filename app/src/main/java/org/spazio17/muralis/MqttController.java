@@ -1271,6 +1271,12 @@ final class MqttController implements MqttCallbackExtended {
                         // reads it, never "all up".
                         entity.put("value_template", "{{ 'ON' if " + reading + " == true else ("
                                 + "'OFF' if " + reading + " == false else 'None') }}");
+                    } else if ("time".equals(value.optString("type"))) {
+                        // Milliseconds since 1970 in the state, a timestamp sensor's moment.
+                        entity.put("p", "sensor");
+                        entity.put("device_class", "timestamp");
+                        entity.put("value_template", "{{ (" + reading + " / 1000) | int"
+                                + " | timestamp_local if " + reading + " is not none else 'None' }}");
                     } else {
                         entity.put("p", "sensor");
                         entity.put("value_template", "{{ " + reading + " }}");
