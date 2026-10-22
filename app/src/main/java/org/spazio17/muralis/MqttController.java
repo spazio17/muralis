@@ -625,7 +625,9 @@ final class MqttController implements MqttCallbackExtended {
                     arguments = args;
                 }
             } catch (JSONException malformed) {
-                Log.w(TAG, "Rejected malformed MQTT command", malformed);
+                // Not the exception itself: its message quotes the whole payload, which can carry
+                // an address with a token.
+                Log.w(TAG, "Rejected malformed MQTT command: not valid JSON");
                 // No id is available, since the envelope is what failed to parse, so the reply carries
                 // an empty one. Still worth publishing: silence is indistinguishable from a broker
                 // problem or an offline device, which is the wrong thing to tell a caller that in fact
