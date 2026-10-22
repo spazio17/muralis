@@ -484,6 +484,30 @@ final class FleetDocument {
     }
 
     /**
+     * The group whose values of {@code section} apply on {@code member}: the latest of its own
+     * groups that shares it, else the whole fleet while the member follows it and it shares the
+     * section; null when none does. Every panel works it out the same way for any member.
+     */
+    static String sourceGroup(Map<String, Object> document, Map<String, Object> member,
+            String section) {
+        Map<String, Long> by = sharedBy(document, section);
+        List<String> groups = memberGroups(document, member);
+        String group = null;
+        long at = 0;
+        for (Map.Entry<String, Long> candidate : by.entrySet()) {
+            if (!EVERYONE.equals(candidate.getKey()) && groups.contains(candidate.getKey())
+                    && candidate.getValue() > at) {
+                group = candidate.getKey();
+                at = candidate.getValue();
+            }
+        }
+        if (group == null && followsFleet(member) && by.containsKey(EVERYONE)) {
+            group = EVERYONE;
+        }
+        return group;
+    }
+
+    /**
      * The next document with {@code section} shared in {@code group} with {@code values}, or
      * unshared there when they are null, by {@code author}: one version higher, the entry
      * stamped with it, everything else carried over. The entry stays when unsharing, without

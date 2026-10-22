@@ -3857,6 +3857,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return live;
     }
 
+    /** The running integrations, for values the fleet passes on; null while not running. */
+    static IntegrationRunner integrationsOf() {
+        KioskService service = live;
+        return service == null ? null : service.integrations;
+    }
+
     static Beacons beaconsOf(Context context) {
         KioskService service = live;
         return service == null ? null : service.beacons;
