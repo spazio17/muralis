@@ -79,6 +79,10 @@ final class FleetProfile {
                 values.put("credit_corner", saver.creditCorner);
                 break;
             }
+            case "speaker":
+                values.put("network_speaker", config.networkSpeaker);
+                values.put("network_speaker_port", (long) config.networkSpeakerPort);
+                break;
             case "alerts":
                 values.put("alert_offline_minutes", config.alerts.offlineMinutes);
                 values.put("alert_page_error", config.alerts.pageError);
@@ -195,6 +199,26 @@ final class FleetProfile {
                             key, now, values, refused);
                 }
                 break;
+            case "speaker": {
+                // The port first, by the checks a person's own Save takes, then the switch,
+                // which refuses while its port is taken by another service.
+                long port = number(values, "network_speaker_port", -1);
+                if (port != number(now, "network_speaker_port", -1)) {
+                    String problem = KioskService.saveNetworkSpeakerPort(context,
+                            Long.toString(port));
+                    if (problem != null) {
+                        refused.add("network_speaker_port: " + problem);
+                    }
+                }
+                boolean on = flag(values, "network_speaker", false);
+                if (on != flag(now, "network_speaker", false)) {
+                    String problem = KioskService.setNetworkSpeaker(context, on);
+                    if (problem != null) {
+                        refused.add("network_speaker: " + problem);
+                    }
+                }
+                break;
+            }
             case "alerts":
                 for (Field field : fields(section)) {
                     if (!values.containsKey(field.key)
@@ -485,6 +509,10 @@ final class FleetProfile {
                         DisplayOffPolicy.AUTO, "Automatic", DisplayOffPolicy.SLEEP, "Sleep",
                         DisplayOffPolicy.FILM, "Black overlay"));
                 fields.add(new Field("auto_brightness", "Automatic brightness", "switch"));
+                break;
+            case "speaker":
+                fields.add(new Field("network_speaker", "Network speaker on", "switch"));
+                fields.add(new Field("network_speaker_port", "Port", "number"));
                 break;
             case "ambient":
                 fields.add(new Field("mode", "Mode", "select", ScreensaverPolicy.OFF, "Off",

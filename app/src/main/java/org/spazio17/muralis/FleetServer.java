@@ -566,6 +566,26 @@ final class FleetServer {
     /** As above, taking a reply body of up to {@code replyLimit} bytes; longer is discarded. */
     static Reply call(Context context, String address, int port, String spki, String method,
             String path, JSONObject body, int replyLimit) throws IOException {
+        return call(context, address, port, spki, method, path, body, replyLimit, Long.MAX_VALUE,
+                null);
+    }
+
+    /** Thrown when the request was not sent because its deadline had passed: nothing happened. */
+    static final class TooLate extends IOException {
+        TooLate() {
+            super("the deadline passed before the request could be sent");
+        }
+    }
+
+    /**
+     * As above, the request sent only while {@code SystemClock.elapsedRealtime()} is before
+     * {@code sendBy} (else {@link TooLate}, and the other panel never sees it), and
+     * {@code sent[0]} set the moment it went, so a caller can tell "never sent" from "sent, no
+     * answer".
+     */
+    static Reply call(Context context, String address, int port, String spki, String method,
+            String path, JSONObject body, int replyLimit, long sendBy, boolean[] sent)
+            throws IOException {
         FleetIdentity identity = FleetIdentity.load(context);
         if (identity == null) {
             throw new IOException("this panel's fleet key cannot be read");
@@ -582,6 +602,12 @@ final class FleetServer {
             byte[] content = body == null ? new byte[0]
                     : body.toString().getBytes(StandardCharsets.UTF_8);
             OutputStream output = channel.getOutputStream();
+            if (android.os.SystemClock.elapsedRealtime() >= sendBy) {
+                throw new TooLate();
+            }
+            if (sent != null) {
+                sent[0] = true;
+            }
             output.write((method + " " + path + " HTTP/1.1\r\nHost: panel\r\n"
                     + "Content-Type: application/json\r\nContent-Length: " + content.length
                     + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
@@ -1074,6 +1100,14 @@ final class FleetServer {
                     identify(output);
                 } else {
                     respond(output, 405, error("only POST"));
+                }
+            } else if ("/fleet/speaker".equals(parts[1])) {
+                if ("GET".equals(parts[0])) {
+                    speakerState(output);
+                } else if ("POST".equals(parts[0])) {
+                    speakerAction(body, output);
+                } else {
+                    respond(output, 405, error("only GET or POST"));
                 }
             } else {
                 respond(output, 404, error("no such endpoint"));
@@ -2817,6 +2851,114 @@ final class FleetServer {
             } catch (JSONException impossible) {
                 throw new IllegalStateException(impossible);
             }
+        }
+    }
+
+    /** {@code GET /fleet/speaker}: this panel as a speaker, for the Speakers card. */
+    private void speakerState(OutputStream output) throws IOException {
+        KioskService service = KioskService.liveService();
+        if (service == null) {
+            respond(output, 409, error(SERVICE_DOWN));
+        } else {
+            respond(output, 200, service.speakerState());
+        }
+    }
+
+    /**
+     * {@code POST /fleet/speaker} with {@code {"action": "say|play|stop|volume|switch", "value"}}:
+     * the Speakers card's action on this panel, now or refused, never later.
+     */
+    private void speakerAction(byte[] body, OutputStream output) throws IOException {
+        String action;
+        String value;
+        try {
+            JSONObject asked = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            action = asked.optString("action", "");
+            value = asked.isNull("value") ? null : asked.optString("value", null);
+        } catch (JSONException malformed) {
+            respond(output, 400, error("the body must be a JSON object with an action"));
+            return;
+        }
+        String problem = speakerActionHere(action, value);
+        if (problem != null) {
+            respond(output, 409, error(problem));
+            return;
+        }
+        try {
+            respond(output, 200, new JSONObject().put("status", "accepted"));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    private static String speakerActionHere(String action, String value) {
+        KioskService service = KioskService.liveService();
+        return service == null ? SERVICE_DOWN : service.speakerAction(action, value);
+    }
+
+    /**
+     * One panel as a speaker, this one or another through {@code GET /fleet/speaker}: its state,
+     * or null when it did not answer. Not on the main thread.
+     */
+    static JSONObject speakerStateOf(Context context, java.util.Map<String, Object> member) {
+        if (isSelf(context, member)) {
+            KioskService service = KioskService.liveService();
+            return service == null ? null : service.speakerState();
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return null;
+        }
+        try {
+            Reply reply = call(context, address, portOf(member, spki), spki, "GET",
+                    "/fleet/speaker", null);
+            if (reply.status == 404) {
+                // Online, on a Muralis from before the Speakers card.
+                return new JSONObject().put("too_old", true);
+            }
+            return reply.status == 200 ? reply.body : null;
+        } catch (IOException | RuntimeException | JSONException failed) {
+            return null;
+        }
+    }
+
+    /**
+     * The Speakers card's action on one panel, this one or another through
+     * {@code POST /fleet/speaker}; null when done, else why not. Not on the main thread.
+     */
+    static String speakerActionOn(Context context, java.util.Map<String, Object> member,
+            String action, String value, long sendBy) {
+        if (isSelf(context, member)) {
+            return speakerActionHere(action, value);
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return "not reached";
+        }
+        try {
+            JSONObject asked = new JSONObject().put("action", action);
+            if (value != null) {
+                asked.put("value", value);
+            }
+            boolean[] sent = {false};
+            Reply reply;
+            try {
+                reply = call(context, address, portOf(member, spki), spki, "POST",
+                        "/fleet/speaker", asked, MAX_DOCUMENT, sendBy, sent);
+            } catch (IOException failed) {
+                // Sent and then silent: it may have played, and the card says so rather than
+                // "not reached". Never sent: nothing happened, and nothing will.
+                return sent[0] ? "sent, no answer" : "not reached";
+            }
+            // A panel on a Muralis from before the Speakers card has no such route.
+            return reply.status == 200 ? null : reply.status == 404
+                    ? "its Muralis is too old for the Speakers card" : reply.reason();
+        } catch (RuntimeException | JSONException failed) {
+            Log.d(TAG, "Speaker action not answered by key " + FleetTls.shortForm(spki) + ": "
+                    + failed.getMessage());
+            return "not reached";
         }
     }
 

@@ -113,6 +113,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private volatile HttpAdminServer httpAdminServer;
     /** The member endpoint; null until the fleet key can be read. */
     private volatile FleetServer fleetServer;
+    /** The DLNA speaker while it is switched on and its port could be had; null otherwise. */
+    private volatile NetworkSpeaker networkSpeaker;
+    /** What the speaker was last started from; see {@link #restartNetworkSpeaker}. */
+    private String speakerInputs;
     /** The panel's announcement on the local network while it stands, and what it announced. */
     private android.net.nsd.NsdManager.RegistrationListener announcement;
     private String announcedKey = "";
@@ -1158,6 +1162,86 @@ public final class KioskService extends Service implements KioskCommandDispatche
         startFleetServer();
         refreshAnnouncement();
         FleetServer.heartbeatSoon(this, "start");
+        restartNetworkSpeaker(config);
+    }
+
+    private static String speakerInputsOf(KioskConfig config) {
+        return config.networkSpeaker + FIELD_SEPARATOR + config.networkSpeakerPort
+                + FIELD_SEPARATOR + config.deviceId;
+    }
+
+    /**
+     * Starts, moves or stops the network speaker when its switch, its port or the panel's name
+     * changed. A speaker whose port was taken is tried again at every reload of the settings,
+     * as the member endpoint is; another port is never taken in its place.
+     */
+    private void restartNetworkSpeaker(KioskConfig config) {
+        String now = speakerInputsOf(config);
+        if (now.equals(speakerInputs) && (networkSpeaker != null || !config.networkSpeaker)) {
+            return;
+        }
+        stopNetworkSpeaker();
+        speakerInputs = now;
+        if (config.networkSpeaker) {
+            networkSpeaker = NetworkSpeaker.start(this, config.networkSpeakerPort,
+                    config.deviceId, KioskConfig.networkSpeakerUdnOf(this), this::stopAudio);
+        }
+        KioskRuntimeState.publishSpeakerState(!config.networkSpeaker ? "off"
+                : networkSpeaker != null ? "on"
+                : "port " + config.networkSpeakerPort + " is in use by another service");
+        publishStateSoon();
+    }
+
+    private void stopNetworkSpeaker() {
+        NetworkSpeaker speaker = networkSpeaker;
+        networkSpeaker = null;
+        if (speaker != null) {
+            speaker.shutdown();
+        }
+        KioskRuntimeState.publishSpeakerState("off");
+    }
+
+    /**
+     * The network speaker's switch, from either settings surface: on only while its port can be
+     * had, so a switch never says on for a speaker that cannot start. Null when done.
+     */
+    static String setNetworkSpeaker(Context context, boolean on) {
+        KioskConfig config = KioskConfig.load(context);
+        if (on && !speakerRunning() && !SettingProbe.portFree(config.networkSpeakerPort)) {
+            return "port " + config.networkSpeakerPort + " is in use by another service on this"
+                    + " device; choose another port first";
+        }
+        KioskConfig.edit(context).networkSpeaker(on).apply();
+        reloadConfiguration(context);
+        return null;
+    }
+
+    /** The network speaker's port, typed on either surface; null when saved, else why not. */
+    static String saveNetworkSpeakerPort(Context context, String typed) {
+        KioskConfig config = KioskConfig.load(context);
+        String digits = typed == null ? "" : typed.trim();
+        if (!digits.matches("\\d{1,5}")) {
+            return "the port must be a number";
+        }
+        int port = Integer.parseInt(digits);
+        String problem = KioskCommandDispatcher.validateSpeakerPort(port,
+                config.networkSpeakerPort, config.httpPort, config.fleetPort);
+        if (problem != null) {
+            return problem;
+        }
+        boolean ours = port == config.networkSpeakerPort && speakerRunning();
+        if (!ours && config.networkSpeaker && !SettingProbe.portFree(port)) {
+            return "port " + port + " is already in use by another service on this device";
+        }
+        KioskConfig.edit(context).networkSpeakerPort(port).apply();
+        reloadConfiguration(context);
+        return null;
+    }
+
+    /** Whether the network speaker holds its port now, so a save of that port is no conflict. */
+    static boolean speakerRunning() {
+        KioskService service = liveService();
+        return service != null && service.networkSpeaker != null;
     }
 
     /**
@@ -1443,6 +1527,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         startFleetServer();
         refreshAnnouncement();
+        restartNetworkSpeaker(config);
     }
 
     private void stopControllers() {
@@ -1460,6 +1545,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             fleetServer.stop();
             fleetServer = null;
         }
+        stopNetworkSpeaker();
+        speakerInputs = null;
     }
 
     private void stopTelemetry() {
@@ -1652,6 +1739,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
             KioskConfig config = KioskConfig.load(this);
             org.json.JSONObject applied = new org.json.JSONObject();
             applied.put("dashboard_url", config.dashboardUrl);
+            // The network speaker: its switch, port and whether it actually runs.
+            applied.put("network_speaker", config.networkSpeaker);
+            applied.put("network_speaker_port", config.networkSpeakerPort);
+            applied.put("network_speaker_state", KioskRuntimeState.speakerState());
             applied.put("dashboard_cameras", KioskConfig.dashboardCamerasOf(this));
             applied.put("camera_layout", KioskConfig.cameraLayoutOf(this));
             applied.put("camera_big", KioskConfig.cameraBigOf(this));
@@ -3989,6 +4080,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             return "url must start with http:// or https://";
         }
+        // Two sounds never play at once: this one replaces what the network speaker plays,
+        // as the speaker's stops this one (NetworkSpeaker's beforeSound).
+        NetworkSpeaker speaker = networkSpeaker;
+        if (speaker != null) {
+            speaker.stopPlayback();
+        }
         try {
             android.media.MediaPlayer next = new android.media.MediaPlayer();
             next.setAudioAttributes(new android.media.AudioAttributes.Builder()
@@ -4069,8 +4166,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     if (status == android.speech.tts.TextToSpeech.SUCCESS) {
                         speech = engine[0];
                         speechReady = true;
-                        speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null,
-                                "muralis-say");
+                        speech.setOnUtteranceProgressListener(speechEnds);
+                        speakNow(text);
                     } else {
                         // Let go, so the next call asks the engine again rather than
                         // answering "not ready" until the service restarts.
@@ -4100,9 +4197,66 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!speechReady) {
             return "the text-to-speech engine is not ready";
         }
-        speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "muralis-say");
+        speakNow(text);
         return null;
     }
+
+    /** Numbers each sentence, so only the end of the latest plays the speaker on again. */
+    private int sentences;
+    /** The sentence after which the network speaker plays on, or null when it paused nothing. */
+    private String resumeAfter;
+
+    /**
+     * Speaks on the ready engine. What the network speaker plays pauses for the sentence and
+     * plays on when it ends, as a smart speaker does for an announcement; a played sound is
+     * stopped instead, since it is the panel's own and short. Caller holds this service's lock.
+     */
+    private void speakNow(String text) {
+        NetworkSpeaker speaker = networkSpeaker;
+        String id = "muralis-say-" + (++sentences);
+        resumeAfter = speaker != null && speaker.pauseForSpeech() ? id : null;
+        speech.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, id);
+    }
+
+    /**
+     * The engine's word that a sentence ended, however it ended. A sentence cut off by the next
+     * one ends too: only the latest one's end plays the speaker on.
+     */
+    private final android.speech.tts.UtteranceProgressListener speechEnds =
+            new android.speech.tts.UtteranceProgressListener() {
+                @Override
+                public void onStart(String id) {
+                }
+
+                @Override
+                public void onDone(String id) {
+                    ended(id);
+                }
+
+                @Override
+                public void onError(String id) {
+                    ended(id);
+                }
+
+                @Override
+                public void onStop(String id, boolean interrupted) {
+                    ended(id);
+                }
+
+                private void ended(String id) {
+                    NetworkSpeaker speaker;
+                    synchronized (KioskService.this) {
+                        if (id == null || !id.equals(resumeAfter)) {
+                            return;
+                        }
+                        resumeAfter = null;
+                        speaker = networkSpeaker;
+                    }
+                    if (speaker != null) {
+                        speaker.resumeAfterSpeech();
+                    }
+                }
+            };
 
     /** How long an engine has to answer before it is let go. */
     private static final long SPEECH_START_MS = 10_000;
@@ -4111,6 +4265,84 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private android.speech.tts.TextToSpeech speechStarting;
 
     /** Lets the speech engine go with the service: a connection to it leaked per restart. */
+    /**
+     * The fleet's Speakers card asks a panel to say, play, stop or set its volume, or switches its
+     * network speaker. Only a panel whose network speaker is switched on takes sound (Juri,
+     * 2026-10-22): the switch is the person's yes to being a speaker. Null when done, else why
+     * not; runs now or never, nothing waits to be played later.
+     */
+    synchronized String speakerAction(String action, String value) {
+        if ("switch".equals(action)) {
+            if (!FleetServer.profileSource("speaker").isEmpty()) {
+                // A shared section: one panel's switch would change every panel that shares it.
+                return "its network speaker follows the fleet's shared setting; change it there";
+            }
+            return setNetworkSpeaker(this, "on".equals(value));
+        }
+        // Stop always: it plays nothing, and a sound started another way stops too.
+        if (!"stop".equals(action) && !KioskConfig.load(this).networkSpeaker) {
+            return "its network speaker is off";
+        }
+        switch (action) {
+            case "say":
+                return value == null || value.trim().isEmpty() ? "the sentence is empty"
+                        : say(value.trim());
+            case "play":
+                return value == null || value.trim().isEmpty() ? "the address is empty"
+                        : playAudio(value.trim());
+            case "stop": {
+                stopAudio();
+                NetworkSpeaker speaker = networkSpeaker;
+                if (speaker != null) {
+                    speaker.stopPlayback();
+                }
+                if (speech != null) {
+                    speech.stop();
+                }
+                return null;
+            }
+            case "volume": {
+                String digits = value == null ? "" : value.trim();
+                if (!digits.matches("\\d{1,3}") || Integer.parseInt(digits) > 100) {
+                    return "the volume must be 0 to 100";
+                }
+                setMediaVolume(Integer.parseInt(digits));
+                return null;
+            }
+            default:
+                return "no such speaker action: " + action;
+        }
+    }
+
+    /** This panel as a speaker, for the fleet's Speakers card: on, playing, volume in percent. */
+    synchronized org.json.JSONObject speakerState() {
+        org.json.JSONObject state = new org.json.JSONObject();
+        try {
+            state.put("on", KioskConfig.load(this).networkSpeaker);
+            boolean playing;
+            try {
+                playing = player != null && player.isPlaying();
+            } catch (IllegalStateException notReady) {
+                playing = false;
+            }
+            NetworkSpeaker speaker = networkSpeaker;
+            playing |= speaker != null && speaker.playing();
+            playing |= speech != null && speech.isSpeaking();
+            state.put("playing", playing);
+            android.media.AudioManager audio = getSystemService(android.media.AudioManager.class);
+            int volume = -1;
+            if (audio != null) {
+                int max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+                volume = max <= 0 ? -1 : Math.round(100f
+                        * audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) / max);
+            }
+            state.put("volume", volume);
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return state;
+    }
+
     private synchronized void stopSpeech() {
         if (speech != null) {
             speech.shutdown();

@@ -367,6 +367,15 @@ public final class KioskActivity extends Activity {
      * {@link #watchForWriteSettingsGrant()}.
      */
     private android.app.AppOpsManager.OnOpChangedListener writeSettingsWatch;
+    /**
+     * Set while the Display card is built: brings its switch and slider in step when the
+     * brightness changes elsewhere (MQTT, the web admin, the light sensor, Android's own shade).
+     */
+    private android.database.ContentObserver brightnessWatch;
+    /** True while the card itself moves the switch, so its listener does not write it back. */
+    private boolean syncingBrightness;
+    /** True while a finger is on the slider, which the watcher then leaves alone. */
+    private boolean draggingBrightness;
     /** Between onResume and onPause. The grant watcher only starts this activity when it is not. */
     private boolean inFront;
     /** True from the moment a launcher hand-over starts until it has been made or abandoned. */
@@ -1055,6 +1064,7 @@ public final class KioskActivity extends Activity {
         KioskRuntimeState.publishOperatorOnScreen(false);
         releaseKioskPolicy();
         stopWatchingWriteSettings();
+        stopWatchingBrightness();
         stopWatchingOverlay();
         AppLock.hideOverWindows(this);
         unregisterReceiver(controlReceiver);
@@ -2328,6 +2338,49 @@ public final class KioskActivity extends Activity {
                 writeSettingsWatch);
     }
 
+    /**
+     * Follows the system brightness and its mode while the Display card is on screen, so a level
+     * or a switch changed over MQTT, from the web admin or in Android's own shade shows here at
+     * once, as the web admin shows it from its poll. Replaces the watcher of an earlier drawing.
+     */
+    private void watchBrightness(CompoundButton autoSwitch, SeekBar slider, TextView value,
+            KioskTheme theme) {
+        stopWatchingBrightness();
+        // A screen torn down under a finger never reports the release; a new card starts free.
+        draggingBrightness = false;
+        brightnessWatch = new android.database.ContentObserver(mainHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                if (!configurationVisible || !slider.isAttachedToWindow()) {
+                    stopWatchingBrightness();
+                    return;
+                }
+                boolean auto = KioskService.isAutoBrightnessOn(KioskActivity.this);
+                if (autoSwitch != null && autoSwitch.isChecked() != auto) {
+                    syncingBrightness = true;
+                    autoSwitch.setChecked(auto);
+                    syncingBrightness = false;
+                }
+                if (!draggingBrightness) {
+                    applyBrightnessEnabledState(slider, value, theme);
+                }
+            }
+        };
+        getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false,
+                brightnessWatch);
+        getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false,
+                brightnessWatch);
+    }
+
+    private void stopWatchingBrightness() {
+        if (brightnessWatch != null) {
+            getContentResolver().unregisterContentObserver(brightnessWatch);
+            brightnessWatch = null;
+        }
+    }
+
     private void stopWatchingWriteSettings() {
         if (writeSettingsWatch == null) {
             return;
@@ -2850,6 +2903,13 @@ public final class KioskActivity extends Activity {
             appOps.stopWatchingMode(overlayWatch);
         }
         overlayWatch = null;
+    }
+
+    /** The Network speaker section's line, the web's words. */
+    private static String speakerSummary(KioskConfig config) {
+        String state = KioskRuntimeState.speakerState();
+        return !config.networkSpeaker ? "Off" : "on".equals(state)
+                ? "On · port " + config.networkSpeakerPort : "Not on: " + state;
     }
 
     /** The camera or group chosen on the Cameras page: "c:" or "g:" and its name, empty to add. */
@@ -3719,6 +3779,9 @@ public final class KioskActivity extends Activity {
             // through it was refused. Same behaviour as the web admin's switch, which has always
             // applied immediately.
             autoBrightnessInput.setOnCheckedChangeListener((button, checked) -> {
+                if (syncingBrightness) {
+                    return;
+                }
                 if (KioskService.applyAutoBrightness(this, checked)) {
                     // Automatic mode does nothing until any per-window override is out of the way,
                     // in either direction; brightness itself is the system setting now.
@@ -3780,10 +3843,12 @@ public final class KioskActivity extends Activity {
 
             @Override
             public void onStartTrackingTouch(SeekBar bar) {
+                draggingBrightness = true;
             }
 
             @Override
             public void onStopTrackingTouch(SeekBar bar) {
+                draggingBrightness = false;
                 // The final position always lands, whatever the coalescing did with the ones before.
                 mainHandler.removeCallbacks(brightnessApplyTask);
                 pendingBrightnessPercent = Math.max(1, bar.getProgress());
@@ -3803,6 +3868,7 @@ public final class KioskActivity extends Activity {
         displayCard.addView(brightnessNote, matchWrapClose());
         brightnessModeNote = brightnessNote;
         applyBrightnessEnabledState(brightnessInput, brightnessValue, theme);
+        watchBrightness(autoBrightnessInput, brightnessInput, brightnessValue, theme);
 
         TextView orientationLabel = fieldCaption(theme, "Orientation");
         LinearLayout.LayoutParams orientationLabelParams = new LinearLayout.LayoutParams(
@@ -3976,6 +4042,28 @@ public final class KioskActivity extends Activity {
         // The volume buttons, applied the moment the switch is touched, as on the web admin. A
         // lock-down choice, so it stands under Way out (the UI round, 2026-10-15); built here so
         // the sync below can follow it.
+        // The network speaker (a DLNA renderer): the switch applies at once, as on the web; off
+        // by default, since DLNA has no password. On only while its port can be had.
+        CompoundButton speakerInput = themedSwitch(theme, "Network speaker", config.networkSpeaker);
+        TextView speakerState = new FlushText(this);
+        speakerState.setTextSize(14);
+        speakerState.setTextColor(theme.bad);
+        speakerInput.setOnCheckedChangeListener((button, checked) -> {
+            if (syncingLiveControls) {
+                return;
+            }
+            String refused = KioskService.setNetworkSpeaker(this, checked);
+            if (refused != null) {
+                Toast.makeText(this, "Not switched on: " + refused + ".", Toast.LENGTH_LONG)
+                        .show();
+                syncingLiveControls = true;
+                button.setChecked(false);
+                syncingLiveControls = false;
+            }
+        });
+        EditText speakerPortInput = themedInput(theme,
+                Integer.toString(config.networkSpeakerPort), false);
+        speakerPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         CompoundButton volumeButtonsInput = themedSwitch(theme, "Disable volume buttons",
                 config.volumeButtonsDisabled);
         volumeButtonsInput.setOnCheckedChangeListener((button, checked) ->
@@ -4032,6 +4120,14 @@ public final class KioskActivity extends Activity {
                 try {
                     setCheckedIfChanged(volumeButtonsInput,
                             KioskConfig.volumeButtonsDisabled(KioskActivity.this));
+                    // A change made on the web shows here within a second, and why it is not on.
+                    boolean speakerOn = KioskConfig.load(KioskActivity.this).networkSpeaker;
+                    setCheckedIfChanged(speakerInput, speakerOn);
+                    String speaking = KioskRuntimeState.speakerState();
+                    speakerState.setText(speakerOn && !"on".equals(speaking)
+                            ? "Not on: " + speaking + "." : "");
+                    speakerState.setVisibility(speakerState.getText().length() == 0
+                            ? View.GONE : View.VISIBLE);
                     paintFleetMembership(fleetMember, fleetJoinButton, fleetLeaveButton,
                             fleetAddButton, theme);
                     paintInviteLine();
@@ -4113,6 +4209,28 @@ public final class KioskActivity extends Activity {
         Button camerasMore = textButtonOnward(theme, "More camera settings");
         camerasMore.setOnClickListener(view -> showCamerasPage());
         camerasCard.addView(buttonRow(camerasMore), matchWrap());
+
+        LinearLayout speakerCard = sectionBody(theme);
+        addSharedLine(speakerCard, theme, "speaker");
+        speakerCard.addView(speakerInput, matchWrap());
+        TextView speakerNote = new FlushText(this);
+        speakerNote.setText("Smart-home systems and apps that play to a speaker on the network find"
+                + " the panel by themselves and can play on it."
+                + " While it is on, anyone on your network can play sound on this panel.");
+        speakerNote.setTextColor(theme.subtext);
+        speakerNote.setTextSize(14);
+        speakerCard.addView(speakerNote, matchWrapClose());
+        speakerState.setVisibility(View.GONE);
+        speakerCard.addView(speakerState, matchWrapClose());
+        addField(speakerCard, theme, "Port", speakerPortInput);
+        Button speakerSave = primaryButton(theme, "Save");
+        speakerSave.setOnClickListener(view -> {
+            String refused = KioskService.saveNetworkSpeakerPort(this,
+                    speakerPortInput.getText().toString());
+            Toast.makeText(this, refused == null ? "Saved." : "Not saved: " + refused + ".",
+                    refused == null ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+        });
+        speakerCard.addView(fittingButtonRow(speakerSave), matchWrap());
 
         // Integrations (2026-10-15): in the menu already, empty until the first ones come.
         LinearLayout integrationsCard = sectionBody(theme);
@@ -4402,6 +4520,8 @@ public final class KioskActivity extends Activity {
                                 : config.mqttHost + ":" + config.mqttPort, mqttCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_web, "Web admin",
                         webAdminSummary(config), httpCard),
+                new Section(GROUP_CONNECTIONS, R.drawable.ic_sensor_audio, "Network speaker",
+                        speakerSummary(config), speakerCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_fleet, "Fleet",
                         FleetServer.summaryOf(config.fleetPort), fleetCard),
                 new Section(GROUP_SECURITY, R.drawable.ic_escape, "Way out",
@@ -4750,6 +4870,10 @@ public final class KioskActivity extends Activity {
         hintParams.topMargin = dp(10);
         panels.addView(addHint, hintParams);
         column.addView(panels, matchWrap());
+        LinearLayout speakers = new LinearLayout(this);
+        speakers.setOrientation(LinearLayout.VERTICAL);
+        fillSpeakersCard(speakers, theme, list, groups);
+        column.addView(speakers, matchWrap());
         // Groups: make one, remove one.
         LinearLayout groupsCard = card(theme, "Groups");
         if (groups.isEmpty()) {
@@ -5073,6 +5197,247 @@ public final class KioskActivity extends Activity {
     }
 
     /** A fleet change off the main thread; its refusal, if any, as a toast. */
+    /** Where the Speakers card sends: 0 all panels, 1 a group, 2 the ticked panels. */
+    private int speakersMode;
+    private String speakersGroup = "";
+    /**
+     * What is typed into the card's boxes, kept for the process so a rotation, which builds the
+     * activity anew, does not empty them.
+     */
+    private static String speakersSentence = "";
+    private static String speakersSound = "";
+
+    /** A TextWatcher that only wants the text after each change. */
+    private static final class SimpleWatcher implements android.text.TextWatcher {
+        private final java.util.function.Consumer<String> after;
+
+        SimpleWatcher(java.util.function.Consumer<String> after) {
+            this.after = after;
+        }
+
+        @Override
+        public void beforeTextChanged(CharSequence text, int start, int count, int added) {
+        }
+
+        @Override
+        public void onTextChanged(CharSequence text, int start, int removed, int count) {
+        }
+
+        @Override
+        public void afterTextChanged(android.text.Editable text) {
+            after.accept(text.toString());
+        }
+    }
+    private final java.util.Set<String> speakersTicked = new java.util.HashSet<>();
+
+    /**
+     * The Speakers card, the web's in the same order (sketch agreed 2026-10-22): where it goes,
+     * a sentence to say, a sound or stream to play, Stop all, the volume of all, and one row a
+     * panel with its state, its volume and its network speaker's switch. Each panel's state is
+     * asked off the main thread when the card is drawn and after each action, never on a timer.
+     * Only a panel whose network speaker is on takes sound (KioskService.speakerAction).
+     */
+    private void fillSpeakersCard(LinearLayout into, KioskTheme theme,
+            java.util.Map<String, Object> list, java.util.Map<String, String> groups) {
+        into.removeAllViews();
+        Context app = getApplicationContext();
+        LinearLayout card = card(theme, "Speakers");
+        into.addView(card, matchWrap());
+        java.util.List<String> labels = new java.util.ArrayList<>(
+                java.util.Arrays.asList("All panels", "A group", "Choose"));
+        if (groups.isEmpty()) {
+            labels.remove(1);
+            if (speakersMode == 1) {
+                speakersMode = 0;
+            }
+        }
+        int shown = groups.isEmpty() && speakersMode == 2 ? 1 : speakersMode;
+        card.addView(segmentedChoice(theme, labels.toArray(new String[0]), shown, index -> {
+            speakersMode = groups.isEmpty() && index == 1 ? 2 : index;
+            fillSpeakersCard(into, theme, list, groups);
+        }), matchWrapClose());
+        if (speakersMode == 1) {
+            MenuField groupMenu = new MenuField(card, theme, "Group");
+            for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+                groupMenu.add(group.getValue(), group.getKey());
+            }
+            groupMenu.select(speakersGroup);
+            speakersGroup = groupMenu.value();
+            groupMenu.onChange = () -> speakersGroup = groupMenu.value();
+        }
+        TextView result = new FlushText(this);
+        result.setTextSize(14);
+        result.setTextColor(theme.subtext);
+        result.setVisibility(View.GONE);
+        java.util.function.Supplier<String> target = () -> speakersMode == 1
+                ? "group:" + speakersGroup : speakersMode == 2
+                ? "panels:" + String.join(",", speakersTicked) : "all";
+        Runnable[] reload = new Runnable[1];
+        java.util.function.BiConsumer<String[], String> send = (what, to) -> {
+            result.setText("Sending...");
+            result.setVisibility(View.VISIBLE);
+            new Thread(() -> {
+                org.json.JSONObject done = FleetSpeakers.act(app, to, what[0], what[1]);
+                String line = done.optString("detail", done.optString("error", ""));
+                mainHandler.post(() -> {
+                    result.setText(line);
+                    reload[0].run();
+                });
+            }, "MuralisFleetSpeakers").start();
+        };
+        EditText sentence = proseInput(theme, speakersSentence);
+        sentence.addTextChangedListener(new SimpleWatcher(text -> speakersSentence = text));
+        addField(card, theme, "Sentence", sentence);
+        EditText sound = themedInput(theme, speakersSound, false);
+        sound.addTextChangedListener(new SimpleWatcher(text -> speakersSound = text));
+        sound.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        addField(card, theme, "Sound or stream address", sound);
+        Button say = primaryButton(theme, "Say");
+        say.setOnClickListener(view -> send.accept(
+                new String[] {"say", sentence.getText().toString()}, target.get()));
+        Button play = tonalButton(theme, "Play");
+        play.setOnClickListener(view -> send.accept(
+                new String[] {"play", sound.getText().toString()}, target.get()));
+        Button stop = textButton(theme, "Stop all");
+        stop.setOnClickListener(view -> send.accept(new String[] {"stop", null}, target.get()));
+        card.addView(fittingButtonRow(say, play, stop), matchWrapClose());
+        TextView allCaption = fieldCaption(theme, "Volume of all");
+        LinearLayout.LayoutParams captionParams = matchWrapClose();
+        captionParams.topMargin = dp(12);
+        card.addView(allCaption, captionParams);
+        SeekBar all = speakerSlider(theme, 50, percent ->
+                send.accept(new String[] {"volume", Integer.toString(percent)}, target.get()));
+        card.addView(all, matchWrapClose());
+        card.addView(result, matchWrapClose());
+        java.util.Map<String, TextView> states = new java.util.HashMap<>();
+        java.util.Map<String, SeekBar> volumes = new java.util.HashMap<>();
+        java.util.Map<String, CompoundButton> switches = new java.util.HashMap<>();
+        boolean first = true;
+        for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
+            String id = TinyJson.string(member, FleetDocument.ID, "");
+            String name = TinyJson.string(member, FleetDocument.NAME, id);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(16), dp(8), dp(16), dp(8));
+            if (speakersMode == 2) {
+                CheckBox tick = new CheckBox(this);
+                tick.setButtonTintList(ColorStateList.valueOf(theme.accent));
+                tick.setContentDescription(name);
+                tick.setChecked(speakersTicked.contains(id));
+                tick.setOnCheckedChangeListener((button, checked) -> {
+                    if (checked) {
+                        speakersTicked.add(id);
+                    } else {
+                        speakersTicked.remove(id);
+                    }
+                });
+                row.addView(tick);
+            }
+            LinearLayout text = new LinearLayout(this);
+            text.setOrientation(LinearLayout.VERTICAL);
+            TextView head = new FlushText(this);
+            head.setText(name);
+            head.setTextColor(theme.text);
+            head.setTextSize(16);
+            text.addView(head);
+            TextView state = new FlushText(this);
+            state.setText("Asking the panel...");
+            state.setTextColor(theme.subtext);
+            state.setTextSize(14);
+            text.addView(state);
+            SeekBar volume = speakerSlider(theme, 0, percent -> send.accept(
+                    new String[] {"volume", Integer.toString(percent)}, "panels:" + id));
+            volume.setEnabled(false);
+            volume.setContentDescription("Volume of " + name);
+            text.addView(volume, matchWrapClose());
+            row.addView(text, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            CompoundButton on = themedSwitch(theme, "", false);
+            on.setEnabled(false);
+            on.setContentDescription("Network speaker of " + name);
+            on.setOnCheckedChangeListener((button, checked) -> {
+                if (button.isPressed()) {
+                    send.accept(new String[] {"switch", checked ? "on" : "off"}, "panels:" + id);
+                }
+            });
+            row.addView(on, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            addListRow(card, theme, row, first);
+            first = false;
+            states.put(id, state);
+            volumes.put(id, volume);
+            switches.put(id, on);
+        }
+        TextView hint = new FlushText(this);
+        hint.setTextSize(13);
+        hint.setTextColor(theme.subtext);
+        hint.setText("The switch is each panel's network speaker, switched here for that panel."
+                + " Only a panel with it on takes Say, Play and the volume; Stop all reaches every"
+                + " panel. A panel that is not reached does not play it later.");
+        LinearLayout.LayoutParams hintParams = matchWrap();
+        hintParams.topMargin = dp(10);
+        card.addView(hint, hintParams);
+        reload[0] = () -> new Thread(() -> {
+            org.json.JSONArray panels = FleetSpeakers.states(app).optJSONArray("panels");
+            mainHandler.post(() -> {
+                if (!card.isAttachedToWindow() || panels == null) {
+                    return;
+                }
+                for (int index = 0; index < panels.length(); index++) {
+                    org.json.JSONObject one = panels.optJSONObject(index);
+                    String id = one == null ? "" : one.optString("id");
+                    TextView state = states.get(id);
+                    if (state == null) {
+                        continue;
+                    }
+                    boolean reached = one.optBoolean("reached");
+                    boolean speakerOn = one.optBoolean("on");
+                    state.setText(one.optBoolean("too_old") ? "Its Muralis is too old for this"
+                            : !reached ? "Not reached" : !speakerOn ? "Speaker off"
+                            : one.optBoolean("playing") ? "Playing" : "Idle");
+                    CompoundButton on = switches.get(id);
+                    on.setEnabled(reached);
+                    on.setChecked(reached && speakerOn);
+                    SeekBar volume = volumes.get(id);
+                    volume.setEnabled(reached && speakerOn);
+                    if (one.optInt("volume", -1) >= 0 && !volume.isPressed()) {
+                        volume.setProgress(one.optInt("volume"));
+                    }
+                }
+            });
+        }, "MuralisFleetSpeakers").start();
+        reload[0].run();
+    }
+
+    /** A volume slider that sends when the finger lifts, not at every pixel. */
+    private SeekBar speakerSlider(KioskTheme theme, int percent,
+            java.util.function.IntConsumer onSet) {
+        SeekBar slider = new SeekBar(this);
+        slider.setMax(100);
+        slider.setProgress(percent);
+        slider.getProgressDrawable().setColorFilter(theme.accent,
+                android.graphics.PorterDuff.Mode.SRC_IN);
+        slider.getThumb().setColorFilter(theme.accent, android.graphics.PorterDuff.Mode.SRC_IN);
+        slider.setMinimumHeight(dp(48));
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                onSet.accept(bar.getProgress());
+            }
+        });
+        return slider;
+    }
+
     private void fleetWork(Context app, java.util.function.Supplier<String> work) {
         new Thread(() -> {
             String refused = work.get();
@@ -6029,6 +6394,7 @@ public final class KioskActivity extends Activity {
             case "humidity": return R.drawable.ic_sensor_humidity;
             case "display": return R.drawable.ic_sensor_display;
             case "ambient": return R.drawable.ic_sensor_screensaver;
+            case "speaker": return R.drawable.ic_sensor_audio;
             case "battery": return R.drawable.ic_sensor_battery;
             case "power": return R.drawable.ic_sensor_power;
             case "network": return R.drawable.ic_sensor_network;
