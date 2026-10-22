@@ -65,7 +65,7 @@ var once=document.getElementById('open-once');
 if(once){once.addEventListener('click',function(event){
 event.preventDefault();
 var box=once.form&&once.form.elements.dashboard_url;
-send('cmnd=kiosk.open_url&url='+encodeURIComponent(box?box.value:''),'kiosk.open_url',once.form);});}
+send('cmnd=dashboard.open_once&url='+encodeURIComponent(box?box.value:''),'dashboard.open_once',once.form);});}
 var auto=document.getElementById('auto-brightness');
 if(auto){auto.addEventListener('change',function(){
 // Marked as user-driven so the stats poll does not fight the operator: without this, a

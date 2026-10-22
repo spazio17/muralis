@@ -10,10 +10,10 @@ package org.spazio17.muralis;
  * <p>This covers the failure the other recovery paths cannot see: the page loaded fine, and then
  * the server restarted underneath it. No main-frame request happens, so
  * {@code onReceivedError}/{@code onReceivedHttpError} stay silent; no load is in flight, so the
- * hung-load timeout is idle; and after a Home Assistant restart the frontend reconnects its own
+ * hung-load timeout is idle; and after a smart-home server restart the frontend reconnects its own
  * websocket and most of the page recovers, so the frozen-page probe correctly sees a live page.
  * What is left behind is a card here and there stuck on an error tile, observed on the panel after
- * an ordinary Home Assistant restart, and nothing ever reloads it.
+ * an ordinary smart-home server restart, and nothing ever reloads it.
  *
  * <p>So the activity probes the dashboard URL while the page is settled, and this class turns the
  * stream of probe verdicts into at most one reload decision per outage:
@@ -33,7 +33,7 @@ package org.spazio17.muralis;
  * </ul>
  *
  * <p>Pure logic with no Android imports, so every branch is covered by host tests instead of by
- * restarting Home Assistant next to the tablet.
+ * restarting a smart-home server next to the tablet.
  */
 final class ServerProbePolicy {
     /** Whether an outage has been observed since the last reset or recovery. */

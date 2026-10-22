@@ -125,7 +125,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
-            FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer; do
+            FleetAsker FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -205,6 +205,13 @@ javac -d "${test_dir}/integrationschedule" \
     "${pure_java_dir}/IntegrationSchedule.java" \
     "${host_test_dir}/IntegrationScheduleTest.java"
 java -cp "${test_dir}/integrationschedule" org.spazio17.muralis.IntegrationScheduleTest
+
+# Which panel asks for an integration the fleet shares, and when the values it passed on are old.
+mkdir -p "${test_dir}/fleetasker"
+javac -d "${test_dir}/fleetasker" \
+    "${pure_java_dir}/FleetAsker.java" \
+    "${host_test_dir}/FleetAskerTest.java"
+java -cp "${test_dir}/fleetasker" org.spazio17.muralis.FleetAskerTest
 
 # The beacon distance: the trimmed running average, the model and the two calibration steps.
 javac -d "${test_dir}/beacons" \
@@ -383,7 +390,7 @@ javac -d "${test_dir}/fleetalerts" \
     "${host_test_dir}/FleetAlertsTest.java"
 java -cp "${test_dir}/fleetalerts" org.spazio17.muralis.FleetAlertsTest
 
-# What a panel withdraws from Home Assistant: only what it announced itself.
+# What a panel withdraws over MQTT discovery: only what it announced itself.
 mkdir -p "${test_dir}/withdrawals"
 javac -d "${test_dir}/withdrawals" \
     "${pure_java_dir}/DiscoveryWithdrawals.java" \

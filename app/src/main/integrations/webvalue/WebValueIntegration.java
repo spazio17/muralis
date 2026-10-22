@@ -106,9 +106,8 @@ public final class WebValueIntegration implements Integrations.Source {
         try {
             response = http.get(instance.setting(definition, "url"), headers);
         } catch (java.io.IOException unreachable) {
-            String why = unreachable.getMessage();
             return Integrations.Result.failed("the address did not answer"
-                    + (why == null || why.isEmpty() ? "" : " (" + why + ")"), 0);
+                    + Integrations.why(unreachable), 0);
         }
         // Refused credentials stop the asking until a new key is saved; with no key set there
         // is nothing to replace, so a 401 or 403 is a failure like any other, tried again.

@@ -18,7 +18,7 @@ final class KioskConfig {
     private static final String MQTT_USERNAME = "mqtt_username";
     private static final String MQTT_PASSWORD = "mqtt_password";
     private static final String MQTT_TLS = "mqtt_tls";
-    /** App lock: the package shown instead of the web page; empty when off. */
+    /** App lock: the app the dashboard shows when it shows an app; empty when none chosen. */
     private static final String APP_LOCK = "app_lock";
     /** What the chosen app is called, kept so a panel can name it after it was uninstalled. */
     private static final String APP_LOCK_LABEL = "app_lock_label";
@@ -46,8 +46,10 @@ final class KioskConfig {
     private static final String CAMERAS = "cameras";
     private static final String CAMERA_LOGINS = "camera_logins";
     private static final String CAMERA_GROUPS = "camera_groups";
-    /** The camera or group the panel shows as its main view; empty for the web page. */
+    /** The camera or group the dashboard shows when it shows cameras; empty when none chosen. */
     private static final String DASHBOARD_CAMERAS = "dashboard_cameras";
+    /** What the dashboard shows: KioskCommandDispatcher.DASHBOARD_PAGE, _APP or _CAMERAS. */
+    private static final String DASHBOARD_SHOWS = "dashboard_shows";
     /** How the camera view lays its cameras out: Cameras.LAYOUTS, the big tile's camera, names. */
     private static final String CAMERA_LAYOUT = "camera_layout";
     private static final String CAMERA_BIG = "camera_big";
@@ -68,19 +70,19 @@ final class KioskConfig {
     private static final String STATS_OVERLAY_ANCHOR = "stats_overlay_anchor";
     private static final String ORIENTATION = "orientation";
     private static final String DISPLAY_OFF_METHOD = "display_off_method";
-    private static final String SCREENSAVER_MODE = "screensaver_mode";
-    private static final String SCREENSAVER_IDLE_SECONDS = "screensaver_idle_s";
-    private static final String SCREENSAVER_OFF_SECONDS = "screensaver_off_s";
-    private static final String SCREENSAVER_URL = "screensaver_url";
-    private static final String SCREENSAVER_DIM_PERCENT = "screensaver_dim_percent";
-    private static final String SCREENSAVER_ON_WAKE = "screensaver_on_wake";
-    private static final String SCREENSAVER_PICTURE_SECONDS = "screensaver_picture_s";
-    private static final String SCREENSAVER_TRANSITION = "screensaver_transition";
-    private static final String SCREENSAVER_PICTURE_FIT = "screensaver_picture_fit";
-    private static final String SCREENSAVER_SHUFFLE = "screensaver_shuffle";
-    private static final String SCREENSAVER_ONE_PER_CYCLE = "screensaver_one_per_cycle";
-    private static final String SCREENSAVER_CREDIT = "screensaver_credit";
-    private static final String SCREENSAVER_CREDIT_CORNER = "screensaver_credit_corner";
+    private static final String AMBIENT_MODE = "ambient_mode";
+    private static final String AMBIENT_START_AFTER_SECONDS = "ambient_start_after_s";
+    private static final String AMBIENT_OFF_SECONDS = "ambient_off_s";
+    private static final String AMBIENT_URL = "ambient_url";
+    private static final String AMBIENT_DIM_PERCENT = "ambient_dim_percent";
+    private static final String AMBIENT_ON_WAKE = "ambient_on_wake";
+    private static final String AMBIENT_PICTURE_SECONDS = "ambient_picture_s";
+    private static final String AMBIENT_TRANSITION = "ambient_transition";
+    private static final String AMBIENT_PICTURE_FIT = "ambient_picture_fit";
+    private static final String AMBIENT_SHUFFLE = "ambient_shuffle";
+    private static final String AMBIENT_ONE_PER_START = "ambient_one_per_start";
+    private static final String AMBIENT_CREDIT = "ambient_credit";
+    private static final String AMBIENT_CREDIT_CORNER = "ambient_credit_corner";
     /** How a folder of pictures is shown on the playlist page: list, details, small or big. */
     private static final String PICTURE_VIEW = "picture_view";
     /**
@@ -91,7 +93,7 @@ final class KioskConfig {
     private static final String PORTRAIT = "portrait";
     private static final String KIOSK_STOPPED = "kiosk_stopped";
     private static final String VISUAL_OFF_BOOT_COUNT = "visual_off_boot_count";
-    private static final String SCREENSAVER_BOOT_COUNT = "screensaver_boot_count";
+    private static final String AMBIENT_BOOT_COUNT = "ambient_boot_count";
     private static final String LAST_DASHBOARD_RELAUNCH_AT = "last_dashboard_relaunch_at";
     private static final String WEB_ADMIN_ENABLED = "web_admin_enabled";
     /** Which certificate the web admin serves; see AdminCertificate. */
@@ -147,6 +149,7 @@ final class KioskConfig {
     String mqttUsername = "";
     String mqttPassword = "";
     boolean mqttTls;
+    /** The app the dashboard shows now, empty unless it shows an app. */
     String appLockPackage = "";
     String mqttTlsPin = "";
     /** The client certificate's names and when it ends; empty and 0 when none is uploaded. */
@@ -232,11 +235,11 @@ final class KioskConfig {
         config.deviceId = preferences.getString(DEVICE_ID, "").trim();
         if (config.deviceId.isEmpty()) {
             // Persisted at once, not just returned. This identifier is the MQTT topic prefix and
-            // the unique_id of every Home Assistant entity, and load() is called independently by
+            // the unique_id of every MQTT discovery entity, and load() is called independently by
             // MqttController, the stats builder and the admin page: minting it per-call without
             // storing it gave each of them a *different* id, so the topics being published to and
-            // the id being reported did not match, and every restart created a fresh Home
-            // Assistant device. commit() rather than apply() because MqttController reads it back
+            // the id being reported did not match, and every restart created a fresh smart-home
+            // device. commit() rather than apply() because MqttController reads it back
             // immediately to build its topic prefix.
             config.deviceId = "kiosk-" + UUID.randomUUID().toString().substring(0, 8);
             preferences.edit().putString(DEVICE_ID, config.deviceId).commit();
@@ -248,7 +251,9 @@ final class KioskConfig {
         String storedPassword = secrets.getOrNull(MQTT_PASSWORD);
         config.mqttPassword = storedPassword == null ? "" : storedPassword;
         config.mqttTls = preferences.getBoolean(MQTT_TLS, false);
-        config.appLockPackage = preferences.getString(APP_LOCK, "");
+        config.appLockPackage = KioskCommandDispatcher.DASHBOARD_APP.equals(
+                dashboardShowsIn(preferences))
+                ? preferences.getString(APP_LOCK, "") : "";
         config.mqttTlsPin = preferences.getString(MQTT_TLS_PIN, "");
         config.mqttClientName = preferences.getString(MQTT_CLIENT_NAME, "");
         config.mqttClientUntil = preferences.getLong(MQTT_CLIENT_UNTIL, 0);
@@ -356,15 +361,21 @@ final class KioskConfig {
         }
 
         /**
-         * The app App lock shows, a package name, empty switches App lock off; the app the panel shows; one answer of "The panel shows", so choosing an app, or the
-         * web page (empty), also ends the cameras.
+         * The app the dashboard shows when it shows an app, a package name. Only the choice:
+         * whether the dashboard shows it is {@link #dashboardShows}.
          */
         Editor appLock(String packageName) {
             String chosen = packageName == null ? "" : packageName.trim();
             plain.putString(APP_LOCK, chosen)
                     .putString(APP_LOCK_LABEL, chosen.isEmpty() ? ""
-                            : AppLock.labelOf(storageContext, chosen))
-                    .putString(DASHBOARD_CAMERAS, "");
+                            : AppLock.labelOf(storageContext, chosen));
+            return this;
+        }
+
+        /** What the dashboard shows; a value outside the vocabulary is stored as the page. */
+        Editor dashboardShows(String value) {
+            plain.putString(DASHBOARD_SHOWS, isDashboardShows(value) ? value
+                    : KioskCommandDispatcher.DASHBOARD_PAGE);
             return this;
         }
 
@@ -376,13 +387,12 @@ final class KioskConfig {
             return this;
         }
 
-        /** The camera or group the panel shows; choosing one ends App lock, empty is the page. */
+        /**
+         * The camera or group the dashboard shows when it shows cameras. Only the choice:
+         * whether the dashboard shows them is {@link #dashboardShows}.
+         */
         Editor dashboardCameras(String name) {
-            String chosen = name == null ? "" : name.trim();
-            plain.putString(DASHBOARD_CAMERAS, chosen);
-            if (!chosen.isEmpty()) {
-                plain.putString(APP_LOCK, "").putString(APP_LOCK_LABEL, "");
-            }
+            plain.putString(DASHBOARD_CAMERAS, name == null ? "" : name.trim());
             return this;
         }
 
@@ -638,7 +648,9 @@ final class KioskConfig {
             return this;
         }
 
-        /** One sensor's switch; see Sensors. Off until switched on, like the companion app. */
+        /**
+         * One sensor's switch; see Sensors. Off until switched on, like a smart-home companion app.
+         */
         // Every sensor setting carries when it changed, under changed_<its key>, for the fleet
         // of 0.7 to merge by (2026-09-30); see sensorSettingsDocument. Writing the value already
         // stored is no change and keeps the time.
@@ -687,7 +699,7 @@ final class KioskConfig {
         }
 
         Editor screensaverMode(String value) {
-            plain.putString(SCREENSAVER_MODE, value);
+            plain.putString(AMBIENT_MODE, value);
             return this;
         }
 
@@ -705,63 +717,63 @@ final class KioskConfig {
         }
 
         Editor screensaverIdleSeconds(int value) {
-            plain.putInt(SCREENSAVER_IDLE_SECONDS, value);
+            plain.putInt(AMBIENT_START_AFTER_SECONDS, value);
             return this;
         }
 
         Editor screensaverOffSeconds(int value) {
-            plain.putInt(SCREENSAVER_OFF_SECONDS, value);
+            plain.putInt(AMBIENT_OFF_SECONDS, value);
             return this;
         }
 
         Editor screensaverUrl(String value) {
-            plain.putString(SCREENSAVER_URL, value.trim());
+            plain.putString(AMBIENT_URL, value.trim());
             return this;
         }
 
         Editor screensaverDimPercent(int value) {
-            plain.putInt(SCREENSAVER_DIM_PERCENT, value);
+            plain.putInt(AMBIENT_DIM_PERCENT, value);
             return this;
         }
 
         Editor screensaverOnWake(String value) {
-            plain.putString(SCREENSAVER_ON_WAKE, value);
+            plain.putString(AMBIENT_ON_WAKE, value);
             return this;
         }
 
 
         Editor screensaverPictureSeconds(int value) {
-            plain.putInt(SCREENSAVER_PICTURE_SECONDS, value);
+            plain.putInt(AMBIENT_PICTURE_SECONDS, value);
             return this;
         }
 
         Editor screensaverTransition(String value) {
-            plain.putString(SCREENSAVER_TRANSITION, value);
+            plain.putString(AMBIENT_TRANSITION, value);
             return this;
         }
 
         Editor screensaverPictureFit(String value) {
-            plain.putString(SCREENSAVER_PICTURE_FIT, value);
+            plain.putString(AMBIENT_PICTURE_FIT, value);
             return this;
         }
 
         Editor screensaverShuffle(boolean value) {
-            plain.putBoolean(SCREENSAVER_SHUFFLE, value);
+            plain.putBoolean(AMBIENT_SHUFFLE, value);
             return this;
         }
 
         Editor screensaverOnePerCycle(boolean value) {
-            plain.putBoolean(SCREENSAVER_ONE_PER_CYCLE, value);
+            plain.putBoolean(AMBIENT_ONE_PER_START, value);
             return this;
         }
 
         Editor screensaverCredit(boolean value) {
-            plain.putBoolean(SCREENSAVER_CREDIT, value);
+            plain.putBoolean(AMBIENT_CREDIT, value);
             return this;
         }
 
         Editor screensaverCreditCorner(String value) {
-            plain.putString(SCREENSAVER_CREDIT_CORNER, value);
+            plain.putString(AMBIENT_CREDIT_CORNER, value);
             return this;
         }
 
@@ -865,31 +877,31 @@ final class KioskConfig {
     static ScreensaverPolicy.Settings screensaverOf(Context context) {
         SharedPreferences preferences = storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        String mode = preferences.getString(SCREENSAVER_MODE, ScreensaverPolicy.OFF);
-        String onWake = preferences.getString(SCREENSAVER_ON_WAKE,
+        String mode = preferences.getString(AMBIENT_MODE, ScreensaverPolicy.OFF);
+        String onWake = preferences.getString(AMBIENT_ON_WAKE,
                 ScreensaverPolicy.WAKE_SCREENSAVER);
-        String transition = preferences.getString(SCREENSAVER_TRANSITION,
+        String transition = preferences.getString(AMBIENT_TRANSITION,
                 ScreensaverPolicy.TRANSITION_FADE);
-        String fit = preferences.getString(SCREENSAVER_PICTURE_FIT, ScreensaverPolicy.FIT_WHOLE);
-        String corner = preferences.getString(SCREENSAVER_CREDIT_CORNER,
+        String fit = preferences.getString(AMBIENT_PICTURE_FIT, ScreensaverPolicy.FIT_WHOLE);
+        String corner = preferences.getString(AMBIENT_CREDIT_CORNER,
                 ScreensaverPolicy.CORNER_BOTTOM_LEFT);
         return new ScreensaverPolicy.Settings(
                 ScreensaverPolicy.isMode(mode) ? mode : ScreensaverPolicy.OFF,
-                clamp(preferences.getInt(SCREENSAVER_IDLE_SECONDS,
+                clamp(preferences.getInt(AMBIENT_START_AFTER_SECONDS,
                         ScreensaverPolicy.DEFAULT_IDLE_SECONDS), 0, ScreensaverPolicy.MAX_SECONDS),
-                clamp(preferences.getInt(SCREENSAVER_OFF_SECONDS,
+                clamp(preferences.getInt(AMBIENT_OFF_SECONDS,
                         ScreensaverPolicy.DEFAULT_OFF_SECONDS), 0, ScreensaverPolicy.MAX_SECONDS),
-                preferences.getString(SCREENSAVER_URL, ""),
-                clamp(preferences.getInt(SCREENSAVER_DIM_PERCENT,
+                preferences.getString(AMBIENT_URL, ""),
+                clamp(preferences.getInt(AMBIENT_DIM_PERCENT,
                         ScreensaverPolicy.DEFAULT_DIM_PERCENT), 1, 100),
                 ScreensaverPolicy.isOnWake(onWake) ? onWake : ScreensaverPolicy.WAKE_SCREENSAVER,
-                clamp(preferences.getInt(SCREENSAVER_PICTURE_SECONDS,
+                clamp(preferences.getInt(AMBIENT_PICTURE_SECONDS,
                         ScreensaverPolicy.DEFAULT_PICTURE_SECONDS), 1, ScreensaverPolicy.MAX_SECONDS),
                 ScreensaverPolicy.isTransition(transition) ? transition
                         : ScreensaverPolicy.TRANSITION_FADE,
-                preferences.getBoolean(SCREENSAVER_SHUFFLE, false),
-                preferences.getBoolean(SCREENSAVER_ONE_PER_CYCLE, false),
-                preferences.getBoolean(SCREENSAVER_CREDIT, true),
+                preferences.getBoolean(AMBIENT_SHUFFLE, false),
+                preferences.getBoolean(AMBIENT_ONE_PER_START, false),
+                preferences.getBoolean(AMBIENT_CREDIT, true),
                 ScreensaverPolicy.isCorner(corner) ? corner : ScreensaverPolicy.CORNER_BOTTOM_LEFT,
                 ScreensaverPolicy.isFit(fit) ? fit : ScreensaverPolicy.FIT_WHOLE);
     }
@@ -905,11 +917,6 @@ final class KioskConfig {
     static boolean sensorEnabled(Context context, String id, boolean fallback) {
         SharedPreferences prefs = storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        // The Ambient sensor was called screensaver before 0.7: a switch stored under that name
-        // still counts until the switch is set again.
-        if (Sensors.SCREENSAVER.id.equals(id) && !prefs.contains("sensor_" + id)) {
-            return prefs.getBoolean("sensor_screensaver", fallback);
-        }
         return prefs.getBoolean("sensor_" + id, fallback);
     }
 
@@ -1057,7 +1064,7 @@ final class KioskConfig {
     /**
      * Keeps the tags seen down to the newest {@code keep}: a panel in a public place reads tags
      * all day, and each one is a line in the settings file otherwise. The names a person could
-     * give a tag went on 2026-09-30 (a tag is named in Home Assistant, as the companion app
+     * give a tag went on 2026-09-30 (a tag is named in the smart home, as its companion app
      * leaves it), and what an older build stored for them goes here too.
      */
     static void pruneSeenTags(Context context, int keep) {
@@ -1552,20 +1559,12 @@ final class KioskConfig {
     }
 
     /**
-     * The stored settings as a settings file carries them: a value stored under a name from
-     * before 0.7 in today's form, and without the calibrations a sensor keeps for its own
-     * hardware (they need a hand at the panel), which another panel's import would refuse.
+     * The stored settings as a settings file carries them: without the calibrations a sensor
+     * keeps for its own hardware (they need a hand at the panel), which another panel's import
+     * would refuse.
      */
     static java.util.Map<String, Object> transferableSettings(Context context) {
         java.util.Map<String, Object> settings = new java.util.HashMap<>(storedSettings(context));
-        Object wake = settings.get(SCREENSAVER_ON_WAKE);
-        if (wake != null && !ScreensaverPolicy.isOnWake(String.valueOf(wake))) {
-            settings.put(SCREENSAVER_ON_WAKE, ScreensaverPolicy.WAKE_SCREENSAVER);
-        }
-        Object oldSensor = settings.remove("sensor_screensaver");
-        if (oldSensor != null && !settings.containsKey("sensor_" + Sensors.SCREENSAVER.id)) {
-            settings.put("sensor_" + Sensors.SCREENSAVER.id, oldSensor);
-        }
         for (String key : new java.util.ArrayList<>(settings.keySet())) {
             if (key.startsWith("sensor_option_") && !key.startsWith("sensor_option_beacon_")
                     && String.valueOf(Sensors.checkOption(key.substring("sensor_option_".length()),
@@ -1642,9 +1641,48 @@ final class KioskConfig {
                 .getBoolean(CAMERA_NAMES, false);
     }
 
+    /** The camera or group chosen for the dashboard, shown or not; empty when none. */
     static String dashboardCamerasOf(Context context) {
         return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(DASHBOARD_CAMERAS, "");
+    }
+
+    /** The camera or group the dashboard shows now; empty while it shows the page or an app. */
+    static String shownCamerasOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(dashboardShowsIn(prefs))
+                ? prefs.getString(DASHBOARD_CAMERAS, "") : "";
+    }
+
+    /** What the dashboard shows: page, app or cameras. */
+    static String dashboardShowsOf(Context context) {
+        return dashboardShowsIn(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE));
+    }
+
+    /**
+     * The stored choice, read as the page when the app or the cameras it names were never chosen
+     * (a settings file can carry the choice without them), so the dashboard never waits on
+     * nothing; a value this build does not know reads as the page too.
+     */
+    private static String dashboardShowsIn(SharedPreferences prefs) {
+        String shows = prefs.getString(DASHBOARD_SHOWS, KioskCommandDispatcher.DASHBOARD_PAGE);
+        if (KioskCommandDispatcher.DASHBOARD_APP.equals(shows)
+                && prefs.getString(APP_LOCK, "").isEmpty()) {
+            return KioskCommandDispatcher.DASHBOARD_PAGE;
+        }
+        if (KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(shows)
+                && prefs.getString(DASHBOARD_CAMERAS, "").isEmpty()) {
+            return KioskCommandDispatcher.DASHBOARD_PAGE;
+        }
+        return isDashboardShows(shows) ? shows : KioskCommandDispatcher.DASHBOARD_PAGE;
+    }
+
+    static boolean isDashboardShows(String value) {
+        return KioskCommandDispatcher.DASHBOARD_PAGE.equals(value)
+                || KioskCommandDispatcher.DASHBOARD_APP.equals(value)
+                || KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(value);
     }
 
     static java.util.List<Cameras.Group> cameraGroupsOf(Context context) {
@@ -1680,8 +1718,19 @@ final class KioskConfig {
     }
 
     /** The status light as stored, for the frame, the status document and both surfaces. */
-    /** App lock's chosen package, empty when off; a plain read, cheap enough for a layout pass. */
+    /**
+     * The app the dashboard shows now, empty while it shows the page or the cameras; a plain
+     * read, cheap enough for a layout pass.
+     */
     static String appLockOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return KioskCommandDispatcher.DASHBOARD_APP.equals(dashboardShowsIn(prefs))
+                ? prefs.getString(APP_LOCK, "") : "";
+    }
+
+    /** The app chosen for the dashboard, shown or not; empty when none was ever chosen. */
+    static String chosenAppOf(Context context) {
         return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(APP_LOCK, "");
     }
@@ -1740,12 +1789,12 @@ final class KioskConfig {
     }
 
     /**
-     * Whether the panel was deliberately blanked with kiosk.stop and has not been started since.
+     * Whether the panel was deliberately blanked with dashboard.stop and has not been started since.
      *
      * <p>Persisted, not process state. As a field in the activity it evaporated on the nightly
      * restart, so a panel stopped in the evening woke up rendering the dashboard at 04:xx with
      * nobody told, and the pressure rebuild reset it the same way. A stop is an operator's
-     * decision and holds until kiosk.start or a new URL, whatever housekeeping runs in between.
+     * decision and holds until dashboard.start or a new URL, whatever housekeeping runs in between.
      */
     static boolean kioskStopped(Context context) {
         return storageContext(context)
@@ -1761,7 +1810,7 @@ final class KioskConfig {
      * survive the nightly restart and the pressure rebuild, which are process-level, and
      * invalidate itself across a reboot by construction, with no cleanup step that could be
      * missed. Decided 2026-08-25, after the nightly restart lit up a panel blanked with the
-     * Display off button: kiosk.stop already survived (see {@link #kioskStopped}), visual_off
+     * Display off button: dashboard.stop already survived (see {@link #kioskStopped}), visual_off
      * did not.
      */
     static int visualOffBootCount(Context context) {
@@ -1794,24 +1843,24 @@ final class KioskConfig {
      */
     static void recordScreensaverBootCount(Context context, int bootCount) {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putInt(SCREENSAVER_BOOT_COUNT, bootCount)
+                .putInt(AMBIENT_BOOT_COUNT, bootCount)
                 .commit();
     }
 
     static int screensaverBootCount(Context context) {
         return storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(SCREENSAVER_BOOT_COUNT, -1);
+                .getInt(AMBIENT_BOOT_COUNT, -1);
     }
 
     static long screensaverSinceMs(Context context) {
         return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getLong("screensaver_since_ms", -1L);
+                .getLong("ambient_since_ms", -1L);
     }
 
     static void recordScreensaverSinceMs(Context context, long sinceMs) {
         storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putLong("screensaver_since_ms", sinceMs).commit();
+                .putLong("ambient_since_ms", sinceMs).commit();
     }
 
     static void recordVisualOffBootCount(Context context, int bootCount) {

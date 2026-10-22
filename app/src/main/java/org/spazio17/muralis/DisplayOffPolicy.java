@@ -44,7 +44,7 @@ final class DisplayOffPolicy {
     /**
      * How often the service writes a heartbeat while the screen is asleep, and a third of the gap
      * that counts as the process having been frozen. Thirty seconds is the MQTT liveness cadence
-     * too, so a panel frozen long enough to be judged here is one Home Assistant already saw go
+     * too, so a panel frozen long enough to be judged here is one the smart home already saw go
      * unavailable.
      */
     static final long HEARTBEAT_MS = 30_000L;

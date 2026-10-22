@@ -17,7 +17,7 @@ public final class RequestOriginTest {
         System.out.println("RequestOriginTest passed");
     }
 
-    /** curl and Home Assistant send neither header. They must keep working. */
+    /** curl and a smart-home system send neither header. They must keep working. */
     private static void automationPasses() {
         expectAllowed(null, null, "192.0.2.51:8080");
         // A body-less POST from a script that sets Host only.

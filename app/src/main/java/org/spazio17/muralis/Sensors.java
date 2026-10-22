@@ -30,15 +30,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The panel's sensors: one flat list, alphabetical on the pages, the companion app's "Manage
- * sensors" (2026-09-26 and 2026-09-27). Every row is the same shape and only its right
+ * The panel's sensors: one flat list, alphabetical on the pages, a smart-home companion app's
+ * "Manage sensors" (2026-09-26 and 2026-09-27). Every row is the same shape and only its right
  * edge says what kind it is: a switch for the ones a person turns on, a chevron beside the
  * switch for the ones with a page of their own, Allow while a permission is missing, the reading
  * alone for what the panel always reports (display, Ambient, battery, power, network,
  * processor, memory), greyed at the end for what this device lacks.
  *
  * <p>Every reading is a row on both surfaces, a field of the {@code sensors} block in the status
- * document, a Home Assistant entity through discovery for the switchable ones (the panel's own
+ * document, an MQTT entity through discovery for the switchable ones (the panel's own
  * values have had their entities since before this class), and a sample for the automations:
  * {@link Automations.Engine} is fed from here, by the hardware listeners as readings arrive and
  * by {@link #poll} on the service's two-second tick for everything read on demand and, again,
@@ -66,7 +66,7 @@ final class Sensors implements SensorEventListener {
         PANEL
     }
 
-    /** One sensor's fixed description: what it is called and how Home Assistant should draw it. */
+    /** One sensor's fixed description: what it is called and how the smart home should draw it. */
     static final class Def {
         final String id;
         final String name;
@@ -101,25 +101,25 @@ final class Sensors implements SensorEventListener {
             Kind.SWITCH, false, "audio");
     static final Def BATTERY = new Def("battery", "Battery", SENSOR, "battery", "%",
             "measurement", 0, Kind.PANEL, false, "battery");
-    static final Def BLUETOOTH = new Def("bluetooth", "Bluetooth beacons", SENSOR, null, null,
+    static final Def BLUETOOTH = new Def("bluetooth_beacons", "Bluetooth beacons", SENSOR, null, null,
             "measurement", 0, Kind.PERMISSION, true, "bluetooth");
-    static final Def CAMERA = new Def("camera", "Camera", BINARY, "motion", null, null, 0,
+    static final Def CAMERA = new Def("motion", "Motion", BINARY, "motion", null, null, 0,
             Kind.PERMISSION, true, "camera");
     static final Def DISPLAY = new Def("display", "Display", BINARY, null, null, null, 0,
             Kind.PANEL, false, "display");
     static final Def HUMIDITY = new Def("humidity", "Humidity", SENSOR, "humidity", "%",
             "measurement", Sensor.TYPE_RELATIVE_HUMIDITY, Kind.SWITCH, true, "humidity");
-    static final Def LIGHT = new Def("light", "Light", SENSOR, "illuminance", "lx",
+    static final Def LIGHT = new Def("illuminance", "Illuminance", SENSOR, "illuminance", "lx",
             "measurement", Sensor.TYPE_LIGHT, Kind.SWITCH, true, "light");
     static final Def MEMORY = new Def("memory", "Memory", SENSOR, null, "%", "measurement", 0,
             Kind.PANEL, false, "memory");
-    static final Def MICROPHONE = new Def("microphone", "Microphone", SENSOR, null, "%",
+    static final Def MICROPHONE = new Def("sound_level", "Sound level", SENSOR, null, "%",
             "measurement", 0, Kind.PERMISSION, true, "microphone");
     static final Def MOVEMENT = new Def("movement", "Movement", BINARY, "moving", null, null,
             Sensor.TYPE_ACCELEROMETER, Kind.SWITCH, true, "movement");
     static final Def NETWORK = new Def("network", "Network", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "network");
-    static final Def NFC = new Def("nfc", "NFC", SENSOR, null, null, null, 0, Kind.SWITCH, true,
+    static final Def NFC = new Def("nfc_tag", "NFC tag", SENSOR, null, null, null, 0, Kind.SWITCH, true,
             "nfc");
     static final Def POWER = new Def("power", "Power", SENSOR, "enum", null, null, 0,
             Kind.PANEL, false, "power");
@@ -131,7 +131,7 @@ final class Sensors implements SensorEventListener {
             "measurement", Sensor.TYPE_PROXIMITY, Kind.SWITCH, true, "proximity");
     static final Def SCREENSAVER = new Def("ambient", "Ambient", BINARY, "running", null,
             null, 0, Kind.PANEL, false, "ambient");
-    static final Def TEMPERATURE = new Def("temperature", "Ambient temperature", SENSOR,
+    static final Def TEMPERATURE = new Def("temperature", "Temperature", SENSOR,
             "temperature", "°C", "measurement", Sensor.TYPE_AMBIENT_TEMPERATURE, Kind.SWITCH,
             true, "temperature");
 
@@ -317,12 +317,12 @@ final class Sensors implements SensorEventListener {
     private long lastTagAtMs;
 
     /**
-     * The tag id in a tag written by Home Assistant, whose content is the address
-     * https://www.home-assistant.io/tag/<tag id> (the companion app's documentation, "Universal
-     * links"). The companion app reports that id, and so does the panel, so a tag works the
-     * same held to a phone or to the panel. The app refuses a tag without it
+     * The tag id in the tag format Home Assistant's companion app writes, whose content is the
+     * address https://www.home-assistant.io/tag/<tag id> (the companion app's documentation,
+     * "Universal links"). The companion app reports that id, and so does the panel, so a tag
+     * works the same held to a phone or to the panel. The app refuses a tag without it
      * (TagReaderViewModel: "Tag intent had no tag id"); the panel reports such a tag by its
-     * chip's id instead, so any tag works (2026-09-30: always as Home Assistant does).
+     * chip's id instead, so any tag works (2026-09-30: always as the companion app does).
      */
     static String homeAssistantTagId(String content) {
         if (content == null) {
