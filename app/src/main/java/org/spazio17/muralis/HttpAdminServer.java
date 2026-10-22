@@ -3062,9 +3062,11 @@ final class HttpAdminServer {
                 events.append("<label class=\"radio").append(one_).append("\"><input type=\"radio\" name=\"event_")
                         .append(def.id).append("\" value=\"").append(event.id).append("\"")
                         .append(checked ? " checked" : "")
-                        .append(" data-level=\"").append(event.levelUnit == null ? "" : event.levelUnit)
-                        .append("\" data-holds=\"").append(event.holds ? "1" : "")
-                        .append("\" data-tag=\"").append(event.tag ? "1" : "").append("\">")
+                        // Present when the event has a level, its unit perhaps empty (a count).
+                        .append(event.levelUnit == null ? "" : " data-level=\""
+                                + escapeHtml(event.levelUnit) + "\"")
+                        .append(" data-holds=\"").append(event.holds ? "1" : "")
+                        .append("\" data-tag=\"").append(event.oneShot ? "1" : "").append("\">")
                         .append(escapeHtml(event.label)).append("</label>");
             }
             events.append("</div>");
@@ -3118,16 +3120,16 @@ final class HttpAdminServer {
                     .append("\" data-camera=\"").append(camera ? "1" : "")
                     .append("\">").append(escapeHtml(action.label)).append("</option>");
         }
-        String waitedFor = Automations.CAMERAS.equals(rule.sensor) ? rule.tag : "";
+        String waitedFor = Automations.CAMERAS.equals(rule.sensor) ? rule.match : "";
         String shown = camera(rule.action) ? rule.argument : "";
         // Every tag read lately, by its id, newest first, as the panel's own editor has it.
-        StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.tag));
+        StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.match));
         java.util.Set<String> tagsRead = KioskConfig.seenTags(context).keySet();
         for (String tag : tagsRead) {
-            tags.append(selectOption(tag, tag, rule.tag));
+            tags.append(selectOption(tag, tag, rule.match));
         }
-        if (!rule.tag.isEmpty() && !tagsRead.contains(rule.tag)) {
-            tags.append(selectOption(rule.tag, rule.tag, rule.tag));
+        if (!rule.match.isEmpty() && !tagsRead.contains(rule.match)) {
+            tags.append(selectOption(rule.match, rule.match, rule.match));
         }
         return "<form method=\"post\" action=\"/api/automations/save\" class=\"automation\" id=\"editor"
                 + sfx + "\">"
@@ -3502,7 +3504,7 @@ final class HttpAdminServer {
         rule.level = Automations.TIME.equals(rule.sensor)
                 ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
         rule.minutes = parseMinutes(form.get("minutes"));
-        rule.tag = (Automations.CAMERAS.equals(rule.sensor) ? form.getOrDefault("camera_tag", "")
+        rule.match = (Automations.CAMERAS.equals(rule.sensor) ? form.getOrDefault("camera_tag", "")
                 : form.getOrDefault("tag", "")).trim();
         String cooldown = form.getOrDefault("cooldown", "").trim();
         rule.cooldown = cooldown.isEmpty() ? 0 : cooldown.matches("\\d{1,5}")
