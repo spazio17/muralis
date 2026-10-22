@@ -178,7 +178,7 @@ final class FleetDocument {
      * port, escape combinations and PIN, calibrations and what belongs to its hardware.
      */
     static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "ambient",
-            "alerts"};
+            "speaker", "alerts"};
     /** A section's words on both surfaces. */
     static String sectionLabel(String section) {
         switch (section) {
@@ -187,6 +187,7 @@ final class FleetDocument {
             case "web_admin": return "Web admin";
             case "display": return "Display";
             case "alerts": return "Alerts";
+            case "speaker": return "Network speaker";
             default: return "Ambient";
         }
     }

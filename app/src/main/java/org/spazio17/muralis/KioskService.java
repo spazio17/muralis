@@ -4265,6 +4265,84 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private android.speech.tts.TextToSpeech speechStarting;
 
     /** Lets the speech engine go with the service: a connection to it leaked per restart. */
+    /**
+     * The fleet's Speakers card asks a panel to say, play, stop or set its volume, or switches its
+     * network speaker. Only a panel whose network speaker is switched on takes sound (Juri,
+     * 2026-10-22): the switch is the person's yes to being a speaker. Null when done, else why
+     * not; runs now or never, nothing waits to be played later.
+     */
+    synchronized String speakerAction(String action, String value) {
+        if ("switch".equals(action)) {
+            if (!FleetServer.profileSource("speaker").isEmpty()) {
+                // A shared section: one panel's switch would change every panel that shares it.
+                return "its network speaker follows the fleet's shared setting; change it there";
+            }
+            return setNetworkSpeaker(this, "on".equals(value));
+        }
+        // Stop always: it plays nothing, and a sound started another way stops too.
+        if (!"stop".equals(action) && !KioskConfig.load(this).networkSpeaker) {
+            return "its network speaker is off";
+        }
+        switch (action) {
+            case "say":
+                return value == null || value.trim().isEmpty() ? "the sentence is empty"
+                        : say(value.trim());
+            case "play":
+                return value == null || value.trim().isEmpty() ? "the address is empty"
+                        : playAudio(value.trim());
+            case "stop": {
+                stopAudio();
+                NetworkSpeaker speaker = networkSpeaker;
+                if (speaker != null) {
+                    speaker.stopPlayback();
+                }
+                if (speech != null) {
+                    speech.stop();
+                }
+                return null;
+            }
+            case "volume": {
+                String digits = value == null ? "" : value.trim();
+                if (!digits.matches("\\d{1,3}") || Integer.parseInt(digits) > 100) {
+                    return "the volume must be 0 to 100";
+                }
+                setMediaVolume(Integer.parseInt(digits));
+                return null;
+            }
+            default:
+                return "no such speaker action: " + action;
+        }
+    }
+
+    /** This panel as a speaker, for the fleet's Speakers card: on, playing, volume in percent. */
+    synchronized org.json.JSONObject speakerState() {
+        org.json.JSONObject state = new org.json.JSONObject();
+        try {
+            state.put("on", KioskConfig.load(this).networkSpeaker);
+            boolean playing;
+            try {
+                playing = player != null && player.isPlaying();
+            } catch (IllegalStateException notReady) {
+                playing = false;
+            }
+            NetworkSpeaker speaker = networkSpeaker;
+            playing |= speaker != null && speaker.playing();
+            playing |= speech != null && speech.isSpeaking();
+            state.put("playing", playing);
+            android.media.AudioManager audio = getSystemService(android.media.AudioManager.class);
+            int volume = -1;
+            if (audio != null) {
+                int max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+                volume = max <= 0 ? -1 : Math.round(100f
+                        * audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) / max);
+            }
+            state.put("volume", volume);
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return state;
+    }
+
     private synchronized void stopSpeech() {
         if (speech != null) {
             speech.shutdown();
