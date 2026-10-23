@@ -210,6 +210,15 @@ final class SettingsImport {
                 }
                 return problem;
             }
+            case "network_speaker_port": {
+                String problem = KioskCommandDispatcher.validateSpeakerPort(number,
+                        current.networkSpeakerPort, adminPort, memberPort);
+                if (problem == null && number != current.networkSpeakerPort
+                        && !SettingProbe.portFree(number)) {
+                    problem = "port " + number + " is already in use on this device";
+                }
+                return problem;
+            }
             case "browser_user_agent":
                 return BrowserOptions.checkUserAgent(text);
             case "browser_text_size":

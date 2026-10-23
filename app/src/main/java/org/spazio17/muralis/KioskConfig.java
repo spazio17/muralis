@@ -116,6 +116,15 @@ final class KioskConfig {
     /** The member endpoint's port until a person sets another. */
     static final int DEFAULT_FLEET_PORT = 8081;
     private static final String FLEET_PORT = "fleet_port";
+    /** The network speaker (NetworkSpeaker): off until a person switches it on, and its port. */
+    private static final String NETWORK_SPEAKER = "network_speaker";
+    private static final String NETWORK_SPEAKER_PORT = "network_speaker_port";
+    static final int DEFAULT_NETWORK_SPEAKER_PORT = 2325;
+    /**
+     * The speaker's UPnP identity, minted once. Not a setting: it never travels in a settings
+     * file, since two panels with one UDN would be one device to a controller.
+     */
+    private static final String NETWORK_SPEAKER_UDN = "network_speaker_udn";
     /** The fleet's alerts, stored under the keys both surfaces use. */
     private static final String ALERT_OFFLINE_MINUTES = "alert_offline_minutes";
     private static final String ALERT_PAGE_ERROR = "alert_page_error";
@@ -158,6 +167,12 @@ final class KioskConfig {
     int httpPort = DEFAULT_HTTP_PORT;
     /** The member endpoint's port, a setting like the web admin's (2026-10-08). */
     int fleetPort = DEFAULT_FLEET_PORT;
+    /**
+     * Whether the panel is a DLNA speaker on the network. Off by default and so failing closed:
+     * DLNA has no authentication, so while it is on anyone on the network can play sound here.
+     */
+    boolean networkSpeaker;
+    int networkSpeakerPort = DEFAULT_NETWORK_SPEAKER_PORT;
     /** The fleet's alerts: thresholds and destinations; see FleetAlerts. */
     FleetAlerts.Settings alerts = new FleetAlerts.Settings();
     String httpAdminPassword = "";
@@ -259,6 +274,9 @@ final class KioskConfig {
         config.mqttClientUntil = preferences.getLong(MQTT_CLIENT_UNTIL, 0);
         config.httpPort = preferences.getInt(HTTP_PORT, DEFAULT_HTTP_PORT);
         config.fleetPort = preferences.getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
+        config.networkSpeaker = preferences.getBoolean(NETWORK_SPEAKER, false);
+        config.networkSpeakerPort = preferences.getInt(NETWORK_SPEAKER_PORT,
+                DEFAULT_NETWORK_SPEAKER_PORT);
         config.alerts = alertsOf(preferences);
         String storedAdminPassword = secrets.getOrNull(HTTP_ADMIN_PASSWORD);
         config.httpAdminPassword = storedAdminPassword == null ? "" : storedAdminPassword;
@@ -420,6 +438,16 @@ final class KioskConfig {
 
         Editor fleetPort(int value) {
             plain.putInt(FLEET_PORT, value);
+            return this;
+        }
+
+        Editor networkSpeaker(boolean value) {
+            plain.putBoolean(NETWORK_SPEAKER, value);
+            return this;
+        }
+
+        Editor networkSpeakerPort(int value) {
+            plain.putInt(NETWORK_SPEAKER_PORT, value);
             return this;
         }
 
@@ -1992,6 +2020,22 @@ final class KioskConfig {
     static int fleetPortOf(Context context) {
         return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getInt(FLEET_PORT, DEFAULT_FLEET_PORT);
+    }
+
+    /**
+     * The network speaker's UDN, minted and stored the first time it is asked for, so a
+     * controller keeps knowing the panel as the same speaker across restarts and renames.
+     * commit() rather than apply(), like the device id, because the caller announces it at once.
+     */
+    static String networkSpeakerUdnOf(Context context) {
+        SharedPreferences preferences = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String udn = preferences.getString(NETWORK_SPEAKER_UDN, "");
+        if (!DlnaProtocol.isUdn(udn)) {
+            udn = DlnaProtocol.newUdn();
+            preferences.edit().putString(NETWORK_SPEAKER_UDN, udn).commit();
+        }
+        return udn;
     }
 
     /** The web admin's stored port alone, for the member endpoint's start. */

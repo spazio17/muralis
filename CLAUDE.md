@@ -67,7 +67,8 @@ on purpose.
   and in App lock the one app chosen, is allowed under lock task; anything else is reached by
   releasing lock task, never by widening that list.
 - **Remote surfaces fail closed.** No default password or PIN. The web admin listens only once a
-  password of sufficient length exists; MQTT starts only once a broker is set. The fleet's member
+  password of sufficient length exists; MQTT starts only once a broker is set; the network
+  speaker (DLNA, which has no password) runs only once switched on. The fleet's member
   endpoint listens on every panel but admits only keys the panel trusts, apart from the narrow
   join, invitation and check-in routes while they are open. Request sizes are bounded.
 - **A refusal always has a reason,** and a command never claims a success it did not have.

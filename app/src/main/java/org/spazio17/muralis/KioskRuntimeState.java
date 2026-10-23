@@ -348,6 +348,20 @@ final class KioskRuntimeState {
         operatorOnScreen = onScreen;
     }
 
+    /**
+     * The network speaker as it stands: "off", "on", or why it is not on although switched on
+     * (its port taken). Set by KioskService whenever it starts or stops the speaker.
+     */
+    private static volatile String speakerState = "off";
+
+    static void publishSpeakerState(String state) {
+        speakerState = state;
+    }
+
+    static String speakerState() {
+        return speakerState;
+    }
+
     /** The sensors block of the last status document built; see Sensors.snapshot. */
     private static volatile org.json.JSONObject sensors = new org.json.JSONObject();
 

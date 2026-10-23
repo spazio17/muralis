@@ -521,3 +521,15 @@ dialog.qr-full .qr-full-close{position:absolute;top:8px;inset-inline-start:8px;m
 dialog.qr-full .qr-full-close svg{color:rgba(0,0,0,.87)}
 /* The Cameras page's left list: the groups under a head of their own, 24 px below the cameras. */
 .ld .nav .cardhead.groups{margin-top:16px}
+/* The Fleet page's Speakers card: a box with its button beside it, a small volume slider under
+   each panel's state, and a tick before the row while Choose is on. */
+.row-field{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row-field>.field{flex:1 1 240px;min-width:0}
+li.speaker .text{flex:1;min-width:0}
+label.slider.small input[type=range]{height:28px}
+label.slider.small input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px}
+label.slider.small input[type=range]::-webkit-slider-thumb{height:24px;margin-top:-9px}
+label.slider.small input[type=range]::-moz-range-track{height:6px;border-radius:3px}
+label.slider.small input[type=range]::-moz-range-progress{height:6px;border-radius:3px}
+li.speaker label.tick{display:flex;align-items:center}
+li.speaker label.tick[hidden]{display:none}

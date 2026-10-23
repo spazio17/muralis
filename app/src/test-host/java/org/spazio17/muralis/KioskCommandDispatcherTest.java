@@ -232,6 +232,19 @@ public final class KioskCommandDispatcherTest {
                 "a privileged member port must be refused");
         require(KioskCommandDispatcher.validateMemberPort(65536, 8081, 8080) != null,
                 "a member port above 65535 must be refused");
+        // The network speaker's port, against both of the others.
+        require(KioskCommandDispatcher.validateSpeakerPort(2325, 2325, 8080, 8081) == null,
+                "the default speaker port must be accepted");
+        require(KioskCommandDispatcher.validateSpeakerPort(1023, 2325, 8080, 8081) != null,
+                "a privileged speaker port must be refused");
+        require(KioskCommandDispatcher.validateSpeakerPort(65536, 2325, 8080, 8081) != null,
+                "a speaker port above 65535 must be refused");
+        require(KioskCommandDispatcher.validateSpeakerPort(8080, 2325, 8080, 8081)
+                        .contains("web admin"),
+                "the web admin port must be refused as a new speaker port, by name");
+        require(KioskCommandDispatcher.validateSpeakerPort(8081, 2325, 8080, 8081)
+                        .contains("member"),
+                "the member port must be refused as a new speaker port, by name");
         require(KioskCommandDispatcher.validateMemberPort(8080, 8080, 8080) == null,
                 "a member port that already collides can still be saved unchanged");
     }
