@@ -103,6 +103,11 @@ final class IntegrationSettings {
             if (problem != null) {
                 return new Saved(problem, null);
             }
+            if (fresh) {
+                // Ids are reused once free: a key some path left under this one is not the
+                // new integration's.
+                clearSecrets(store, id, definitionId);
+            }
             for (Map.Entry<String, String> secret : secrets.entrySet()) {
                 store.put(Integrations.secretName(id, secret.getKey()), secret.getValue());
             }
@@ -123,6 +128,8 @@ final class IntegrationSettings {
             }
             KioskConfig.storeIntegrations(context, list);
             KioskService.refreshIntegrationsSoon(context, secrets.isEmpty() ? null : id);
+            // A change made here goes to the fleet when the fleet shares the integrations.
+            KioskService.publishTelemetrySoon(context);
             return new Saved(null, id);
         }
     }
@@ -156,7 +163,21 @@ final class IntegrationSettings {
             KioskConfig.storeIntegrations(context, list);
         }
         KioskService.refreshIntegrationsSoon(context, null);
+        KioskService.publishTelemetrySoon(context);
         return null;
+    }
+
+    /** Clears every secret an instance of this kind keeps under this id. */
+    static void clearSecrets(SecretStore store, String instanceId, String definitionId) {
+        Integrations.Definition definition = Integrations.DEFINITIONS.get(definitionId);
+        if (definition == null) {
+            return;
+        }
+        for (Integrations.Field field : definition.fields) {
+            if (field.secret) {
+                store.clear(Integrations.secretName(instanceId, field.id));
+            }
+        }
     }
 
     /**
@@ -179,18 +200,153 @@ final class IntegrationSettings {
                 return "that integration was removed meanwhile";
             }
             KioskConfig.storeIntegrations(context, list);
-            Integrations.Definition definition = Integrations.DEFINITIONS.get(gone.definition);
-            SecretStore store = new SecretStore(KioskConfig.storageContext(context));
-            if (definition != null) {
-                for (Integrations.Field field : definition.fields) {
-                    if (field.secret) {
-                        store.clear(Integrations.secretName(gone.id, field.id));
-                    }
+            clearSecrets(new SecretStore(KioskConfig.storageContext(context)), gone.id,
+                    gone.definition);
+        }
+        KioskService.refreshIntegrationsSoon(context, null);
+        KioskService.publishTelemetrySoon(context);
+        return null;
+    }
+
+    /**
+     * The instances as the fleet shares them: every setting a definition marks SHARED, none of
+     * the PANEL ones (a room is each panel's own), and no secret, which travels apart.
+     */
+    static List<Integrations.Instance> sharedPart(List<Integrations.Instance> instances) {
+        List<Integrations.Instance> shared = new java.util.ArrayList<>();
+        for (Integrations.Instance instance : instances) {
+            Integrations.Definition definition = Integrations.DEFINITIONS.get(instance.definition);
+            Map<String, String> settings = new LinkedHashMap<>();
+            for (Map.Entry<String, String> setting : instance.settings.entrySet()) {
+                Integrations.Field field = definition == null ? null
+                        : definition.field(setting.getKey());
+                if (field == null || field.scope == Integrations.Scope.SHARED) {
+                    settings.put(setting.getKey(), setting.getValue());
+                }
+            }
+            shared.add(new Integrations.Instance(instance.id, instance.definition, instance.name,
+                    instance.enabled, settings));
+        }
+        return shared;
+    }
+
+    /**
+     * The SHARED secret settings of every instance, for the fleet's wire only: "{}" when there
+     * are none, and "" while one cannot be read (before the first unlock), which the fleet's
+     * sync reads as "keep what the others hold", never as "none".
+     */
+    static String sharedSecrets(Context context) {
+        SecretStore store = new SecretStore(KioskConfig.storageContext(context));
+        Map<String, Object> all = new LinkedHashMap<>();
+        for (Integrations.Instance instance : KioskConfig.integrationsOf(context)) {
+            Integrations.Definition definition = Integrations.DEFINITIONS.get(instance.definition);
+            if (definition == null) {
+                continue;
+            }
+            for (Integrations.Field field : definition.fields) {
+                if (!field.secret || field.scope != Integrations.Scope.SHARED) {
+                    continue;
+                }
+                String value = store.getOrNull(Integrations.secretName(instance.id, field.id));
+                if (value == null) {
+                    return "";
+                }
+                if (!value.isEmpty()) {
+                    all.put(instance.id + "_" + field.id, value);
                 }
             }
         }
+        return TinyJson.write(all);
+    }
+
+    /**
+     * Applies the fleet's integrations on this panel: the fleet's list becomes this panel's, each
+     * instance checked as its own Save checks it, a PANEL setting kept from this panel's own
+     * instance of the same id, the shared secrets stored, and the secrets of an instance the
+     * fleet no longer has cleared. Returns the refusals, one line each; a refused instance keeps
+     * this panel's own. An empty secret block keeps the stored secrets (they are blanked in
+     * every stored copy of the fleet's list).
+     */
+    static List<String> applyShared(Context context, String instancesJson, String secretsJson) {
+        List<String> refused = new java.util.ArrayList<>();
+        List<Integrations.Instance> fleet = Integrations.parseInstances(instancesJson);
+        SecretStore store = new SecretStore(KioskConfig.storageContext(context));
+        Map<String, Object> secrets = null;
+        if (secretsJson != null && !secretsJson.isEmpty()) {
+            try {
+                secrets = TinyJson.object(TinyJson.parse(secretsJson));
+            } catch (IllegalArgumentException unreadable) {
+                refused.add("integration_secrets: not readable");
+            }
+        }
+        synchronized (KioskConfig.INTEGRATIONS_STORE) {
+            List<Integrations.Instance> own = KioskConfig.integrationsOf(context);
+            Map<String, Integrations.Instance> ownById = new LinkedHashMap<>();
+            for (Integrations.Instance instance : own) {
+                ownById.put(instance.id, instance);
+            }
+            List<Integrations.Instance> next = new java.util.ArrayList<>();
+            for (Integrations.Instance shared : fleet) {
+                Integrations.Instance mine = ownById.get(shared.id);
+                Integrations.Definition definition =
+                        Integrations.DEFINITIONS.get(shared.definition);
+                Map<String, String> settings = new LinkedHashMap<>(shared.settings);
+                if (definition != null && mine != null) {
+                    for (Integrations.Field field : definition.fields) {
+                        if (field.scope == Integrations.Scope.PANEL && !field.secret) {
+                            settings.put(field.id, mine.settings.getOrDefault(field.id, ""));
+                        }
+                    }
+                }
+                Integrations.Instance merged = new Integrations.Instance(shared.id,
+                        shared.definition, shared.name, shared.enabled, settings);
+                if (definition != null) {
+                    java.util.Set<String> secretFields = new java.util.HashSet<>();
+                    for (Integrations.Field field : definition.fields) {
+                        if (field.secret) {
+                            secretFields.add(field.id);
+                        }
+                    }
+                    String problem = Integrations.checkName(merged.name);
+                    if (problem == null) {
+                        problem = Integrations.check(definition, settings, secretFields);
+                    }
+                    if (problem == null && merged.enabled) {
+                        problem = editionProblem(context, definition);
+                    }
+                    if (problem != null) {
+                        refused.add("integrations: " + merged.name + ": " + problem);
+                        if (mine != null) {
+                            next.add(mine);
+                        }
+                        continue;
+                    }
+                }
+                next.add(merged);
+            }
+            java.util.Set<String> kept = new java.util.HashSet<>();
+            for (Integrations.Instance instance : next) {
+                kept.add(instance.id);
+            }
+            for (Integrations.Instance gone : own) {
+                if (!kept.contains(gone.id)) {
+                    clearSecrets(store, gone.id, gone.definition);
+                }
+            }
+            if (secrets != null) {
+                for (Map.Entry<String, Object> one : secrets.entrySet()) {
+                    String key = one.getKey();
+                    int cut = key.indexOf('_');
+                    if (cut > 0 && kept.contains(key.substring(0, cut))
+                            && one.getValue() instanceof String) {
+                        store.put("integration_" + key, (String) one.getValue());
+                    }
+                }
+            }
+            KioskConfig.storeIntegrations(context, next);
+        }
         KioskService.refreshIntegrationsSoon(context, null);
-        return null;
+        return refused;
     }
 
     /** What removing an integration changes, the words both surfaces ask with. */
@@ -281,7 +437,7 @@ final class IntegrationSettings {
             case TEXT:
                 return "\"" + value.text + "\"";
             case TIME:
-                return new java.util.Date((long) value.number).toString();
+                return timeWords((long) value.number);
             default: {
                 double number = value.number;
                 String figure = number == Math.rint(number) && Math.abs(number) < 1e15
@@ -289,6 +445,15 @@ final class IntegrationSettings {
                 return spec.unit.isEmpty() ? figure : figure + " " + spec.unit;
             }
         }
+    }
+
+    /** A time as a row says it: "14:00", or "Thu 14:00" when it is not today. */
+    static String timeWords(long epochMs) {
+        java.time.ZonedDateTime at = java.time.Instant.ofEpochMilli(epochMs)
+                .atZone(java.time.ZoneId.systemDefault());
+        boolean today = at.toLocalDate().equals(java.time.LocalDate.now());
+        return at.format(java.time.format.DateTimeFormatter.ofPattern(today ? "HH:mm"
+                : "EEE d MMM HH:mm", java.util.Locale.ENGLISH));
     }
 
     /** Why this panel's edition cannot run the definition, or null. */

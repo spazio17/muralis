@@ -84,30 +84,30 @@ final class Automations {
     private static Map<String, List<Event>> events() {
         Map<String, List<Event>> map = new LinkedHashMap<>();
         map.put("proximity", Arrays.asList(
-                // Android's own words for the sensor (SensorManager: "near/far"); Home
-                // Assistant has no binary class for it, its nearest, occupancy, is about a room.
+                // Android's own words for the sensor (SensorManager: "near/far"); MQTT discovery
+                // has no binary class for it, its nearest, occupancy, is about a room.
                 new Event("near", "Near", null, false, false),
                 new Event("far", "Far", null, false, false)));
-        map.put("light", Arrays.asList(
+        map.put("illuminance", Arrays.asList(
                 new Event("darker", "Darker than", "lx", true, false),
                 new Event("brighter", "Brighter than", "lx", false, false)));
         map.put("movement", Arrays.asList(
                 new Event("picked_up", "Picked up", null, false, false),
                 new Event("still", "Still again", null, false, false)));
-        map.put("bluetooth", Arrays.asList(
+        map.put("bluetooth_beacons", Arrays.asList(
                 new Event("in_reach", "The first beacon comes in reach", null, false, false),
                 new Event("out_of_reach", "The last beacon goes out of reach", null, false, false)));
-        map.put("nfc", Collections.singletonList(
+        map.put("nfc_tag", Collections.singletonList(
                 new Event("tag", "A tag is read", null, false, true)));
         map.put("audio", Arrays.asList(
                 new Event("playing", "Sound starts playing", null, false, false),
                 new Event("stopped", "Sound stops", null, false, false)));
-        map.put("camera", Arrays.asList(
+        map.put("motion", Arrays.asList(
                 new Event("motion", "Motion in front of the panel", null, false, false),
                 // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
                 // itself, and read "for for" (review, 2026-10-01).
                 new Event("no_motion", "Nothing moving", null, true, false)));
-        map.put("microphone", Collections.singletonList(
+        map.put("sound_level", Collections.singletonList(
                 new Event("louder", "Louder than", "%", false, false)));
         map.put("display", Arrays.asList(
                 new Event("on", "Display switched on", null, false, false),
@@ -140,11 +140,11 @@ final class Automations {
     static final List<Action> ACTIONS = Collections.unmodifiableList(Arrays.asList(
             new Action("display_on", "Display on", null),
             new Action("display_off", "Display off", null),
-            new Action("dashboard", "Show the dashboard", null),
+            new Action("dashboard", "Open dashboard", null),
             new Action("ambient", "Start Ambient", null),
             new Action("play_sound", "Play a sound", "Sound address"),
             new Action("say", "Say a sentence", "Sentence"),
-            new Action("reload", "Reload the page", null),
+            new Action("reload", "Reload dashboard", null),
             new Action("light_on", "Status light on", "Colour (r,g,b)"),
             new Action("light_off", "Status light off", null),
             new Action("open_page", "Open a page", "Address"),
@@ -331,30 +331,22 @@ final class Automations {
         return rules;
     }
 
-    private static String renamed(String id) {
-        return "screensaver".equals(id) ? "ambient" : id;
-    }
-
     /** One rule as stored or posted; an empty id is left for the caller to decide on. */
     static Rule parseRule(JSONObject one) {
         Rule rule = new Rule();
         rule.id = one.optString("id", "");
         rule.name = one.optString("name", "");
-        // Ambient was called screensaver before 0.7, as a sensor and as an action: a rule stored
-        // with the old name means the same thing.
-        rule.sensor = renamed(one.optString("sensor", ""));
+        rule.sensor = one.optString("sensor", "");
         rule.event = one.optString("event", "");
         rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
         rule.minutes = one.optInt("minutes", 0);
-        // "tag" is what rules said before integrations, and what an older Muralis importing a
-        // settings file, and API clients written before, still read.
-        rule.match = one.optString("match", one.optString("tag", ""));
+        rule.match = one.optString("match", "");
         // A rule stored before the field keeps running every time, as it did.
         rule.cooldown = one.optInt("cooldown", 0);
         rule.seconds = one.optInt("seconds", Popup.DEFAULT_SECONDS);
         rule.chime = one.optBoolean("chime", false);
         rule.show = one.optString("show", SHOW_POPUP);
-        rule.action = renamed(one.optString("action", ""));
+        rule.action = one.optString("action", "");
         rule.argument = one.optString("argument", "");
         rule.enabled = one.optBoolean("enabled", true);
         rule.onlyFrom = one.optInt("only_from", -1);
@@ -381,7 +373,7 @@ final class Automations {
                     one.put("level", rule.level);
                 }
                 one.put("minutes", rule.minutes);
-                one.put("match", rule.match).put("tag", rule.match);
+                one.put("match", rule.match);
                 one.put("cooldown", rule.cooldown);
                 one.put("seconds", rule.seconds);
                 one.put("chime", rule.chime);

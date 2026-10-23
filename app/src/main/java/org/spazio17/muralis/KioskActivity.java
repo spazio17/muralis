@@ -78,7 +78,7 @@ public final class KioskActivity extends Activity {
     /**
      * How often the dashboard's server is probed for reachability while the page is settled.
      *
-     * <p>Fifteen seconds: a Home Assistant restart keeps the server down for tens of seconds to a
+     * <p>Fifteen seconds: a smart-home server restart keeps it down for tens of seconds to a
      * couple of minutes, so an outage that matters spans several probes, and the reload lands
      * within one probe interval plus one backoff of the server coming back. An outage shorter than
      * one interval can slip between two probes, deliberately: nothing that recovers that fast kept
@@ -448,7 +448,7 @@ public final class KioskActivity extends Activity {
             Toast.makeText(this, "Brightness not applied: " + problem, Toast.LENGTH_LONG).show();
         } else {
             // The house rule (CLAUDE.md): anything applied outside the dispatcher republishes,
-            // or Home Assistant shows the old value until the next 60-second tick. The slider
+            // or the smart home shows the old value until the next 60-second tick. The slider
             // and the auto switch were the two controls that never did.
             KioskService.publishTelemetrySoon(this);
         }
@@ -514,7 +514,7 @@ public final class KioskActivity extends Activity {
      * whatever it last rendered forever. No callback fires for this, because nothing at the network
      * or renderer level ever fails.
      *
-     * <p>Deliberately generic rather than Home-Assistant-specific: no scanning for the words
+     * <p>Deliberately generic rather than specific to one dashboard: no scanning for the words
      * "disconnected" or "reconnecting", which would only work for pages that happen to say them in
      * English and is exactly the kind of app-specific assumption this project's own self-recovery
      * work avoided elsewhere. Instead it watches whether the page's own rendered content is moving
@@ -575,10 +575,10 @@ public final class KioskActivity extends Activity {
     /**
      * Catches the other failure nothing else notices: the page loaded fine, and then the server
      * restarted underneath it. No main-frame request happens, so the error callbacks stay silent;
-     * no load is in flight, so the hung-load timeout is idle; and after a Home Assistant restart
+     * no load is in flight, so the hung-load timeout is idle; and after a smart-home server restart
      * the frontend reconnects its own websocket and most cards recover, so the frozen-page probe
      * correctly sees a live page. What is left is the odd card stuck on an error tile, observed on
-     * the panel after an ordinary Home Assistant restart, and until this existed nothing ever
+     * the panel after an ordinary smart-home server restart, and until this existed nothing ever
      * reloaded it.
      *
      * <p>The probe only observes; the decision is {@link ServerProbePolicy}'s, and the reload is
@@ -1038,7 +1038,7 @@ public final class KioskActivity extends Activity {
         // tablet nobody can use.
         disableStatusBarIfPinned();
         // Deliberately do not call WebView.onPause(): the kiosk contract keeps
-        // JavaScript and its Home Assistant WebSocket alive while visually off.
+        // JavaScript and its dashboard WebSocket alive while visually off.
         super.onPause();
     }
 
@@ -1288,7 +1288,7 @@ public final class KioskActivity extends Activity {
      * The web admin controls, from live state rather than a build-time snapshot: they follow the
      * flag and the socket while the screen sits open (liveSettingSyncTask) and refresh right
      * after the local toggle. Both together on purpose, the button's label is state exactly like
-     * the line under it, and only the line syncing made a toggle from Home Assistant flip the
+     * the line under it, and only the line syncing made a toggle from the smart home flip the
      * text while the button kept offering the wrong direction. Green with the address while
      * listening; grey "disabled" while the operator has the surface off; a warning when it
      * should be up and is not, and when it is up but nothing can reach it: a panel with Wi-Fi
@@ -1393,7 +1393,7 @@ public final class KioskActivity extends Activity {
             return true;
         }
         // Deliberately NOT webView.goBack(). That was removed on purpose: it let anyone standing at
-        // the panel walk the dashboard's history backwards, and on a Home Assistant frontend it
+        // the panel walk the dashboard's history backwards, and on a smart-home frontend it
         // strands the viewer on some earlier view with no obvious way forward.
         return false;
     }
@@ -2396,14 +2396,14 @@ public final class KioskActivity extends Activity {
 
     /**
      * Applies one instantly-applied setting the moment it is touched, the way the web admin's
-     * equivalent controls already do, and tells Home Assistant about it without waiting for the
+     * equivalent controls already do, and tells the smart home about it without waiting for the
      * next telemetry tick. These controls sit in the card each one is about rather than collected
      * into a box of their own, so this is what they have in common, not where they are.
      *
      * <p>Two things here are load-bearing. It needs no controller restart, because every one of
      * these settings is read live by whoever consumes it (the overlay ticker, the telemetry loop).
      * And it calls {@link KioskService#publishTelemetrySoon} so the MQTT switch in
-     * Home Assistant reflects the new value in under a second rather than up to a full interval
+     * the smart home reflects the new value in under a second rather than up to a full interval
      * later, the same reason {@code KioskService.dispatch} republishes after an accepted command.
      */
     private void applyLiveSetting(java.util.function.Consumer<KioskConfig.Editor> change) {
@@ -2621,12 +2621,12 @@ public final class KioskActivity extends Activity {
     private static final int REQUEST_PAGE_PERMISSION = 7_301;
 
     /**
-     * The camera view, a page under Dashboard as App lock is: the camera or group the panel shows
-     * as its main view, one tap to choose; the web admin's Camera view page is the same.
+     * Dashboard cameras, a page under Dashboard as the app's is: the camera or group the
+     * dashboard shows, one tap to choose and show; the web admin's page is the same.
      */
     private void showCameraViewPage() {
         currentScreen = this::showCameraViewPage;
-        LinearLayout page = subPage("Camera view", this::showSettings);
+        LinearLayout page = subPage("Dashboard cameras", this::showSettings);
         KioskTheme theme = currentTheme();
         String chosen = KioskConfig.dashboardCamerasOf(this);
         LinearLayout card = card(theme, "The cameras this panel shows");
@@ -2636,7 +2636,7 @@ public final class KioskActivity extends Activity {
         about.setText("A camera, or a group as a grid, instead of the web page. A tap opens one"
                 + " camera of a grid, pinch to zoom; a tap brings the grid back.");
         card.addView(about, matchWrapClose());
-        // No "Off" here: the web page is the other answer of Dashboard's "The panel shows".
+        // No "Off" here: the web page is another answer of the Dashboard choice.
         RadioGroup choices = new RadioGroup(this);
         for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
             radioChoice(theme, choices, camera.name, camera.name);
@@ -2648,23 +2648,29 @@ public final class KioskActivity extends Activity {
             card.addView(emptyState(theme, "No cameras yet",
                     "Add one in Cameras, under Screen."), matchWrapClose());
         }
-        checkRadioIfChanged(choices, chosen);
+        // Checked only while the dashboard shows it: a camera kept from before is not ticked
+        // as if it were on the glass, and a tap on it shows it again.
+        checkRadioIfChanged(choices, KioskConfig.shownCamerasOf(this));
         choices.setOnCheckedChangeListener((group, id) -> {
             View checked = group.findViewById(id);
             String value = checked == null ? "" : (String) checked.getTag();
-            if (value.equals(KioskConfig.dashboardCamerasOf(this))) {
+            if (value.isEmpty() || value.equals(KioskConfig.shownCamerasOf(this))) {
                 return;
             }
+            // Chosen here, from the Dashboard choice's Cameras: stored and shown.
             KioskService service = KioskService.liveService();
             String refused = service == null ? "the service is not running"
                     : service.setDashboardCameras(value);
+            if (refused == null) {
+                refused = service.setDashboardShows(KioskCommandDispatcher.DASHBOARD_CAMERAS);
+            }
             if (refused != null) {
                 Toast.makeText(this, "Not saved: " + refused + ".", Toast.LENGTH_LONG).show();
                 return;
             }
-            // App lock ends with the choice; the lock-task allowlist follows at once.
+            // An app shown before ends with the choice; the lock-task allowlist follows at once.
             applyKioskPolicy();
-            Toast.makeText(this, value + " is the main view", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, value + " is the dashboard", Toast.LENGTH_SHORT).show();
         });
         card.addView(choices, matchWrapClose());
         java.util.List<View> cards = new java.util.ArrayList<>();
@@ -2721,14 +2727,15 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * App lock: the one app the panel shows instead of the web page, or Off, chosen
-     * from the installed apps and stored at once; the permission it needs, asked for with why.
+     * Dashboard app (App lock): the one app the dashboard shows instead of the web page,
+     * chosen from the installed apps, stored and shown at once; the permission it needs, asked
+     * for with why.
      */
     private void showAppLockPage() {
         currentScreen = this::showAppLockPage;
-        LinearLayout page = subPage("App lock", this::showSettings);
+        LinearLayout page = subPage("Dashboard app", this::showSettings);
         KioskTheme theme = currentTheme();
-        String chosen = KioskConfig.appLockOf(this);
+        String chosen = KioskConfig.chosenAppOf(this);
         LinearLayout card = card(theme, "The app this panel shows");
         TextView about = new FlushText(this);
         about.setTextSize(13);
@@ -2754,7 +2761,7 @@ public final class KioskActivity extends Activity {
             redrawInPlace(this::showAppLockPage);
         });
         card.addView(system, matchWrapClose());
-        // No "Off" here: the web page is the other half of Dashboard's "The panel shows".
+        // No "Off" here: the web page is another answer of the Dashboard choice.
         RadioGroup apps = new RadioGroup(this);
         boolean listed = chosen.isEmpty();
         for (AppLock.App app : AppLock.launchable(this, appLockShowSystem)) {
@@ -2773,19 +2780,22 @@ public final class KioskActivity extends Activity {
             card.addView(emptyState(theme, "No apps of your own on this panel",
                     "Install one, or show the apps that came with the device."), matchWrapClose());
         }
-        checkRadioIfChanged(apps, chosen);
+        // Checked only while the dashboard shows it, as the cameras' page does.
+        checkRadioIfChanged(apps, KioskConfig.appLockOf(this));
         apps.setOnCheckedChangeListener((group, id) -> {
             View checked = group.findViewById(id);
             String value = checked == null ? "" : (String) checked.getTag();
-            if (value.equals(KioskConfig.appLockOf(this))) {
+            if (value.isEmpty() || value.equals(KioskConfig.appLockOf(this))) {
                 return;
             }
-            KioskConfig.edit(this).appLock(value).apply();
+            // Chosen here, from the Dashboard choice's App: stored and shown.
+            KioskConfig.edit(this).appLock(value)
+                    .dashboardShows(KioskCommandDispatcher.DASHBOARD_APP).apply();
             // The lock-task allowlist follows the choice at once.
             applyKioskPolicy();
             KioskService.publishTelemetrySoon(this);
-            Toast.makeText(this, value.isEmpty() ? "App lock off"
-                    : "App lock: " + AppLock.labelOf(this, value), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Dashboard app: " + AppLock.labelOf(this, value),
+                    Toast.LENGTH_SHORT).show();
         });
         card.addView(apps, matchWrapClose());
         page.addView(card, matchWrap());
@@ -2902,6 +2912,8 @@ public final class KioskActivity extends Activity {
                 return value.optBoolean("value") ? "on" : "off";
             case "text":
                 return "\"" + value.optString("value") + "\"";
+            case "time":
+                return IntegrationSettings.timeWords((long) value.optDouble("value"));
             default: {
                 double number = value.optDouble("value");
                 String figure = number == Math.rint(number) && Math.abs(number) < 1e15
@@ -3741,42 +3753,52 @@ public final class KioskActivity extends Activity {
         }
 
         LinearLayout dashboardCard = sectionBody(theme);
-        // What the panel shows, first and as a choice (the UI round, 2026-10-15): a web page,
-        // the address and its options below, or an app, App lock, chosen on a page of its own.
+        // What the dashboard shows, first and as a choice (the UI round, 2026-10-15): the web
+        // page, the address and its options below, an app (App lock), or cameras. The app and
+        // the cameras are kept when the choice moves away, so a tap on them shows the last one
+        // chosen; with none chosen yet the tap opens its page to choose one.
         String lockedApp = KioskConfig.appLockOf(this);
         boolean showsApp = !lockedApp.isEmpty();
+        String shownCameras = KioskConfig.shownCamerasOf(this);
+        boolean showsCameras = !shownCameras.isEmpty();
         // Cameras, the third answer, once there is a camera or a group to show.
-        String shownCameras = KioskConfig.dashboardCamerasOf(this);
-        boolean showsCameras = !showsApp && !shownCameras.isEmpty();
-        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(this).isEmpty();
-        dashboardCard.addView(fieldCaption(theme, "The panel shows"), matchWrapClose());
+        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(this).isEmpty()
+                || !KioskConfig.cameraGroupsOf(this).isEmpty();
+        dashboardCard.addView(fieldCaption(theme, "Dashboard"), matchWrapClose());
         LinearLayout.LayoutParams showsParams = matchWrapClose();
         showsParams.topMargin = dp(8);
+        String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
         dashboardCard.addView(segmentedChoice(theme, offerCameras
-                        ? new String[] {"A web page", "An app", "Cameras"}
-                        : new String[] {"A web page", "An app"},
+                        ? new String[] {words[0][1], words[1][1], words[2][1]}
+                        : new String[] {words[0][1], words[1][1]},
                 showsApp ? 1 : showsCameras ? 2 : 0, index -> {
-                    if (index == 1) {
+                    String value = words[index][0];
+                    if (value.equals(KioskConfig.dashboardShowsOf(this))) {
+                        return;
+                    }
+                    KioskService service = KioskService.liveService();
+                    String refused = service == null ? "the service is not running"
+                            : service.setDashboardShows(value);
+                    if (KioskCommandDispatcher.NO_APP_CHOSEN.equals(refused)) {
                         showAppLockPage();
-                    } else if (index == 2) {
+                    } else if (KioskCommandDispatcher.NO_CAMERA_CHOSEN.equals(refused)) {
                         showCameraViewPage();
-                    } else if (!KioskConfig.appLockOf(this).isEmpty()
-                            || !KioskConfig.dashboardCamerasOf(this).isEmpty()) {
-                        // The web page: App lock and the cameras both end.
-                        KioskConfig.edit(this).appLock("").apply();
+                    } else if (refused != null) {
+                        Toast.makeText(this, "Not changed: " + refused + ".",
+                                Toast.LENGTH_LONG).show();
+                    } else {
                         // The lock-task allowlist follows the choice at once.
                         applyKioskPolicy();
-                        KioskService.publishTelemetrySoon(this);
                         redrawThisScreen();
                     }
                 }), showsParams);
         if (showsCameras) {
             dashboardCard.addView(glyphRow(theme, R.drawable.ic_cameras, shownCameras,
-                    "Shown as the main view", null, this::showCameraViewPage, false, false),
+                    "Shown as the dashboard", null, this::showCameraViewPage, false, false),
                     matchWrapClose());
         }
         // The box holds what is stored and nothing else; the example is a hint. It used to be
-        // prefilled with a Home Assistant address as real text, so a fresh panel saved and loaded
+        // prefilled with a smart-home address as real text, so a fresh panel saved and loaded
         // it at the first press of Open dashboard and showed an error page for a host that does
         // not exist. See KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL for the two reasons.
         EditText urlInput = themedInput(theme, config.dashboardUrl, false);
@@ -3803,7 +3825,7 @@ public final class KioskActivity extends Activity {
         // pressed as if it were the save and the screen closed without one. Anyone who
         // misunderstands that button makes the same mistake, so it is gone rather than renamed.
         // Nothing is lost: Open dashboard already returns to the stored dashboard, a kiosk
-        // restart does too, and Home Assistant keeps its own kiosk.home button.
+        // restart does too, and the smart home keeps its own dashboard.open button.
         Button openOnce = secondaryButton(theme, "Open once");
         openOnce.setOnClickListener(view -> {
             String once = normalizeUrl(urlInput.getText().toString());
@@ -4044,7 +4066,7 @@ public final class KioskActivity extends Activity {
         httpCard.addView(buttonRow(webAdminToggle), matchWrap());
         refreshWebAdminControls(webAdminToggle, httpState, fingerprintView, theme);
         // The broker is checked as soon as the screen opens, not only after an edit: an operator
-        // who comes here because "Home Assistant lost the panel" gets the answer without having
+        // who comes here because "the smart home lost the panel" gets the answer without having
         // to touch a field first.
         checkBroker.run();
         LinearLayout.LayoutParams httpStateParams = new LinearLayout.LayoutParams(
@@ -4110,7 +4132,7 @@ public final class KioskActivity extends Activity {
         }
         if (KioskService.hasLightSensor(this)) {
             autoBrightnessInput = themedSwitch(theme,
-                    "Adjust brightness automatically",
+                    "Automatic brightness",
                     autoBrightnessWasOn);
             // Applied the moment it is touched, not on save.
             //
@@ -4127,7 +4149,7 @@ public final class KioskActivity extends Activity {
                     // in either direction; brightness itself is the system setting now.
                     setWindowBrightness(-1);
                     // Same house rule as the slider: applied outside the dispatcher, so republish,
-                    // or the HA switch shows the old side for up to a minute.
+                    // or the MQTT switch shows the old side for up to a minute.
                     KioskService.publishTelemetrySoon(this);
                 } else if (!KioskService.canWriteSystemSettings(this)) {
                     // The hardware can do it and the app cannot, which is a fixable state, so say so
@@ -4216,12 +4238,12 @@ public final class KioskActivity extends Activity {
         RadioGroup orientationInput = new RadioGroup(this);
         // "Auto-rotate", the platform's own name for it, is offered only where a sensor exists to
         // follow, the same gate the auto-brightness switch sits behind just above.
-        if (KioskService.hasAccelerometer(this)) {
-            radioChoice(theme, orientationInput, "Auto-rotate",
-                    KioskConfig.ORIENTATION_AUTO);
+        for (String[] choice : KioskCommandDispatcher.ORIENTATION_WORDS) {
+            if (!KioskConfig.ORIENTATION_AUTO.equals(choice[0])
+                    || KioskService.hasAccelerometer(this)) {
+                radioChoice(theme, orientationInput, choice[1], choice[0]);
+            }
         }
-        radioChoice(theme, orientationInput, "Landscape", KioskConfig.ORIENTATION_LANDSCAPE);
-        radioChoice(theme, orientationInput, "Portrait", KioskConfig.ORIENTATION_PORTRAIT);
         checkRadioIfChanged(orientationInput, config.orientation);
         orientationInput.setOnCheckedChangeListener((group, checkedId) -> {
             View checked = group.findViewById(checkedId);
@@ -4243,7 +4265,7 @@ public final class KioskActivity extends Activity {
         // An ordinary install gets no choice at all: Automatic resolved to the film there, so
         // the two options were one thing under two names (2026-09-24). It shows the film,
         // ticked and greyed, and the line under it says what would unlock the rest.
-        TextView displayOffLabel = fieldCaption(theme, "Display off");
+        TextView displayOffLabel = fieldCaption(theme, "Display off method");
         LinearLayout.LayoutParams displayOffLabelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         displayOffLabelParams.topMargin = dp(14);
@@ -4251,13 +4273,14 @@ public final class KioskActivity extends Activity {
 
         RadioGroup displayOffInput = new RadioGroup(this);
         if (KioskService.isDeviceOwner(this)) {
-            radioChoice(theme, displayOffInput, "Automatic", DisplayOffPolicy.AUTO);
-            radioChoice(theme, displayOffInput, "Turn the screen off", DisplayOffPolicy.SLEEP);
-            radioChoice(theme, displayOffInput, "Black film", DisplayOffPolicy.FILM);
+            for (String[] choice : KioskCommandDispatcher.DISPLAY_OFF_WORDS) {
+                radioChoice(theme, displayOffInput, choice[1], choice[0]);
+            }
             checkRadioIfChanged(displayOffInput, config.displayOffMethod);
         } else {
-            RadioButton film = radioChoice(theme, displayOffInput, "Black film",
-                    DisplayOffPolicy.FILM);
+            RadioButton film = radioChoice(theme, displayOffInput,
+                    KioskCommandDispatcher.wordOf(KioskCommandDispatcher.DISPLAY_OFF_WORDS,
+                            DisplayOffPolicy.FILM), DisplayOffPolicy.FILM);
             displayOffInput.check(film.getId());
             film.setEnabled(false);
             film.setTextColor(theme.subtext);
@@ -4282,7 +4305,7 @@ public final class KioskActivity extends Activity {
         });
 
         // The status light: the switch and the colour by name, the web admin's two controls.
-        // The brightness and any other colour come over HTTP, MQTT and Home Assistant; a stored
+        // The brightness and any other colour come over HTTP and MQTT; a stored
         // colour with no name is offered as it is.
         StatusLight.State light = KioskConfig.statusLightOf(this);
         CompoundButton lightInput = themedSwitch(theme,
@@ -4545,7 +4568,7 @@ public final class KioskActivity extends Activity {
         // The Pro state lives in This panel (About until 2026-09-27; moved here 2026-08-29, by
         // decision of that day): it is a fact about this installation, like the version line
         // beside it, not a card-sized feature of its own.
-        // This panel (2026-09-27): the panel's name first, what Home Assistant and MQTT
+        // This panel (2026-09-27): the panel's name first, what the smart home and MQTT
         // call it, then the stats and the log behind a chevron, the version and the Pro state,
         // and the two legal pages.
         LinearLayout aboutCard = sectionBody(theme);
@@ -4940,8 +4963,8 @@ public final class KioskActivity extends Activity {
             editor.apply();
             KioskService.reloadConfiguration(this);
             // House rule: applied outside the dispatcher, so republish. dashboard_url and
-            // device id ride in the telemetry document, and this save used to leave Home
-            // Assistant on the old values for up to a minute.
+            // device id ride in the telemetry document, and this save used to leave the smart
+            // home on the old values for up to a minute.
             KioskService.publishTelemetrySoon(this);
             showDashboard(url);
         };
@@ -6152,12 +6175,12 @@ public final class KioskActivity extends Activity {
      * bar's subtitle, the uptime is in the stats readout, the build number is on the About page.
      */
     private String dashboardSummary(KioskConfig config) {
-        // An app instead of the page says so, as "The panel shows" does.
+        // An app or cameras instead of the page say so, as the Dashboard choice does.
         if (!KioskConfig.appLockOf(this).isEmpty()) {
             return "App: " + KioskConfig.appLockLabelOf(this);
         }
-        if (!KioskConfig.dashboardCamerasOf(this).isEmpty()) {
-            return "Cameras: " + KioskConfig.dashboardCamerasOf(this);
+        if (!KioskConfig.shownCamerasOf(this).isEmpty()) {
+            return "Cameras: " + KioskConfig.shownCamerasOf(this);
         }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
@@ -6455,6 +6478,7 @@ public final class KioskActivity extends Activity {
             case "humidity": return R.drawable.ic_sensor_humidity;
             case "display": return R.drawable.ic_sensor_display;
             case "ambient": return R.drawable.ic_sensor_screensaver;
+            case "integrations": return R.drawable.ic_integrations;
             case "battery": return R.drawable.ic_sensor_battery;
             case "power": return R.drawable.ic_sensor_power;
             case "network": return R.drawable.ic_sensor_network;
@@ -6871,7 +6895,7 @@ public final class KioskActivity extends Activity {
             return card;
         }
         // One word and the glyph, nothing more (2026-09-27: it works or it does not).
-        // The words are Home Assistant's for a binary sensor of the running class, Running and
+        // The words are MQTT discovery's for a binary sensor of the running class, Running and
         // Not running, so the panel and a dashboard say the same (2026-09-28: "Disabled"
         // read like a switch somebody set). The glyph says the same: the sensor sending, the
         // sensor with a slash, a question for a test not run yet.
@@ -7607,8 +7631,8 @@ public final class KioskActivity extends Activity {
             cards.add(calibrationCard(theme, def, one, this::calibrateMicrophone));
         } else if (def == Sensors.NFC) {
             // The tags read lately, newest first, by their id and when: a tag is named and
-            // used in Home Assistant, which gets each read as a tag scanned, the way its
-            // companion app hands one over (2026-09-30: "copy what Home Assistant does").
+            // used in the smart home, which gets each read as a tag scanned, the way its
+            // companion app hands one over (2026-09-30: copy what established smart-home apps do).
             // The automations here offer the same tags by id.
             LinearLayout tags = card(theme, "Tags");
             java.util.Map<String, Long> seen = KioskConfig.seenTags(this);
@@ -9495,8 +9519,8 @@ public final class KioskActivity extends Activity {
         }
         boolean wanted = inFront && Sensors.enabled(this, Sensors.NFC);
         Log.i(TAG, "NFC reader mode " + (wanted ? "on" : "off") + (nfc.isEnabled() ? "" : ", adapter off"));
-        // The contents are read too, for the Home Assistant tag id a tag written by Home
-        // Assistant carries; a password-protected tag still gives its chip's id (a LEGO
+        // The contents are read too, for the tag id a tag in the companion app's format
+        // carries; a password-protected tag still gives its chip's id (a LEGO
         // Dimensions figure, 2026-09-30).
         try {
             if (wanted) {
@@ -9823,12 +9847,11 @@ public final class KioskActivity extends Activity {
 
         RadioGroup modeInput = null;
         if (parent != null) {
+            parent.addView(fieldCaption(theme, "Ambient mode"), matchWrapClose());
             modeInput = new RadioGroup(this);
-            radioChoice(theme, modeInput, "Off", ScreensaverPolicy.OFF);
-            radioChoice(theme, modeInput, "Dimmed page", ScreensaverPolicy.DIM);
-            radioChoice(theme, modeInput, "Black film", ScreensaverPolicy.FILM);
-            radioChoice(theme, modeInput, "Web page", ScreensaverPolicy.URL);
-            radioChoice(theme, modeInput, "Pictures", ScreensaverPolicy.PICTURES);
+            for (String[] choice : KioskCommandDispatcher.AMBIENT_MODE_WORDS) {
+                radioChoice(theme, modeInput, choice[1], choice[0]);
+            }
             checkRadioIfChanged(modeInput, settings.mode);
             LinearLayout.LayoutParams modeParams = matchWrapClose();
             modeParams.topMargin = dp(6);
@@ -9845,7 +9868,7 @@ public final class KioskActivity extends Activity {
         TextView onWakeLabel = null;
         if (full) {
             idleInput = secondsInput(theme, settings.idleSeconds);
-            addField(options, theme, "Idle before Ambient (seconds, 0 = off)", idleInput);
+            addField(options, theme, "Ambient start after (seconds, 0 = never)", idleInput);
             offInput = secondsInput(theme, settings.offSeconds);
             addField(options, theme, "Ambient before display off (seconds, 0 = never)",
                     offInput);
@@ -9853,21 +9876,20 @@ public final class KioskActivity extends Activity {
             urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
             urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                     | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            urlCaption = addField(options, theme, "Web page to show", urlInput);
+            urlCaption = addField(options, theme, "Ambient web page", urlInput);
             dimInput = themedInput(theme, String.valueOf(settings.dimPercent), false);
             dimInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-            dimCaption = addField(options, theme, "Brightness while dimmed (percent)", dimInput);
+            dimCaption = addField(options, theme, "Ambient dim brightness (percent)", dimInput);
 
-            onWakeLabel = fieldCaption(theme, "After a wake from display off");
+            onWakeLabel = fieldCaption(theme, "Ambient on wake");
             LinearLayout.LayoutParams onWakeLabelParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             onWakeLabelParams.topMargin = dp(14);
             options.addView(onWakeLabel, onWakeLabelParams);
             onWakeInput = new RadioGroup(this);
-            radioChoice(theme, onWakeInput, "Show Ambient first, a touch opens the page",
-                    ScreensaverPolicy.WAKE_SCREENSAVER);
-            radioChoice(theme, onWakeInput, "Show the page at once",
-                    ScreensaverPolicy.WAKE_DASHBOARD);
+            for (String[] choice : KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS) {
+                radioChoice(theme, onWakeInput, choice[1], choice[0]);
+            }
             checkRadioIfChanged(onWakeInput, settings.onWake);
             options.addView(onWakeInput, matchWrapClose());
         }
@@ -9984,7 +10006,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * The Pictures mode's controls on the Ambient page: the playlist's sentence, then how long
-     * each picture stays, how it changes, shuffle, one per cycle, and the credit line with its
+     * each picture stays, how it changes, shuffle, one per start, and the credit line with its
      * corner.
      */
     private void addPicturesControls(LinearLayout group, LinearLayout playlistCard,
@@ -10011,18 +10033,18 @@ public final class KioskActivity extends Activity {
 
         EditText pictureSeconds = themedInput(theme, String.valueOf(settings.pictureSeconds), false);
         pictureSeconds.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(group, theme, "Each picture stays for (seconds)", pictureSeconds);
+        addField(group, theme, "Ambient picture duration (seconds)", pictureSeconds);
         controls.pictureSecondsInput = pictureSeconds;
 
-        TextView transitionCaption = fieldCaption(theme, "Change of picture");
+        TextView transitionCaption = fieldCaption(theme, "Ambient transition");
         LinearLayout.LayoutParams transitionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         transitionParams.topMargin = dp(14);
         group.addView(transitionCaption, transitionParams);
         RadioGroup transitionInput = new RadioGroup(this);
-        radioChoice(theme, transitionInput, "Cut", ScreensaverPolicy.TRANSITION_NONE);
-        radioChoice(theme, transitionInput, "Fade", ScreensaverPolicy.TRANSITION_FADE);
-        radioChoice(theme, transitionInput, "Slide", ScreensaverPolicy.TRANSITION_SLIDE);
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS) {
+            radioChoice(theme, transitionInput, choice[1], choice[0]);
+        }
         checkRadioIfChanged(transitionInput, settings.transition);
         group.addView(transitionInput, matchWrapClose());
         controls.transitionInput = transitionInput;
@@ -10031,16 +10053,15 @@ public final class KioskActivity extends Activity {
         // Fit is the default and what the panel always did: these are somebody's photographs and
         // somebody's licensed work, so nothing is cropped or pulled out of shape unless the
         // operator asks for it.
-        TextView fitCaption = fieldCaption(theme, "How a picture fills the screen");
+        TextView fitCaption = fieldCaption(theme, "Ambient picture fit");
         LinearLayout.LayoutParams fitParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fitParams.topMargin = dp(14);
         group.addView(fitCaption, fitParams);
         RadioGroup fitInput = new RadioGroup(this);
-        radioChoice(theme, fitInput, "Fit", ScreensaverPolicy.FIT_WHOLE);
-        radioChoice(theme, fitInput, "Fill", ScreensaverPolicy.FIT_FILL);
-        radioChoice(theme, fitInput, "Stretch", ScreensaverPolicy.FIT_STRETCH);
-        radioChoice(theme, fitInput, "Actual size", ScreensaverPolicy.FIT_ACTUAL);
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_FIT_WORDS) {
+            radioChoice(theme, fitInput, choice[1], choice[0]);
+        }
         checkRadioIfChanged(fitInput, settings.pictureFit);
         group.addView(fitInput, matchWrapClose());
         controls.fitInput = fitInput;
@@ -10051,30 +10072,29 @@ public final class KioskActivity extends Activity {
         fitNote.setTextSize(12);
         group.addView(fitNote, matchWrapClose());
 
-        CompoundButton shuffle = themedSwitch(theme, "Shuffle the order", settings.shuffle);
+        CompoundButton shuffle = themedSwitch(theme, "Ambient shuffle", settings.shuffle);
         LinearLayout.LayoutParams boxParams = matchWrapClose();
         boxParams.topMargin = dp(8);
         group.addView(shuffle, boxParams);
         controls.shuffleBox = shuffle;
         CompoundButton onePerCycle = themedSwitch(theme,
-                "One picture per cycle", settings.onePerCycle);
+                "Ambient one picture per start", settings.onePerCycle);
         group.addView(onePerCycle, matchWrapClose());
         controls.onePerCycleBox = onePerCycle;
         CompoundButton credit = themedSwitch(theme,
-                "Show the title and credit line", settings.credit);
+                "Ambient credit line", settings.credit);
         group.addView(credit, matchWrapClose());
         controls.creditBox = credit;
 
-        TextView cornerCaption = fieldCaption(theme, "Credit line in the corner");
+        TextView cornerCaption = fieldCaption(theme, "Ambient credit corner");
         LinearLayout.LayoutParams cornerParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cornerParams.topMargin = dp(14);
         group.addView(cornerCaption, cornerParams);
         RadioGroup cornerInput = new RadioGroup(this);
-        radioChoice(theme, cornerInput, "Bottom left", ScreensaverPolicy.CORNER_BOTTOM_LEFT);
-        radioChoice(theme, cornerInput, "Bottom right", ScreensaverPolicy.CORNER_BOTTOM_RIGHT);
-        radioChoice(theme, cornerInput, "Top left", ScreensaverPolicy.CORNER_TOP_LEFT);
-        radioChoice(theme, cornerInput, "Top right", ScreensaverPolicy.CORNER_TOP_RIGHT);
+        for (String[] choice : KioskCommandDispatcher.AMBIENT_CORNER_WORDS) {
+            radioChoice(theme, cornerInput, choice[1], choice[0]);
+        }
         checkRadioIfChanged(cornerInput, settings.creditCorner);
         group.addView(cornerInput, matchWrapClose());
         controls.cornerInput = cornerInput;
@@ -10404,7 +10424,7 @@ public final class KioskActivity extends Activity {
     private void changePlaylists(java.util.function.Function<PlaylistDocument, String> change) {
         PictureLibrary library = PictureLibrary.get(this);
         library.run(() -> {
-            // Under the library's lock with the web admin's and Home Assistant's edits, the same
+            // Under the library's lock with the web admin's and the smart home's edits, the same
             // door every surface uses since 2026-09-19.
             final String said = library.editPlaylists(change);
             library.onMain(() -> {
@@ -12193,7 +12213,8 @@ public final class KioskActivity extends Activity {
         }
         library.run(() -> {
             // One edit under the library's lock, like every other surface's: a Save that loaded,
-            // changed and stored on its own could store over a switch Home Assistant made meanwhile.
+            // changed and stored on its own could store over a switch the smart home made
+            // meanwhile.
             final String said = library.editPlaylists(document -> {
                 String refusal = document.nameProblem(draft.name, draft.id);
                 String id = draft.id;
@@ -12565,12 +12586,15 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         page.addView(pageHeading(theme, "What should this panel show?", "Your way out is set"),
                 matchWrap());
-        Button web = primaryButton(theme, "A web page");
+        // The Dashboard choice's own words; Cameras is not offered, a new panel has none yet.
+        Button web = primaryButton(theme, KioskCommandDispatcher.wordOf(
+                KioskCommandDispatcher.DASHBOARD_WORDS, KioskCommandDispatcher.DASHBOARD_PAGE));
         web.setOnClickListener(view -> {
             openSection = "Dashboard";
             showConfiguration(KioskConfig.load(this));
         });
-        Button app = tonalButton(theme, "An app");
+        Button app = tonalButton(theme, KioskCommandDispatcher.wordOf(
+                KioskCommandDispatcher.DASHBOARD_WORDS, KioskCommandDispatcher.DASHBOARD_APP));
         app.setOnClickListener(view -> showAppLockPage());
         Button later = textButton(theme, "Later");
         later.setOnClickListener(view -> showDashboard(KioskConfig.load(this).dashboardUrl));
@@ -15081,7 +15105,7 @@ public final class KioskActivity extends Activity {
      * The dashboard view of a panel that has no dashboard URL.
      *
      * <p>Reached three ways, all of them "show the dashboard" with nothing to show: the foot button
-     * pressed with the URL box emptied, {@code kiosk.home} or a kiosk restart with nothing stored,
+     * pressed with the URL box emptied, {@code dashboard.open} or a kiosk restart with nothing stored,
      * and the nightly and pressure rebuilds on such a panel. Not reached at boot: an unconfigured
      * panel still opens its settings screen from {@code initializeUserInterface}, because that is
      * where the missing URL gets typed. Before this existed the empty case was a black WebView
@@ -15089,7 +15113,7 @@ public final class KioskActivity extends Activity {
      *
      * <p>It is the dashboard state in every respect but the WebView: fullscreen, lock task held,
      * the escape combinations working from its corners, and the blackout honoured, so
-     * {@code kiosk.stop} and {@code display.visual_off} blank this screen exactly as they blank a
+     * {@code dashboard.stop} and {@code display.visual_off} blank this screen exactly as they blank a
      * dashboard. There is no supervisor, no frozen-page check and no server probe, because there
      * is no page; {@link #destroyWebView} has already cancelled them. Rebuilt on rotation like
      * every native screen.
@@ -15167,14 +15191,14 @@ public final class KioskActivity extends Activity {
             // App lock's app was uninstalled: the robot says so (2026-10-15).
             appGoneShowing = true;
             showParkingPage(KioskConfig.appLockLabelOf(this) + " is not installed",
-                    "Choose another app, or A web page, in the Muralis settings: Dashboard.");
+                    "Choose another app, or Web page, in the Muralis settings: Dashboard.");
             return;
         }
         // App lock: the app is what the panel shows, so a page address is neither needed nor
         // loaded; the screen behind the app is the dark plate the dashboard starts as.
         appLockPlate = appLockOn();
         // Cameras as the main view: the stored dashboard only, so Open once still shows its page.
-        String cameras = appLockPlate ? "" : KioskConfig.dashboardCamerasOf(this);
+        String cameras = appLockPlate ? "" : KioskConfig.shownCamerasOf(this);
         java.util.List<Cameras.Tile> cameraTiles = !cameras.isEmpty() && (url == null
                 || url.trim().isEmpty() || url.equals(KioskConfig.load(this).dashboardUrl))
                 ? KioskService.cameraTiles(this, cameras) : null;
@@ -15262,9 +15286,9 @@ public final class KioskActivity extends Activity {
         // viewport height, and Chromium then reflows and scrolls the focused input into view by itself.
         //
         // Without this, any dashboard with a text field is unusable: reported on the panel while
-        // logging in to Home Assistant, where the login form sat under the keyboard and the page could
-        // not scroll because, as far as it knew, the viewport was still full height. Not a Home
-        // Assistant bug, and not fixable from the page.
+        // logging in to a smart-home dashboard, where the login form sat under the keyboard and the
+        // page could not scroll because, as far as it knew, the viewport was still full height. Not
+        // a bug of the dashboard, and not fixable from the page.
         trackKeyboardInset(dashboard,
                 inset -> dashboard.setPadding(0, 0, 0, inset));
         addScreensaverLayer(dashboard);
@@ -15285,7 +15309,7 @@ public final class KioskActivity extends Activity {
         setContentView(dashboard);
         applyKioskPolicy();
         // Restored, not reset. This used to hard-code false, which is how both maintenance passes
-        // cancelled a deliberate kiosk.stop: the nightly restart came back through here and so did
+        // cancelled a deliberate dashboard.stop: the nightly restart came back through here and so did
         // the pressure rebuild, each lighting up a panel somebody had blanked on purpose.
         kioskStopped = KioskConfig.kioskStopped(this);
         if (kioskStopped) {
@@ -15298,7 +15322,7 @@ public final class KioskActivity extends Activity {
         // from the earlier persisted 1% override, which outlived reboots on its own and came back
         // without its blackout: a panel stranded dark, every brightness command answering
         // accepted while a window attribute outranked the setting they write, and
-        // applied_brightness_percent pinned at 1% so Home Assistant's slider sprang back to it.
+        // applied_brightness_percent pinned at 1% so the smart home's slider sprang back to it.
         // Here the blackout, the dimming and every exit (a tap, display.wake, showing any page)
         // come back together.
         int visualOffBoot = KioskConfig.visualOffBootCount(this);
@@ -15752,7 +15776,7 @@ public final class KioskActivity extends Activity {
             // onDetachedFromWindow to a dead WebView, which crashes or leaks depending on the
             // provider, and the provider here is updated by Play, so "fine today" is not durable.
             // onRenderProcessGone already does it in this order. This path runs on every nightly
-            // recycle, every memory-pressure recycle and every kiosk.restart.
+            // recycle, every memory-pressure recycle and every app.restart.
             ViewGroup parent = webView.getParent() instanceof ViewGroup
                     ? (ViewGroup) webView.getParent() : null;
             if (parent != null) {
@@ -16420,7 +16444,7 @@ public final class KioskActivity extends Activity {
                 web.loadUrl("about:blank");
             } else if (!hidden && cameraDashboardPaused) {
                 java.util.List<Cameras.Tile> tiles = KioskService.cameraTiles(KioskActivity.this,
-                        KioskConfig.dashboardCamerasOf(KioskActivity.this));
+                        KioskConfig.shownCamerasOf(KioskActivity.this));
                 if (!tiles.isEmpty()) {
                     cameraDashboardPaused = false;
                     CameraView.show(web, tiles, KioskConfig.certificatePinsOf(KioskActivity.this),
@@ -16489,7 +16513,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * The page's address changed (a load or a single-page app's own step). Before anybody has
-     * touched it, that is where the dashboard settles: a redirect, a login, Home Assistant's own
+     * touched it, that is where the dashboard settles: a redirect, a login, a dashboard's own
      * step from / to its first view. After a touch, an address other than that one is away.
      */
     private void pageMoved(String url) {
@@ -16596,10 +16620,10 @@ public final class KioskActivity extends Activity {
                 // The NFC switch was flipped on another surface; reader mode is the activity's.
                 applyNfcReader();
                 break;
-            case "kiosk.screenshot":
+            case "panel.screenshot":
                 answerScreenshot();
                 break;
-            case "kiosk.identify":
+            case "panel.identify":
                 showIdentify();
                 break;
             case "applock.changed":
@@ -16608,13 +16632,13 @@ public final class KioskActivity extends Activity {
                 if (AppLock.appUp) {
                     AppLock.bringMuralisForward(this);
                 } else if (inFront && configurationVisible) {
-                    // Dashboard's "The panel shows" and the menu's line follow the change.
+                    // The Dashboard choice and the menu's line follow the change.
                     redrawSettingsSoon();
                 } else if (inFront) {
                     applyKioskPolicy();
-                    // The web page chosen also ends the cameras as the main view.
+                    // The view is drawn again when it changed: the app, the cameras or the page.
                     if (appLockPlate != appLockOn() || (cameraDashboard != null)
-                            == KioskConfig.dashboardCamerasOf(this).isEmpty()) {
+                            == KioskConfig.shownCamerasOf(this).isEmpty()) {
                         showDashboard(KioskConfig.load(this).dashboardUrl);
                     }
                     scheduleLockedApp();
@@ -16626,7 +16650,7 @@ public final class KioskActivity extends Activity {
                 if (!configurationVisible) {
                     showDashboard(KioskConfig.load(this).dashboardUrl);
                 } else if (inFront) {
-                    // Dashboard's "The panel shows" and the menu's line follow the change.
+                    // The Dashboard choice and the menu's line follow the change.
                     redrawSettingsSoon();
                 }
                 break;
@@ -16642,9 +16666,9 @@ public final class KioskActivity extends Activity {
             case "popup.show":
                 showPendingPopup();
                 break;
-            case "kiosk.start":
+            case "dashboard.start":
                 kioskStopped = false;
-                // Persisted (here and in kiosk.stop/set_url) because the flag used to be process
+                // Persisted (here and in dashboard.stop and dashboard.url) because the flag used to be process
                 // state only: the nightly restart and the pressure rebuild both forgot a
                 // deliberate stop and lit the panel back up.
                 KioskConfig.edit(this).kioskStopped(false).apply();
@@ -16659,7 +16683,7 @@ public final class KioskActivity extends Activity {
                     loadPage(pageUrl(KioskConfig.load(this).dashboardUrl));
                 }
                 break;
-            case "kiosk.set_url":
+            case "dashboard.url":
                 kioskStopped = false;
                 KioskConfig.edit(this).kioskStopped(false).apply();
                 liftVisualOff();
@@ -16676,25 +16700,25 @@ public final class KioskActivity extends Activity {
                     loadPage(pageUrl(url));
                 }
                 break;
-            case "kiosk.open_url":
-            case "kiosk.home": {
+            case "dashboard.open_once":
+            case "dashboard.open": {
                 // One shape for both: the only difference is which URL is loaded, and neither
-                // writes anything. kiosk.open_url shows a URL that is deliberately NOT stored, so
+                // writes anything. dashboard.open_once shows a URL that is deliberately NOT stored, so
                 // a restart, a reboot or the nightly clean comes back to the stored dashboard;
-                // kiosk.home is the way back on demand.
-                String target = "kiosk.home".equals(command)
+                // dashboard.open is the way back on demand.
+                String target = "dashboard.open".equals(command)
                         ? KioskConfig.load(this).dashboardUrl
                         : url;
                 if (target == null || target.trim().isEmpty()) {
-                    // Only reachable for kiosk.home on a panel with no dashboard URL. Home is the
+                    // Only reachable for dashboard.open on a panel with no dashboard URL. Home is the
                     // dashboard view, and with nothing stored the dashboard view is the parking
                     // page, so that is where home goes. It used to log a line and do nothing,
                     // which on a panel that had just been blanked on purpose read as a dead command.
                     showDashboard("");
                     break;
                 }
-                // A one-off URL also lifts a kiosk.stop and a visual-off, exactly as
-                // kiosk.set_url does: asking for a page is asking to see it.
+                // A one-off URL also lifts a dashboard.stop and a visual-off, exactly as
+                // dashboard.url does: asking for a page is asking to see it.
                 kioskStopped = false;
                 KioskConfig.edit(this).kioskStopped(false).apply();
                 liftVisualOff();
@@ -16703,7 +16727,7 @@ public final class KioskActivity extends Activity {
                     blackout.setVisibility(View.GONE);
                 }
                 if (webView == null || cameraDashboard != null
-                        || !KioskConfig.dashboardCamerasOf(this).isEmpty()) {
+                        || !KioskConfig.shownCamerasOf(this).isEmpty()) {
                     // Built again: from the cameras a page shown once, or back to the cameras.
                     showDashboard(target);
                 } else {
@@ -16713,17 +16737,17 @@ public final class KioskActivity extends Activity {
                 }
                 // An address shown once is away from the dashboard from the start, so the way
                 // back after a while brings the stored one again.
-                if ("kiosk.open_url".equals(command)) {
+                if ("dashboard.open_once".equals(command)) {
                     pageAway = true;
                     touchedSinceHome = true;
                 }
                 break;
             }
-            case "kiosk.stop":
+            case "dashboard.stop":
                 kioskStopped = true;
                 KioskConfig.edit(this).kioskStopped(true).apply();
                 // A stop supersedes a visual-off: the blackout now belongs to the stop, and the
-                // eventual kiosk.start must come back at system brightness, not at 1%.
+                // eventual dashboard.start must come back at system brightness, not at 1%.
                 liftVisualOff();
                 stopScreensaver("kiosk stopped");
                 resetLoadTracking();
@@ -16734,13 +16758,13 @@ public final class KioskActivity extends Activity {
                     blackout.setVisibility(View.VISIBLE);
                 }
                 break;
-            case "kiosk.reload":
+            case "dashboard.reload":
                 if (webView != null && !appLockPlate) {
                     beginLoad();
                     webView.reload();
                 }
                 break;
-            case "kiosk.restart":
+            case "app.restart":
                 showDashboard(KioskConfig.load(this).dashboardUrl);
                 break;
             case "display.visual_off":
@@ -16869,8 +16893,8 @@ public final class KioskActivity extends Activity {
      * Lifts display.visual_off entirely: the persisted flag and the window dimming, letting the
      * system brightness apply again rather than restoring a remembered level, because which level
      * is correct is the system's business now. Called by display.wake and by everything that
-     * shows a page (kiosk.start/set_url/open_url/home), asking for a page is asking to see it,
-     * the same rule those commands already apply to kiosk.stop; and by kiosk.stop itself, so a
+     * shows a page (dashboard.start, dashboard.url, dashboard.open_once, dashboard.open), asking for a page is asking to see it,
+     * the same rule those commands already apply to dashboard.stop; and by dashboard.stop itself, so a
      * stopped panel that is later started comes back at system brightness rather than at the 1%
      * a visual-off left in force.
      */
@@ -16878,7 +16902,7 @@ public final class KioskActivity extends Activity {
         filmOn = false;
         KioskConfig.recordVisualOffBootCount(this, -1);
         setWindowBrightness(-1);
-        // A wake by tap goes through no dispatcher, so Home Assistant would otherwise learn of it
+        // A wake by tap goes through no dispatcher, so the smart home would otherwise learn of it
         // at the next minute tick; a duplicate from the command paths is coalesced.
         KioskService.publishTelemetrySoon(this);
     }
@@ -17311,7 +17335,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The operator's "How a picture fills the screen" as the platform's own scaling: the whole
+     * The "Ambient picture fit" choice as the platform's own scaling: the whole
      * picture inside the screen, cropped to cover it, pulled out of shape to cover it, or left at
      * the size it was taken (2026-09-23).
      */
@@ -17485,7 +17509,7 @@ public final class KioskActivity extends Activity {
             out.animate().cancel();
             in.setImageBitmap(bitmap);
             in.setTranslationX(0f);
-            if (!animate || ScreensaverPolicy.TRANSITION_NONE.equals(transition)) {
+            if (!animate || ScreensaverPolicy.TRANSITION_CUT.equals(transition)) {
                 in.setAlpha(1f);
                 out.setAlpha(0f);
                 out.setImageDrawable(null);
@@ -17513,7 +17537,7 @@ public final class KioskActivity extends Activity {
             // A cut has nothing to wait for, and the first picture of a cycle has no outgoing
             // credit to keep, so both take the line at once; every other transition hands it over
             // in the animation's end action above.
-            if (firstPicture || !animate || ScreensaverPolicy.TRANSITION_NONE.equals(transition)) {
+            if (firstPicture || !animate || ScreensaverPolicy.TRANSITION_CUT.equals(transition)) {
                 setCaption(credit);
             }
             displayedCredit = credit;
@@ -17695,7 +17719,7 @@ public final class KioskActivity extends Activity {
         homeLoad();
         // loadUrl rather than reload(): reload() re-runs the last request, which after an error is the
         // request that produced the cached error page. loadUrl always asks for the configured
-        // dashboard, which is what kiosk.restart does and is known to work.
+        // dashboard, which is what app.restart does and is known to work.
         loadPage(pageUrl(url));
     }
 
@@ -17861,7 +17885,7 @@ public final class KioskActivity extends Activity {
                         + AppLog.withoutSecrets(request.getUrl().toString()));
                 // An HTTP error status is the *normal* way a dashboard goes away: a reverse proxy
                 // answers 502 or 503 for as long as its backend is restarting, which is exactly what a
-                // Home Assistant update looks like from here.
+                // smart-home server update looks like from here.
                 recordLoadFailure(description);
             }
         }
@@ -17897,7 +17921,7 @@ public final class KioskActivity extends Activity {
 
     /**
      * Surfaces page errors into logcat. Only errors: logging every console message was invaluable
-     * while hunting the cause of a slow dashboard, but a live Home Assistant frontend chatters
+     * while hunting the cause of a slow dashboard, but a live smart-home frontend chatters
      * constantly and writing all of it to logcat is pure overhead once the answer is known.
      */
     private final class KioskWebChromeClient extends WebChromeClient {
@@ -17959,8 +17983,8 @@ public final class KioskActivity extends Activity {
         @Override
         public boolean onConsoleMessage(ConsoleMessage message) {
             if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                // Logged but deliberately NOT recorded as the kiosk's last error: a live Home
-                // Assistant dashboard emits console errors routinely, and letting them fill that
+                // Logged but deliberately NOT recorded as the kiosk's last error: a live smart-home
+                // dashboard emits console errors routinely, and letting them fill that
                 // slot would keep the overlay permanently red and hide a real load failure.
                 Log.w(TAG, "console error: " + AppLog.secretsCut(message.message()) + " ("
                         + AppLog.withoutSecrets(message.sourceId()) + ":" + message.lineNumber() + ")");
@@ -18114,7 +18138,7 @@ public final class KioskActivity extends Activity {
      * Asks the loaded page how light its background is, so the status bar icons can be flipped
      * dark over a light dashboard. Without this an ordinary install showing a light page renders
      * the bar white on white, clock and icons gone, only the battery fill surviving; found on the
-     * Pixel 9 Pro XL over the Home Assistant demo, 2026-08-29.
+     * Pixel 9 Pro XL over a smart-home demo dashboard, 2026-08-29.
      *
      * <p>The page's computed background colour is the honest source: this app does not choose
      * the dashboard's palette and must not guess it from a URL. Body first, the document root as

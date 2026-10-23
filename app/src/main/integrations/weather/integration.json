@@ -1,0 +1,7 @@
+{
+  "id": "weather",
+  "class": "WeatherIntegration",
+  "name": "Weather",
+  "kind": "cloud",
+  "codeowners": ["@Nihvel"]
+}

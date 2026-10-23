@@ -25,47 +25,47 @@ import java.util.Map;
  * <p>Pure, with no Android imports, so the rules are host-tested; IntegrationRunner asks the
  * services, IntegrationSettings stores what the two settings surfaces send.
  */
-final class Integrations {
+public final class Integrations {
     private Integrations() {
     }
 
     /** What a value is, which decides what a rule can ask about it. */
-    enum Type { NUMBER, FLAG, TEXT, TIME }
+    public enum Type { NUMBER, FLAG, TEXT, TIME }
 
     /** Whether a setting is the same on every panel of a fleet or belongs to one panel. */
-    enum Scope { SHARED, PANEL }
+    public enum Scope { SHARED, PANEL }
 
     /** How a setting's box is drawn and what it takes. */
-    enum Kind { TEXT, URL, NUMBER, CHOICE }
+    public enum Kind { TEXT, URL, NUMBER, CHOICE }
 
     /** The longest value a setting takes, secrets included. */
-    static final int MAX_SETTING_LENGTH = 2048;
+    public static final int MAX_SETTING_LENGTH = 2048;
 
     /** One setting of an integration, drawn as a box on both surfaces. */
-    static final class Field {
-        final String id;
-        final String label;
-        final Scope scope;
+    public static final class Field {
+        public final String id;
+        public final String label;
+        public final Scope scope;
         /** Kept in SecretStore, never shown, logged or put in diagnostics or the status. */
-        final boolean secret;
-        final boolean required;
-        final Kind kind;
+        public final boolean secret;
+        public final boolean required;
+        public final Kind kind;
         /** A CHOICE's values, in the order the menu shows them; empty for the other kinds. */
-        final List<String> options;
+        public final List<String> options;
         /** What an empty box means, "" for nothing. */
-        final String fallback;
+        public final String fallback;
         /** A NUMBER's bounds. */
-        final long min;
-        final long max;
+        public final long min;
+        public final long max;
         /** One line under the box, "" for none. */
-        final String hint;
+        public final String hint;
 
-        Field(String id, String label, Scope scope, boolean secret, boolean required) {
+        public Field(String id, String label, Scope scope, boolean secret, boolean required) {
             this(id, label, scope, secret, required, Kind.TEXT, Collections.emptyList(), "", 0, 0,
                     "");
         }
 
-        Field(String id, String label, Scope scope, boolean secret, boolean required, Kind kind,
+        public Field(String id, String label, Scope scope, boolean secret, boolean required, Kind kind,
                 List<String> options, String fallback, long min, long max, String hint) {
             this.id = id;
             this.label = label;
@@ -115,14 +115,14 @@ final class Integrations {
     }
 
     /** One value an integration reports, declared by its definition. */
-    static final class ValueSpec {
-        final String id;
-        final String label;
-        final Type type;
+    public static final class ValueSpec {
+        public final String id;
+        public final String label;
+        public final Type type;
         /** The unit of a number, "" for none. */
-        final String unit;
+        public final String unit;
 
-        ValueSpec(String id, String label, Type type, String unit) {
+        public ValueSpec(String id, String label, Type type, String unit) {
             this.id = id;
             this.label = label;
             this.type = type;
@@ -131,28 +131,41 @@ final class Integrations {
     }
 
     /** One integration as the app ships it. */
-    static final class Definition {
-        final String id;
-        final String name;
+    public static final class Definition {
+        public final String id;
+        public final String name;
         /** The edition it needs: "free", "pro" or "business". */
-        final String edition;
-        final List<Field> fields;
-        final List<ValueSpec> values;
+        public final String edition;
+        public final List<Field> fields;
+        public final List<ValueSpec> values;
         /** How often it asks its service, and never more often than the floor. */
-        final long intervalMs;
-        final long floorMs;
+        public final long intervalMs;
+        public final long floorMs;
         /** One sentence for the Integrations page: what it brings to the panel. */
-        final String summary;
+        public final String summary;
         /** What asks the service; null in a definition used only to describe values. */
-        final Source source;
+        public final Source source;
+        /**
+         * What it brings, so the places that use one kind list only those: {@link #VALUES} for
+         * values the automations and MQTT take, {@link #WEATHER} for the weather set
+         * Ambient's information layer reads, {@link #AGENDA} for a list of events.
+         */
+        public final String capability;
 
-        Definition(String id, String name, String edition, List<Field> fields,
+        public Definition(String id, String name, String edition, List<Field> fields,
                 List<ValueSpec> values, long intervalMs, long floorMs) {
             this(id, name, edition, "", fields, values, intervalMs, floorMs, null);
         }
 
-        Definition(String id, String name, String edition, String summary, List<Field> fields,
+        public Definition(String id, String name, String edition, String summary, List<Field> fields,
                 List<ValueSpec> values, long intervalMs, long floorMs, Source source) {
+            this(id, name, edition, summary, fields, values, intervalMs, floorMs, source, VALUES);
+        }
+
+        public Definition(String id, String name, String edition, String summary,
+                List<Field> fields, List<ValueSpec> values, long intervalMs, long floorMs,
+                Source source, String capability) {
+            this.capability = capability;
             this.id = id;
             this.name = name;
             this.edition = edition;
@@ -164,7 +177,7 @@ final class Integrations {
             this.source = source;
         }
 
-        Field field(String fieldId) {
+        public Field field(String fieldId) {
             for (Field field : fields) {
                 if (field.id.equals(fieldId)) {
                     return field;
@@ -177,18 +190,18 @@ final class Integrations {
          * The values an instance reports. Fixed for most; a definition whose instance chooses the
          * type or unit (a value from a web address) answers per instance.
          */
-        List<ValueSpec> valuesOf(Instance instance) {
+        public List<ValueSpec> valuesOf(Instance instance) {
             return source == null ? values : source.values(this, instance);
         }
 
         /** How often an instance asks: its "interval_s" setting where it has one, never below the floor. */
-        long intervalOf(Instance instance) {
+        public long intervalOf(Instance instance) {
             String seconds = instance.setting(this, "interval_s");
             long ms = seconds.matches("\\d{1,9}") ? Long.parseLong(seconds) * 1000L : intervalMs;
             return Math.max(floorMs, ms);
         }
 
-        ValueSpec value(String valueId) {
+        public ValueSpec value(String valueId) {
             for (ValueSpec spec : values) {
                 if (spec.id.equals(valueId)) {
                     return spec;
@@ -199,14 +212,14 @@ final class Integrations {
     }
 
     /** What an integration's value reads now: typed, perhaps unavailable, with attributes. */
-    static final class Value {
-        final Type type;
-        final boolean available;
-        final double number;
-        final Boolean flag;
-        final String text;
+    public static final class Value {
+        public final Type type;
+        public final boolean available;
+        public final double number;
+        public final Boolean flag;
+        public final String text;
         /** Details for a card or a pop-up (the next meeting's subject and times); never secret. */
-        final Map<String, String> attributes;
+        public final Map<String, String> attributes;
 
         private Value(Type type, boolean available, double number, Boolean flag, String text,
                 Map<String, String> attributes) {
@@ -218,28 +231,28 @@ final class Integrations {
             this.attributes = Collections.unmodifiableMap(new LinkedHashMap<>(attributes));
         }
 
-        static Value of(double number) {
+        public static Value of(double number) {
             return new Value(Type.NUMBER, true, number, null, null, Collections.emptyMap());
         }
 
-        static Value of(boolean flag) {
+        public static Value of(boolean flag) {
             return new Value(Type.FLAG, true, Double.NaN, flag, null, Collections.emptyMap());
         }
 
-        static Value of(String text) {
+        public static Value of(String text) {
             return new Value(Type.TEXT, true, Double.NaN, null, text, Collections.emptyMap());
         }
 
         /** A time as milliseconds since 1970, compared as a number. */
-        static Value at(long epochMs) {
+        public static Value at(long epochMs) {
             return new Value(Type.TIME, true, epochMs, null, null, Collections.emptyMap());
         }
 
-        static Value unavailable(Type type) {
+        public static Value unavailable(Type type) {
             return new Value(type, false, Double.NaN, null, null, Collections.emptyMap());
         }
 
-        Value with(Map<String, String> details) {
+        public Value with(Map<String, String> details) {
             return new Value(type, available, number, flag, text, details);
         }
 
@@ -269,14 +282,14 @@ final class Integrations {
      * {@link #secretName}, never here, so this list can travel in the status and the settings
      * file.
      */
-    static final class Instance {
-        final String id;
-        final String definition;
-        final String name;
-        final boolean enabled;
-        final Map<String, String> settings;
+    public static final class Instance {
+        public final String id;
+        public final String definition;
+        public final String name;
+        public final boolean enabled;
+        public final Map<String, String> settings;
 
-        Instance(String id, String definition, String name, boolean enabled,
+        public Instance(String id, String definition, String name, boolean enabled,
                 Map<String, String> settings) {
             this.id = id;
             this.definition = definition;
@@ -286,7 +299,7 @@ final class Integrations {
         }
 
         /** The setting as stored, or the field's fallback when it is empty. */
-        String setting(Definition definition, String fieldId) {
+        public String setting(Definition definition, String fieldId) {
             String value = settings.getOrDefault(fieldId, "");
             Field field = definition.field(fieldId);
             return value.isEmpty() && field != null ? field.fallback : value;
@@ -297,20 +310,46 @@ final class Integrations {
         }
     }
 
+    public static final String VALUES = "values";
+    public static final String WEATHER = "weather";
+    public static final String AGENDA = "agenda";
+
+    /**
+     * A failed request in words for the status line and the log: the exception's own message
+     * only when it carries no address, since a message like "FileNotFoundException:
+     * https://...?appid=" would put a key from the address where everyone reads it.
+     */
+    /**
+     * The time now for an integration, which names no clock of the platform itself
+     * (scripts/integration-registry.py): settable, so a host test reads a calendar at a fixed
+     * moment.
+     */
+    public static volatile java.util.function.LongSupplier clock = System::currentTimeMillis;
+
+    public static long now() {
+        return clock.getAsLong();
+    }
+
+    public static String why(java.io.IOException failed) {
+        String message = failed.getMessage();
+        return message == null || message.isEmpty() || message.contains("://")
+                || message.contains("?") ? "" : " (" + message + ")";
+    }
+
     /** The SecretStore name of an instance's secret setting. */
     static String secretName(String instance, String fieldId) {
         return "integration_" + instance + "_" + fieldId;
     }
 
     /** What one ask of the service brought: the values, or why there are none this time. */
-    static final class Result {
-        final Map<String, Value> values;
+    public static final class Result {
+        public final Map<String, Value> values;
         /** Why the ask failed, in words for the status line; null when it did not. */
-        final String problem;
+        public final String problem;
         /** How long the service asked to be left alone, 0 for not said. */
-        final long retryAfterMs;
+        public final long retryAfterMs;
         /** The service refused the credentials: polling stops until new ones (reauth). */
-        final boolean credentialsRefused;
+        public final boolean credentialsRefused;
 
         private Result(Map<String, Value> values, String problem, long retryAfterMs,
                 boolean credentialsRefused) {
@@ -320,27 +359,27 @@ final class Integrations {
             this.credentialsRefused = credentialsRefused;
         }
 
-        static Result of(Map<String, Value> values) {
+        public static Result of(Map<String, Value> values) {
             return new Result(values, null, 0, false);
         }
 
-        static Result failed(String problem, long retryAfterMs) {
+        public static Result failed(String problem, long retryAfterMs) {
             return new Result(Collections.emptyMap(), problem, retryAfterMs, false);
         }
 
-        static Result refused(String problem) {
+        public static Result refused(String problem) {
             return new Result(Collections.emptyMap(), problem, 0, true);
         }
     }
 
     /** An answer to one HTTP request, its body already capped. */
-    static final class Response {
-        final int status;
-        final String body;
+    public static final class Response {
+        public final int status;
+        public final String body;
         /** The Retry-After header in milliseconds, 0 when absent or unreadable. */
-        final long retryAfterMs;
+        public final long retryAfterMs;
 
-        Response(int status, String body, long retryAfterMs) {
+        public Response(int status, String body, long retryAfterMs) {
             this.status = status;
             this.body = body;
             this.retryAfterMs = retryAfterMs;
@@ -352,12 +391,12 @@ final class Integrations {
      * the timeouts, the size cap and the redirect checks; a source never opens a connection itself,
      * so every integration is held to the same limits.
      */
-    interface Http {
+    public interface Http {
         Response get(String url, Map<String, String> headers) throws java.io.IOException;
     }
 
     /** What an integration does when it asks its service. Built into the app, never downloaded. */
-    interface Source {
+    public interface Source {
         /** The values this instance reports; most return the definition's own. */
         default List<ValueSpec> values(Definition definition, Instance instance) {
             return definition.values;
@@ -377,7 +416,7 @@ final class Integrations {
      * source's. {@code secretsKept} names the secret fields that already hold a value, so an
      * empty secret box ("keep the current one") passes a required secret.
      */
-    static String check(Definition definition, Map<String, String> settings,
+    public static String check(Definition definition, Map<String, String> settings,
             java.util.Set<String> secretsKept) {
         for (Field field : definition.fields) {
             String value = settings.getOrDefault(field.id, "");
@@ -398,12 +437,12 @@ final class Integrations {
     }
 
     /** The longest name a person gives an instance. */
-    static final int MAX_NAME_LENGTH = 40;
+    public static final int MAX_NAME_LENGTH = 40;
     /** How many instances one panel holds. */
-    static final int MAX_INSTANCES = 30;
+    public static final int MAX_INSTANCES = 30;
 
     /** Why a name is refused, or null. */
-    static String checkName(String name) {
+    public static String checkName(String name) {
         if (name.trim().isEmpty()) {
             return "the name is needed";
         }
@@ -533,12 +572,22 @@ final class Integrations {
     static volatile Lookup lookup = sensorId -> null;
 
     /** The definitions the app ships, by id, in the order the Integrations page lists them. */
-    static final Map<String, Definition> DEFINITIONS = definitions(WebValueIntegration.DEFINITION);
+    public static final Map<String, Definition> DEFINITIONS = definitions(IntegrationRegistry.ALL);
 
+    /**
+     * The definitions by id, from the registry the build generates from the integration folders
+     * (scripts/integration-registry.py). A definition whose id is not its folder's, or an id twice,
+     * stops the app at once rather than shipping an integration nobody can find.
+     */
     private static Map<String, Definition> definitions(Definition... all) {
         Map<String, Definition> byId = new LinkedHashMap<>();
-        for (Definition definition : all) {
-            byId.put(definition.id, definition);
+        for (int index = 0; index < all.length; index++) {
+            Definition definition = all[index];
+            if (!definition.id.equals(IntegrationRegistry.IDS[index])
+                    || byId.put(definition.id, definition) != null) {
+                throw new IllegalStateException("integration " + definition.id
+                        + " does not match its folder " + IntegrationRegistry.IDS[index]);
+            }
         }
         return Collections.unmodifiableMap(byId);
     }
