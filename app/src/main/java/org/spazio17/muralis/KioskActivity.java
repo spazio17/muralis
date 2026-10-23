@@ -8153,8 +8153,22 @@ public final class KioskActivity extends Activity {
     /** The rule the wide Automations page shows in its editor; see showAutomationsPage. */
     private String selectedAutomation = "";
 
+    /**
+     * The open automation editor's rule as it read when the editor opened, untouched, in the
+     * stored spelling; null until the editor is drawn. Carried across a rotation and a change of
+     * shape, so leaving asks "Discard your changes?" only when something differs from it, as the
+     * web asks (admin_automation.js).
+     */
+    private String automationPristine;
+
     private void showAutomationsPage() {
         showAutomationsPage(null);
+    }
+
+    /** A rule's editor opened afresh from the list: what it holds untouched is taken anew. */
+    private void openAutomationEditor(Automations.Rule rule) {
+        automationPristine = null;
+        showAutomationEditor(rule);
     }
 
     /**
@@ -8170,7 +8184,10 @@ public final class KioskActivity extends Activity {
             return;
         }
         currentScreen = this::showAutomationsPage;
-        LinearLayout page = subPage("Automations", this::showSettings);
+        // The arrow and Back lead to the settings; on the wide page they ask first when the
+        // editor beside the list holds changes (set with the editor below).
+        final Runnable[] back = {this::showSettings};
+        LinearLayout page = subPage("Automations", () -> back[0].run());
         automationSwitches.clear();
         KioskTheme theme = currentTheme();
         java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
@@ -8182,9 +8199,22 @@ public final class KioskActivity extends Activity {
                 Automations.Rule stored = Automations.find(rules, selectedAutomation);
                 draft = stored != null ? stored.copy()
                         : rules.isEmpty() ? new Automations.Rule() : rules.get(0).copy();
+                automationPristine = null;
             }
             selectedAutomation = draft.id;
         }
+        final Automations.Rule editingNow = draft;
+        // The wide editor's redraw and what reads its boxes, both set once it is built; the
+        // rows and Add above it use them only when tapped.
+        final Runnable[] again = new Runnable[1];
+        final Runnable[] collectEditor = new Runnable[1];
+        java.util.function.Consumer<Runnable> leaveTo = go -> {
+            if (collectEditor[0] == null) {
+                go.run();
+            } else {
+                leaveAutomationEditor(collectEditor[0], editingNow, go, again[0]);
+            }
+        };
         LinearLayout list = wide ? navPanel(theme) : card(theme, null);
         TextView count = new FlushText(this);
         count.setText(automationsSummary());
@@ -8202,10 +8232,16 @@ public final class KioskActivity extends Activity {
         for (Automations.Rule rule : rules) {
             CompoundButton toggle = automationSwitch(theme, rule);
             Runnable open = wide ? () -> {
-                selectedAutomation = rule.id;
-                hideKeyboardIfShown();
-                redrawInPlace(() -> showAutomationsPage(null));
-            } : () -> showAutomationEditor(rule);
+                // The rule already open keeps what is typed in it.
+                if (rule.id.equals(editingNow.id)) {
+                    return;
+                }
+                leaveTo.accept(() -> {
+                    selectedAutomation = rule.id;
+                    hideKeyboardIfShown();
+                    redrawInPlace(() -> showAutomationsPage(null));
+                });
+            } : () -> openAutomationEditor(rule);
             LinearLayout row = automationRow(theme, rule, toggle, open, !wide);
             if (wide) {
                 addMenuRow(list, theme, row, rule == rules.get(0), rule.id.equals(draft.id), open);
@@ -8213,17 +8249,18 @@ public final class KioskActivity extends Activity {
                 addListRow(list, theme, row, rule == rules.get(0));
             }
         }
-        Button add = tonalButton(theme, "Add");
+        Button add = withPlus(tonalButton(theme, "Add"));
         if (wide) {
-            add.setOnClickListener(view -> {
+            add.setOnClickListener(view -> leaveTo.accept(() -> {
                 hideKeyboardIfShown();
+                automationPristine = null;
                 redrawInPlace(() -> showAutomationsPage(new Automations.Rule()));
-            });
+            }));
             LinearLayout addRow = buttonRow(add);
             addRow.setPadding(dp(12), dp(8), dp(12), dp(4));
             list.addView(addRow, matchWrap());
         } else {
-            add.setOnClickListener(view -> showAutomationEditor(new Automations.Rule()));
+            add.setOnClickListener(view -> openAutomationEditor(new Automations.Rule()));
             list.addView(buttonRow(add), matchWrap());
         }
         LinearLayout.LayoutParams params = matchWrap();
@@ -8231,27 +8268,23 @@ public final class KioskActivity extends Activity {
         if (wide) {
             LinearLayout detail = new LinearLayout(this);
             detail.setOrientation(LinearLayout.VERTICAL);
-            final Automations.Rule editingNow = draft;
-            final Runnable[] again = new Runnable[1];
             Runnable collect = automationEditor(detail, theme, editingNow, true,
                     () -> showAutomationsPage(null), () -> again[0].run());
+            collectEditor[0] = collect;
             again[0] = () -> {
                 collect.run();
                 showAutomationsPage(editingNow);
             };
+            back[0] = () -> leaveTo.accept(this::showSettings);
             currentScreen = again[0];
             page.addView(listDetailPair(list, detail), params);
             setContentView(scrollPage(theme, page));
             // Drawn again for a change elsewhere: what the editor holds stays when it was
             // edited, and the stored rule comes back when it was not, so a rename on the web
             // reaches an editor nobody touched.
-            final String untouched = Automations.store(
-                    java.util.Collections.singletonList(editingNow));
             watchLists("automations", page, () -> redrawInPlace(() -> {
                 collect.run();
-                boolean edited = !untouched.equals(Automations.store(
-                        java.util.Collections.singletonList(editingNow)));
-                showAutomationsPage(edited ? editingNow : null);
+                showAutomationsPage(automationEdited(editingNow) ? editingNow : null);
             }));
             return;
         } else {
@@ -8261,7 +8294,7 @@ public final class KioskActivity extends Activity {
         watchLists("automations", page, () -> redrawInPlace(() -> showAutomationsPage(null)));
     }
 
-    /** The editor as a page of its own: Name, When, Then, Only; nothing is stored until Save. */
+    /** The editor as a page of its own: Name, the Whens, If; nothing is stored until Save. */
     private void showAutomationEditor(Automations.Rule original) {
         if (widthClass() == 2) {
             // Turned back to a wide screen mid-edit: the editor belongs beside the list there.
@@ -8271,16 +8304,20 @@ public final class KioskActivity extends Activity {
         final Automations.Rule draft = original.copy();
         currentScreen = () -> showAutomationEditor(draft);
         boolean fresh = draft.id.isEmpty();
+        final Runnable[] again = new Runnable[1];
+        final Runnable[] collectEditor = new Runnable[1];
+        // The arrow and Back ask first when something was changed, as Cancel does.
         LinearLayout page = subPage(fresh ? "New automation" : "Edit automation",
-                this::showAutomationsPage);
+                () -> leaveAutomationEditor(collectEditor[0], draft, this::showAutomationsPage,
+                        again[0]));
         KioskTheme theme = currentTheme();
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        final Runnable[] again = new Runnable[1];
         Runnable collect = automationEditor(body, theme, draft, false,
                 this::showAutomationsPage, () -> again[0].run());
-        // What is typed rides across a rotation and a Delete backed out of: both rebuild this
-        // page from the draft, so the draft is read from the boxes first.
+        collectEditor[0] = collect;
+        // What is typed rides across a rotation, a change of shape and a Delete backed out of:
+        // each rebuilds this page from the draft, so the draft is read from the boxes first.
         again[0] = () -> {
             collect.run();
             showAutomationEditor(draft);
@@ -8290,33 +8327,370 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
+    /** Whether the open editor's draft, read back from its boxes, differs from how it opened. */
+    private boolean automationEdited(Automations.Rule draft) {
+        return automationPristine != null && !automationPristine.equals(
+                Automations.store(java.util.Collections.singletonList(draft)));
+    }
+
     /**
-     * Builds the editor into {@code into} and returns what reads the boxes back into the draft.
-     * {@code done} follows Save, Cancel and Delete; {@code reopen} rebuilds the editor from the
-     * draft when a Delete is backed out of; {@code stacked} lays the cards in one column, for
-     * the detail pane beside a list.
+     * Leaves the automation editor for {@code go}: at once when nothing was changed, else after
+     * "Discard your changes?", whose Cancel draws the editor again from the draft ({@code stay}).
+     * Back, the arrow, Cancel, another rule and Add come through here; Save and Delete do not.
+     */
+    private void leaveAutomationEditor(Runnable collect, Automations.Rule draft, Runnable go,
+            Runnable stay) {
+        collect.run();
+        if (!automationEdited(draft)) {
+            go.run();
+            return;
+        }
+        hideKeyboardIfShown();
+        showConfirm("Discard your changes?",
+                draft.id.isEmpty() ? "It has not been saved, so nothing will be kept."
+                        : "The changes you made will not be kept.",
+                "Discard", true, go, stay);
+    }
+
+    /**
+     * What every part of one automation editor draws from, looked up once per editor, and what
+     * the parts hand back: the web's EditorData.
+     */
+    private final class AutomationEditorData {
+        final KioskTheme theme;
+        final org.json.JSONObject block = KioskRuntimeState.sensors();
+        final java.util.List<String> cameraNames = new java.util.ArrayList<>();
+        final java.util.List<String> groupNames = new java.util.ArrayList<>();
+        final boolean anyCamera;
+        /** The integrations' values by sensor id, with their names. */
+        final java.util.Map<String, String> values = IntegrationRunner.sensorNames(
+                KioskRuntimeState.integrations());
+        final java.util.Set<String> tagsRead = KioskConfig.seenTags(KioskActivity.this).keySet();
+        /** Each part's reader of its boxes into its When, action or condition. */
+        final java.util.List<Runnable> collects = new java.util.ArrayList<>();
+        /** Applies one change of shape ({@link Automations#applyOp}) and draws the editor again. */
+        final java.util.function.Consumer<String> change;
+
+        AutomationEditorData(KioskTheme theme, java.util.function.Consumer<String> change) {
+            this.theme = theme;
+            this.change = change;
+            for (Cameras.Camera camera : KioskConfig.camerasOf(KioskActivity.this)) {
+                cameraNames.add(camera.name);
+            }
+            for (Cameras.Group group : KioskConfig.cameraGroupsOf(KioskActivity.this)) {
+                groupNames.add(group.name);
+            }
+            anyCamera = !cameraNames.isEmpty() || !groupNames.isEmpty();
+        }
+    }
+
+    /**
+     * Builds the editor into {@code into} and returns what reads the boxes back into the draft:
+     * Name, a card per When with its Then list ("or" between them, and an "or" line with Add
+     * after the last), If, and the buttons; the web's automationEditor. {@code done} follows
+     * Save, Delete and a Cancel that changed nothing or was confirmed; {@code reopen} rebuilds the
+     * editor from the draft, after a change of shape, a Delete or a Cancel backed out of;
+     * {@code stacked} is the detail pane beside a list, level with its top.
      */
     private Runnable automationEditor(LinearLayout into, KioskTheme theme,
             final Automations.Rule draft, boolean stacked, Runnable done, Runnable reopen) {
+        // Callers keep the returned reader across changes of shape, which rebuild the editor's
+        // views in place: it always reads the boxes on screen.
+        final Runnable[] live = new Runnable[1];
+        live[0] = buildAutomationEditor(into, theme, draft, stacked, done, reopen, live);
+        return () -> live[0].run();
+    }
+
+    /** {@link #automationEditor}'s body; {@code live} receives the reader of a rebuilt editor. */
+    private Runnable buildAutomationEditor(LinearLayout into, KioskTheme theme,
+            final Automations.Rule draft, boolean stacked, Runnable done, Runnable reopen,
+            final Runnable[] live) {
         boolean fresh = draft.id.isEmpty();
-        // The editor shows the first When, its first action and the first time condition; any
-        // other When, action or condition of the draft stays as it is and is saved with it.
-        final Automations.When when = Automations.firstWhen(draft);
-        final Automations.Step step = Automations.firstStep(when);
-        Automations.Condition window = Automations.firstTimeCondition(draft);
-        boolean windowed = window != null && window.timed();
-        org.json.JSONObject block = KioskRuntimeState.sensors();
+        // A new rule is drawn with one When, and every When with one action at least.
+        Automations.firstWhen(draft);
+        for (Automations.When when : draft.whens) {
+            Automations.firstStep(when);
+        }
+        final Runnable[] collectAll = new Runnable[1];
+        // Add, Remove and the moves change the draft's shape and rebuild only the editor, not
+        // the page: the list and the scroll stay, where swapping the whole screen read as a
+        // reload. No transition: every view is new, so one fades the editor out to empty and
+        // back. The boxes are read first, each into the part it belongs to, so a moved action
+        // carries what was typed in it; the rebuild waits so the tapped button's ripple can end.
+        AutomationEditorData data = new AutomationEditorData(theme, op -> {
+            hideKeyboardIfShown();
+            collectAll[0].run();
+            Automations.applyOp(draft, op);
+            into.postDelayed(() -> {
+                if (!into.isAttachedToWindow()) {
+                    return;
+                }
+                into.removeAllViews();
+                live[0] = buildAutomationEditor(into, theme, draft, stacked, done, reopen, live);
+            }, 100);
+        });
 
         LinearLayout nameCard = card(theme, null);
         EditText nameInput = themedInput(theme, draft.name, false);
         nameInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         addField(nameCard, theme, "Name", nameInput);
 
-        LinearLayout whenCard = card(theme, "When");
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(nameCard, navRowParams());
+        int whenCount = draft.whens.size();
+        int steps = Automations.stepCount(draft);
+        for (int index = 0; index < whenCount; index++) {
+            LinearLayout.LayoutParams whenParams = matchWrap();
+            if (index > 0) {
+                column.addView(orWord(theme), orParams());
+                whenParams.topMargin = 0;
+            }
+            column.addView(whenCard(data, draft, index, steps), whenParams);
+        }
+        if (whenCount < Automations.MAX_WHENS && steps < Automations.MAX_STEPS) {
+            // On an "or" line after the last When, so it reads as one more When, not as the If
+            // card's below it.
+            LinearLayout more = new LinearLayout(this);
+            more.setOrientation(LinearLayout.HORIZONTAL);
+            more.setGravity(Gravity.CENTER);
+            more.addView(orWord(theme));
+            Button addWhen = withPlus(textButton(theme, "Add"));
+            addWhen.setContentDescription("Add a When");
+            addWhen.setOnClickListener(view -> data.change.accept("add_when"));
+            LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            addParams.leftMargin = dp(4);
+            more.addView(addWhen, addParams);
+            column.addView(more, orParams());
+        }
+        column.addView(ifCard(data, draft), matchWrap());
+        LinearLayout.LayoutParams columnParams = matchWrap();
+        columnParams.topMargin = stacked ? 0 : dp(16);
+        into.addView(column, columnParams);
+
+        Runnable collect = () -> {
+            draft.name = nameInput.getText().toString();
+            for (Runnable part : data.collects) {
+                part.run();
+            }
+        };
+        collectAll[0] = collect;
+        Button cancel = textButton(theme, "Cancel");
+        cancel.setOnClickListener(view -> leaveAutomationEditor(collect, draft, done, reopen));
+        // Why a save was refused, in red over the buttons, by the controls as the web page has
+        // its notice: a toast was too quick to read (review, 2026-10-01), and under the buttons
+        // it stood half below the screen's edge. Brought into sight with the buttons once it is
+        // laid out, should the page have been scrolled away from them.
+        TextView refused = new FlushText(this);
+        refused.setTextColor(theme.bad);
+        refused.setTextSize(12);
+        refused.setVisibility(View.GONE);
+        final View[] buttonRow = new View[1];
+        java.util.function.Consumer<String> refuse = why -> {
+            refused.setText("Not saved: " + why + ".");
+            refused.setVisibility(View.VISIBLE);
+            refused.post(() -> refused.requestRectangleOnScreen(new android.graphics.Rect(0, 0,
+                    refused.getWidth(), buttonRow[0].getBottom() - refused.getTop()), false));
+        };
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            collect.run();
+            String problem = Automations.validate(draft, Sensors.names());
+            if (problem != null) {
+                refuse.accept(problem);
+                return;
+            }
+            synchronized (Automations.STORE) {
+                java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                Automations.Rule stored = Automations.find(rules, draft.id);
+                if (stored == null) {
+                    if (!draft.id.isEmpty()) {
+                        refuse.accept("that automation was deleted");
+                        return;
+                    }
+                    if (rules.size() >= Automations.MAX_RULES) {
+                        refuse.accept("there are already " + Automations.MAX_RULES
+                                + " automations");
+                        return;
+                    }
+                    draft.id = Automations.newId(rules);
+                    rules.add(draft);
+                } else {
+                    // The switch beside the editor may have been flipped while it was open, on
+                    // any surface: the stored state stands, the editor never carried it.
+                    draft.enabled = stored.enabled;
+                    rules.set(rules.indexOf(stored), draft);
+                }
+                String tooMuch = Automations.checkList(rules);
+                if (tooMuch != null) {
+                    if (stored == null) {
+                        // Still a new rule, as for any other refusal.
+                        draft.id = "";
+                    }
+                    refuse.accept(tooMuch);
+                    return;
+                }
+                KioskConfig.storeAutomations(this, rules);
+            }
+            selectedAutomation = draft.id;
+            KioskService.refreshSensorsSoon(this);
+            done.run();
+        });
+        Button delete = null;
+        if (!fresh) {
+            delete = dangerOutlinedButton(theme, "Delete");
+            delete.setOnClickListener(view -> {
+                // The stored name, not the draft's: what is typed in the Name box and never
+                // saved is not what is deleted.
+                Automations.Rule named = Automations.find(KioskConfig.automationsOf(this), draft.id);
+                confirmDelete(named != null ? named.name : draft.name, null, () -> {
+                synchronized (Automations.STORE) {
+                    java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
+                    Automations.Rule stored = Automations.find(rules, draft.id);
+                    if (stored != null) {
+                        rules.remove(stored);
+                        KioskConfig.storeAutomations(this, rules);
+                    }
+                }
+                KioskService.refreshSensorsSoon(this);
+                done.run();
+            }, reopen);
+            });
+        }
+        // At the left like the other editors' refusal lines, 16 dp under the cards.
+        LinearLayout.LayoutParams refusedParams = matchWrapClose();
+        refusedParams.topMargin = dp(16);
+        refusedParams.leftMargin = dp(16);
+        into.addView(refused, refusedParams);
+        buttonRow[0] = editorButtonRow(delete, cancel, save);
+        into.addView(buttonRow[0], matchWrap());
+        // The draft as the boxes read untouched, once per editor opened: what leaving compares.
+        collect.run();
+        if (automationPristine == null) {
+            automationPristine = Automations.store(java.util.Collections.singletonList(draft));
+        }
+        return collect;
+    }
+
+    /** The "or" between two When cards and before the Add of one more: the web's p.or. */
+    private TextView orWord(KioskTheme theme) {
+        TextView or = new FlushText(this);
+        or.setText("or");
+        or.setTextColor(theme.subtext);
+        or.setTextSize(14);
+        or.setTypeface(MEDIUM);
+        or.setGravity(Gravity.CENTER);
+        return or;
+    }
+
+    /** An "or" line's place: 8 dp above and below, as the web's. */
+    private LinearLayout.LayoutParams orParams() {
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(8);
+        params.bottomMargin = dp(8);
+        return params;
+    }
+
+    /**
+     * The box an action or a condition stands in inside its card: a dashed outline with a 12 dp
+     * corner, the web's .step and .cond. Its first field's own 16 dp and the 4 dp here make the
+     * web's 20.
+     */
+    private LinearLayout dashedBox(KioskTheme theme) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable outline =
+                theme.panel(Color.TRANSPARENT, dp(12));
+        outline.setStroke(dp(1), theme.border, dp(4), dp(4));
+        box.setBackground(outline);
+        box.setPadding(dp(12), dp(4), dp(12), dp(8));
+        return box;
+    }
+
+    /** A Move up, Move down or Remove icon button, greyed and inert where it cannot act. */
+    private ImageButton opIcon(AutomationEditorData data, int drawable, String label, String op,
+            boolean enabled) {
+        ImageButton button = iconButton(data.theme, drawable, label);
+        button.setEnabled(enabled);
+        button.setAlpha(enabled ? 1f : 0.38f);
+        button.setOnClickListener(view -> data.change.accept(op));
+        return button;
+    }
+
+    /** A sensor a rule names that this device does not offer, as its menu shows it. */
+    private static String missingSensorName(String sensor) {
+        Sensors.Def missing = Sensors.byId(sensor);
+        return (missing == null ? sensor : missing.name) + " (not on this device)";
+    }
+
+    /** A level as typed: blank or not a number is none (NaN), which Save refuses by name. */
+    private static double typedLevel(String typed) {
+        String level = typed.trim();
+        try {
+            // A German keyboard offers the comma on a number box.
+            return level.isEmpty() ? Double.NaN : Double.parseDouble(level.replace(',', '.'));
+        } catch (NumberFormatException notANumber) {
+            return Double.NaN;
+        }
+    }
+
+    /**
+     * A time box of a time condition, as the web reads it: empty is no time (the whole day), and
+     * anything that is not a time of day a minute past the day, which Save refuses by name rather
+     * than reading it as the whole day.
+     */
+    private static int conditionTime(String typed) {
+        if (typed.trim().isEmpty()) {
+            return -1;
+        }
+        int minutes = Automations.minutesOf(typed);
+        return minutes < 0 ? 24 * 60 + 1 : minutes;
+    }
+
+    /**
+     * One When as its card, the web's whenBlock: the bolt and "When" ("When (any of these)" on
+     * the first of several, each of which has a Remove), the sensor and its event with what the
+     * event needs, then its actions in order under "Then" and the Add of one more.
+     */
+    private View whenCard(AutomationEditorData data, Automations.Rule draft, int index,
+            int steps) {
+        KioskTheme theme = data.theme;
+        Automations.When when = draft.whens.get(index);
+        int whenCount = draft.whens.size();
+        LinearLayout whenCard = card(theme, null);
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(partGlyph(theme, R.drawable.ic_sensor_bolt),
+                new LinearLayout.LayoutParams(dp(20), dp(20)));
+        TextView title = cardTitle(theme, whenCount > 1 && index == 0 ? "When (any of these)"
+                : "When");
+        title.setPadding(0, 0, 0, 0);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        titleParams.leftMargin = dp(8);
+        head.addView(title, titleParams);
+        if (whenCount > 1) {
+            ImageButton remove = opIcon(data, R.drawable.ic_remove_circle, "Remove",
+                    "remove_when:" + index, true);
+            // Into the card's padding, so the 48 dp target does not make the heading taller.
+            LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            removeParams.topMargin = -dp(12);
+            removeParams.bottomMargin = -dp(12);
+            removeParams.rightMargin = -dp(12);
+            head.addView(remove, removeParams);
+        }
+        LinearLayout.LayoutParams headParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        headParams.bottomMargin = dp(4);
+        whenCard.addView(head, headParams);
+
         // A menu, like the web page's: up to fourteen sensors, see MenuField.
         MenuField sensorMenu = new MenuField(whenCard, theme, "Sensor");
         for (Sensors.Def def : Sensors.ALL) {
-            org.json.JSONObject one = block.optJSONObject(def.id);
+            org.json.JSONObject one = data.block.optJSONObject(def.id);
             if (!Automations.EVENTS.containsKey(def.id) || one == null
                     || !one.optBoolean("available")) {
                 continue;
@@ -8326,21 +8700,11 @@ public final class KioskActivity extends Activity {
         // The clock, which every panel has.
         sensorMenu.add(Automations.TIME_NAME, Automations.TIME);
         // A camera's event, once there is a camera or a group to wait for.
-        java.util.List<String> cameraNames = new java.util.ArrayList<>();
-        for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
-            cameraNames.add(camera.name);
-        }
-        java.util.List<String> groupNames = new java.util.ArrayList<>();
-        for (Cameras.Group group : KioskConfig.cameraGroupsOf(this)) {
-            groupNames.add(group.name);
-        }
-        boolean anyCamera = !cameraNames.isEmpty() || !groupNames.isEmpty();
-        if (anyCamera || Automations.CAMERAS.equals(when.sensor)) {
+        if (data.anyCamera || Automations.CAMERAS.equals(when.sensor)) {
             sensorMenu.add(Automations.CAMERAS_NAME, Automations.CAMERAS);
         }
         // The integrations' values, each a sensor of its own.
-        for (java.util.Map.Entry<String, String> value : IntegrationRunner.sensorNames(
-                KioskRuntimeState.integrations()).entrySet()) {
+        for (java.util.Map.Entry<String, String> value : data.values.entrySet()) {
             java.util.List<Automations.Event> list = Automations.events(value.getKey());
             if (list != null && !list.isEmpty()) {
                 sensorMenu.add(value.getValue(), value.getKey());
@@ -8349,9 +8713,7 @@ public final class KioskActivity extends Activity {
         if (!when.sensor.isEmpty() && !sensorMenu.values.contains(when.sensor)) {
             // A rule on a sensor this device lacks keeps it: opening and saving the rule for
             // its name must not move it to the first sensor in the menu (review, 2026-10-01).
-            Sensors.Def missing = Sensors.byId(when.sensor);
-            sensorMenu.add((missing == null ? when.sensor : missing.name)
-                    + " (not on this device)", when.sensor);
+            sensorMenu.add(missingSensorName(when.sensor), when.sensor);
         }
         // Under the sensors, for a sensor whose test found it not running while the display
         // sleeps: the rule cannot run then, and the black film is what keeps it running.
@@ -8389,18 +8751,18 @@ public final class KioskActivity extends Activity {
         // offered by its id, newest first.
         MenuField tagMenu = new MenuField(whenCard, theme, "Tag");
         tagMenu.add("Any tag", "");
-        java.util.Set<String> tagsRead = KioskConfig.seenTags(this).keySet();
-        for (String tag : tagsRead) {
+        for (String tag : data.tagsRead) {
             tagMenu.add(tag, tag);
         }
-        if (!when.match.isEmpty() && !tagsRead.contains(when.match)) {
+        if (!when.match.isEmpty() && !data.tagsRead.contains(when.match)) {
             tagMenu.add(when.match, when.match);
         }
         tagMenu.select(when.match);
         View tagBox = (View) tagMenu.box.getParent();
         // The camera or group a camera's event names, in place of the tag.
-        MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group", cameraNames,
-                groupNames, Automations.CAMERAS.equals(when.sensor) ? when.match : "");
+        MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group",
+                data.cameraNames, data.groupNames,
+                Automations.CAMERAS.equals(when.sensor) ? when.match : "");
         View cameraBox = (View) cameraMenu.box.getParent();
         // The text an integration's value must become ("Busy"), upper and lower case alike.
         EditText textInput = proseInput(theme,
@@ -8483,17 +8845,78 @@ public final class KioskActivity extends Activity {
         sensorMenu.select(when.sensor.isEmpty() ? "proximity" : when.sensor);
         paintSensor.run();
 
-        LinearLayout thenCard = card(theme, "Then");
-        // A menu, like the web page's: seven actions, see MenuField.
-        MenuField actionMenu = new MenuField(thenCard, theme, "Action");
+        TextView thenHeading = new FlushText(this);
+        thenHeading.setText(when.then.size() > 1 ? "Then, in order" : "Then");
+        thenHeading.setTextColor(theme.subtext);
+        thenHeading.setTextSize(14);
+        thenHeading.setTypeface(MEDIUM);
+        LinearLayout thenHead = partHead(theme, R.drawable.ic_then, thenHeading);
+        LinearLayout.LayoutParams thenParams = matchWrap();
+        thenParams.topMargin = dp(24);
+        whenCard.addView(thenHead, thenParams);
+        for (int step = 0; step < when.then.size(); step++) {
+            LinearLayout.LayoutParams stepParams = matchWrap();
+            stepParams.topMargin = dp(12);
+            whenCard.addView(stepRow(data, index, step, when.then.get(step), when.then.size()),
+                    stepParams);
+        }
+        if (when.then.size() < Automations.MAX_STEPS_PER_WHEN && steps < Automations.MAX_STEPS) {
+            Button addAction = withPlus(textButton(theme, "Add"));
+            addAction.setContentDescription("Add an action");
+            addAction.setOnClickListener(view -> data.change.accept("add_action:" + index));
+            whenCard.addView(buttonRow(addAction), matchWrapClose());
+        }
+
+        data.collects.add(() -> {
+            when.sensor = sensorMenu.value();
+            View event = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
+            when.event = event == null ? "" : (String) event.getTag();
+            String level = levelInput.getText().toString();
+            if (Automations.TIME.equals(when.sensor)) {
+                int at = Automations.minutesOf(level);
+                when.level = at < 0 || at >= 24 * 60 ? Double.NaN : at;
+            } else {
+                when.level = typedLevel(level);
+            }
+            String minutes = minutesInput.getText().toString().trim();
+            // Blank is "at once"; anything else that is not a number is refused by validate,
+            // as the web refuses it, rather than quietly meaning 0.
+            when.minutes = minutes.isEmpty() ? 0
+                    : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
+            when.match = (Automations.CAMERAS.equals(when.sensor) ? cameraMenu.value()
+                    : Integrations.isSensorId(when.sensor) ? textInput.getText().toString()
+                    : tagMenu.value()).trim();
+            // Blank is none, as on the web.
+            String cooldown = cooldownInput.getText().toString().trim();
+            when.cooldown = cooldown.isEmpty() ? 0
+                    : cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;
+        });
+        return whenCard;
+    }
+
+    /**
+     * One action of a When in its dashed box, the web's stepRow: the Action menu and what the
+     * action needs. With several actions, Move up, Move down (greyed at the ends) and Remove,
+     * beside the menu from 600 dp and on a row of their own under the box's fields below that.
+     */
+    private View stepRow(AutomationEditorData data, int whenIndex, int index,
+            Automations.Step step, int count) {
+        KioskTheme theme = data.theme;
+        LinearLayout row = dashedBox(theme);
+        boolean beside = count > 1 && getResources().getConfiguration().screenWidthDp >= 600;
+        LinearLayout menuRow = new LinearLayout(this);
+        menuRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout menuColumn = new LinearLayout(this);
+        menuColumn.setOrientation(LinearLayout.VERTICAL);
+        menuRow.addView(menuColumn, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(menuRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // A menu, like the web page's: seventeen actions, see MenuField.
+        MenuField actionMenu = new MenuField(menuColumn, theme, "Action");
         for (Automations.Action action : Automations.ACTIONS) {
             // Show a camera once there is one to show.
-            if (action.id.equals("camera") && !anyCamera && !"camera".equals(step.action)) {
-                continue;
-            }
-            // A Wait needs an action after it, which this editor of one action cannot add: it
-            // is offered only to a rule whose first action already is one, so that is kept.
-            if (Automations.waits(action.id) && !Automations.waits(step.action)) {
+            if (action.id.equals("camera") && !data.anyCamera && !"camera".equals(step.action)) {
                 continue;
             }
             actionMenu.add(action.label, action.id);
@@ -8502,35 +8925,55 @@ public final class KioskActivity extends Activity {
         EditText argumentInput = themedInput(theme, step.argument, false);
         argumentInput.setInputType(InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        TextView argumentCaption = addField(thenCard, theme, "Sentence", argumentInput);
+        TextView argumentCaption = addField(row, theme, "Sentence", argumentInput);
         View argumentBox = (View) argumentInput.getParent();
-        MenuField targetMenu = cameraTargetMenu(thenCard, theme, "Camera or group", cameraNames,
-                groupNames, "camera".equals(step.action) ? step.argument : "");
+        MenuField targetMenu = cameraTargetMenu(row, theme, "Camera or group", data.cameraNames,
+                data.groupNames, "camera".equals(step.action) ? step.argument : "");
         View targetBox = (View) targetMenu.box.getParent();
         // Pop-up or full screen, as the editor's other choices: two radios.
         RadioGroup showGroup = new RadioGroup(this);
         radioChoice(theme, showGroup, "Pop-up", Automations.SHOW_POPUP);
         radioChoice(theme, showGroup, "Full screen", Automations.SHOW_FULLSCREEN);
         checkRadioIfChanged(showGroup, step.show);
-        thenCard.addView(showGroup, matchWrapClose());
+        row.addView(showGroup, matchWrapClose());
         EditText secondsInput = themedInput(theme, Integer.toString(step.seconds), false);
         secondsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        TextView secondsCaption = addField(thenCard, theme, "For (seconds, 0 = until touched)",
-                secondsInput);
+        TextView secondsCaption = addField(row, theme, POPUP_SECONDS, secondsInput);
         View secondsBox = (View) secondsInput.getParent();
+        // A Wait's length is the same box, with the timer glyph at its start, as on the web.
+        android.graphics.drawable.Drawable timer = getDrawable(R.drawable.ic_timer).mutate();
+        timer.setTint(theme.subtext);
+        timer.setBounds(0, 0, dp(24), dp(24));
         CompoundButton chimeSwitch = themedSwitch(theme, "Chime", step.chime);
-        thenCard.addView(chimeSwitch, matchWrap());
+        row.addView(chimeSwitch, matchWrap());
+        if (count > 1) {
+            String op = whenIndex + ":" + index;
+            View[] moves = {
+                opIcon(data, R.drawable.ic_arrow_up, "Move up", "up:" + op, index > 0),
+                opIcon(data, R.drawable.ic_arrow_down, "Move down", "down:" + op,
+                        index < count - 1),
+                opIcon(data, R.drawable.ic_remove_circle, "Remove", "remove_action:" + op, true)};
+            if (beside) {
+                addBesideBox(menuRow, moves);
+            } else {
+                LinearLayout moveRow = new LinearLayout(this);
+                moveRow.setOrientation(LinearLayout.HORIZONTAL);
+                moveRow.setGravity(Gravity.END);
+                for (View move : moves) {
+                    moveRow.addView(move);
+                }
+                LinearLayout.LayoutParams moveParams = matchWrapClose();
+                // The last glyph lined up with the box's fields, its target into the padding.
+                moveParams.rightMargin = -dp(8);
+                row.addView(moveRow, moveParams);
+            }
+        }
         Runnable paintShows = () -> {
-            boolean fullscreen = "camera".equals(actionMenu.value())
-                    && showGroup.getCheckedRadioButtonId() != View.NO_ID
-                    && Automations.SHOW_FULLSCREEN.equals(showGroup.findViewById(
-                            showGroup.getCheckedRadioButtonId()).getTag());
-            // A Wait's length is the same box.
-            secondsCaption.setText(Automations.waits(actionMenu.value()) ? "Seconds"
-                    : fullscreen ? "For (seconds, 0 = until closed)"
-                    : "For (seconds, 0 = until touched)");
+            boolean wait = Automations.waits(actionMenu.value());
+            secondsCaption.setText(wait ? "Seconds" : POPUP_SECONDS);
+            secondsInput.setCompoundDrawablesRelative(wait ? timer : null, null, null, null);
+            secondsInput.setCompoundDrawablePadding(dp(12));
         };
-        showGroup.setOnCheckedChangeListener((group, id) -> paintShows.run());
         Runnable paintAction = () -> {
             Automations.Action action = Automations.action(actionMenu.value());
             boolean camera = action != null && action.id.equals("camera");
@@ -8545,7 +8988,10 @@ public final class KioskActivity extends Activity {
             argumentBox.setVisibility(argument ? View.VISIBLE : View.GONE);
             if (argument) {
                 argumentCaption.setText(action.argumentLabel);
-                argumentInput.setInputType(action.id.equals("play_sound")
+                // The address keyboard for an address, as the web's box has it.
+                boolean address = action.id.equals("play_sound") || action.id.equals("open_page")
+                        || action.id.equals("call_url");
+                argumentInput.setInputType(address
                         ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                         : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
             }
@@ -8553,174 +8999,381 @@ public final class KioskActivity extends Activity {
         actionMenu.onChange = paintAction;
         paintAction.run();
 
-        LinearLayout onlyCard = card(theme, "If");
-        CompoundButton onlySwitch = themedSwitch(theme, "Between these times", windowed);
-        onlyCard.addView(onlySwitch, matchWrap());
-        // The time keyboard, as the web's time fields have; a full keyboard for "07:00" was
-        // the wrong tool (review, 2026-10-01).
-        EditText fromInput = themedInput(theme,
-                windowed ? Automations.clock(window.from) : "07:00", false);
-        fromInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
-        addField(onlyCard, theme, "From", fromInput);
-        View fromBox = (View) fromInput.getParent();
-        EditText toInput = themedInput(theme,
-                windowed ? Automations.clock(window.to) : "22:00", false);
-        toInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
-        addField(onlyCard, theme, "To", toInput);
-        View toBox = (View) toInput.getParent();
-        Runnable paintOnly = () -> {
-            fromBox.setVisibility(onlySwitch.isChecked() ? View.VISIBLE : View.GONE);
-            toBox.setVisibility(onlySwitch.isChecked() ? View.VISIBLE : View.GONE);
-        };
-        onlySwitch.setOnCheckedChangeListener((button, checked) -> paintOnly.run());
-        paintOnly.run();
-
-        LinearLayout.LayoutParams gridParams = matchWrap();
-        gridParams.topMargin = stacked ? 0 : dp(16);
-        java.util.List<View> cards = java.util.Arrays.<View>asList(
-                nameCard, whenCard, thenCard, onlyCard);
-        if (stacked) {
-            // The first card level with the top of the list beside it, the rest 16 dp apart.
-            LinearLayout column = new LinearLayout(this);
-            column.setOrientation(LinearLayout.VERTICAL);
-            for (View card : cards) {
-                column.addView(card, column.getChildCount() == 0 ? navRowParams() : matchWrap());
-            }
-            into.addView(column, gridParams);
-        } else {
-            into.addView(cardGrid(theme, cards), gridParams);
-        }
-
-        Runnable collect = () -> {
-            draft.name = nameInput.getText().toString();
-            when.sensor = sensorMenu.value();
-            View event = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
-            when.event = event == null ? "" : (String) event.getTag();
-            String level = levelInput.getText().toString().trim();
-            if (Automations.TIME.equals(when.sensor)) {
-                int at = Automations.minutesOf(level);
-                level = at < 0 || at >= 24 * 60 ? "" : Integer.toString(at);
-            }
-            try {
-                // A German keyboard offers the comma on a number box.
-                when.level = level.isEmpty() ? Double.NaN
-                        : Double.parseDouble(level.replace(',', '.'));
-            } catch (NumberFormatException notANumber) {
-                when.level = Double.NaN;
-            }
-            String minutes = minutesInput.getText().toString().trim();
-            // Blank is "at once"; anything else that is not a number is refused by validate,
-            // as the web refuses it, rather than quietly meaning 0.
-            when.minutes = minutes.isEmpty() ? 0
-                    : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
-            when.match = Automations.CAMERAS.equals(when.sensor) ? cameraMenu.value()
-                    : Integrations.isSensorId(when.sensor) ? textInput.getText().toString()
-                    : tagMenu.value();
-            String cooldown = cooldownInput.getText().toString().trim();
-            when.cooldown = cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;
+        data.collects.add(() -> {
             step.action = actionMenu.value();
             step.argument = "camera".equals(step.action) ? targetMenu.value()
                     : argumentInput.getText().toString();
+            // Blank is the default, as on the web; anything else not a number is refused.
             String seconds = secondsInput.getText().toString().trim();
-            step.seconds = seconds.matches("\\d{1,4}") ? Integer.parseInt(seconds) : -1;
+            step.seconds = seconds.isEmpty() ? Popup.DEFAULT_SECONDS
+                    : seconds.matches("\\d{1,4}") ? Integer.parseInt(seconds) : -1;
             step.chime = chimeSwitch.isChecked();
             View shown = showGroup.findViewById(showGroup.getCheckedRadioButtonId());
             step.show = shown == null ? Automations.SHOW_POPUP : (String) shown.getTag();
-            int from = Automations.minutesOf(fromInput.getText().toString());
-            int to = Automations.minutesOf(toInput.getText().toString());
-            if (!onlySwitch.isChecked()) {
-                Automations.setWindow(draft, -1, -1);
-            } else if (from >= 0 && to >= 0) {
-                Automations.setWindow(draft, from, to);
-            }
-            // Times not like 07:00 leave the window as it was; Save refuses them.
-        };
-        Button cancel = textButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> done.run());
-        // Why a save was refused, in red under the buttons, where the web page has it: a
-        // toast was too quick to read (review, 2026-10-01).
-        TextView refused = new FlushText(this);
-        refused.setTextColor(theme.bad);
-        refused.setTextSize(12);
-        refused.setVisibility(View.GONE);
-        java.util.function.Consumer<String> refuse = why -> {
-            refused.setText("Not saved: " + why + ".");
-            refused.setVisibility(View.VISIBLE);
-        };
-        Button save = primaryButton(theme, "Save");
-        save.setOnClickListener(view -> {
-            collect.run();
-            if (onlySwitch.isChecked()
-                    && (Automations.minutesOf(fromInput.getText().toString()) < 0
-                            || Automations.minutesOf(toInput.getText().toString()) < 0)) {
-                refuse.accept("the times must be like 07:00");
-                return;
-            }
-            String problem = Automations.validate(draft, Sensors.names());
-            if (problem != null) {
-                refuse.accept(problem);
-                return;
-            }
-            synchronized (Automations.STORE) {
-                java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
-                Automations.Rule stored = Automations.find(rules, draft.id);
-                if (stored == null) {
-                    if (!draft.id.isEmpty()) {
-                        refuse.accept("that automation was deleted");
-                        return;
-                    }
-                    if (rules.size() >= Automations.MAX_RULES) {
-                        refuse.accept("there are already " + Automations.MAX_RULES
-                                + " automations");
-                        return;
-                    }
-                    draft.id = Automations.newId(rules);
-                    rules.add(draft);
-                } else {
-                    // The switch beside the editor may have been flipped while it was open, on
-                    // any surface: the stored state stands, the editor never carried it.
-                    draft.enabled = stored.enabled;
-                    rules.set(rules.indexOf(stored), draft);
-                }
-                String tooMuch = Automations.checkList(rules);
-                if (tooMuch != null) {
-                    if (stored == null) {
-                        // Still a new rule, as for any other refusal.
-                        draft.id = "";
-                    }
-                    refuse.accept(tooMuch);
-                    return;
-                }
-                KioskConfig.storeAutomations(this, rules);
-            }
-            selectedAutomation = draft.id;
-            KioskService.refreshSensorsSoon(this);
-            done.run();
         });
-        Button delete = null;
-        if (!fresh) {
-            delete = dangerOutlinedButton(theme, "Delete");
-            delete.setOnClickListener(view -> {
-                // The stored name, not the draft's: what is typed in the Name box and never
-                // saved is not what is deleted.
-                Automations.Rule named = Automations.find(KioskConfig.automationsOf(this), draft.id);
-                confirmDelete(named != null ? named.name : draft.name, null, () -> {
-                synchronized (Automations.STORE) {
-                    java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
-                    Automations.Rule stored = Automations.find(rules, draft.id);
-                    if (stored != null) {
-                        rules.remove(stored);
-                        KioskConfig.storeAutomations(this, rules);
+        return row;
+    }
+
+    /** An automation part's glyph (the When's bolt, Then's arrow, If's funnel), in the accent. */
+    private ImageView partGlyph(KioskTheme theme, int drawable) {
+        ImageView glyph = new ImageView(this);
+        glyph.setImageResource(drawable);
+        glyph.setImageTintList(ColorStateList.valueOf(theme.accent));
+        glyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return glyph;
+    }
+
+    /** A part's heading with its glyph before it, as the web draws When, Then and If. */
+    private LinearLayout partHead(KioskTheme theme, int drawable, TextView title) {
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(partGlyph(theme, drawable), new LinearLayout.LayoutParams(dp(20), dp(20)));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        titleParams.leftMargin = dp(8);
+        head.addView(title, titleParams);
+        return head;
+    }
+
+    /**
+     * The If card, the web's ifCard: "All of these" or "Any of these" once there are two
+     * conditions, a row per condition, and Add. The rule runs only when they hold as a When
+     * starts it.
+     */
+    private View ifCard(AutomationEditorData data, Automations.Rule draft) {
+        KioskTheme theme = data.theme;
+        LinearLayout ifCard = card(theme, null);
+        TextView ifTitle = cardTitle(theme, "If");
+        ifTitle.setPadding(0, 0, 0, 0);
+        ifCard.addView(partHead(theme, R.drawable.ic_if, ifTitle), matchWrap());
+        int count = draft.conditions.size();
+        RadioGroup join = new RadioGroup(this);
+        if (count > 1) {
+            radioChoice(theme, join, "All of these", "all");
+            radioChoice(theme, join, "Any of these", "any");
+            checkRadioIfChanged(join, draft.anyCondition ? "any" : "all");
+            ifCard.addView(join, matchWrapClose());
+        }
+        for (int index = 0; index < count; index++) {
+            LinearLayout.LayoutParams rowParams = matchWrap();
+            rowParams.topMargin = dp(12);
+            ifCard.addView(conditionRow(data, index, draft.conditions.get(index)), rowParams);
+        }
+        if (count < Automations.MAX_CONDITIONS) {
+            Button addCondition = withPlus(textButton(theme, "Add"));
+            addCondition.setContentDescription("Add a condition");
+            addCondition.setOnClickListener(view -> data.change.accept("add_condition"));
+            ifCard.addView(buttonRow(addCondition), matchWrapClose());
+        }
+        data.collects.add(() -> {
+            // One condition or none is "all", as the web reads a form without the choice.
+            View chosen = join.findViewById(join.getCheckedRadioButtonId());
+            draft.anyCondition = count > 1 && chosen != null && "any".equals(chosen.getTag());
+        });
+        return ifCard;
+    }
+
+    /** A pop-up's or a camera's seconds box, in the web's words for both. */
+    private static final String POPUP_SECONDS = "For (seconds, 0 = until touched or closed)";
+
+    private static final String[] DAY_CHIPS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+    private static final String[] DAY_SPOKEN = {
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+
+    /**
+     * One If condition in its dashed box, the web's conditionRow: its sensor menu (Time of day
+     * first, then the device's sensors and the integrations' values that have a state to ask
+     * about) with Remove beside it, the sensor's states, a level or a text where the state has
+     * one, and for a time of day From, To and the days as filter chips.
+     */
+    private View conditionRow(AutomationEditorData data, int index,
+            Automations.Condition condition) {
+        KioskTheme theme = data.theme;
+        LinearLayout row = dashedBox(theme);
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout sensorColumn = new LinearLayout(this);
+        sensorColumn.setOrientation(LinearLayout.VERTICAL);
+        head.addView(sensorColumn, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        MenuField sensorMenu = new MenuField(sensorColumn, theme, "Sensor");
+        sensorMenu.add(Automations.TIME_NAME, Automations.TIME);
+        java.util.Map<String, String> sensors = new java.util.LinkedHashMap<>();
+        for (Sensors.Def def : Sensors.ALL) {
+            org.json.JSONObject one = data.block.optJSONObject(def.id);
+            if (Automations.EVENTS.containsKey(def.id) && one != null
+                    && one.optBoolean("available")) {
+                sensors.put(def.id, def.name);
+            }
+        }
+        sensors.putAll(data.values);
+        for (java.util.Map.Entry<String, String> sensor : sensors.entrySet()) {
+            // A tag read, a camera, a Changes: nothing a sensor stays in, so no condition.
+            if (!stateEvents(sensor.getKey()).isEmpty()) {
+                sensorMenu.add(sensor.getValue(), sensor.getKey());
+            }
+        }
+        if (!condition.sensor.isEmpty() && !sensorMenu.values.contains(condition.sensor)) {
+            sensorMenu.add(missingSensorName(condition.sensor), condition.sensor);
+        }
+        addBesideBox(head, opIcon(data, R.drawable.ic_remove_circle, "Remove",
+                "remove_condition:" + index, true));
+        row.addView(head, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // The states, as a When's events: radios, or a line of text for a sensor with one.
+        RadioGroup stateGroup = new RadioGroup(this);
+        LinearLayout.LayoutParams stateParams = matchWrapClose();
+        stateParams.topMargin = dp(8);
+        row.addView(stateGroup, stateParams);
+        TextView onlyState = new FlushText(this);
+        onlyState.setTextColor(theme.text);
+        onlyState.setTextSize(16);
+        onlyState.setMinHeight(dp(48));
+        onlyState.setGravity(Gravity.CENTER_VERTICAL);
+        onlyState.setVisibility(View.GONE);
+        row.addView(onlyState, matchWrapClose());
+        EditText levelInput = themedInput(theme, Double.isNaN(condition.level) ? ""
+                : Automations.number(condition.level), false);
+        levelInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        TextView levelCaption = addField(row, theme, "Level", levelInput);
+        View levelBox = (View) levelInput.getParent();
+        EditText textInput = proseInput(theme, condition.match);
+        LinearLayout textBox = new LinearLayout(this);
+        textBox.setOrientation(LinearLayout.VERTICAL);
+        addField(textBox, theme, "Text", textInput, "Upper and lower case count the same.");
+        row.addView(textBox, matchWrapClose());
+        // From and To side by side, then the days: the web's .timebox. A time typed alone
+        // stays in its box, so Save names the one missing rather than dropping both.
+        LinearLayout timeBox = new LinearLayout(this);
+        timeBox.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout times = new LinearLayout(this);
+        times.setOrientation(LinearLayout.HORIZONTAL);
+        boolean time = Automations.TIME.equals(condition.sensor);
+        EditText fromInput = timeField(theme, times, "From",
+                time && condition.from >= 0 ? Automations.clock(condition.from) : "");
+        EditText toInput = timeField(theme, times, "To",
+                time && condition.to >= 0 ? Automations.clock(condition.to) : "");
+        timeBox.addView(times, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        WrapRow days = new WrapRow();
+        CheckBox[] dayChips = new CheckBox[7];
+        for (int day = 0; day < 7; day++) {
+            // A condition on a sensor is every day; a new time of day too, until days are chosen.
+            dayChips[day] = dayChip(theme, DAY_CHIPS[day], DAY_SPOKEN[day],
+                    !time || (condition.days & 1 << day) != 0);
+            days.addView(dayChips[day]);
+        }
+        LinearLayout.LayoutParams daysParams = matchWrapClose();
+        daysParams.topMargin = dp(8);
+        timeBox.addView(days, daysParams);
+        row.addView(timeBox, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Runnable paintState = () -> {
+            View checked = stateGroup.findViewById(stateGroup.getCheckedRadioButtonId());
+            String sensor = sensorMenu.value();
+            Automations.Event state = checked == null ? null
+                    : Automations.event(sensor, (String) checked.getTag());
+            boolean level = state != null && state.levelUnit != null;
+            levelBox.setVisibility(level ? View.VISIBLE : View.GONE);
+            if (level) {
+                levelCaption.setText(state.levelUnit.isEmpty() ? "Level"
+                        : "Level (" + state.levelUnit + ")");
+            }
+            textBox.setVisibility(state != null && state.matches ? View.VISIBLE : View.GONE);
+        };
+        Runnable paintSensor = () -> {
+            String sensor = sensorMenu.value();
+            boolean timeOfDay = Automations.TIME.equals(sensor);
+            timeBox.setVisibility(timeOfDay ? View.VISIBLE : View.GONE);
+            stateGroup.removeAllViews();
+            java.util.List<Automations.Event> states = timeOfDay
+                    ? java.util.Collections.<Automations.Event>emptyList() : stateEvents(sensor);
+            // An integration's state words follow the value's name: "Price above".
+            String valueName = data.values.get(sensor);
+            for (Automations.Event state : states) {
+                radioChoice(theme, stateGroup, valueName == null ? state.stateLabel
+                        : valueName + " " + state.stateLabel, state.id);
+            }
+            if (!states.isEmpty()) {
+                checkRadioIfChanged(stateGroup, sensor.equals(condition.sensor)
+                        && !condition.state.isEmpty() ? condition.state : states.get(0).id);
+                if (stateGroup.getCheckedRadioButtonId() == View.NO_ID) {
+                    // A stored state this version does not offer: the first one, as the web.
+                    checkRadioIfChanged(stateGroup, states.get(0).id);
+                }
+            }
+            boolean one = states.size() == 1;
+            stateGroup.setVisibility(states.size() > 1 ? View.VISIBLE : View.GONE);
+            onlyState.setText(one ? ((RadioButton) stateGroup.getChildAt(0)).getText() : "");
+            onlyState.setVisibility(one ? View.VISIBLE : View.GONE);
+            paintState.run();
+        };
+        sensorMenu.onChange = paintSensor;
+        stateGroup.setOnCheckedChangeListener((group, id) -> paintState.run());
+        sensorMenu.select(condition.sensor.isEmpty() ? Automations.TIME : condition.sensor);
+        paintSensor.run();
+
+        data.collects.add(() -> {
+            condition.sensor = sensorMenu.value();
+            if (Automations.TIME.equals(condition.sensor)) {
+                condition.from = conditionTime(fromInput.getText().toString());
+                condition.to = conditionTime(toInput.getText().toString());
+                int chosen = 0;
+                for (int day = 0; day < 7; day++) {
+                    if (dayChips[day].isChecked()) {
+                        chosen |= 1 << day;
                     }
                 }
-                KioskService.refreshSensorsSoon(this);
-                done.run();
-            }, reopen);
-            });
+                condition.days = chosen;
+                return;
+            }
+            View checked = stateGroup.findViewById(stateGroup.getCheckedRadioButtonId());
+            condition.state = checked == null ? "" : (String) checked.getTag();
+            condition.level = typedLevel(levelInput.getText().toString());
+            condition.match = textInput.getText().toString().trim();
+        });
+        return row;
+    }
+
+    /** The states a sensor can be asked about in an If condition; empty for none. */
+    private static java.util.List<Automations.Event> stateEvents(String sensor) {
+        java.util.List<Automations.Event> states = new java.util.ArrayList<>();
+        java.util.List<Automations.Event> events = Automations.events(sensor);
+        if (events != null) {
+            for (Automations.Event event : events) {
+                if (Automations.conditionEvent(event)) {
+                    states.add(event);
+                }
+            }
         }
-        into.addView(editorButtonRow(delete, cancel, save), matchWrap());
-        into.addView(refused, matchWrapClose());
-        return collect;
+        return states;
+    }
+
+    /**
+     * A time box in its half of {@code row}, with the time keyboard, as the web's time fields
+     * have; a full keyboard for "07:00" was the wrong tool (review, 2026-10-01).
+     */
+    private EditText timeField(KioskTheme theme, LinearLayout row, String label, String value) {
+        LinearLayout half = new LinearLayout(this);
+        half.setOrientation(LinearLayout.VERTICAL);
+        EditText input = themedInput(theme, value, false);
+        input.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
+        addField(half, theme, label, input);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        params.leftMargin = row.getChildCount() == 0 ? 0 : dp(16);
+        row.addView(half, params);
+        return input;
+    }
+
+    /**
+     * A day of a time condition as a Material 3 filter chip, drawn by hand as the app has no
+     * Material library, the web's label.fchip: 32 dp tall in a 48 dp touch target, outlined
+     * while off, and while on the secondary container with a tick before the word. A check box
+     * underneath, so a screen reader says "Monday, checked".
+     */
+    private CheckBox dayChip(KioskTheme theme, String label, String spoken, boolean checked) {
+        CheckBox chip = new CheckBox(this);
+        chip.setButtonDrawable(null);
+        chip.setText(label);
+        chip.setContentDescription(spoken);
+        chip.setTextSize(14);
+        chip.setTypeface(MEDIUM);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setMinHeight(dp(48));
+        chip.setMinimumHeight(dp(48));
+        chip.setCompoundDrawablePadding(dp(8));
+        Runnable paint = () -> {
+            boolean on = chip.isChecked();
+            android.graphics.drawable.GradientDrawable shape =
+                    theme.panel(on ? theme.secondaryContainer : Color.TRANSPARENT, dp(8));
+            if (!on) {
+                shape.setStroke(dp(1), theme.border);
+            }
+            int ink = on ? theme.onSecondaryContainer : theme.subtext;
+            // The 32 dp shape in the middle of the 48 dp target.
+            chip.setBackground(new android.graphics.drawable.InsetDrawable(theme.ripple(shape,
+                    theme.panel(Color.WHITE, dp(8)), ink), 0, dp(8), 0, dp(8)));
+            chip.setTextColor(ink);
+            android.graphics.drawable.Drawable tick = null;
+            if (on) {
+                tick = getDrawable(R.drawable.ic_check).mutate();
+                tick.setTint(ink);
+                tick.setBounds(0, 0, dp(18), dp(18));
+            }
+            chip.setCompoundDrawablesRelative(tick, null, null, null);
+            chip.setPaddingRelative(on ? dp(8) : dp(16), 0, dp(16), 0);
+        };
+        chip.setChecked(checked);
+        chip.setOnCheckedChangeListener((button, on) -> paint.run());
+        paint.run();
+        return chip;
+    }
+
+    /**
+     * Children from the start of a line to its end and on to the next line when it is full,
+     * 8 dp apart: the web's flex-wrap, for the day chips, which do not fit one line on a phone.
+     */
+    private final class WrapRow extends ViewGroup {
+        WrapRow() {
+            super(KioskActivity.this);
+        }
+
+        @Override
+        protected void onMeasure(int widthSpec, int heightSpec) {
+            int room = MeasureSpec.getMode(widthSpec) == MeasureSpec.UNSPECIFIED
+                    ? Integer.MAX_VALUE : MeasureSpec.getSize(widthSpec);
+            int gap = dp(8);
+            int x = 0;
+            int y = 0;
+            int line = 0;
+            int widest = 0;
+            for (int index = 0; index < getChildCount(); index++) {
+                View child = getChildAt(index);
+                if (child.getVisibility() == GONE) {
+                    continue;
+                }
+                measureChild(child, widthSpec, heightSpec);
+                if (x > 0 && x + child.getMeasuredWidth() > room) {
+                    x = 0;
+                    y += line;
+                    line = 0;
+                }
+                x += child.getMeasuredWidth();
+                widest = Math.max(widest, x);
+                x += gap;
+                line = Math.max(line, child.getMeasuredHeight());
+            }
+            setMeasuredDimension(resolveSize(widest, widthSpec), resolveSize(y + line, heightSpec));
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+            int room = right - left;
+            int gap = dp(8);
+            boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+            int x = 0;
+            int y = 0;
+            int line = 0;
+            for (int index = 0; index < getChildCount(); index++) {
+                View child = getChildAt(index);
+                if (child.getVisibility() == GONE) {
+                    continue;
+                }
+                int width = child.getMeasuredWidth();
+                if (x > 0 && x + width > room) {
+                    x = 0;
+                    y += line;
+                    line = 0;
+                }
+                int start = rtl ? room - x - width : x;
+                child.layout(start, y, start + width, y + child.getMeasuredHeight());
+                x += width + gap;
+                line = Math.max(line, child.getMeasuredHeight());
+            }
+        }
     }
 
     /**
@@ -15362,6 +16015,22 @@ public final class KioskActivity extends Activity {
         button.setTextColor(theme.accent);
         button.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
                 Color.TRANSPARENT), theme.pill(Color.WHITE), theme.accent));
+        return button;
+    }
+
+    /**
+     * The plus before an Add's word, as the web's Add buttons have it, in the word's colour.
+     * Material's padding for a button with a leading icon: 12 dp before it and 16 after the word
+     * on a text button, 16 and 24 on a filled or tonal one.
+     */
+    private Button withPlus(Button button) {
+        boolean text = button.getPaddingEnd() < dp(24);
+        android.graphics.drawable.Drawable plus = getDrawable(R.drawable.ic_add).mutate();
+        plus.setTint(button.getCurrentTextColor());
+        plus.setBounds(0, 0, dp(18), dp(18));
+        button.setCompoundDrawablesRelative(plus, null, null, null);
+        button.setCompoundDrawablePadding(dp(8));
+        button.setPaddingRelative(dp(text ? 12 : 16), 0, dp(text ? 16 : 24), 0);
         return button;
     }
 
