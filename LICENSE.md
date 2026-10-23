@@ -1,3 +1,7 @@
+Muralis's own code is under the PolyForm Shield License 1.0.0 below. The parts made by others that ship with it keep their own licences, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The [terms](https://muralis.spazio17.org/terms/) say in plain words what this licence allows.
+
+---
+
 # PolyForm Shield License 1.0.0
 
 <https://polyformproject.org/licenses/shield/1.0.0>
@@ -90,6 +94,6 @@ A **product** can be a good or service, or a combination of them.
 
 ---
 
-Required Notice: Copyright 2026 Juri Calleri (spazio17) (https://github.com/spazio17/muralis)
+Required Notice: Copyright 2026 Juri Calleri (spazio17) and the Muralis contributors (https://github.com/spazio17/muralis)
 
 Licensor Line of Business: Muralis, the kiosk app for Android tablets and screens, with Muralis Pro and Muralis Business (https://muralis.spazio17.org)
