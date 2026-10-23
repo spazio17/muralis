@@ -159,6 +159,23 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
+    // The integrations: one folder each under src/main/integrations/ (code, integration.json,
+    // README.md, a host test), compiled in like the app's own code and never downloaded (Play's
+    // rule and the decision of 2026-10-14). Their tests run on the host (scripts/test-host.sh),
+    // not here.
+    sourceSets {
+        main {
+            java {
+                srcDirs += 'src/main/integrations'
+                // Only the integrations' own tests, never an app class that ends in Test.
+                exclude { element ->
+                    element.file.path.contains('/src/main/integrations/')
+                            && element.name.endsWith('Test.java')
+                }
+            }
+        }
+    }
+
     // A release with no licensing key builds, signs and uploads perfectly, and then no customer
     // can ever unlock Pro, with no error anywhere to say why. Same failure shape as the missing
     // upload-key password the release workflow already refuses, so it is refused the same way:
@@ -205,6 +222,43 @@ android {
     // device or an emulator.
     testOptions {
         unitTests.returnDefaultValues = true
+    }
+}
+
+// The registry of integrations, generated from their folders at build time, so a new integration
+// is its folder alone and touches no file of the app (Juri, 2026-10-22).
+abstract class IntegrationRegistryTask extends DefaultTask {
+    @InputDirectory
+    abstract DirectoryProperty getIntegrations()
+
+    @InputFile
+    abstract RegularFileProperty getGenerator()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDir()
+
+    @javax.inject.Inject
+    abstract ExecOperations getExecOperations()
+
+    @TaskAction
+    void generate() {
+        execOperations.exec {
+            commandLine 'python3', generator.get().asFile.path, integrations.get().asFile.path,
+                    outputDir.get().asFile.path
+        }
+    }
+}
+
+def integrationRegistry = tasks.register('generateIntegrationRegistry', IntegrationRegistryTask) {
+    integrations = layout.projectDirectory.dir('src/main/integrations')
+    generator = rootProject.layout.projectDirectory.file('scripts/integration-registry.py')
+    outputDir = layout.buildDirectory.dir('generated/integrations')
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.java.addGeneratedSourceDirectory(integrationRegistry,
+                IntegrationRegistryTask::getOutputDir)
     }
 }
 
