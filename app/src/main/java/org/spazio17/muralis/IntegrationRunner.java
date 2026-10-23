@@ -53,6 +53,11 @@ final class IntegrationRunner {
     private static final int MAX_REDIRECTS = 3;
     /** The longest one ask may take, redirects and a slow answer included. */
     private static final long TOTAL_DEADLINE_MS = 30_000;
+    /**
+     * The longest a Try may take: two asks, the most any integration here makes at once (Uptime
+     * Kuma reads the page, then the beats). The web admin keeps a Try's connection open this long.
+     */
+    static final long TRY_DEADLINE_MS = 2 * TOTAL_DEADLINE_MS;
     private static final int ASKING_THREADS = 3;
     /** How often the roles for the fleet's shared instances are worked out again. */
     private static final long ROLE_EVERY_MS = 10_000;
@@ -881,7 +886,7 @@ final class IntegrationRunner {
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             URL url = new URL(current);
             if (!"http".equals(url.getProtocol()) && !"https".equals(url.getProtocol())) {
-                throw new IOException("redirected to a " + url.getProtocol() + " address");
+                throw new Integrations.PlainFailure("redirected to a " + url.getProtocol() + " address");
             }
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             try {
@@ -913,7 +918,7 @@ final class IntegrationRunner {
                 connection.disconnect();
             }
         }
-        throw new IOException("more than " + MAX_REDIRECTS + " redirects");
+        throw new Integrations.PlainFailure("more than " + MAX_REDIRECTS + " redirects");
     }
 
     private static String readCapped(InputStream in, long deadline) throws IOException {
@@ -924,11 +929,11 @@ final class IntegrationRunner {
             while ((read = stream.read(buffer)) != -1) {
                 // A server that drips a byte now and then is cut off, not waited for forever.
                 if (SystemClock.elapsedRealtime() > deadline) {
-                    throw new IOException("the answer took longer than "
+                    throw new Integrations.PlainFailure("the answer took longer than "
                             + (TOTAL_DEADLINE_MS / 1000) + " s");
                 }
                 if (out.size() + read > MAX_BODY_BYTES) {
-                    throw new IOException("the answer is larger than "
+                    throw new Integrations.PlainFailure("the answer is larger than "
                             + (MAX_BODY_BYTES / 1024 / 1024) + " MB");
                 }
                 out.write(buffer, 0, read);

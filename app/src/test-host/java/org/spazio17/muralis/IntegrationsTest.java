@@ -12,6 +12,20 @@ import java.util.List;
 public final class IntegrationsTest {
 
     public static void main(String[] args) throws Exception {
+        // A failure reads as plain words, never the platform's own message.
+        require(Integrations.why(new java.io.IOException(
+                "unexpected end of stream on com.android.okhttp.Address@f2032d83"))
+                        .equals(" (the connection broke off)"), "a platform message leaked");
+        require(Integrations.why(new java.net.SocketTimeoutException("timeout"))
+                .equals(" (no answer in time)"), "timeout wording");
+        require(Integrations.why(new java.net.ConnectException(
+                "Failed to connect to /127.0.0.1:3998"))
+                        .equals(" (nothing answers at that address)"), "refused wording");
+        require(Integrations.why(new java.net.UnknownHostException("kuma.lan"))
+                .equals(" (that name is not found on the network)"), "unknown name wording");
+        require(Integrations.why(new Integrations.PlainFailure("more than 3 redirects"))
+                .equals(" (more than 3 redirects)"), "the app's own wording was lost");
+
         // Sensor ids: only what MQTT topics and discovery object ids take.
         String down = Integrations.sensorId("mon1", "down_count");
         require(down.equals("int_mon1_down_count") && down.matches("[a-z0-9_]+"), "id shape");
