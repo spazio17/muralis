@@ -10213,7 +10213,7 @@ public final class KioskActivity extends Activity {
 
         RadioGroup modeInput = null;
         if (parent != null) {
-            parent.addView(fieldCaption(theme, "Ambient mode"), matchWrapClose());
+            parent.addView(fieldCaption(theme, "Mode"), matchWrapClose());
             modeInput = new RadioGroup(this);
             for (String[] choice : KioskCommandDispatcher.AMBIENT_MODE_WORDS) {
                 radioChoice(theme, modeInput, choice[1], choice[0]);
@@ -10234,20 +10234,20 @@ public final class KioskActivity extends Activity {
         TextView onWakeLabel = null;
         if (full) {
             idleInput = secondsInput(theme, settings.idleSeconds);
-            addField(options, theme, "Ambient start after (seconds, 0 = never)", idleInput);
+            addField(options, theme, "Start after (seconds, 0 = never)", idleInput);
             offInput = secondsInput(theme, settings.offSeconds);
-            addField(options, theme, "Ambient before display off (seconds, 0 = never)",
+            addField(options, theme, "Before display off (seconds, 0 = never)",
                     offInput);
             urlInput = themedInput(theme, settings.url, false);
             urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
             urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                     | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            urlCaption = addField(options, theme, "Ambient web page", urlInput);
+            urlCaption = addField(options, theme, "Web page", urlInput);
             dimInput = themedInput(theme, String.valueOf(settings.dimPercent), false);
             dimInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-            dimCaption = addField(options, theme, "Ambient dim brightness (percent)", dimInput);
+            dimCaption = addField(options, theme, "Dim brightness (percent)", dimInput);
 
-            onWakeLabel = fieldCaption(theme, "Ambient on wake");
+            onWakeLabel = fieldCaption(theme, "On wake");
             LinearLayout.LayoutParams onWakeLabelParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             onWakeLabelParams.topMargin = dp(14);
@@ -10399,10 +10399,10 @@ public final class KioskActivity extends Activity {
 
         EditText pictureSeconds = themedInput(theme, String.valueOf(settings.pictureSeconds), false);
         pictureSeconds.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(group, theme, "Ambient picture duration (seconds)", pictureSeconds);
+        addField(group, theme, "Picture duration (seconds)", pictureSeconds);
         controls.pictureSecondsInput = pictureSeconds;
 
-        TextView transitionCaption = fieldCaption(theme, "Ambient transition");
+        TextView transitionCaption = fieldCaption(theme, "Transition");
         LinearLayout.LayoutParams transitionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         transitionParams.topMargin = dp(14);
@@ -10419,7 +10419,7 @@ public final class KioskActivity extends Activity {
         // Fit is the default and what the panel always did: these are somebody's photographs and
         // somebody's licensed work, so nothing is cropped or pulled out of shape unless the
         // operator asks for it.
-        TextView fitCaption = fieldCaption(theme, "Ambient picture fit");
+        TextView fitCaption = fieldCaption(theme, "Picture fit");
         LinearLayout.LayoutParams fitParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         fitParams.topMargin = dp(14);
@@ -10438,21 +10438,21 @@ public final class KioskActivity extends Activity {
         fitNote.setTextSize(12);
         group.addView(fitNote, matchWrapClose());
 
-        CompoundButton shuffle = themedSwitch(theme, "Ambient shuffle", settings.shuffle);
+        CompoundButton shuffle = themedSwitch(theme, "Shuffle", settings.shuffle);
         LinearLayout.LayoutParams boxParams = matchWrapClose();
         boxParams.topMargin = dp(8);
         group.addView(shuffle, boxParams);
         controls.shuffleBox = shuffle;
         CompoundButton onePerCycle = themedSwitch(theme,
-                "Ambient one picture per start", settings.onePerCycle);
+                "One picture per start", settings.onePerCycle);
         group.addView(onePerCycle, matchWrapClose());
         controls.onePerCycleBox = onePerCycle;
         CompoundButton credit = themedSwitch(theme,
-                "Ambient credit line", settings.credit);
+                "Credit line", settings.credit);
         group.addView(credit, matchWrapClose());
         controls.creditBox = credit;
 
-        TextView cornerCaption = fieldCaption(theme, "Ambient credit corner");
+        TextView cornerCaption = fieldCaption(theme, "Credit corner");
         LinearLayout.LayoutParams cornerParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cornerParams.topMargin = dp(14);
@@ -17701,7 +17701,7 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * The "Ambient picture fit" choice as the platform's own scaling: the whole
+     * The "Picture fit" choice as the platform's own scaling: the whole
      * picture inside the screen, cropped to cover it, pulled out of shape to cover it, or left at
      * the size it was taken (2026-09-23).
      */

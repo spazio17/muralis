@@ -5603,7 +5603,7 @@ final class HttpAdminServer {
         // A menu here and radios on the Ambient page, deliberately: this is one section among
         // nine, while the page's chooser decides what the rest of that page says.
         return sharedLine("ambient")
-                + selectField("ambient-mode", null, "Ambient mode", "ambient_mode",
+                + selectField("ambient-mode", null, "Mode", "ambient_mode",
                 screensaverModeOptions(saver), null)
                 + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"ambient-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
@@ -5935,24 +5935,24 @@ final class HttpAdminServer {
                 + "<p class=\"hint" + (picturesProblem != null ? " bad" : "") + "\" id=\"ambient-pictures-note\">"
                 + escapeHtml(library.state()) + "</p>"
                 + fieldWithId("ambient-picture-s", "number", null,
-                        "Ambient picture duration (seconds)", String.valueOf(saver.pictureSeconds),
+                        "Picture duration (seconds)", String.valueOf(saver.pictureSeconds),
                         " data-setting=\"ambient_picture_s\" min=\"1\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null)
-                + selectField("ambient-transition", null, "Ambient transition",
+                + selectField("ambient-transition", null, "Transition",
                         "ambient_transition", transitions.toString(), null)
-                + selectField("ambient-fit", null, "Ambient picture fit",
+                + selectField("ambient-fit", null, "Picture fit",
                         "ambient_picture_fit", fits.toString(),
                         "Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
                         + "it out of shape, Actual size does not scale it.")
                 + "<div class=\"switches\">"
-                + switchRow("ambient-shuffle", "Ambient shuffle",
+                + switchRow("ambient-shuffle", "Shuffle",
                         " data-setting=\"ambient_shuffle\"", saver.shuffle)
-                + switchRow("ambient-one", "Ambient one picture per start",
+                + switchRow("ambient-one", "One picture per start",
                         " data-setting=\"ambient_one_per_start\"", saver.onePerCycle)
-                + switchRow("ambient-credit", "Ambient credit line",
+                + switchRow("ambient-credit", "Credit line",
                         " data-setting=\"ambient_credit\"", saver.credit)
                 + "</div>"
-                + selectField("ambient-corner", null, "Ambient credit corner",
+                + selectField("ambient-corner", null, "Credit corner",
                         "ambient_credit_corner", corners.toString(), null)
                 + "</div>";
     }
@@ -7197,24 +7197,24 @@ final class HttpAdminServer {
                 .append("\" id=\"ambient-options\"><h2 id=\"ambient-options-title\">")
                 .append(escapeHtml(ScreensaverPolicy.optionsTitle(saver.mode))).append("</h2>")
                 .append(fieldWithId("ambient-idle", "number", null,
-                        "Ambient start after (seconds, 0 = never)",
+                        "Start after (seconds, 0 = never)",
                         String.valueOf(saver.idleSeconds),
                         " data-setting=\"ambient_start_after_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append(fieldWithId("ambient-off", "number", null,
-                        "Ambient before display off (seconds, 0 = never)",
+                        "Before display off (seconds, 0 = never)",
                         String.valueOf(saver.offSeconds),
                         " data-setting=\"ambient_off_s\" min=\"0\" max=\""
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append("<div id=\"ambient-url-field\"")
                 .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("ambient-url", "text", null, "Ambient web page", saver.url,
+                .append(fieldWithId("ambient-url", "text", null, "Web page", saver.url,
                         " data-setting=\"ambient_url\" inputmode=\"url\"", null))
                 .append("</div>")
                 .append("<div id=\"ambient-dim-field\"")
                 .append(ScreensaverPolicy.DIM.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
                 .append(fieldWithId("ambient-dim", "number", null,
-                        "Ambient dim brightness (percent)", String.valueOf(saver.dimPercent),
+                        "Dim brightness (percent)", String.valueOf(saver.dimPercent),
                         " data-setting=\"ambient_dim_percent\" min=\"1\" max=\"100\" step=\"1\"",
                         null))
                 .append("</div>")
@@ -7223,7 +7223,7 @@ final class HttpAdminServer {
                 .append("<div id=\"ambient-wake-field\"")
                 .append(ScreensaverPolicy.wakeChoiceApplies(saver.mode) ? "" : " class=\"gone\"")
                 .append(">")
-                .append(selectField("ambient-on-wake", null, "Ambient on wake",
+                .append(selectField("ambient-on-wake", null, "On wake",
                         "ambient_on_wake", onWake.toString(), null))
                 .append("</div>")
                 .append(pictureOptions(saver))
