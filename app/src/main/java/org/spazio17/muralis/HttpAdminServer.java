@@ -114,6 +114,12 @@ final class HttpAdminServer {
      * joins it with calls of their own: the answer must still find the browser connected.
      */
     private static final int ADOPT_DEADLINE_MS = (int) FleetServer.CODE_SEARCH_MS + 20_000;
+    /**
+     * Saving an integration can Try its service first, which waits on that service: the answer
+     * must still find the browser connected, with the reason when the service is slow or silent.
+     */
+    private static final int INTEGRATION_DEADLINE_MS = (int) IntegrationRunner.TRY_DEADLINE_MS
+            + 5_000;
     /** Browser preconnects need headroom; twelve from one address leave four workers free. */
     private static final int WORKER_THREADS = 16;
     private static final int PER_HOST_CONNECTIONS = 12;
@@ -754,6 +760,12 @@ final class HttpAdminServer {
                     deadline.cancel(false);
                     deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
                             ADOPT_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                }
+                if (method.equals("POST") && requestPath.equals("/integrations")) {
+                    input.extend(INTEGRATION_DEADLINE_MS);
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            INTEGRATION_DEADLINE_MS, TimeUnit.MILLISECONDS);
                 }
                 if (requestPath.equals("/api/fleet/screenshot")
                         || requestPath.equals("/api/fleet/identify")) {

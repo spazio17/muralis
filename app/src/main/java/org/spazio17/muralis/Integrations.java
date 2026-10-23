@@ -330,10 +330,36 @@ public final class Integrations {
         return clock.getAsLong();
     }
 
+    /**
+     * Why a service did not answer, in words a person reads in the status line: the kind of
+     * failure, never the platform's own message, which names internal classes ("unexpected end
+     * of stream on com.android.okhttp.Address@...") and can carry the address with its key.
+     */
     public static String why(java.io.IOException failed) {
-        String message = failed.getMessage();
-        return message == null || message.isEmpty() || message.contains("://")
-                || message.contains("?") ? "" : " (" + message + ")";
+        if (failed instanceof PlainFailure) {
+            return " (" + failed.getMessage() + ")";
+        }
+        if (failed instanceof java.net.SocketTimeoutException) {
+            return " (no answer in time)";
+        }
+        if (failed instanceof java.net.UnknownHostException) {
+            return " (that name is not found on the network)";
+        }
+        if (failed instanceof java.net.ConnectException
+                || failed instanceof java.net.NoRouteToHostException) {
+            return " (nothing answers at that address)";
+        }
+        if (failed instanceof javax.net.ssl.SSLException) {
+            return " (the secure connection failed)";
+        }
+        return " (the connection broke off)";
+    }
+
+    /** A failure the app words itself, so {@link #why} may show its message as it is. */
+    static final class PlainFailure extends java.io.IOException {
+        PlainFailure(String reason) {
+            super(reason);
+        }
     }
 
     /** The SecretStore name of an instance's secret setting. */
