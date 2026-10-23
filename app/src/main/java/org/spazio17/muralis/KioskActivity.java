@@ -10242,7 +10242,7 @@ public final class KioskActivity extends Activity {
             urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
             urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                     | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            urlCaption = addField(options, theme, "Web page", urlInput);
+            urlCaption = addField(options, theme, "Web page address", urlInput);
             dimInput = themedInput(theme, String.valueOf(settings.dimPercent), false);
             dimInput.setInputType(InputType.TYPE_CLASS_NUMBER);
             dimCaption = addField(options, theme, "Dim brightness (percent)", dimInput);

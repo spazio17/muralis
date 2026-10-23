@@ -887,7 +887,9 @@ final class IntegrationRunner {
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             URL url = new URL(current);
             if (!"http".equals(url.getProtocol()) && !"https".equals(url.getProtocol())) {
-                throw new Integrations.PlainFailure("redirected to a " + url.getProtocol() + " address");
+                throw new Integrations.PlainFailure(hop == 0
+                        ? "the address must start with http:// or https://"
+                        : "redirected to a " + url.getProtocol() + " address");
             }
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             try {

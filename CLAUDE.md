@@ -108,5 +108,6 @@ on purpose.
 
 The build and the host tests run in a container with pinned tools (`scripts/build-app.sh`,
 `scripts/test-host.sh`). The version comes from git (`git describe` against the latest `v*` tag,
-the commit count as version code). CI builds every push; a manual workflow tags a release and
-attaches the signed bundle. A pull request's title is its line in the release notes.
+the commit count as version code). CI builds every pull request and main (host tests, lint and
+the release build); a manual workflow tags a release and attaches the signed bundle. A pull
+request's title is its line in the release notes.
