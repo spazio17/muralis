@@ -284,6 +284,14 @@ public final class FleetDocumentTest {
                 .equals(new HashSet<>(java.util.Arrays.asList(all, "group-1")))
                 && FleetDocument.sharedBy(lobbyShares, "mqtt").isEmpty(),
                 "which groups share a section is wrong");
+        // Which group's values apply on a member: its own group over the whole fleet.
+        require("group-1".equals(FleetDocument.sourceGroup(lobbyShares,
+                        FleetDocument.memberByKey(lobbyShares, memberSpki), "dashboard"))
+                && all.equals(FleetDocument.sourceGroup(lobbyShares,
+                        FleetDocument.memberByKey(lobbyShares, managerSpki), "dashboard"))
+                && FleetDocument.sourceGroup(lobbyShares,
+                        FleetDocument.memberByKey(lobbyShares, managerSpki), "mqtt") == null,
+                "the group a member takes a section from is wrong");
         Map<String, Object> removed = FleetDocument.withoutGroup(lobbyShares, "kiosk-a",
                 "group-1", "2026-10-12T21:08:00Z");
         require(FleetDocument.memberGroups(removed, FleetDocument.memberByKey(removed, memberSpki))
