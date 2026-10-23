@@ -636,8 +636,7 @@ final class IntegrationRunner {
 
     private void feed(String instanceId, String valueId, Integrations.Value value) {
         if (engine != null) {
-            engine.sample(Integrations.sensorId(instanceId, valueId), value.sample(),
-                    SystemClock.elapsedRealtime(), Sensors.minuteOfDay());
+            engine.sample(Integrations.sensorId(instanceId, valueId), value.sample());
         }
     }
 

@@ -51,9 +51,38 @@ public final class IntegrationsTest {
                 && Automations.event(down, "int_on") == null
                 && Automations.event("int_zzz_x", "int_above") == null,
                 "events by the value's type");
+        // Changes on a number and a text, never on a flag, which has Turns on and Turns off.
+        String anyDown = Integrations.sensorId("mon1", "any_down");
+        String roomValue = Integrations.sensorId("cal1", "room");
+        require(Automations.event(down, "int_changes") != null
+                && Automations.event(down, "int_changes").changes
+                && Automations.event(roomValue, "int_changes") != null
+                && Automations.event(anyDown, "int_changes") == null,
+                "Changes on a number and a text, not a flag");
 
         List<String> ran = new ArrayList<>();
-        Automations.Engine engine = new Automations.Engine(rule -> ran.add(rule.id));
+        Automations.Engine engine = new Automations.Engine((rule, step) -> ran.add(rule.id),
+                (delayMs, task) -> task.run(), new Automations.Clock() {
+                    @Override
+                    public long nowMs() {
+                        return 1_000L;
+                    }
+
+                    @Override
+                    public int minuteOfDay() {
+                        return 600;
+                    }
+
+                    @Override
+                    public int isoDay() {
+                        return 3;
+                    }
+
+                    @Override
+                    public long epochDay() {
+                        return 20_000;
+                    }
+                });
         Automations.Rule red = rule("red", down, "int_above", 0, "");
         Automations.Rule busy = rule("busy", Integrations.sensorId("cal1", "room"), "int_becomes",
                 Double.NaN, "Busy");
@@ -82,10 +111,10 @@ public final class IntegrationsTest {
         // Validation: a text rule keeps its match, an over-long one is refused in its own words.
         java.util.Map<String, String> names = Collections.singletonMap(roomId, "Room");
         Automations.Rule text = rule("t", roomId, "int_becomes", Double.NaN, "Busy");
-        text.action = "light_off";
-        require(Automations.validate(text, names) == null && text.match.equals("Busy"),
+        text.whens.get(0).then.get(0).action = "light_off";
+        require(Automations.validate(text, names) == null && text.whens.get(0).match.equals("Busy"),
                 "a text rule lost its match");
-        text.match = "x".repeat(65);
+        text.whens.get(0).match = "x".repeat(65);
         require("the text is too long".equals(Automations.validate(text, names)),
                 "the text limit says tag");
 
@@ -96,14 +125,14 @@ public final class IntegrationsTest {
         require(Automations.validate(over, counted) == null
                 && over.name.endsWith("Rises above 0, then Status light on"),
                 "the unitless sentence: " + over.name);
-        over.level = -5;
+        over.whens.get(0).level = -5;
         require(Automations.validate(over, counted) == null, "a negative level was refused");
 
         // A stored rule keeps its match.
         Automations.Rule stored = Automations.parseRule(new org.json.JSONObject()
                 .put("id", "nfc").put("sensor", "nfc_tag").put("event", "tag").put("match", "04A3")
                 .put("action", "display_on"));
-        require(stored.match.equals("04A3"), "a stored NFC rule lost its tag");
+        require(stored.whens.get(0).match.equals("04A3"), "a stored NFC rule lost its tag");
 
         instances();
         System.out.println("IntegrationsTest passed");
@@ -147,16 +176,20 @@ public final class IntegrationsTest {
             String match) {
         Automations.Rule rule = new Automations.Rule();
         rule.id = id;
-        rule.sensor = sensor;
-        rule.event = event;
-        rule.level = level;
-        rule.match = match;
-        rule.action = "light_on";
+        Automations.When when = new Automations.When();
+        when.sensor = sensor;
+        when.event = event;
+        when.level = level;
+        when.match = match;
+        Automations.Step step = new Automations.Step();
+        step.action = "light_on";
+        when.then.add(step);
+        rule.whens.add(when);
         return rule;
     }
 
     private static void feed(Automations.Engine engine, String sensor, Integrations.Value value) {
-        engine.sample(sensor, value.sample(), 1_000L, 600);
+        engine.sample(sensor, value.sample());
     }
 
     private static void require(boolean condition, String message) {

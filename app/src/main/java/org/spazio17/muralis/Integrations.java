@@ -622,15 +622,24 @@ public final class Integrations {
     static List<Automations.Event> events(ValueSpec spec) {
         switch (spec.type) {
             case NUMBER:
+                // The state words follow the value's name in an If: "Price above".
                 return Arrays.asList(
-                        new Automations.Event("int_above", "Rises above", spec.unit, true, false),
-                        new Automations.Event("int_below", "Falls below", spec.unit, true, false));
+                        new Automations.Event("int_above", "Rises above", spec.unit, true, false)
+                                .withState("above"),
+                        new Automations.Event("int_below", "Falls below", spec.unit, true, false)
+                                .withState("below"),
+                        Automations.Event.changes("int_changes", "Changes"));
             case FLAG:
+                // No Changes: a flag only turns on or off, which these two say already.
                 return Arrays.asList(
-                        new Automations.Event("int_on", "Turns on", null, true, false),
-                        new Automations.Event("int_off", "Turns off", null, true, false));
+                        new Automations.Event("int_on", "Turns on", null, true, false)
+                                .withState("on"),
+                        new Automations.Event("int_off", "Turns off", null, true, false)
+                                .withState("off"));
             case TEXT:
-                return Collections.singletonList(Automations.Event.text("int_becomes", "Becomes"));
+                return Arrays.asList(
+                        Automations.Event.text("int_becomes", "Becomes").withState("is"),
+                        Automations.Event.changes("int_changes", "Changes"));
             default:
                 // A time is read by cards and the agenda, not waited for by a rule (yet).
                 return Collections.emptyList();

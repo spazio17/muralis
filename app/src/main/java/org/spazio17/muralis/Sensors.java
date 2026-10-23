@@ -844,12 +844,7 @@ final class Sensors implements SensorEventListener {
         if (engine == null || sample == null) {
             return;
         }
-        engine.sample(def.id, sample, SystemClock.elapsedRealtime(), minuteOfDay());
-    }
-
-    static int minuteOfDay() {
-        java.util.Calendar now = java.util.Calendar.getInstance();
-        return now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE);
+        engine.sample(def.id, sample);
     }
 
     /**
@@ -975,8 +970,7 @@ final class Sensors implements SensorEventListener {
             lastTagAtMs = System.currentTimeMillis();
         }
         if (engine != null) {
-            engine.event(NFC.id, java.util.Collections.singleton(id == null ? "" : id),
-                    minuteOfDay(), android.os.SystemClock.elapsedRealtime());
+            engine.event(NFC.id, java.util.Collections.singleton(id == null ? "" : id));
         }
     }
 
@@ -986,8 +980,7 @@ final class Sensors implements SensorEventListener {
      * "not again within"; nothing runs before the automations are loaded.
      */
     int[] cameraTriggered(java.util.Set<String> names) {
-        return engine == null ? new int[2] : engine.event(Automations.CAMERAS, names,
-                minuteOfDay(), android.os.SystemClock.elapsedRealtime());
+        return engine == null ? new int[2] : engine.event(Automations.CAMERAS, names);
     }
 
     /**
@@ -1006,7 +999,9 @@ final class Sensors implements SensorEventListener {
         // The hardware sensors and movement feed the engine from their own events, once each;
         // feeding their last reading again here handed it an older sample after the newer one
         // and could fire a rule twice (review, 2026-10-01). The tick advances their minutes.
-        long now = SystemClock.elapsedRealtime();
+        // The display's state for the If conditions ("Display on"), noted whether or not its
+        // sensor switch is on: a condition on it must not depend on a switch elsewhere.
+        engine.note(DISPLAY.id, sampleOf(DISPLAY));
         for (Def def : ALL) {
             if (!available(def) || !on(def)) {
                 continue;
@@ -1015,7 +1010,7 @@ final class Sensors implements SensorEventListener {
             if (sample == null) {
                 Automations.Sample seed = seedOf(def);
                 if (seed != null) {
-                    engine.seed(def.id, seed, now);
+                    engine.seed(def.id, seed);
                 }
                 continue;
             }
@@ -1024,14 +1019,13 @@ final class Sensors implements SensorEventListener {
                 // edited one, or every rule after a start) is only seeded with the state as it
                 // stands, so the first event after it is a change and fires. Without this the
                 // first event itself was the seed and was swallowed (review, 2026-10-01).
-                engine.seed(def.id, sample, now);
+                engine.seed(def.id, sample);
             } else {
                 feed(def, sample);
             }
         }
-        engine.tick(now, minuteOfDay());
-        // The "Time of day" rules: the panel's own clock, the day and the minute.
-        engine.clock(java.time.LocalDate.now().toEpochDay(), minuteOfDay());
+        // The minutes held, and the "Time of day" Whens by the panel's own clock.
+        engine.tick();
     }
 
     private Automations.Sample sampleOf(Def def) {
@@ -1410,8 +1404,9 @@ final class Sensors implements SensorEventListener {
             if (rule == null) {
                 continue;
             }
+            // The digest moves with any change to the rule but its switch (Automations.statusJson).
             String line = rule.optString("id", "") + '|' + rule.optString("name", "") + '|'
-                    + rule.optString("sensor", "") + '|' + rule.optString("sentence", "") + '\n';
+                    + rule.optString("digest", "") + '|' + rule.optString("sentence", "") + '\n';
             rulesAll.append(line);
             if (rule.optBoolean("enabled")) {
                 rulesOn.append(line);

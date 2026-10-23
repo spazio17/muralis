@@ -93,9 +93,13 @@ final class HttpAdminServer {
      * The three documents of the fleet shape (/api/automations, /api/sensors/settings,
      * /api/beacons/names): 64 rules with 500-character arguments in a script of three bytes a
      * character, or full of escaped quotes, come to about 130 KB, which the 16 KB budget
-     * refused, so "post back the shape GET gives" failed (review, 2026-10-01).
+     * refused, so "post back the shape GET gives" failed (review, 2026-10-01). A rule may now
+     * hold several Whens and up to 20 actions, and the list is bounded by
+     * Automations.MAX_STORED_CHARS instead, 200,000 characters that may each take three bytes
+     * as UTF-8: 640 KB holds that. The editor's save carries a rule's whole baseline, so it has
+     * the same budget.
      */
-    private static final int MAX_DOCUMENT_BYTES = 160 * 1024;
+    private static final int MAX_DOCUMENT_BYTES = 640 * 1024;
     /**
      * A certificate upload: a full chain of RSA 4096 certificates and its key come to about
      * 12 KB, so the 16 KB budget would refuse a long chain with its multipart wrapping.
@@ -780,6 +784,7 @@ final class HttpAdminServer {
                             && requestPath.equals("/api/playlists/order");
                     boolean document = method.equals("POST")
                             && (requestPath.equals("/api/automations")
+                                    || requestPath.equals("/api/automations/save")
                                     || requestPath.equals("/settings-file")
                                     || requestPath.equals("/api/sensors/settings")
                                     || requestPath.equals("/api/beacons/names"));
@@ -2462,12 +2467,16 @@ final class HttpAdminServer {
     }
 
     /**
-     * The mark before a rule's sentence when its sensor is not running while the display
-     * sleeps, the panel's own: the sensor with a slash, small, in the warning colour.
+     * The mark before a rule's sentence when any sensor it reads is not running while the
+     * display sleeps, the panel's own: the sensor with a slash, small, in the warning colour.
      */
-    private String stopsMark(String sensorId) {
+    private String stopsMarkAny(java.util.Collection<String> sensorIds) {
+        boolean stops = false;
+        for (String sensorId : sensorIds) {
+            stops |= KioskService.stopsWhileAsleep(context, sensorId);
+        }
         // The words for a screen reader too, not only in a tooltip (review, 2026-10-01).
-        return KioskService.stopsWhileAsleep(context, sensorId)
+        return stops
                 ? "<span class=\"stops\" title=\"Not running while the display is off\">"
                         + glyph("asleep_off") + "<span class=\"sr\">Not running while the display"
                         + " is off. </span></span>"
@@ -2526,7 +2535,7 @@ final class HttpAdminServer {
         String key = kind.startsWith("integrations_")
                 ? IntegrationRunner.listKey(KioskRuntimeState.integrations())
                 : Sensors.listKeys(KioskRuntimeState.sensors(),
-                        Automations.toJson(KioskConfig.automationsOf(context), true))
+                        Automations.statusJson(KioskConfig.automationsOf(context)))
                         .optString(kind, "");
         return " data-lists-kind=\"" + kind + "\" data-lists=\"" + escapeHtml(key) + "\"";
     }
@@ -2556,21 +2565,20 @@ final class HttpAdminServer {
     private String automationsSectionBody() {
         // As stored, not the status document's copy, which follows a change by a tick: the
         // list's key is taken from what is stored, and the two must agree.
-        org.json.JSONArray rules = Automations.toJson(KioskConfig.automationsOf(context), true);
         StringBuilder rows = new StringBuilder();
-        for (int index = 0; index < rules.length(); index++) {
-            org.json.JSONObject rule = rules.optJSONObject(index);
-            if (rule == null || !rule.optBoolean("enabled")) {
+        for (Automations.Rule rule : KioskConfig.automationsOf(context)) {
+            if (!rule.enabled) {
                 continue;
             }
-            String id = rule.optString("id", "");
-            rows.append(navRow(listRow("automations", rule.optString("name", ""),
-                    null, rule.optString("sentence", ""), null,
+            // Ids pass Automations.ID_SHAPE on the way in; escaped here all the same.
+            String id = escapeHtml(rule.id);
+            rows.append(navRow(listRow("automations", rule.name,
+                    null, Automations.sentence(rule), null,
                     "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
                             + "-home\" data-setting=\"automation_" + id + "\" aria-label=\""
-                            + escapeHtml(rule.optString("name", "")) + "\" checked>", false,
-                    stopsMark(rule.optString("sensor", ""))),
-                    id, false));
+                            + escapeHtml(rule.name) + "\" checked>", false,
+                    stopsMarkAny(rule.sensors())),
+                    rule.id, false));
         }
         return "<div id=\"automations-body\"" + listsAttributes("automations_home") + ">"
                 + (rows.length() == 0 ? "" : "<ul class=\"list seg\" id=\"automations-home\">" + rows + "</ul>")
@@ -3025,7 +3033,7 @@ final class HttpAdminServer {
                     "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
                             + "\" data-setting=\"automation_" + id + "\" aria-label=\""
                             + escapeHtml(each.name) + "\"" + (each.enabled ? " checked" : "") + ">",
-                    stopsMark(each.sensor)),
+                    stopsMarkAny(each.sensors())),
                     each.id, each.id.equals(rule.id)));
         }
         String nav = "<section class=\"card nav\"><div class=\"cardhead\"><h2>Automations</h2>"
@@ -3091,13 +3099,21 @@ final class HttpAdminServer {
         String baseline = stored == null ? "" : Automations.baseline(stored);
         // Ids of its own per editor: several stand on one page, one per rule.
         String sfx = "-" + (fresh ? "new" : escapeHtml(rule.id));
+        // The editor shows the first When, its first action and the first time condition;
+        // saveAutomation keeps the rest of the rule as stored. On a copy, so drawing a rule
+        // with no When yet does not add one to the caller's.
+        Automations.Rule drawn = rule.copy();
+        Automations.When when = Automations.firstWhen(drawn);
+        Automations.Step step = Automations.firstStep(when);
+        Automations.Condition time = Automations.firstTimeCondition(drawn);
+        boolean windowed = time != null && time.timed();
         org.json.JSONObject block = KioskRuntimeState.sensors();
         StringBuilder sensorOptions = new StringBuilder();
         StringBuilder events = new StringBuilder();
         // A new rule starts on the proximity sensor where there is one, as on the panel, so
         // the two surfaces offer the same first rule; a chosen option is always rendered, so
         // the stats poll never takes a fresh editor for one being edited (review, 2026-10-01).
-        String chosenSensor = rule.sensor;
+        String chosenSensor = when.sensor;
         if (chosenSensor.isEmpty()) {
             org.json.JSONObject proximity = block.optJSONObject("proximity");
             chosenSensor = proximity != null && proximity.optBoolean("available") ? "proximity"
@@ -3121,7 +3137,7 @@ final class HttpAdminServer {
             for (Automations.Event event : list) {
                 // The only event of its sensor is ticked, so a form posted without scripting
                 // carries it: the radio is hidden and could not be picked (review, 2026-10-01).
-                boolean checked = def.id.equals(rule.sensor) && event.id.equals(rule.event)
+                boolean checked = def.id.equals(when.sensor) && event.id.equals(when.event)
                         || list.size() == 1;
                 events.append("<label class=\"radio").append(one_).append("\"><input type=\"radio\" name=\"event_")
                         .append(def.id).append("\" value=\"").append(event.id).append("\"")
@@ -3130,7 +3146,8 @@ final class HttpAdminServer {
                         .append(event.levelUnit == null ? "" : " data-level=\""
                                 + escapeHtml(event.levelUnit) + "\"")
                         .append(" data-holds=\"").append(event.holds ? "1" : "")
-                        .append("\" data-tag=\"").append(event.oneShot ? "1" : "").append("\">")
+                        .append("\" data-tag=\"").append(event.oneShot ? "1" : "").append("\"")
+                        .append(coolsAttributes(event)).append(">")
                         .append(escapeHtml(event.label)).append("</label>");
             }
             events.append("</div>");
@@ -3148,7 +3165,7 @@ final class HttpAdminServer {
         java.util.List<Cameras.Camera> cameraList = KioskConfig.camerasOf(context);
         java.util.List<Cameras.Group> groupList = KioskConfig.cameraGroupsOf(context);
         boolean anyCamera = !cameraList.isEmpty() || !groupList.isEmpty();
-        if (anyCamera || Automations.CAMERAS.equals(rule.sensor)) {
+        if (anyCamera || Automations.CAMERAS.equals(when.sensor)) {
             offered |= Automations.CAMERAS.equals(chosenSensor);
             sensorOptions.append(selectOption(Automations.CAMERAS, Automations.CAMERAS_NAME,
                     chosenSensor));
@@ -3156,7 +3173,9 @@ final class HttpAdminServer {
                     .append("\" role=\"radiogroup\" aria-label=\"").append(Automations.CAMERAS_NAME)
                     .append(" events\"><label class=\"radio one\"><input type=\"radio\" name=\"event_")
                     .append(Automations.CAMERAS).append("\" value=\"triggered\" checked data-level=\"\""
-                            + " data-holds=\"\" data-tag=\"1\" data-camera=\"1\">")
+                            + " data-holds=\"\" data-tag=\"1\" data-camera=\"1\""
+                            + coolsAttributes(Automations.event(Automations.CAMERAS, "triggered"))
+                            + ">")
                     .append("A camera is triggered</label></div>");
         }
         // The integrations' values, each a sensor of its own, with the events its type has.
@@ -3173,8 +3192,8 @@ final class HttpAdminServer {
                     .append("\" role=\"radiogroup\" aria-label=\"")
                     .append(escapeHtml(value.getValue())).append(" events\">");
             for (Automations.Event event : list) {
-                boolean checked = value.getKey().equals(rule.sensor)
-                        && event.id.equals(rule.event);
+                boolean checked = value.getKey().equals(when.sensor)
+                        && event.id.equals(when.event);
                 events.append("<label class=\"radio\"><input type=\"radio\" name=\"event_")
                         .append(escapeHtml(value.getKey())).append("\" value=\"")
                         .append(event.id).append("\"").append(checked ? " checked" : "")
@@ -3182,25 +3201,32 @@ final class HttpAdminServer {
                                 + escapeHtml(event.levelUnit) + "\"")
                         .append(" data-holds=\"").append(event.holds ? "1" : "")
                         .append("\" data-tag=\"\" data-text=\"")
-                        .append(event.matches && !event.oneShot ? "1" : "").append("\">")
+                        .append(event.matches && !event.oneShot ? "1" : "").append("\"")
+                        .append(coolsAttributes(event)).append(">")
                         .append(escapeHtml(event.label)).append("</label>");
             }
             events.append("</div>");
         }
-        if (!offered && !rule.sensor.isEmpty()) {
+        if (!offered && !when.sensor.isEmpty()) {
             // A rule on a sensor this device lacks keeps it: saving the rule for its name must
             // not move it to the first sensor of the menu (review, 2026-10-01).
-            Sensors.Def missing = Sensors.byId(rule.sensor);
-            sensorOptions.append(selectOption(rule.sensor,
-                    (missing == null ? rule.sensor : missing.name) + " (not on this device)",
-                    rule.sensor));
+            Sensors.Def missing = Sensors.byId(when.sensor);
+            sensorOptions.append(selectOption(when.sensor,
+                    (missing == null ? when.sensor : missing.name) + " (not on this device)",
+                    when.sensor));
         }
-        String chosenAction = rule.action.isEmpty() ? "display_on" : rule.action;
+        String chosenAction = step.action.isEmpty() ? "display_on" : step.action;
         StringBuilder actionOptions = new StringBuilder();
         for (Automations.Action action : Automations.ACTIONS) {
             boolean camera = action.id.equals("camera");
             // Show a camera once there is one to show.
             if (camera && !anyCamera && !camera(chosenAction)) {
+                continue;
+            }
+            // A Wait needs an action after it, which this editor of one action cannot add: it
+            // is offered only to a rule whose first action already is one, so that is kept.
+            boolean wait = Automations.waits(action.id);
+            if (wait && !Automations.waits(chosenAction)) {
                 continue;
             }
             actionOptions.append("<option value=\"").append(action.id).append("\"")
@@ -3210,18 +3236,20 @@ final class HttpAdminServer {
                             : escapeHtml(action.argumentLabel))
                     .append("\" data-shows=\"").append(Automations.shows(action.id) ? "1" : "")
                     .append("\" data-camera=\"").append(camera ? "1" : "")
+                    .append("\" data-wait=\"").append(wait ? "1" : "")
                     .append("\">").append(escapeHtml(action.label)).append("</option>");
         }
-        String waitedFor = Automations.CAMERAS.equals(rule.sensor) ? rule.match : "";
-        String shown = camera(rule.action) ? rule.argument : "";
+        boolean waiting = Automations.waits(chosenAction);
+        String waitedFor = Automations.CAMERAS.equals(when.sensor) ? when.match : "";
+        String shown = camera(step.action) ? step.argument : "";
         // Every tag read lately, by its id, newest first, as the panel's own editor has it.
-        StringBuilder tags = new StringBuilder(selectOption("", "Any tag", rule.match));
+        StringBuilder tags = new StringBuilder(selectOption("", "Any tag", when.match));
         java.util.Set<String> tagsRead = KioskConfig.seenTags(context).keySet();
         for (String tag : tagsRead) {
-            tags.append(selectOption(tag, tag, rule.match));
+            tags.append(selectOption(tag, tag, when.match));
         }
-        if (!rule.match.isEmpty() && !tagsRead.contains(rule.match)) {
-            tags.append(selectOption(rule.match, rule.match, rule.match));
+        if (!when.match.isEmpty() && !tagsRead.contains(when.match)) {
+            tags.append(selectOption(when.match, when.match, when.match));
         }
         return "<form method=\"post\" action=\"/api/automations/save\" class=\"automation\" id=\"editor"
                 + sfx + "\">"
@@ -3234,55 +3262,58 @@ final class HttpAdminServer {
                 + "</section>"
                 + "<section class=\"card gap\"><h2>When</h2>"
                 + selectField("a-sensor" + sfx, "sensor", "Sensor", null, sensorOptions.toString(), null)
-                + stopsNote(rule.sensor)
+                + stopsNote(when.sensor)
                 + events
                 + fieldWithId("a-level" + sfx, "number", "level", "Level",
-                        Double.isNaN(rule.level) ? "" : Automations.number(rule.level),
+                        Double.isNaN(when.level) ? "" : Automations.number(when.level),
                         " step=\"any\" min=\"0\"", null)
                 + fieldWithId("a-at" + sfx, "time", "at", "At",
-                        Automations.TIME.equals(rule.sensor) && !Double.isNaN(rule.level)
-                                ? Automations.clock((int) rule.level) : "07:00", "", null)
+                        Automations.TIME.equals(when.sensor) && !Double.isNaN(when.level)
+                                ? Automations.clock((int) when.level) : "07:00", "", null)
                 + fieldWithId("a-minutes" + sfx, "number", "minutes", "For (minutes)",
-                        rule.minutes == 0 ? "" : Integer.toString(rule.minutes),
+                        when.minutes == 0 ? "" : Integer.toString(when.minutes),
                         " min=\"0\" max=\"" + Automations.MAX_MINUTES + "\"", null)
                 + selectField("a-tag" + sfx, "tag", "Tag", null, tags.toString(), null)
                 // The text an integration's value must become ("Busy"), upper and lower case
                 // alike.
                 + fieldWithId("a-text" + sfx, "text", "match_text", "Text",
-                        Integrations.isSensorId(rule.sensor) ? rule.match : "", "",
+                        Integrations.isSensorId(when.sensor) ? when.match : "", "",
                         "Upper and lower case count the same.").replace(MACHINE_TEXT, "")
                 + selectField("a-camera" + sfx, "camera_tag", "Camera or group", null,
                         cameraOptions(cameraList, groupList, waitedFor), null)
                 + fieldWithId("a-cooldown" + sfx, "number", "cooldown",
-                        "Not again within (seconds)", Integer.toString(rule.cooldown),
+                        "Not again within (seconds)", Integer.toString(when.cooldown),
                         " min=\"0\" max=\"" + Automations.MAX_COOLDOWN + "\"", null)
                 + "</section>"
                 + "<section class=\"card\"><h2>Then</h2>"
                 + selectField("a-action" + sfx, "action", "Action", null, actionOptions.toString(), null)
                 + fieldWithId("a-argument" + sfx, "text", "argument", "Sentence",
-                        camera(rule.action) ? "" : rule.argument, "", null)
+                        camera(step.action) ? "" : step.argument, "", null)
                         .replace(MACHINE_TEXT, "")
                 + selectField("a-target" + sfx, "target", "Camera or group", null,
                         cameraOptions(cameraList, groupList, shown), null)
                 + selectField("a-show" + sfx, "show", "Show as", null,
-                        selectOption(Automations.SHOW_POPUP, "Pop-up", rule.show)
-                                + selectOption(Automations.SHOW_FULLSCREEN, "Full screen", rule.show),
+                        selectOption(Automations.SHOW_POPUP, "Pop-up", step.show)
+                                + selectOption(Automations.SHOW_FULLSCREEN, "Full screen", step.show),
                         null)
+                // A Wait's length in the same box, with its own caption and bounds.
                 + fieldWithId("a-seconds" + sfx, "number", "seconds",
-                        "For (seconds, 0 = until touched or closed)", Integer.toString(rule.seconds),
-                        " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
-                + switchRow("a-chime" + sfx, "Chime", " name=\"chime\" value=\"1\"", rule.chime)
+                        waiting ? "Seconds" : "For (seconds, 0 = until touched or closed)",
+                        Integer.toString(step.seconds), waiting
+                                ? " min=\"" + Automations.MIN_WAIT + "\" max=\"" + Automations.MAX_WAIT + "\""
+                                : " min=\"0\" max=\"" + Popup.MAX_SECONDS + "\"", null)
+                + switchRow("a-chime" + sfx, "Chime", " name=\"chime\" value=\"1\"", step.chime)
                 + "</section>"
-                + "<section class=\"card\"><h2>Only</h2>"
+                + "<section class=\"card\"><h2>If</h2>"
                 + switchRow("a-only" + sfx, "Between these times", " name=\"only\" value=\"1\"",
-                        rule.windowed())
+                        windowed)
                 + "<div class=\"two\">"
                 + fieldWithId("a-from" + sfx, "time", "only_from", "From",
                         typedFrom != null ? typedFrom
-                                : rule.windowed() ? Automations.clock(rule.onlyFrom) : "07:00", "", null)
+                                : windowed ? Automations.clock(time.from) : "07:00", "", null)
                 + fieldWithId("a-to" + sfx, "time", "only_to", "To",
                         typedTo != null ? typedTo
-                                : rule.windowed() ? Automations.clock(rule.onlyTo) : "22:00", "", null)
+                                : windowed ? Automations.clock(time.to) : "22:00", "", null)
                 + "</div></section>"
                 // One row, as the panel lays it out (2026-09-28): Delete at the start,
                 // Cancel then Save at the end, ordered by the stylesheet. Save is the form's
@@ -3296,6 +3327,16 @@ final class HttpAdminServer {
                         + " data-confirm=\"" + escapeHtml(deleteQuestion(
                                 stored == null ? rule.name : stored.name)) + "\">Delete</button>")
                 + "</div></form>";
+    }
+
+    /**
+     * On an event radio whose When has a "Not again within" (a tag, a camera, a Changes): the
+     * mark admin_automation.js shows the box by, and the seconds it starts at when the event is
+     * picked.
+     */
+    private static String coolsAttributes(Automations.Event event) {
+        return Automations.cools(event) ? " data-cools=\"1\" data-cooldown=\""
+                + Automations.defaultCooldown(event) + "\"" : "";
     }
 
     private static boolean camera(String action) {
@@ -3391,7 +3432,7 @@ final class HttpAdminServer {
     private JSONObject automationsDocument() {
         JSONObject document = new JSONObject();
         try {
-            document.put("rules", Automations.toJson(KioskConfig.automationsOf(context), false));
+            document.put("rules", Automations.toJson(KioskConfig.automationsOf(context)));
             document.put("deleted", new org.json.JSONArray(KioskConfig.automationsDeleted(context)));
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
@@ -3442,6 +3483,11 @@ final class HttpAdminServer {
                     refuseJson(output, "\"" + rule.name + "\": " + problem);
                     return;
                 }
+            }
+            String tooMuch = Automations.checkList(rules);
+            if (tooMuch != null) {
+                refuseJson(output, tooMuch);
+                return;
             }
             KioskConfig.storeAutomations(context, rules);
         }
@@ -3596,40 +3642,44 @@ final class HttpAdminServer {
             }
         }
         rule.name = form.getOrDefault("name", "");
-        rule.sensor = form.getOrDefault("sensor", "");
-        rule.event = form.getOrDefault("event_" + rule.sensor, "");
-        rule.level = Automations.TIME.equals(rule.sensor)
+        // The form edits the first When, its first action and the first time condition; any
+        // other When, action or condition stays as stored.
+        Automations.When when = Automations.firstWhen(rule);
+        when.sensor = form.getOrDefault("sensor", "");
+        when.event = form.getOrDefault("event_" + when.sensor, "");
+        when.level = Automations.TIME.equals(when.sensor)
                 ? timeLevel(form.get("at")) : parseLevel(form.get("level"));
-        rule.minutes = parseMinutes(form.get("minutes"));
-        rule.match = (Automations.CAMERAS.equals(rule.sensor) ? form.getOrDefault("camera_tag", "")
-                : Integrations.isSensorId(rule.sensor) ? form.getOrDefault("match_text", "")
+        when.minutes = parseMinutes(form.get("minutes"));
+        when.match = (Automations.CAMERAS.equals(when.sensor) ? form.getOrDefault("camera_tag", "")
+                : Integrations.isSensorId(when.sensor) ? form.getOrDefault("match_text", "")
                 : form.getOrDefault("tag", "")).trim();
         String cooldown = form.getOrDefault("cooldown", "").trim();
-        rule.cooldown = cooldown.isEmpty() ? 0 : cooldown.matches("\\d{1,5}")
+        when.cooldown = cooldown.isEmpty() ? 0 : cooldown.matches("\\d{1,5}")
                 ? Integer.parseInt(cooldown) : -1;
-        rule.action = form.getOrDefault("action", "");
-        rule.argument = camera(rule.action) ? form.getOrDefault("target", "")
+        Automations.Step step = Automations.firstStep(when);
+        step.action = form.getOrDefault("action", "");
+        step.argument = camera(step.action) ? form.getOrDefault("target", "")
                 : form.getOrDefault("argument", "");
         String seconds = form.getOrDefault("seconds", "").trim();
-        rule.seconds = seconds.isEmpty() ? Popup.DEFAULT_SECONDS : seconds.matches("\\d{1,4}")
+        step.seconds = seconds.isEmpty() ? Popup.DEFAULT_SECONDS : seconds.matches("\\d{1,4}")
                 ? Integer.parseInt(seconds) : -1;
-        rule.chime = isTrue(form.getOrDefault("chime", "0"));
-        rule.show = form.getOrDefault("show", Automations.SHOW_POPUP);
+        step.chime = isTrue(form.getOrDefault("chime", "0"));
+        step.show = form.getOrDefault("show", Automations.SHOW_POPUP);
         boolean only = isTrue(form.getOrDefault("only", "0"));
         String typedFrom = form.getOrDefault("only_from", "");
         String typedTo = form.getOrDefault("only_to", "");
-        rule.onlyFrom = only ? Automations.minutesOf(typedFrom) : -1;
-        rule.onlyTo = only ? Automations.minutesOf(typedTo) : -1;
-        if (only && (rule.onlyFrom < 0 || rule.onlyTo < 0)) {
+        int from = only ? Automations.minutesOf(typedFrom) : -1;
+        int to = only ? Automations.minutesOf(typedTo) : -1;
+        if (only && (from < 0 || to < 0)) {
             // Shown again with the times as typed and the window switch on, so the page can be
             // corrected rather than filled in again.
-            rule.onlyFrom = Math.max(rule.onlyFrom, 0);
-            rule.onlyTo = rule.onlyTo < 0 ? 24 * 60 - 1 : rule.onlyTo;
+            Automations.setWindow(rule, Math.max(from, 0), to < 0 ? 24 * 60 - 1 : to);
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(
                     buildAutomationPage(rule, "Not saved: the times must be like 07:00.",
                             typedFrom, typedTo)));
             return;
         }
+        Automations.setWindow(rule, from, to);
         String problem = Automations.validate(rule, Sensors.names());
         if (problem != null) {
             // Still without an id when it is new, so the page it goes back to is the one for
@@ -3656,6 +3706,16 @@ final class HttpAdminServer {
                 // surface: the stored state stands, the editor never carried it.
                 rule.enabled = existing.enabled;
                 rules.set(rules.indexOf(existing), rule);
+            }
+            String tooMuch = Automations.checkList(rules);
+            if (tooMuch != null) {
+                if (existing == null) {
+                    // The page for a new rule again, as for any other refusal.
+                    rule.id = "";
+                }
+                writeResponse(output, 200, "text/html; charset=utf-8",
+                        bytes(buildAutomationPage(rule, "Not saved: " + tooMuch + ".")));
+                return;
             }
             KioskConfig.storeAutomations(context, rules);
         }

@@ -6674,7 +6674,7 @@ public final class KioskActivity extends Activity {
             return IntegrationRunner.panelListKey(KioskRuntimeState.integrations());
         }
         org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors(),
-                Automations.toJson(KioskConfig.automationsOf(this), true));
+                Automations.statusJson(KioskConfig.automationsOf(this)));
         return "home".equals(kind)
                 ? keys.optString("sensors_home") + keys.optString("automations_home")
                         + IntegrationRunner.panelListKey(KioskRuntimeState.integrations())
@@ -7063,7 +7063,11 @@ public final class KioskActivity extends Activity {
         // the sentence says which sensor it waits for.
         LinearLayout row = glyphRow(theme, R.drawable.ic_automations,
                 rule.name, Automations.sentence(rule), trailing, onOpen, false, chevron);
-        if (KioskService.stopsWhileAsleep(this, rule.sensor)) {
+        boolean stops = false;
+        for (String sensor : rule.sensors()) {
+            stops |= KioskService.stopsWhileAsleep(this, sensor);
+        }
+        if (stops) {
             // The sensor-with-a-slash of the sensor's own card, small and in the warning colour,
             // before the sentence: this rule does not run while the display sleeps.
             TextView sentence = readingOf(row);
@@ -8295,6 +8299,12 @@ public final class KioskActivity extends Activity {
     private Runnable automationEditor(LinearLayout into, KioskTheme theme,
             final Automations.Rule draft, boolean stacked, Runnable done, Runnable reopen) {
         boolean fresh = draft.id.isEmpty();
+        // The editor shows the first When, its first action and the first time condition; any
+        // other When, action or condition of the draft stays as it is and is saved with it.
+        final Automations.When when = Automations.firstWhen(draft);
+        final Automations.Step step = Automations.firstStep(when);
+        Automations.Condition window = Automations.firstTimeCondition(draft);
+        boolean windowed = window != null && window.timed();
         org.json.JSONObject block = KioskRuntimeState.sensors();
 
         LinearLayout nameCard = card(theme, null);
@@ -8325,7 +8335,7 @@ public final class KioskActivity extends Activity {
             groupNames.add(group.name);
         }
         boolean anyCamera = !cameraNames.isEmpty() || !groupNames.isEmpty();
-        if (anyCamera || Automations.CAMERAS.equals(draft.sensor)) {
+        if (anyCamera || Automations.CAMERAS.equals(when.sensor)) {
             sensorMenu.add(Automations.CAMERAS_NAME, Automations.CAMERAS);
         }
         // The integrations' values, each a sensor of its own.
@@ -8336,12 +8346,12 @@ public final class KioskActivity extends Activity {
                 sensorMenu.add(value.getValue(), value.getKey());
             }
         }
-        if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
+        if (!when.sensor.isEmpty() && !sensorMenu.values.contains(when.sensor)) {
             // A rule on a sensor this device lacks keeps it: opening and saving the rule for
             // its name must not move it to the first sensor in the menu (review, 2026-10-01).
-            Sensors.Def missing = Sensors.byId(draft.sensor);
-            sensorMenu.add((missing == null ? draft.sensor : missing.name)
-                    + " (not on this device)", draft.sensor);
+            Sensors.Def missing = Sensors.byId(when.sensor);
+            sensorMenu.add((missing == null ? when.sensor : missing.name)
+                    + " (not on this device)", when.sensor);
         }
         // Under the sensors, for a sensor whose test found it not running while the display
         // sleeps: the rule cannot run then, and the black film is what keeps it running.
@@ -8364,14 +8374,14 @@ public final class KioskActivity extends Activity {
         onlyEvent.setGravity(Gravity.CENTER_VERTICAL);
         onlyEvent.setVisibility(View.GONE);
         whenCard.addView(onlyEvent, matchWrapClose());
-        EditText levelInput = themedInput(theme, Double.isNaN(draft.level) ? ""
-                : Automations.TIME.equals(draft.sensor) ? Automations.clock((int) draft.level)
-                : Automations.number(draft.level), false);
+        EditText levelInput = themedInput(theme, Double.isNaN(when.level) ? ""
+                : Automations.TIME.equals(when.sensor) ? Automations.clock((int) when.level)
+                : Automations.number(when.level), false);
         levelInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         TextView levelCaption = addField(whenCard, theme, "Level", levelInput);
         View levelBox = (View) levelInput.getParent();
         EditText minutesInput = themedInput(theme,
-                draft.minutes == 0 ? "" : Integer.toString(draft.minutes), false);
+                when.minutes == 0 ? "" : Integer.toString(when.minutes), false);
         minutesInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(whenCard, theme, "For (minutes)", minutesInput);
         View minutesBox = (View) minutesInput.getParent();
@@ -8383,28 +8393,33 @@ public final class KioskActivity extends Activity {
         for (String tag : tagsRead) {
             tagMenu.add(tag, tag);
         }
-        if (!draft.match.isEmpty() && !tagsRead.contains(draft.match)) {
-            tagMenu.add(draft.match, draft.match);
+        if (!when.match.isEmpty() && !tagsRead.contains(when.match)) {
+            tagMenu.add(when.match, when.match);
         }
-        tagMenu.select(draft.match);
+        tagMenu.select(when.match);
         View tagBox = (View) tagMenu.box.getParent();
         // The camera or group a camera's event names, in place of the tag.
         MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group", cameraNames,
-                groupNames, Automations.CAMERAS.equals(draft.sensor) ? draft.match : "");
+                groupNames, Automations.CAMERAS.equals(when.sensor) ? when.match : "");
         View cameraBox = (View) cameraMenu.box.getParent();
         // The text an integration's value must become ("Busy"), upper and lower case alike.
         EditText textInput = proseInput(theme,
-                Integrations.isSensorId(draft.sensor) ? draft.match : "");
+                Integrations.isSensorId(when.sensor) ? when.match : "");
         // In a column of its own, so the box and its helper line hide together.
         LinearLayout textBox = new LinearLayout(this);
         textBox.setOrientation(LinearLayout.VERTICAL);
         addField(textBox, theme, "Text", textInput, "Upper and lower case count the same.");
         whenCard.addView(textBox, matchWrapClose());
-        EditText cooldownInput = themedInput(theme, Integer.toString(draft.cooldown), false);
+        EditText cooldownInput = themedInput(theme, Integer.toString(when.cooldown), false);
         cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(whenCard, theme, "Not again within (seconds)", cooldownInput);
         View cooldownBox = (View) cooldownInput.getParent();
 
+        // The event shown at the last paint, so picking another one that has a "Not again
+        // within" starts the box at that event's default (0 s for a Changes, 60 s for a tag or a
+        // camera); the event the editor opened with keeps what is stored.
+        // By sensor and id: an integration's events are made anew on every lookup.
+        final String[] lastEvent = new String[1];
         Runnable paintEvent = () -> {
             View checked = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
             String sensor = sensorMenu.value();
@@ -8429,7 +8444,15 @@ public final class KioskActivity extends Activity {
             boolean camera = tag && Automations.CAMERAS.equals(sensor);
             tagBox.setVisibility(tag && !camera ? View.VISIBLE : View.GONE);
             cameraBox.setVisibility(camera ? View.VISIBLE : View.GONE);
-            cooldownBox.setVisibility(tag ? View.VISIBLE : View.GONE);
+            boolean cools = event != null && Automations.cools(event);
+            cooldownBox.setVisibility(cools ? View.VISIBLE : View.GONE);
+            String shownEvent = event == null ? null : sensor + "/" + event.id;
+            if (cools && lastEvent[0] != null && !lastEvent[0].equals(shownEvent)) {
+                cooldownInput.setText(Integer.toString(Automations.defaultCooldown(event)));
+            }
+            if (shownEvent != null) {
+                lastEvent[0] = shownEvent;
+            }
             textBox.setVisibility(event != null && event.matches && !event.oneShot
                     ? View.VISIBLE : View.GONE);
         };
@@ -8443,7 +8466,7 @@ public final class KioskActivity extends Activity {
                 for (Automations.Event event : events) {
                     radioChoice(theme, eventGroup, event.label, event.id);
                 }
-                checkRadioIfChanged(eventGroup, sensor.equals(draft.sensor) ? draft.event
+                checkRadioIfChanged(eventGroup, sensor.equals(when.sensor) ? when.event
                         : events.get(0).id);
                 boolean one = events.size() == 1;
                 eventGroup.setVisibility(one ? View.GONE : View.VISIBLE);
@@ -8457,7 +8480,7 @@ public final class KioskActivity extends Activity {
         };
         sensorMenu.onChange = paintSensor;
         eventGroup.setOnCheckedChangeListener((group, id) -> paintEvent.run());
-        sensorMenu.select(draft.sensor.isEmpty() ? "proximity" : draft.sensor);
+        sensorMenu.select(when.sensor.isEmpty() ? "proximity" : when.sensor);
         paintSensor.run();
 
         LinearLayout thenCard = card(theme, "Then");
@@ -8465,39 +8488,46 @@ public final class KioskActivity extends Activity {
         MenuField actionMenu = new MenuField(thenCard, theme, "Action");
         for (Automations.Action action : Automations.ACTIONS) {
             // Show a camera once there is one to show.
-            if (action.id.equals("camera") && !anyCamera && !"camera".equals(draft.action)) {
+            if (action.id.equals("camera") && !anyCamera && !"camera".equals(step.action)) {
+                continue;
+            }
+            // A Wait needs an action after it, which this editor of one action cannot add: it
+            // is offered only to a rule whose first action already is one, so that is kept.
+            if (Automations.waits(action.id) && !Automations.waits(step.action)) {
                 continue;
             }
             actionMenu.add(action.label, action.id);
         }
-        actionMenu.select(draft.action.isEmpty() ? "display_on" : draft.action);
-        EditText argumentInput = themedInput(theme, draft.argument, false);
+        actionMenu.select(step.action.isEmpty() ? "display_on" : step.action);
+        EditText argumentInput = themedInput(theme, step.argument, false);
         argumentInput.setInputType(InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         TextView argumentCaption = addField(thenCard, theme, "Sentence", argumentInput);
         View argumentBox = (View) argumentInput.getParent();
         MenuField targetMenu = cameraTargetMenu(thenCard, theme, "Camera or group", cameraNames,
-                groupNames, "camera".equals(draft.action) ? draft.argument : "");
+                groupNames, "camera".equals(step.action) ? step.argument : "");
         View targetBox = (View) targetMenu.box.getParent();
         // Pop-up or full screen, as the editor's other choices: two radios.
         RadioGroup showGroup = new RadioGroup(this);
         radioChoice(theme, showGroup, "Pop-up", Automations.SHOW_POPUP);
         radioChoice(theme, showGroup, "Full screen", Automations.SHOW_FULLSCREEN);
-        checkRadioIfChanged(showGroup, draft.show);
+        checkRadioIfChanged(showGroup, step.show);
         thenCard.addView(showGroup, matchWrapClose());
-        EditText secondsInput = themedInput(theme, Integer.toString(draft.seconds), false);
+        EditText secondsInput = themedInput(theme, Integer.toString(step.seconds), false);
         secondsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         TextView secondsCaption = addField(thenCard, theme, "For (seconds, 0 = until touched)",
                 secondsInput);
         View secondsBox = (View) secondsInput.getParent();
-        CompoundButton chimeSwitch = themedSwitch(theme, "Chime", draft.chime);
+        CompoundButton chimeSwitch = themedSwitch(theme, "Chime", step.chime);
         thenCard.addView(chimeSwitch, matchWrap());
         Runnable paintShows = () -> {
             boolean fullscreen = "camera".equals(actionMenu.value())
                     && showGroup.getCheckedRadioButtonId() != View.NO_ID
                     && Automations.SHOW_FULLSCREEN.equals(showGroup.findViewById(
                             showGroup.getCheckedRadioButtonId()).getTag());
-            secondsCaption.setText(fullscreen ? "For (seconds, 0 = until closed)"
+            // A Wait's length is the same box.
+            secondsCaption.setText(Automations.waits(actionMenu.value()) ? "Seconds"
+                    : fullscreen ? "For (seconds, 0 = until closed)"
                     : "For (seconds, 0 = until touched)");
         };
         showGroup.setOnCheckedChangeListener((group, id) -> paintShows.run());
@@ -8508,7 +8538,8 @@ public final class KioskActivity extends Activity {
             boolean argument = action != null && action.argumentLabel != null && !camera;
             targetBox.setVisibility(camera ? View.VISIBLE : View.GONE);
             showGroup.setVisibility(camera ? View.VISIBLE : View.GONE);
-            secondsBox.setVisibility(shows ? View.VISIBLE : View.GONE);
+            secondsBox.setVisibility(shows || action != null && Automations.waits(action.id)
+                    ? View.VISIBLE : View.GONE);
             chimeSwitch.setVisibility(shows ? View.VISIBLE : View.GONE);
             paintShows.run();
             argumentBox.setVisibility(argument ? View.VISIBLE : View.GONE);
@@ -8522,18 +8553,18 @@ public final class KioskActivity extends Activity {
         actionMenu.onChange = paintAction;
         paintAction.run();
 
-        LinearLayout onlyCard = card(theme, "Only");
-        CompoundButton onlySwitch = themedSwitch(theme, "Between these times", draft.windowed());
+        LinearLayout onlyCard = card(theme, "If");
+        CompoundButton onlySwitch = themedSwitch(theme, "Between these times", windowed);
         onlyCard.addView(onlySwitch, matchWrap());
         // The time keyboard, as the web's time fields have; a full keyboard for "07:00" was
         // the wrong tool (review, 2026-10-01).
         EditText fromInput = themedInput(theme,
-                draft.windowed() ? Automations.clock(draft.onlyFrom) : "07:00", false);
+                windowed ? Automations.clock(window.from) : "07:00", false);
         fromInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
         addField(onlyCard, theme, "From", fromInput);
         View fromBox = (View) fromInput.getParent();
         EditText toInput = themedInput(theme,
-                draft.windowed() ? Automations.clock(draft.onlyTo) : "22:00", false);
+                windowed ? Automations.clock(window.to) : "22:00", false);
         toInput.setInputType(InputType.TYPE_CLASS_DATETIME | InputType.TYPE_DATETIME_VARIATION_TIME);
         addField(onlyCard, theme, "To", toInput);
         View toBox = (View) toInput.getParent();
@@ -8562,42 +8593,47 @@ public final class KioskActivity extends Activity {
 
         Runnable collect = () -> {
             draft.name = nameInput.getText().toString();
-            draft.sensor = sensorMenu.value();
+            when.sensor = sensorMenu.value();
             View event = eventGroup.findViewById(eventGroup.getCheckedRadioButtonId());
-            draft.event = event == null ? "" : (String) event.getTag();
+            when.event = event == null ? "" : (String) event.getTag();
             String level = levelInput.getText().toString().trim();
-            if (Automations.TIME.equals(draft.sensor)) {
+            if (Automations.TIME.equals(when.sensor)) {
                 int at = Automations.minutesOf(level);
                 level = at < 0 || at >= 24 * 60 ? "" : Integer.toString(at);
             }
             try {
                 // A German keyboard offers the comma on a number box.
-                draft.level = level.isEmpty() ? Double.NaN
+                when.level = level.isEmpty() ? Double.NaN
                         : Double.parseDouble(level.replace(',', '.'));
             } catch (NumberFormatException notANumber) {
-                draft.level = Double.NaN;
+                when.level = Double.NaN;
             }
             String minutes = minutesInput.getText().toString().trim();
             // Blank is "at once"; anything else that is not a number is refused by validate,
             // as the web refuses it, rather than quietly meaning 0.
-            draft.minutes = minutes.isEmpty() ? 0
+            when.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
-            draft.match = Automations.CAMERAS.equals(draft.sensor) ? cameraMenu.value()
-                    : Integrations.isSensorId(draft.sensor) ? textInput.getText().toString()
+            when.match = Automations.CAMERAS.equals(when.sensor) ? cameraMenu.value()
+                    : Integrations.isSensorId(when.sensor) ? textInput.getText().toString()
                     : tagMenu.value();
             String cooldown = cooldownInput.getText().toString().trim();
-            draft.cooldown = cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;
-            draft.action = actionMenu.value();
-            draft.argument = "camera".equals(draft.action) ? targetMenu.value()
+            when.cooldown = cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;
+            step.action = actionMenu.value();
+            step.argument = "camera".equals(step.action) ? targetMenu.value()
                     : argumentInput.getText().toString();
             String seconds = secondsInput.getText().toString().trim();
-            draft.seconds = seconds.matches("\\d{1,4}") ? Integer.parseInt(seconds) : -1;
-            draft.chime = chimeSwitch.isChecked();
+            step.seconds = seconds.matches("\\d{1,4}") ? Integer.parseInt(seconds) : -1;
+            step.chime = chimeSwitch.isChecked();
             View shown = showGroup.findViewById(showGroup.getCheckedRadioButtonId());
-            draft.show = shown == null ? Automations.SHOW_POPUP : (String) shown.getTag();
-            boolean only = onlySwitch.isChecked();
-            draft.onlyFrom = only ? Automations.minutesOf(fromInput.getText().toString()) : -1;
-            draft.onlyTo = only ? Automations.minutesOf(toInput.getText().toString()) : -1;
+            step.show = shown == null ? Automations.SHOW_POPUP : (String) shown.getTag();
+            int from = Automations.minutesOf(fromInput.getText().toString());
+            int to = Automations.minutesOf(toInput.getText().toString());
+            if (!onlySwitch.isChecked()) {
+                Automations.setWindow(draft, -1, -1);
+            } else if (from >= 0 && to >= 0) {
+                Automations.setWindow(draft, from, to);
+            }
+            // Times not like 07:00 leave the window as it was; Save refuses them.
         };
         Button cancel = textButton(theme, "Cancel");
         cancel.setOnClickListener(view -> done.run());
@@ -8614,7 +8650,9 @@ public final class KioskActivity extends Activity {
         Button save = primaryButton(theme, "Save");
         save.setOnClickListener(view -> {
             collect.run();
-            if (onlySwitch.isChecked() && (draft.onlyFrom < 0 || draft.onlyTo < 0)) {
+            if (onlySwitch.isChecked()
+                    && (Automations.minutesOf(fromInput.getText().toString()) < 0
+                            || Automations.minutesOf(toInput.getText().toString()) < 0)) {
                 refuse.accept("the times must be like 07:00");
                 return;
             }
@@ -8643,6 +8681,15 @@ public final class KioskActivity extends Activity {
                     // any surface: the stored state stands, the editor never carried it.
                     draft.enabled = stored.enabled;
                     rules.set(rules.indexOf(stored), draft);
+                }
+                String tooMuch = Automations.checkList(rules);
+                if (tooMuch != null) {
+                    if (stored == null) {
+                        // Still a new rule, as for any other refusal.
+                        draft.id = "";
+                    }
+                    refuse.accept(tooMuch);
+                    return;
                 }
                 KioskConfig.storeAutomations(this, rules);
             }
