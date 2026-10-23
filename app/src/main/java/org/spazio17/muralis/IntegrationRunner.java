@@ -38,17 +38,30 @@ import java.util.concurrent.TimeUnit;
  * schedule says unavailable (three failures in a row); after that an old value never stands in
  * for a service that does not answer. A result that arrives for an instance removed or changed
  * meanwhile is dropped.
+ *
+ * <p>An instance the fleet shares is asked by one panel for the whole group (FleetAsker): that
+ * panel reads it as above and passes the values on (FleetServer.pushValues); the others do not
+ * ask, take the newest values that arrive as if they had read them, and drop them once no
+ * reading came for too long. Each panel works out its role again every few seconds.
  */
 final class IntegrationRunner {
     private static final String TAG = "MuralisIntegrations";
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 15_000;
-    /** The largest answer read: a status page, not a download. */
-    static final int MAX_BODY_BYTES = 256 * 1024;
+    /** The largest answer read: room for a calendar with years of events, not a download. */
+    static final int MAX_BODY_BYTES = 4 * 1024 * 1024;
     private static final int MAX_REDIRECTS = 3;
     /** The longest one ask may take, redirects and a slow answer included. */
     private static final long TOTAL_DEADLINE_MS = 30_000;
     private static final int ASKING_THREADS = 3;
+    /** How often the roles for the fleet's shared instances are worked out again. */
+    private static final long ROLE_EVERY_MS = 10_000;
+    /** A member counts as there when heard from within two check-ins. */
+    private static final long FRESH_MS = 2 * FleetServer.HEARTBEAT_INTERVAL_MS;
+    /** The states a passed-on reading may carry, the ones {@link #state} gives. */
+    private static final java.util.Set<String> FLEET_STATES = new java.util.HashSet<>(
+            java.util.Arrays.asList("ok", "failing", "unavailable", "needs_credentials",
+                    "waiting"));
 
     /** Told when values or a status changed, so the status and MQTT follow. */
     interface Listener {
@@ -60,6 +73,7 @@ final class IntegrationRunner {
         final Integrations.Instance instance;
         final Integrations.Definition definition;
         final IntegrationSchedule schedule;
+        final long intervalMs;
         /** The values by value id, unavailable until the first answer. */
         final Map<String, Integrations.Value> values = new LinkedHashMap<>();
         boolean asking;
@@ -67,14 +81,29 @@ final class IntegrationRunner {
         long updatedAtMs;
         /** Why it does not run at all (an edition it needs), or null. */
         final String blocked;
+        /** The fleet shares it and this panel asks for the whole group: its reads are passed on. */
+        boolean forFleet;
+        /** The name of the panel that asks for the fleet, or null while this panel asks itself. */
+        String askedBy;
+        /** While another asks: when values last arrived, or when it took over (elapsed clock). */
+        long fleetHeardMs;
+        /** The read time of the values held, on this panel's wall clock; 0 for none. */
+        long fleetReadAtMs;
+        /** The asker's state and problem with the values held; null before the first. */
+        String fleetState;
+        String fleetProblem;
+        /** No reading arrived for too long and the values were withdrawn. */
+        boolean fleetStale;
+        /** Every secret it needs is stored and readable; checked again until it is. */
+        boolean secretsReady;
 
         Running(Integrations.Instance instance, Integrations.Definition definition,
                 String blocked, long nowMs) {
             this.instance = instance;
             this.definition = definition;
             this.blocked = blocked;
-            this.schedule = new IntegrationSchedule(definition.intervalOf(instance),
-                    definition.floorMs, nowMs);
+            this.intervalMs = definition.intervalOf(instance);
+            this.schedule = new IntegrationSchedule(intervalMs, definition.floorMs, nowMs);
             for (Integrations.ValueSpec spec : definition.valuesOf(instance)) {
                 values.put(spec.id, Integrations.Value.unavailable(spec.type));
             }
@@ -89,6 +118,8 @@ final class IntegrationRunner {
     private List<Integrations.Instance> stored = new ArrayList<>();
     private ScheduledExecutorService ticker;
     private ExecutorService asking;
+    /** When the roles were last worked out (elapsed clock), so they are not every second. */
+    private long rolesAtMs = Long.MIN_VALUE / 2;
 
     IntegrationRunner(Context context, Automations.Engine engine, Listener listener) {
         this.context = context.getApplicationContext();
@@ -159,6 +190,7 @@ final class IntegrationRunner {
         }
         running.clear();
         running.putAll(next);
+        decideRoles(now);
         changed();
     }
 
@@ -168,13 +200,19 @@ final class IntegrationRunner {
         if (one != null) {
             one.schedule.credentialsReplaced(SystemClock.elapsedRealtime());
             one.problem = null;
+            one.secretsReady = false;
+            // Runnable again at once, so the asker can be this panel from the next tick.
+            rolesAtMs = Long.MIN_VALUE / 2;
         }
     }
 
-    /** Asks this instance's service as soon as its floor allows; false when it is not running. */
+    /**
+     * Asks this instance's service as soon as its floor allows; false when it is not running,
+     * or when another panel asks for the fleet (its status says which).
+     */
     synchronized boolean pollNow(String instanceId) {
         Running one = running.get(instanceId);
-        if (one == null) {
+        if (one == null || one.askedBy != null) {
             return false;
         }
         one.schedule.pollNow(SystemClock.elapsedRealtime());
@@ -222,16 +260,251 @@ final class IntegrationRunner {
         return null;
     }
 
+    /**
+     * Works out, for each instance the fleet shares, whether this panel asks for the group or
+     * another does (FleetAsker), and tells the fleet which ones this panel can run. True when a
+     * role changed, so the status follows. Called holding the lock.
+     */
+    private boolean decideRoles(long now) {
+        rolesAtMs = now;
+        FleetServer.IntegrationsFleet fleet = FleetServer.integrationsFleet(context);
+        java.util.Set<String> mine = new java.util.HashSet<>();
+        for (Running one : running.values()) {
+            if (!askedForFleet(fleet, one)) {
+                continue;
+            }
+            if (!one.secretsReady) {
+                one.secretsReady = secretsReady(one);
+            }
+            if (one.blocked == null && one.secretsReady && !one.schedule.needsCredentials()) {
+                mine.add(one.instance.id);
+            }
+        }
+        FleetServer.setOwnRunnable(mine);
+        List<FleetAsker.Member> candidates = fleet == null ? null : fleet.candidates(mine);
+        boolean changed = false;
+        for (Running one : running.values()) {
+            boolean shared = one.blocked == null && askedForFleet(fleet, one);
+            String asker = shared ? FleetAsker.asker(candidates, fleet.self, one.instance.id,
+                    now, FRESH_MS) : null;
+            // Nobody able to ask (this panel neither): it asks for itself as before, and its
+            // status says why it cannot.
+            String askedBy = asker == null || asker.equals(fleet.self) ? null
+                    : nameOrDefault(fleet.nameOf(asker));
+            boolean forFleet = shared && askedBy == null;
+            if (askedBy != null && one.askedBy == null) {
+                // Stops asking; what it holds stands until it is too old.
+                one.fleetState = state(one.instance, one.definition, one);
+                one.fleetProblem = one.problem;
+                one.fleetHeardMs = now;
+                one.fleetReadAtMs = one.updatedAtMs;
+                one.fleetStale = false;
+                Log.i(TAG, "Integration " + one.instance.id + ": asked by " + askedBy);
+            } else if (askedBy == null && one.askedBy != null) {
+                // Asks from now on, at once as far as its floor and Retry-After let it: the
+                // values it was passed may already be nearly an interval old.
+                one.fleetState = null;
+                one.fleetProblem = null;
+                one.fleetStale = false;
+                one.schedule.pollNow(now);
+                Log.i(TAG, "Integration " + one.instance.id + ": asking "
+                        + (forFleet ? "for the fleet" : "for this panel"));
+            }
+            changed |= forFleet != one.forFleet || !java.util.Objects.equals(askedBy, one.askedBy);
+            one.forFleet = forFleet;
+            one.askedBy = askedBy;
+        }
+        return changed;
+    }
+
+    /**
+     * Whether one panel may ask for the whole group: the fleet shares the instance and every
+     * setting of it is shared. A setting kept per panel (a room) makes each panel's answer its
+     * own, so each asks for itself.
+     */
+    private static boolean askedForFleet(FleetServer.IntegrationsFleet fleet, Running one) {
+        if (fleet == null || !fleet.instances.contains(one.instance.id)) {
+            return false;
+        }
+        for (Integrations.Field field : one.definition.fields) {
+            if (field.scope == Integrations.Scope.PANEL) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String nameOrDefault(String name) {
+        return name.isEmpty() ? "another panel" : name;
+    }
+
+    /** Whether every secret the instance needs is stored and can be read now. */
+    private boolean secretsReady(Running one) {
+        SecretStore store = new SecretStore(KioskConfig.storageContext(context));
+        for (Integrations.Field field : one.definition.fields) {
+            if (!field.secret) {
+                continue;
+            }
+            String value = store.getOrNull(Integrations.secretName(one.instance.id, field.id));
+            if (value == null || (field.required && value.isEmpty())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Values another panel read for the fleet and passed on: taken as if this panel had read
+     * them, when this panel holds the instance, another asks for it, and they are newer than
+     * what it holds (or what it holds was withdrawn). Null when taken, else why not.
+     */
+    String receive(String instanceId, long readAtMs, String state, String problem,
+            String asker, JSONObject values) {
+        Map<String, Integrations.Value> toFeed = new LinkedHashMap<>();
+        synchronized (this) {
+            Running one = running.get(instanceId);
+            if (one == null) {
+                return "this panel does not run " + instanceId;
+            }
+            if (one.askedBy == null) {
+                return "this panel asks for " + instanceId + " itself";
+            }
+            if (!FLEET_STATES.contains(state)) {
+                return "unknown state " + state;
+            }
+            if (values == null) {
+                return "the values are missing";
+            }
+            if (!"ok".equals(state) && !"waiting".equals(state)
+                    && (problem == null || problem.isEmpty())) {
+                return "the state " + state + " carries no reason";
+            }
+            if (!one.fleetStale && readAtMs <= one.fleetReadAtMs) {
+                return "older than the values this panel holds";
+            }
+            for (Map.Entry<String, Integrations.Value> spec : one.values.entrySet()) {
+                Integrations.Value next =
+                        valueOf(values.optJSONObject(spec.getKey()), spec.getValue().type);
+                spec.setValue(next);
+                toFeed.put(spec.getKey(), next);
+            }
+            String before = one.fleetState;
+            one.fleetReadAtMs = readAtMs;
+            one.fleetHeardMs = SystemClock.elapsedRealtime();
+            one.fleetStale = false;
+            one.fleetState = state;
+            one.fleetProblem = problem == null || problem.isEmpty() ? null : problem;
+            if ("ok".equals(state)) {
+                one.updatedAtMs = readAtMs;
+            }
+            if (!state.equals(before)) {
+                Log.i(TAG, "Integration " + instanceId + " from " + asker + ": " + state
+                        + (one.fleetProblem == null ? "" : ", " + one.fleetProblem));
+            }
+        }
+        for (Map.Entry<String, Integrations.Value> value : toFeed.entrySet()) {
+            feed(instanceId, value.getKey(), value.getValue());
+        }
+        changed();
+        return null;
+    }
+
+    /** A value as it travels to the other panels: its type, whether it holds one, and what. */
+    private static JSONObject valueJson(Integrations.Value value) throws JSONException {
+        JSONObject json = new JSONObject();
+        json.put("type", value.type.name());
+        // JSON has no NaN or infinity: such a number travels as no value.
+        boolean available = value.available && (value.type == Integrations.Type.FLAG
+                || value.type == Integrations.Type.TEXT || Double.isFinite(value.number));
+        json.put("available", available);
+        if (available) {
+            json.put("value", value.type == Integrations.Type.FLAG ? (Object) value.flag
+                    : value.type == Integrations.Type.TEXT ? (Object) value.text
+                    : (Object) value.number);
+            if (!value.attributes.isEmpty()) {
+                json.put("attributes", new JSONObject(value.attributes));
+            }
+        }
+        return json;
+    }
+
+    /** A value that travelled, or unavailable when missing, of another type or unreadable. */
+    private static Integrations.Value valueOf(JSONObject json, Integrations.Type type) {
+        if (json == null || !json.optBoolean("available") || !type.name().equals(
+                json.optString("type")) || !json.has("value")) {
+            return Integrations.Value.unavailable(type);
+        }
+        Integrations.Value value;
+        switch (type) {
+            case FLAG:
+                value = Integrations.Value.of(json.optBoolean("value"));
+                break;
+            case TEXT:
+                value = Integrations.Value.of(json.optString("value"));
+                break;
+            case TIME:
+                value = Integrations.Value.at(json.optLong("value"));
+                break;
+            default:
+                double number = json.optDouble("value");
+                if (Double.isNaN(number)) {
+                    return Integrations.Value.unavailable(type);
+                }
+                value = Integrations.Value.of(number);
+        }
+        JSONObject attributes = json.optJSONObject("attributes");
+        if (attributes != null) {
+            Map<String, String> details = new LinkedHashMap<>();
+            java.util.Iterator<String> keys = attributes.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                details.put(key, attributes.optString(key));
+            }
+            value = value.with(details);
+        }
+        return value;
+    }
+
     private void tick() {
         List<Running> due = new ArrayList<>();
+        // Instance id, value id and the unavailable value, fed once the lock is let go.
+        List<Object[]> withdrawn = new ArrayList<>();
+        boolean changed = false;
         synchronized (this) {
             long now = SystemClock.elapsedRealtime();
+            if (now - rolesAtMs >= ROLE_EVERY_MS) {
+                changed = decideRoles(now);
+            }
             for (Running one : running.values()) {
+                if (one.askedBy != null) {
+                    // Another panel asks: nothing to do here but drop its values once they are
+                    // too old (no backlog: they never stand in for a silent asker).
+                    if (!one.fleetStale && FleetAsker.stale(one.fleetHeardMs, one.intervalMs,
+                            FleetServer.HEARTBEAT_INTERVAL_MS, now)) {
+                        one.fleetStale = true;
+                        Log.i(TAG, "Integration " + one.instance.id + ": no reading from "
+                                + one.askedBy + ", values withdrawn");
+                        for (Map.Entry<String, Integrations.Value> spec : one.values.entrySet()) {
+                            Integrations.Value gone =
+                                    Integrations.Value.unavailable(spec.getValue().type);
+                            spec.setValue(gone);
+                            withdrawn.add(new Object[] {one.instance.id, spec.getKey(), gone});
+                        }
+                        changed = true;
+                    }
+                    continue;
+                }
                 if (one.blocked == null && !one.asking && one.schedule.start(now)) {
                     one.asking = true;
                     due.add(one);
                 }
             }
+        }
+        for (Object[] gone : withdrawn) {
+            feed((String) gone[0], (String) gone[1], (Integrations.Value) gone[2]);
+        }
+        if (changed) {
+            changed();
         }
         for (Running one : due) {
             try {
@@ -276,10 +549,12 @@ final class IntegrationRunner {
     private void record(Running one, Integrations.Result result) {
         List<String[]> logLines = new ArrayList<>();
         Map<String, Integrations.Value> toFeed = new LinkedHashMap<>();
+        JSONObject forFleet = null;
         synchronized (this) {
             one.asking = false;
-            if (running.get(one.instance.id) != one) {
-                // Removed or changed while its service was being asked: what it said is old.
+            if (running.get(one.instance.id) != one || one.askedBy != null) {
+                // Removed or changed while its service was being asked, or another panel asks
+                // for the fleet now: what it said is not this panel's to keep.
                 return;
             }
             long now = SystemClock.elapsedRealtime();
@@ -317,6 +592,9 @@ final class IntegrationRunner {
             } else if (one.problem == null && before != null) {
                 logLines.add(new String[] {one.instance.id, "answering again"});
             }
+            if (one.forFleet) {
+                forFleet = fleetBody(one);
+            }
         }
         for (String[] line : logLines) {
             Log.i(TAG, "Integration " + line[0] + " " + line[1]);
@@ -325,6 +603,29 @@ final class IntegrationRunner {
             feed(one.instance.id, value.getKey(), value.getValue());
         }
         changed();
+        if (forFleet != null) {
+            FleetServer.pushValues(context, one.instance.id, forFleet);
+        }
+    }
+
+    /** What the other panels are told after a read for the fleet; see FleetServer.takeValues. */
+    private JSONObject fleetBody(Running one) {
+        try {
+            JSONObject values = new JSONObject();
+            for (Map.Entry<String, Integrations.Value> value : one.values.entrySet()) {
+                values.put(value.getKey(), valueJson(value.getValue()));
+            }
+            return new JSONObject()
+                    .put("instance", one.instance.id)
+                    .put("read_at", System.currentTimeMillis())
+                    .put("state", state(one.instance, one.definition, one))
+                    .put("problem", one.problem == null ? "" : one.problem)
+                    .put("asker", KioskConfig.deviceIdOf(context))
+                    .put("values", values);
+        } catch (JSONException impossible) {
+            // Keys are constants, values strings, numbers and booleans; a NaN is never available.
+            throw new IllegalStateException(impossible);
+        }
     }
 
     private void feed(String instanceId, String valueId, Integrations.Value value) {
@@ -510,6 +811,10 @@ final class IntegrationRunner {
         if (one.blocked != null) {
             return "blocked";
         }
+        if (one.askedBy != null) {
+            return one.fleetStale ? "unavailable"
+                    : one.fleetState == null ? "waiting" : one.fleetState;
+        }
         if (one.schedule.needsCredentials()) {
             return "needs_credentials";
         }
@@ -519,21 +824,41 @@ final class IntegrationRunner {
         return one.schedule.unavailable() ? "waiting" : "ok";
     }
 
-    /** The one line a row shows, the same words on both surfaces. */
+    /**
+     * The one line a row shows, the same words on both surfaces: for an instance the fleet
+     * shares, also who asks for it.
+     */
     private static String statusLine(String state, Running one) {
+        if (one != null && one.askedBy != null && !"blocked".equals(state)) {
+            if (one.fleetStale) {
+                long minutes = (SystemClock.elapsedRealtime() - one.fleetHeardMs) / 60_000;
+                return "No reading from the fleet for " + minutes
+                        + (minutes == 1 ? " minute" : " minutes");
+            }
+            String by = "Asked by " + one.askedBy;
+            return "ok".equals(state) || "waiting".equals(state) ? by
+                    : by + ". " + line(state, null, one.fleetProblem);
+        }
+        if (one != null && one.forFleet && "ok".equals(state)) {
+            return "Asking for the fleet";
+        }
+        return line(state, one == null ? null : one.blocked, one == null ? null : one.problem);
+    }
+
+    private static String line(String state, String blocked, String problem) {
         switch (state) {
             case "unknown":
                 return "Not in this version of Muralis";
             case "off":
                 return "Off";
             case "blocked":
-                return "Off: " + one.blocked;
+                return "Off: " + blocked;
             case "needs_credentials":
-                return "Stopped: " + one.problem + ". Save a new key to start again.";
+                return "Stopped: " + problem + ". Save a new key to start again.";
             case "unavailable":
-                return "Not answering: " + one.problem;
+                return "Not answering: " + problem;
             case "failing":
-                return "Last ask failed: " + one.problem;
+                return "Last ask failed: " + problem;
             case "waiting":
                 return "Asking for the first time";
             default:
@@ -604,7 +929,7 @@ final class IntegrationRunner {
                 }
                 if (out.size() + read > MAX_BODY_BYTES) {
                     throw new IOException("the answer is larger than "
-                            + (MAX_BODY_BYTES / 1024) + " KB");
+                            + (MAX_BODY_BYTES / 1024 / 1024) + " MB");
                 }
                 out.write(buffer, 0, read);
             }

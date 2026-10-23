@@ -1,0 +1,7 @@
+{
+  "id": "webvalue",
+  "class": "WebValueIntegration",
+  "name": "Value from a web address",
+  "kind": "local",
+  "codeowners": ["@Nihvel"]
+}

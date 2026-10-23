@@ -26,7 +26,7 @@ import android.util.Log;
  * <ul>
  *   <li><b>{@code NET_CAPABILITY_INTERNET}, never {@code NET_CAPABILITY_VALIDATED}.</b> Validation
  *       means Android reached a Google connectivity-check endpoint. A dashboard on a LAN with no
- *       route to the internet, which is a perfectly ordinary Home Assistant deployment and is this
+ *       route to the internet, which is a perfectly ordinary smart-home deployment and is this
  *       project's own, would never validate, and a gate that waits for validation would hold such a
  *       panel dark forever.
  *   <li><b>It fires at most once</b>, and unregisters itself when it does. This is a startup gate,
