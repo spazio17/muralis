@@ -414,10 +414,7 @@ final class Automations {
         }
     }
 
-    /**
-     * The rule's first When, added when it has none: the panel's editor as it stands edits this
-     * one, its first action and the first time condition, and keeps the rest as it is.
-     */
+    /** The rule's first When, added when it has none: the panel's editor draws a new rule so. */
     static When firstWhen(Rule rule) {
         if (rule.whens.isEmpty()) {
             rule.whens.add(new When());
