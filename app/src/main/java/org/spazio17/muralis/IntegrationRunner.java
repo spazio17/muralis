@@ -43,8 +43,8 @@ final class IntegrationRunner {
     private static final String TAG = "MuralisIntegrations";
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 15_000;
-    /** The largest answer read: a status page, not a download. */
-    static final int MAX_BODY_BYTES = 256 * 1024;
+    /** The largest answer read: room for a calendar with years of events, not a download. */
+    static final int MAX_BODY_BYTES = 4 * 1024 * 1024;
     private static final int MAX_REDIRECTS = 3;
     /** The longest one ask may take, redirects and a slow answer included. */
     private static final long TOTAL_DEADLINE_MS = 30_000;
@@ -604,7 +604,7 @@ final class IntegrationRunner {
                 }
                 if (out.size() + read > MAX_BODY_BYTES) {
                     throw new IOException("the answer is larger than "
-                            + (MAX_BODY_BYTES / 1024) + " KB");
+                            + (MAX_BODY_BYTES / 1024 / 1024) + " MB");
                 }
                 out.write(buffer, 0, read);
             }

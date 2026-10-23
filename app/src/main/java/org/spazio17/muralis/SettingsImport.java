@@ -54,6 +54,8 @@ final class SettingsImport {
                 ? (Integer) settings.get("fleet_port") : current.fleetPort;
         KioskConfig.Editor editor = KioskConfig.edit(context);
         boolean alertsChanged = false;
+        List<Integrations.Instance> integrationsBefore = KioskConfig.integrationsOf(context);
+        List<Integrations.Instance> integrationsAfter = integrationsBefore;
         for (Map.Entry<String, Object> entry : settings.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
@@ -71,6 +73,9 @@ final class SettingsImport {
                 problem = check(context, key, value, current, adminPort, memberPort, settings);
                 if (problem == null) {
                     editor.imported(key, normalised(key, value));
+                    if ("integrations".equals(key)) {
+                        integrationsAfter = Integrations.parseInstances((String) value);
+                    }
                 }
             }
             if (problem != null) {
@@ -101,9 +106,15 @@ final class SettingsImport {
                     continue;
                 }
                 SecretStore store = new SecretStore(KioskConfig.storageContext(context));
+                java.util.Set<String> ids = new java.util.HashSet<>();
+                for (Integrations.Instance instance : integrationsAfter) {
+                    ids.add(instance.id);
+                }
                 for (java.util.Map.Entry<String, Object> one : all.entrySet()) {
+                    // Only the keys of integrations the panel holds after the import.
                     if (one.getKey().matches(Integrations.INSTANCE_SHAPE
-                            + "_[a-z0-9_]{1,24}") && one.getValue() instanceof String) {
+                            + "_[a-z0-9_]{1,24}") && one.getValue() instanceof String
+                            && ids.contains(one.getKey().substring(0, one.getKey().indexOf('_')))) {
                         store.put("integration_" + one.getKey(), (String) one.getValue());
                     }
                 }
@@ -115,6 +126,17 @@ final class SettingsImport {
                 continue;
             }
             editor.importedSecret(secret.getKey(), secret.getValue());
+        }
+        // The keys of integrations the imported list dropped go with them, as on Remove.
+        java.util.Set<String> keptIds = new java.util.HashSet<>();
+        for (Integrations.Instance instance : integrationsAfter) {
+            keptIds.add(instance.id);
+        }
+        SecretStore integrationKeys = new SecretStore(KioskConfig.storageContext(context));
+        for (Integrations.Instance gone : integrationsBefore) {
+            if (!keptIds.contains(gone.id)) {
+                IntegrationSettings.clearSecrets(integrationKeys, gone.id, gone.definition);
+            }
         }
         editor.apply();
         if (alertsChanged) {
