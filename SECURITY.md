@@ -54,7 +54,7 @@ consent you are named in the release notes and the security advisory. There is n
 
 **Out of scope:**
 
-- the pages a panel shows, your broker, Home Assistant and other systems Muralis talks to;
+- the pages a panel shows, your broker, your smart home and other systems Muralis talks to;
 - flaws in Android, the device's firmware or the system's web engine, unless Muralis makes them
   reachable;
 - limits that are documented and by design: an ordinary install (not device owner) keeps the
