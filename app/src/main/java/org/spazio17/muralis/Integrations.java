@@ -145,6 +145,12 @@ public final class Integrations {
         public final String summary;
         /** What asks the service; null in a definition used only to describe values. */
         public final Source source;
+        /**
+         * What it brings, so the places that use one kind list only those: {@link #VALUES} for
+         * values the automations and MQTT take, {@link #WEATHER} for the weather set
+         * Ambient's information layer reads, {@link #AGENDA} for a list of events.
+         */
+        public final String capability;
 
         public Definition(String id, String name, String edition, List<Field> fields,
                 List<ValueSpec> values, long intervalMs, long floorMs) {
@@ -153,6 +159,13 @@ public final class Integrations {
 
         public Definition(String id, String name, String edition, String summary, List<Field> fields,
                 List<ValueSpec> values, long intervalMs, long floorMs, Source source) {
+            this(id, name, edition, summary, fields, values, intervalMs, floorMs, source, VALUES);
+        }
+
+        public Definition(String id, String name, String edition, String summary,
+                List<Field> fields, List<ValueSpec> values, long intervalMs, long floorMs,
+                Source source, String capability) {
+            this.capability = capability;
             this.id = id;
             this.name = name;
             this.edition = edition;
@@ -295,6 +308,21 @@ public final class Integrations {
         Instance withEnabled(boolean on) {
             return new Instance(id, definition, name, on, settings);
         }
+    }
+
+    public static final String VALUES = "values";
+    public static final String WEATHER = "weather";
+    public static final String AGENDA = "agenda";
+
+    /**
+     * A failed request in words for the status line and the log: the exception's own message
+     * only when it carries no address, since a message like "FileNotFoundException:
+     * https://...?appid=" would put a key from the address where everyone reads it.
+     */
+    public static String why(java.io.IOException failed) {
+        String message = failed.getMessage();
+        return message == null || message.isEmpty() || message.contains("://")
+                || message.contains("?") ? "" : " (" + message + ")";
     }
 
     /** The SecretStore name of an instance's secret setting. */
