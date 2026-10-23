@@ -37,14 +37,14 @@ package org.spazio17.muralis;
 final class RecoveryPolicy {
     /**
      * How long to wait before retrying an unreachable dashboard. Ten seconds, chosen for an
-     * ordinary home: the dashboard is unreachable mainly while Home Assistant restarts or updates,
+     * ordinary home: the dashboard is unreachable mainly while its server restarts or updates,
      * which takes tens of seconds to minutes. Fast enough that the panel is back within seconds of
      * the server returning, slow enough not to hammer a machine already busy coming up.
      */
     static final long RELOAD_BACKOFF_MS = 10_000L;
     /**
      * How long a load may take before it is treated as hung and retried. Generous on purpose: a
-     * Home Assistant dashboard measured 10-15 seconds to {@code onPageFinished} on the interim
+     * smart-home dashboard measured 10-15 seconds to {@code onPageFinished} on the interim
      * MediaPad, so a tight timeout would reload a page that was merely slow. This only needs to
      * catch a load that is never going to complete, a server that accepts the connection and then
      * never answers, for which no callback ever fires.
@@ -99,7 +99,7 @@ final class RecoveryPolicy {
         resetFingerprintTracking();
     }
 
-    /** Forgets everything: no load in flight, no retry pending. The kiosk.stop / teardown state. */
+    /** Forgets everything: no load in flight, no retry pending. The dashboard.stop / teardown state. */
     void reset() {
         loadStartedAtMs = 0;
         nextRetryAtMs = 0;

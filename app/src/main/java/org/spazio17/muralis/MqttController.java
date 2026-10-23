@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  *
  * <p>An earlier design signed every command with an HMAC-SHA256 envelope (id/timestamp/nonce/mac)
  * keyed on a 32-byte secret. It was removed because the secret was generated on-device and never
- * surfaced in any UI, log or API, so nothing, including the tablet's owner or Home Assistant,
+ * surfaced in any UI, log or API, so nothing, including the tablet's owner or the smart home,
  * could ever produce a valid signature: MQTT commands were unusable in practice while appearing to
  * work. A stronger scheme nobody can hold the key to is weaker than a simple one that is actually
  * used. If per-message signing returns, it must ship with a way to read and set the key.
@@ -65,7 +65,7 @@ final class MqttController implements MqttCallbackExtended {
     private final CommandListener commandListener;
     private final String topicPrefix;
     /**
-     * How often {@link #heartbeat()} reasserts availability, and how long Home Assistant waits
+     * How often {@link #heartbeat()} reasserts availability, and how long the smart home waits
      * before deciding the panel has gone quiet. See {@link #publishMqttStateEntity} for why the
      * Last Will alone is not enough.
      */
@@ -78,7 +78,7 @@ final class MqttController implements MqttCallbackExtended {
      */
     private static final long FAREWELL_TIMEOUT_MS = 1_000L;
 
-    /** Real hardware identity for Home Assistant discovery. See {@link #runDiscovery}. */
+    /** Real hardware identity for MQTT discovery. See {@link #runDiscovery}. */
     private final String deviceManufacturer;
     private final String deviceModel;
     private final String appVersion;
@@ -105,7 +105,7 @@ final class MqttController implements MqttCallbackExtended {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     /**
      * Discovery and the state publish run here, one at a time and in order: Paho's thread (a
-     * connect, Home Assistant's birth message), the telemetry tick and a command may all ask at
+     * connect, the smart home's birth message), the telemetry tick and a command may all ask at
      * once, and none of them should wait while the payload is built from storage. Everything
      * below it is touched only on this thread. Shut down by {@link #stop}.
      */
@@ -304,7 +304,7 @@ final class MqttController implements MqttCallbackExtended {
                 // This used to call publish(), which reads the `client` field, and the line above
                 // has just set that field to null. So it returned immediately and silently, and
                 // the farewell has not actually been sent since the null-first ordering was
-                // introduced. The effect was invisible on the panel and glaring in Home Assistant:
+                // introduced. The effect was invisible on the panel and glaring in the smart home:
                 // a deliberate shutdown sends a DISCONNECT, which by MQTT's own rules tells the
                 // broker *not* to fire the Last Will, so with the "offline" missing too, nothing
                 // ever replaced the retained "online". Change the broker host, or stop the panel
@@ -366,7 +366,7 @@ final class MqttController implements MqttCallbackExtended {
         }
         onWorker(() -> {
             // The playlist select's options are part of discovery, and a playlist made, renamed
-            // or deleted since the last discovery is one Home Assistant cannot choose or shows as
+            // or deleted since the last discovery is one the smart home cannot choose or shows as
             // unknown (review of 2026-09-19). Discovery goes again before the state when they
             // differ. Same rule for the sensors, the camera and the automations: a sensor switched
             // on has its entity at once, one switched off loses it, and a rule added, renamed or
@@ -392,11 +392,15 @@ final class MqttController implements MqttCallbackExtended {
         });
     }
 
-    /** The cameras' names discovery last announced, one button each. */
+    /**
+     * The cameras' names discovery last announced, one button each and the Dashboard cameras'
+     * options, and whether an app was chosen, which the Dashboard select offers only then.
+     */
     private volatile String announcedCameras = null;
 
     private String camerasKey() {
-        StringBuilder key = new StringBuilder();
+        StringBuilder key = new StringBuilder(
+                KioskConfig.chosenAppOf(appContext).isEmpty() ? "no app|" : "app|");
         for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
             key.append(camera.name).append(',');
         }
@@ -466,7 +470,7 @@ final class MqttController implements MqttCallbackExtended {
             }
         }
         // The snapshot button comes and goes with the camera's pictures-to-MQTT switch.
-        org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
+        org.json.JSONObject cameraState = sensorBlock.optJSONObject(Sensors.CAMERA.id);
         org.json.JSONObject cameraAttributes = cameraState == null ? null
                 : cameraState.optJSONObject("attributes");
         if (cameraAttributes != null && cameraAttributes.optBoolean("pictures")) {
@@ -482,7 +486,7 @@ final class MqttController implements MqttCallbackExtended {
         return key.toString();
     }
 
-    /** A tag held to the panel, as Home Assistant's tag scanned event expects it. */
+    /** A tag held to the panel, as the MQTT tag scanned event expects it. */
     void publishTagRead(String tagId) {
         try {
             JSONObject payload = new JSONObject();
@@ -508,7 +512,7 @@ final class MqttController implements MqttCallbackExtended {
 
     /**
      * Takes the retained picture off the broker: the camera went off, or its pictures are no
-     * longer wanted there, and a stale frame must not be what a fresh Home Assistant shows.
+     * longer wanted there, and a stale frame must not be what a freshly started smart home shows.
      */
     void clearPicture() {
         MqttAsyncClient activeClient = client;
@@ -524,7 +528,7 @@ final class MqttController implements MqttCallbackExtended {
 
     /**
      * A picture of the screen, JPEG bytes sized for a broker (KioskService.forBroker), what the
-     * Home Assistant image entity shows.
+     * MQTT image entity shows.
      */
     void publishScreenshot(byte[] jpeg) {
         MqttAsyncClient activeClient = client;
@@ -621,7 +625,7 @@ final class MqttController implements MqttCallbackExtended {
             Log.w(TAG, "Rejected retained MQTT command");
             // Say so, rather than only logging: somebody who published with -r sees their command
             // ignored on every reconnect with no clue why, and the device log is not somewhere a
-            // Home Assistant automation can look.
+            // smart-home automation can look.
             publishCommandResult("", "rejected",
                     "retained commands are refused; publish without the retain flag");
             // Then clear it. A retained command sits on the broker forever and is redelivered on
@@ -677,7 +681,7 @@ final class MqttController implements MqttCallbackExtended {
                 return;
             }
         } else {
-            // A bare command name as the whole payload, so `mosquitto_pub -m kiosk.reload` works.
+            // A bare command name as the whole payload, so `mosquitto_pub -m dashboard.reload` works.
             // This is the WLED/Tasmota convenience shape and carries no arguments.
             command = payload;
         }
@@ -777,7 +781,7 @@ final class MqttController implements MqttCallbackExtended {
 
     /**
      * On every connect: ask the broker for this panel's own retained payload before announcing
-     * anything, because that payload is what Home Assistant was told, kept where it reads it.
+     * anything, because that payload is what the smart home was told, kept where it reads it.
      * zigbee2mqtt does the same at its start (it reads its own retained configs for five seconds
      * and clears what it would not publish now), and it covers what a copy on the panel cannot:
      * a panel updated from a build that kept no record, and a publish that never arrived.
@@ -835,7 +839,7 @@ final class MqttController implements MqttCallbackExtended {
 
     /**
      * Worker thread: what the broker held, folded into what this process remembers. The broker's
-     * platform wins over the one in memory: it is what Home Assistant reads, and a publish handed
+     * platform wins over the one in memory: it is what the smart home reads, and a publish handed
      * to the client can still have been lost with the connection.
      */
     private void retainedArrived(String payload) {
@@ -868,7 +872,7 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * From any thread: announce again, on the worker. Home Assistant's birth message asks for it,
+     * From any thread: announce again, on the worker. The smart home's birth message asks for it,
      * as its documentation recommends; before the broker's copy was read on a connect it is
      * already on its way.
      */
@@ -891,7 +895,7 @@ final class MqttController implements MqttCallbackExtended {
             device.put("ids", new JSONArray().put(config.deviceId));
             device.put("name", "Muralis " + config.deviceId);
             // Read from the device, not hardcoded. These were "Lenovo" and "TB-X505F", the ROM
-            // project's tablet, so every panel announced itself to Home Assistant as a Lenovo
+            // project's tablet, so every panel announced itself over MQTT as a Lenovo
             // TB-X505F regardless of what it actually was. Found on the Huawei MediaPad 2026-08-19,
             // where the discovery payload was confidently wrong about the hardware.
             device.put("mf", deviceManufacturer);
@@ -913,27 +917,27 @@ final class MqttController implements MqttCallbackExtended {
             // precision, just "87.0 %" on a dashboard. `round` alone still yields a float in Jinja,
             // hence the int.
             // Renamed from "Battery" 2026-08-20, at the user's request, to avoid clashing with the
-            // conventional Home Assistant name for this device class. Home Assistant derives the
+            // conventional smart-home name for this device class. The smart home derives the
             // entity id from this name, so an existing installation's history follows the entity id
             // only if the rename is done in Settings > Entities once this payload lands, not by
             // deleting and re-adding.
             if (hasBattery) {
-                components.put("battery", sensor(
+                add(components, sensor(
                         "Battery level", "battery", "%", "measurement",
                         "{{ value_json.battery.percent | round | int }}"));
-                components.put("battery_temperature", sensor(
+                add(components, sensor(
                         "Battery temperature", "temperature", "°C", "measurement",
                         "{{ value_json.battery.temperature_c | round(1) }}"));
             }
-            components.put("memory_available", sensor(
+            add(components, sensor(
                     "Available memory", "data_size", "MiB", "measurement",
                     "{{ (value_json.memory.available_bytes / 1048576) | round(1) }}"));
-            components.put("storage_available", sensor(
+            add(components, sensor(
                     "Available storage", "data_size", "MiB", "measurement",
                     "{{ (value_json.storage.available_bytes / 1048576) | round(1) }}"));
             // Only where the device can actually answer. PowerManager.getCurrentThermalStatus is
             // API 29, so on the API 26 MediaPad this counter is JSON null for the life of the
-            // panel, and announcing it produced a Home Assistant entity permanently stuck at
+            // panel, and announcing it produced an MQTT entity permanently stuck at
             // "unknown" (reported 2026-08-20). The null in the state document is contract-compliant
             // and stays; advertising an entity for it is not the same thing. Same reasoning as the
             // auto-brightness control, which the panel omits entirely on hardware with no light
@@ -941,7 +945,7 @@ final class MqttController implements MqttCallbackExtended {
             boolean thermalSupported =
                     android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q;
             if (thermalSupported) {
-                components.put("thermal_status", sensor(
+                add(components, sensor(
                         "Thermal status", null, null, null,
                         "{{ value_json.thermal_status }}"));
             }
@@ -961,11 +965,11 @@ final class MqttController implements MqttCallbackExtended {
             // so the three surfaces cannot drift apart. It is empty when the battery has no
             // reading at all, which would be a blank state rather than an honest one.
             if (hasBattery) {
-                components.put("battery_state", sensor(
+                add(components, sensor(
                         "Battery state", null, null, null,
                         "{{ value_json.battery.charge_state or 'unknown' }}"));
             }
-            // On every panel, battery or not: how it is fed. An enum sensor, so Home Assistant
+            // On every panel, battery or not: how it is fed. An enum sensor, so the smart home
             // knows the three words and can translate and colour them; see SystemStats.powerSource
             // for why a charger, PoE and a DC adapter are all "mains".
             JSONObject powerSource = sensor(
@@ -973,7 +977,7 @@ final class MqttController implements MqttCallbackExtended {
                     "{{ value_json.power.source }}");
             powerSource.put("options",
                     new JSONArray().put("battery").put("wireless").put("mains"));
-            components.put("power_source", powerSource);
+            add(components, powerSource);
             // The build actually running, as its own entity rather than only the device-info "sw"
             // field: device info is buried behind the device page, while a diagnostic sensor can
             // sit on a dashboard, be templated against, and answer "which panels are behind"
@@ -983,20 +987,20 @@ final class MqttController implements MqttCallbackExtended {
                     "App version", null, null, null,
                     "{{ value_json.app_version }}");
             appVersionSensor.put("entity_category", "diagnostic");
-            components.put("app_version", appVersionSensor);
-            // App lock: the app shown instead of the page, "Off" when there is none.
-            components.put("app_lock", sensor("App lock", null, null, null,
+            add(components, appVersionSensor);
+            // The app chosen for the dashboard (App lock), shown now or not; empty when none.
+            add(components, sensor("Dashboard app", null, null, null,
                     "{{ value_json.app_lock.app if value_json.app_lock is defined"
-                            + " and value_json.app_lock.app else 'Off' }}"));
+                            + " else '' }}"));
 
-            // Controls, not just readings. Discovery published sensors only, so a Home Assistant
+            // Controls, not just readings. Discovery published sensors only, so a smart-home
             // user could see the panel but not touch it without hand-writing mqtt.publish calls in
             // every automation: reported 2026-08-20 as "the brightness slider and the auto mode are
             // not there". Nothing about MQTT prevented it; the panel simply never announced them.
             //
             // Every one of these drives the same KioskCommandDispatcher that the HTTP surface does,
             // which is the whole point of that design, so none of it is a second implementation.
-            components.put("brightness", number(
+            add(components, number(
                     "Brightness", 0, 100, "%",
                     "{\"command\":\"display.brightness\",\"args\":{\"percent\":{{ value }}}}",
                     "{{ value_json.display.brightness_percent }}"));
@@ -1006,7 +1010,7 @@ final class MqttController implements MqttCallbackExtended {
             // no ambient light sensor" rather than silently accepting, so an entity here would be a
             // switch that can only fail.
             if (hasLightSensor) {
-                components.put("auto_brightness", toggle(
+                add(components, toggle(
                         "Automatic brightness",
                         "{\"command\":\"display.auto_brightness\",\"args\":{\"enabled\":true}}",
                         "{\"command\":\"display.auto_brightness\",\"args\":{\"enabled\":false}}",
@@ -1023,64 +1027,56 @@ final class MqttController implements MqttCallbackExtended {
             // the admin page, not something a broker subscriber needs.
 
             // A bare command name is a valid payload, which MqttController accepts deliberately so
-            // that `mosquitto_pub -m kiosk.reload` works, so a button needs nothing more than this.
+            // that `mosquitto_pub -m dashboard.reload` works, so a button needs nothing more than this.
             // "auto" is offered only where an accelerometer exists to drive it, the same gate
             // the auto-brightness switch sits behind above. The spellings mirror KioskConfig's
             // ORIENTATION_* constants.
-            org.json.JSONArray orientationOptions = new org.json.JSONArray();
-            if (KioskService.hasAccelerometer(appContext)) {
-                orientationOptions.put("auto");
+            java.util.List<String[]> orientations = new java.util.ArrayList<>();
+            for (String[] choice : KioskCommandDispatcher.ORIENTATION_WORDS) {
+                if (!KioskConfig.ORIENTATION_AUTO.equals(choice[0])
+                        || KioskService.hasAccelerometer(appContext)) {
+                    orientations.add(choice);
+                }
             }
-            orientationOptions.put("landscape");
-            orientationOptions.put("portrait");
-            components.put("orientation", select(
+            add(components, wordSelect(
                     "Orientation",
                     "display.orientation",
-                    orientationOptions,
-                    "{{ value_json.config.orientation }}"));
+                    orientations.toArray(new String[0][]),
+                    "value_json.config.orientation"));
             // How the Display off button darkens the panel; see DisplayOffPolicy. "auto" and
             // "sleep" only where the device owner's lockNow exists to do it: an ordinary install
             // has the film alone, as its own screens show (2026-09-24), and the state reports
             // "film" there too (KioskService), so the select never reads a value it cannot offer.
-            org.json.JSONArray displayOffOptions = new org.json.JSONArray();
-            if (KioskService.isDeviceOwner(appContext)) {
-                displayOffOptions.put(DisplayOffPolicy.AUTO);
-                displayOffOptions.put(DisplayOffPolicy.SLEEP);
-            }
-            displayOffOptions.put(DisplayOffPolicy.FILM);
-            components.put("display_off_method", select(
+            String[][] displayOffWords = KioskService.isDeviceOwner(appContext)
+                    ? KioskCommandDispatcher.DISPLAY_OFF_WORDS
+                    : new String[][] {{DisplayOffPolicy.FILM, KioskCommandDispatcher.wordOf(
+                            KioskCommandDispatcher.DISPLAY_OFF_WORDS, DisplayOffPolicy.FILM)}};
+            add(components, wordSelect(
                     "Display off method",
                     "display.off_method",
-                    displayOffOptions,
-                    "{{ value_json.config.display_off_method }}"));
-            // The status light as a Home Assistant light: on or off, a colour and a brightness,
+                    displayOffWords,
+                    "value_json.config.display_off_method"));
+            // The status light as an MQTT light: on or off, a colour and a brightness,
             // through the template schema so its commands are the panel's own light.on and
-            // light.off. Home Assistant's brightness is 0 to 255, the panel's 1 to 100.
-            components.put("status_light", statusLight());
-            // A pop-up on the panel from Home Assistant's notify.send_message.
+            // light.off. The MQTT light's brightness is 0 to 255, the panel's 1 to 100.
+            add(components, statusLight());
+            // A pop-up on the panel from the smart home's notify.send_message.
             JSONObject popup = new JSONObject();
             popup.put("p", "notify");
             popup.put("name", "Pop-up");
-            popup.put("unique_id", uniqueId("Pop-up"));
             popup.put("command_topic", topicPrefix + "command");
             popup.put("command_template",
                     "{\"command\":\"panel.notify\",\"args\":{\"value\":{{ value | tojson }}}}");
-            components.put("pop_up", popup);
-            org.json.JSONArray screensaverModes = new org.json.JSONArray();
-            screensaverModes.put(ScreensaverPolicy.OFF);
-            screensaverModes.put(ScreensaverPolicy.DIM);
-            screensaverModes.put(ScreensaverPolicy.FILM);
-            screensaverModes.put(ScreensaverPolicy.URL);
-            screensaverModes.put(ScreensaverPolicy.PICTURES);
+            add(components, popup);
             // Ambient: the mode as a select, and one switch that is both its state and its
             // control, start on ON and stop on OFF. No separate start/stop buttons: they would be
             // the switch twice over, and every entity is a row in somebody's device page. The
             // times are numbers of their own.
-            components.put("ambient_mode", select(
+            add(components, wordSelect(
                     "Ambient mode",
                     "ambient.mode",
-                    screensaverModes,
-                    "{{ value_json.ambient.mode }}"));
+                    KioskCommandDispatcher.AMBIENT_MODE_WORDS,
+                    "value_json.ambient.mode"));
             // The playlists by name, so a card can switch a panel's pictures without knowing an
             // id. "No playlist" is a real option because a playlist can be deleted while it is in use,
             // and an entity that cannot express the state it is in reads as broken.
@@ -1091,13 +1087,13 @@ final class MqttController implements MqttCallbackExtended {
                 playlistNames.put(playlist.name);
             }
             announcedPlaylists = PicturePlaylists.namesOf(playlists);
-            components.put("ambient_playlist", select(
+            add(components, select(
                     "Ambient playlist",
                     "ambient.playlist",
                     playlistNames,
                     "{{ value_json.ambient.playlist if value_json.ambient is mapping "
                             + "and value_json.ambient.playlist else '" + PLAYLIST_NONE + "' }}"));
-            components.put("ambient", toggle(
+            add(components, toggle(
                     "Ambient",
                     "{\"command\":\"ambient.start\"}",
                     "{\"command\":\"ambient.stop\"}",
@@ -1105,97 +1101,75 @@ final class MqttController implements MqttCallbackExtended {
             // Every Ambient setting, not a chosen few: "everything must be controllable
             // remotely" (2026-09-09). They are all commands as well, so a caller that
             // would rather publish a command than use an entity can.
-            components.put("ambient_idle", number(
-                    "Ambient idle time",
-                    "ambient.idle_seconds",
+            add(components, number(
+                    "Ambient start after",
+                    "ambient.start_after_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
-                    "{{ value_json.ambient.idle_s }}"));
-            components.put("ambient_display_off", number(
-                    "Ambient to display off",
+                    "{{ value_json.ambient.start_after_s }}"));
+            add(components, number(
+                    "Ambient before display off",
                     "ambient.off_seconds",
                     0, ScreensaverPolicy.MAX_SECONDS, "s",
                     "{{ value_json.ambient.off_s }}"));
-            components.put("ambient_picture_time", number(
-                    "Ambient picture time",
+            add(components, number(
+                    "Ambient picture duration",
                     "ambient.picture_seconds",
                     1, ScreensaverPolicy.MAX_SECONDS, "s",
                     "{{ value_json.ambient.picture_s }}"));
-            components.put("ambient_dim", number(
+            add(components, number(
                     "Ambient dim brightness",
                     "ambient.dim_percent",
                     1, 100, "%",
                     "{{ value_json.ambient.dim_percent }}"));
-            org.json.JSONArray transitions = new org.json.JSONArray();
-            transitions.put(TRANSITION_NONE_OPTION);
-            transitions.put(ScreensaverPolicy.TRANSITION_FADE);
-            transitions.put(ScreensaverPolicy.TRANSITION_SLIDE);
-            JSONObject transition = select(
+            // The choices show the words the panel and the web admin show; the templates turn
+            // them into the keys the commands and the state carry, and back.
+            add(components, wordSelect(
                     "Ambient transition",
                     "ambient.transition",
-                    transitions,
-                    "{{ '" + TRANSITION_NONE_OPTION + "' if value_json.ambient.transition == '"
-                            + ScreensaverPolicy.TRANSITION_NONE + "' else"
-                            + " value_json.ambient.transition }}");
-            // The option's words go back to the panel's own value, which stays "none".
-            transition.put("command_template", "{% set v = '" + ScreensaverPolicy.TRANSITION_NONE
-                    + "' if value == '" + TRANSITION_NONE_OPTION + "' else value %}"
-                    + "{\"command\":\"ambient.transition\",\"args\":{\"value\":{{ v | tojson }}}}");
-            components.put("ambient_transition", transition);
-            org.json.JSONArray fits = new org.json.JSONArray();
-            fits.put(ScreensaverPolicy.FIT_WHOLE);
-            fits.put(ScreensaverPolicy.FIT_FILL);
-            fits.put(ScreensaverPolicy.FIT_STRETCH);
-            fits.put(ScreensaverPolicy.FIT_ACTUAL);
-            components.put("ambient_picture_fit", select(
+                    KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS,
+                    "value_json.ambient.transition"));
+            add(components, wordSelect(
                     "Ambient picture fit",
                     "ambient.picture_fit",
-                    fits,
-                    "{{ value_json.ambient.picture_fit }}"));
-            org.json.JSONArray corners = new org.json.JSONArray();
-            corners.put(ScreensaverPolicy.CORNER_BOTTOM_LEFT);
-            corners.put(ScreensaverPolicy.CORNER_BOTTOM_RIGHT);
-            corners.put(ScreensaverPolicy.CORNER_TOP_LEFT);
-            corners.put(ScreensaverPolicy.CORNER_TOP_RIGHT);
-            components.put("ambient_credit_corner", select(
+                    KioskCommandDispatcher.AMBIENT_FIT_WORDS,
+                    "value_json.ambient.picture_fit"));
+            add(components, wordSelect(
                     "Ambient credit corner",
                     "ambient.credit_corner",
-                    corners,
-                    "{{ value_json.ambient.credit_corner }}"));
-            org.json.JSONArray wakeChoices = new org.json.JSONArray();
-            wakeChoices.put(ScreensaverPolicy.WAKE_SCREENSAVER);
-            wakeChoices.put(ScreensaverPolicy.WAKE_DASHBOARD);
-            components.put("ambient_on_wake", select(
-                    "Ambient after a wake",
+                    KioskCommandDispatcher.AMBIENT_CORNER_WORDS,
+                    "value_json.ambient.credit_corner"));
+            add(components, wordSelect(
+                    "Ambient on wake",
                     "ambient.on_wake",
-                    wakeChoices,
-                    "{{ value_json.ambient.on_wake }}"));
-            components.put("ambient_shuffle", toggle(
+                    KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS,
+                    "value_json.ambient.on_wake"));
+            add(components, toggle(
                     "Ambient shuffle",
                     "{\"command\":\"ambient.shuffle\",\"args\":{\"enabled\":true}}",
                     "{\"command\":\"ambient.shuffle\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("shuffle")));
-            components.put("ambient_one_per_cycle", toggle(
-                    "Ambient one picture per cycle",
-                    "{\"command\":\"ambient.one_per_cycle\",\"args\":{\"enabled\":true}}",
-                    "{\"command\":\"ambient.one_per_cycle\",\"args\":{\"enabled\":false}}",
-                    screensaverBooleanTemplate("one_per_cycle")));
-            components.put("ambient_credit", toggle(
+            add(components, toggle(
+                    "Ambient one picture per start",
+                    "{\"command\":\"ambient.one_per_start\",\"args\":{\"enabled\":true}}",
+                    "{\"command\":\"ambient.one_per_start\",\"args\":{\"enabled\":false}}",
+                    screensaverBooleanTemplate("one_per_start")));
+            add(components, toggle(
                     "Ambient credit line",
                     "{\"command\":\"ambient.credit\",\"args\":{\"enabled\":true}}",
                     "{\"command\":\"ambient.credit\",\"args\":{\"enabled\":false}}",
                     screensaverBooleanTemplate("credit")));
-            components.put("ambient_url", valueText(
-                    "Ambient page",
+            add(components, valueText(
+                    "Ambient web page",
                     "ambient.url",
                     "{{ value_json.ambient.url }}"));
-            components.put("ambient_picture", sensor(
+            add(components, sensor(
                     "Ambient picture", null, null, null,
                     "{{ value_json.ambient.picture.title | default('', true) }}"));
             // The panel's sensors (see Sensors): one entity each, under the panel's device, named
-            // as the companion app names its own. A sensor that is off, or that this device does
-            // not have, is left out; one this panel announced before is withdrawn at the publish
-            // below, so switching it off takes its entity away, and a panel without the hardware
-            // never mentions it.
+            // as a smart-home companion app names its own. A sensor that is off, or that this
+            // device does not have, is left out; one this panel announced before is withdrawn at
+            // the publish below, so switching it off takes its entity away, and a panel without
+            // the hardware never mentions it.
             for (Sensors.Def def : Sensors.ALL) {
                 if (def.kind == Sensors.Kind.PANEL) {
                     // Battery, power, network and the rest have had their entities since
@@ -1204,14 +1178,12 @@ final class MqttController implements MqttCallbackExtended {
                     continue;
                 }
                 org.json.JSONObject one = sensorBlock.optJSONObject(def.id);
-                String key = "sensor_" + def.id;
                 if (one == null || !one.optBoolean("active")) {
                     continue;
                 }
                 JSONObject entity = new JSONObject();
                 entity.put("p", def.platform);
                 entity.put("name", def.name);
-                entity.put("unique_id", uniqueId(def.name));
                 if (def.deviceClass != null && !"enum".equals(def.deviceClass)) {
                     entity.put("device_class", def.deviceClass);
                 }
@@ -1235,7 +1207,7 @@ final class MqttController implements MqttCallbackExtended {
                     entity.put("json_attributes_template",
                             "{{ value_json.sensors." + def.id + ".attributes | tojson }}");
                 }
-                components.put(key, entity);
+                add(components, entity);
             }
             // The integrations' values, one entity each under the panel's device, named after
             // the instance (and the value, where an instance reports several). An instance that
@@ -1262,7 +1234,6 @@ final class MqttController implements MqttCallbackExtended {
                     JSONObject entity = new JSONObject();
                     entity.put("name", entry.optString("name")
                             + (several ? " " + value.optString("name") : ""));
-                    entity.put("unique_id", config.deviceId + "_" + sensorId);
                     if ("flag".equals(value.optString("type"))) {
                         entity.put("p", "binary_sensor");
                         entity.put("payload_on", "ON");
@@ -1286,13 +1257,15 @@ final class MqttController implements MqttCallbackExtended {
                             entity.put("state_class", "measurement");
                         }
                     }
+                    // Keyed by the value's sensor id, not its name: the instance's name is the
+                    // person's and may change, and the entity must stay the same entity.
                     components.put(sensorId, entity);
                 }
             }
             // The camera's controls and its picture, the set Frigate and Blue Iris publish:
             // motion detection as a switch, a snapshot button, and the last picture on motion
             // as a camera entity, all only while the camera is on.
-            org.json.JSONObject cameraState = sensorBlock.optJSONObject("camera");
+            org.json.JSONObject cameraState = sensorBlock.optJSONObject(Sensors.CAMERA.id);
             boolean cameraOn = cameraState != null && cameraState.optBoolean("active");
             org.json.JSONObject cameraAttributes = cameraState == null ? null
                     : cameraState.optJSONObject("attributes");
@@ -1303,20 +1276,20 @@ final class MqttController implements MqttCallbackExtended {
             boolean pictures = cameraOn && cameraAttributes != null
                     && cameraAttributes.optBoolean("pictures");
             if (cameraOn) {
-                components.put("camera_motion", toggle(
+                add(components, toggle(
                         "Camera motion detection",
                         "{\"command\":\"camera.motion\",\"args\":{\"enabled\":true}}",
                         "{\"command\":\"camera.motion\",\"args\":{\"enabled\":false}}",
-                        "{{ 'ON' if value_json.sensors.camera.attributes.detecting else 'OFF' }}"));
+                        "{{ 'ON' if value_json.sensors." + Sensors.CAMERA.id
+                                + ".attributes.detecting else 'OFF' }}"));
             }
             if (pictures) {
-                components.put("camera_snapshot", button("Camera snapshot", "camera.snapshot"));
+                add(components, button("Camera snapshot", "camera.snapshot"));
                 JSONObject picture = new JSONObject();
                 picture.put("p", "camera");
                 picture.put("name", "Camera picture");
-                picture.put("unique_id", uniqueId("Camera picture"));
                 picture.put("topic", topicPrefix + "camera");
-                components.put("camera_picture", picture);
+                add(components, picture);
             } else if (!cameraOn) {
                 clearPicture();
             }
@@ -1326,25 +1299,7 @@ final class MqttController implements MqttCallbackExtended {
             // whenever MQTT runs. Key, id and name say
             // the same thing, so the button has a name of its own, as the camera's snapshot
             // button does beside the camera's picture.
-            components.put("take_a_screenshot", button("Take a screenshot", "kiosk.screenshot"));
-            // One button per camera and per group, "Show <name>", which pops it up; a doorbell's automation
-            // in Home Assistant sends camera.trigger itself, for the panel's automations.
-            // The camera view: "Web page" for the web page, or a camera or group as the main view, the
-            // same choice as Dashboard's "The panel shows: Cameras". Once there is a camera.
-            org.json.JSONArray views = new org.json.JSONArray();
-            views.put(CAMERA_VIEW_PAGE);
-            for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
-                views.put(camera.name);
-            }
-            for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
-                views.put(group.name);
-            }
-            if (views.length() > 1) {
-                components.put("camera_view", select("Camera view", "kiosk.set_cameras", views,
-                        "{{ value_json.config.dashboard_cameras if value_json.config is mapping"
-                                + " and value_json.config.dashboard_cameras else '"
-                                + CAMERA_VIEW_PAGE + "' }}"));
-            }
+            add(components, button("Take a screenshot", "panel.screenshot"));
             java.util.List<String> shown = new java.util.ArrayList<>();
             for (Cameras.Camera camera : KioskConfig.camerasOf(appContext)) {
                 shown.add(camera.name);
@@ -1352,12 +1307,37 @@ final class MqttController implements MqttCallbackExtended {
             for (Cameras.Group group : KioskConfig.cameraGroupsOf(appContext)) {
                 shown.add(group.name);
             }
+            // What the dashboard shows, the same choice and words as the panel's Dashboard.
+            // "App" only once an app was chosen and "Cameras" only once a camera or group
+            // exists: MQTT can switch to the app chosen, never choose one.
+            java.util.List<String[]> dashboardWords = new java.util.ArrayList<>();
+            for (String[] choice : KioskCommandDispatcher.DASHBOARD_WORDS) {
+                if ((!KioskCommandDispatcher.DASHBOARD_APP.equals(choice[0])
+                                || !KioskConfig.chosenAppOf(appContext).isEmpty())
+                        && (!KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(choice[0])
+                                || !shown.isEmpty())) {
+                    dashboardWords.add(choice);
+                }
+            }
+            add(components, wordSelect("Dashboard", "dashboard.show",
+                    dashboardWords.toArray(new String[0][]), "value_json.config.dashboard_shows"));
+            // Which camera or group the dashboard shows when it shows cameras; choosing one
+            // while it shows them switches at once. Once there is a camera.
+            if (!shown.isEmpty()) {
+                org.json.JSONArray cameraNames = new org.json.JSONArray();
+                for (String cameraName : shown) {
+                    cameraNames.put(cameraName);
+                }
+                add(components, select("Dashboard cameras", "dashboard.cameras", cameraNames,
+                        "{{ value_json.config.dashboard_cameras }}"));
+            }
+            // One button per camera and per group, "Show <name>", which pops it up; a doorbell's
+            // automation in the smart home sends camera.trigger itself, for the panel's automations.
             for (String cameraName : shown) {
                 String name = "Show " + cameraName;
                 JSONObject show = button(name, new JSONObject().put("command", "camera.show")
                         .put("args", new JSONObject().put("value", cameraName)).toString());
-                String key = uniqueId(name).substring(config.deviceId.length() + 1)
-                        .replaceAll("[^a-z0-9_]", "_");
+                String key = KioskCommandDispatcher.entityKey(name);
                 // "Door 1" and "Door-1" squeeze to one key: the second keeps its own button.
                 for (int n = 2; components.has(key); n++) {
                     key = key.replaceAll("_\\d+$", "") + "_" + n;
@@ -1367,11 +1347,10 @@ final class MqttController implements MqttCallbackExtended {
             JSONObject screen = new JSONObject();
             screen.put("p", "image");
             screen.put("name", "Screenshot");
-            screen.put("unique_id", uniqueId("Screenshot"));
             screen.put("image_topic", topicPrefix + "screenshot");
             screen.put("content_type", "image/jpeg");
-            components.put("screenshot", screen);
-            // One switch per automation, so a rule can be paused from Home Assistant; a rule
+            add(components, screen);
+            // One switch per automation, so a rule can be paused from the smart home; a rule
             // that was deleted is withdrawn at the publish below, like a sensor switched off.
             for (int index = 0; index < rules.length(); index++) {
                 JSONObject rule = rules.optJSONObject(index);
@@ -1387,9 +1366,8 @@ final class MqttController implements MqttCallbackExtended {
                                 + id + "\"}}",
                         "{{ 'ON' if (value_json.automations | selectattr('id', 'eq', '" + id
                                 + "') | map(attribute='enabled') | first) else 'OFF' }}");
-                // By the id, not the name: two rules may share a name, and a rename must keep
-                // the entity rather than strand one under the old unique id.
-                ruleSwitch.put("unique_id", uniqueId("automation " + id));
+                // Keyed by the id, not the name: two rules may share a name, and a rename must
+                // keep the entity rather than strand one under the old unique id.
                 components.put("automation_" + id, ruleSwitch);
             }
             announcedSensors = sensorsKey(sensorBlock, rules);
@@ -1398,32 +1376,30 @@ final class MqttController implements MqttCallbackExtended {
             // The Web admin switch reflects the operator's flag, not whether a socket is bound:
             // with no admin password stored, "on" is an honest description of intent while the
             // bind stays refused, and the runtime state carries the difference.
-            components.put("web_admin", toggle(
+            add(components, toggle(
                     "Web admin",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":true}}",
                     "{\"command\":\"webadmin.enabled\",\"args\":{\"enabled\":false}}",
                     "{{ 'ON' if value_json.config.web_admin_enabled else 'OFF' }}"));
-            // The two URLs, as text entities so both can be set from Home Assistant, as
+            // The two URLs, as text entities so both can be set from the smart home, as
             // decided. They read different fields on purpose: the stored dashboard
             // reads config.dashboard_url, while the one-off reads runtime.last_page_url, the page
             // actually on the glass. A one-off has nothing stored to read back, and an entity
             // whose state cannot be read is the entity that snaps back on every edit, which is
             // exactly how the Web admin switch broke earlier today.
-            components.put("dashboard_url", text(
+            add(components, text(
                     "Dashboard URL",
-                    "kiosk.set_url",
+                    "dashboard.url",
                     "{{ value_json.config.dashboard_url }}"));
-            components.put("open_url", text(
-                    "Open URL once",
-                    "kiosk.open_url",
+            add(components, text(
+                    "Open once",
+                    "dashboard.open_once",
                     "{{ value_json.runtime.last_page_url }}"));
-            components.put("home", button("Main dashboard", "kiosk.home"));
-            components.put("reload", button("Reload dashboard", "kiosk.reload"));
-            components.put("restart", button("Restart kiosk", "kiosk.restart"));
-            // "Display on" since 2026-09-09, to pair with "Display off"; the key changed with the
-            // name, per the naming rule.
-            components.put("display_on", button("Display on", "display.wake"));
-            components.put("display_off", button("Display off", "display.visual_off"));
+            add(components, button("Open dashboard", "dashboard.open"));
+            add(components, button("Reload dashboard", "dashboard.reload"));
+            add(components, button("Restart app", "app.restart"));
+            add(components, button("Display on", "display.wake"));
+            add(components, button("Display off", "display.visual_off"));
             // Only where it can work: the command answers "unsupported" with a provisioning hint on
             // an ordinary install, and a button that can only fail is not announced there, the
             // same rule as the light sensor and the battery. No shutdown button
@@ -1431,7 +1407,13 @@ final class MqttController implements MqttCallbackExtended {
             // was deleted outright.
             boolean deviceOwner = KioskService.isDeviceOwner(appContext);
             if (deviceOwner) {
-                components.put("reboot", button("Reboot tablet", "system.reboot"));
+                add(components, button("Reboot", "system.reboot"));
+            }
+            // Every component's unique_id is the device id and its key, the key the device
+            // document holds it under and the withdrawals below know it by.
+            for (java.util.Iterator<String> keys = components.keys(); keys.hasNext(); ) {
+                String key = keys.next();
+                components.getJSONObject(key).put("unique_id", config.deviceId + "_" + key);
             }
             discovery.put("cmps", components);
 
@@ -1440,7 +1422,7 @@ final class MqttController implements MqttCallbackExtended {
 
             String topic = discoveryTopic();
 
-            // Simply leaving a component out does NOT remove an entity Home Assistant already
+            // Simply leaving a component out does NOT remove an entity the smart home already
             // discovered, it strands it as "unavailable" forever. The documented removal is the
             // component once more as an empty config holding only its platform ("p"), then an
             // update without it. This panel removes exactly what it announced before and does not
@@ -1449,10 +1431,10 @@ final class MqttController implements MqttCallbackExtended {
             // is what this process published and, after a restart or an update, the payload the
             // broker kept (readRetainedDiscovery). A new panel finds nothing and sends no removal
             // at all, so Muralis starts on MQTT as if it were used for the first time
-            // (2026-10-06). A removal that Home Assistant misses because it is offline at that
+            // (2026-10-06). A removal that the smart home misses because it is offline at that
             // moment leaves the entity unavailable until a person deletes it, which Tasmota,
-            // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: Home
-            // Assistant acts on an empty config only for a component it has discovered since it
+            // ESPHome (its documentation says so), zigbee2mqtt and FreeKiosk all accept: the smart
+            // home acts on an empty config only for a component it has discovered since it
             // started (measured on the test instance, 2026-10-06). A key whose platform changed
             // gets the old platform's empty config, since both cannot stand under one key. A run
             // that did not go out whole is not remembered, and the next state publish runs it
@@ -1467,7 +1449,7 @@ final class MqttController implements MqttCallbackExtended {
             discoveryStale = !handedOver;
             if (handedOver) {
                 for (String key : plan.removed.keySet()) {
-                    Log.i(TAG, "Removed from Home Assistant: " + key);
+                    Log.i(TAG, "Removed from MQTT discovery: " + key);
                 }
                 announced.clear();
                 announced.putAll(now);
@@ -1499,7 +1481,7 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * Each announced component's key and platform, the pair Home Assistant identifies a component
+     * Each announced component's key and platform, the pair the smart home identifies a component
      * by. An entry holding only its platform is a removal, not an announcement, and is left out.
      */
     private static java.util.Map<String, String> announcedIn(JSONObject components) {
@@ -1516,9 +1498,9 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * Tags are not a component of the device document: Home Assistant discovers them on their
+     * Tags are not a component of the device document: the smart home discovers them on their
      * own topic, one per panel, and a read on the state topic named here fires its tag scanned
-     * event, so its tag automations work as they do with the companion app.
+     * event, so its tag automations work as they do with a smart-home companion app.
      */
     private void publishTagDiscovery(JSONObject device) throws JSONException {
         JSONObject tag = new JSONObject();
@@ -1533,8 +1515,8 @@ final class MqttController implements MqttCallbackExtended {
      * entity, since the "Network state" one was removed as information-free (it could only ever
      * publish "connected"; see the no-live-network-entity comment in the discovery components
      * above). Two values and only ever two,
-     * so the connectivity device class fits; the trade is that the rendered words come from Home
-     * Assistant and are capitalised.
+     * so the connectivity device class fits; the trade is that the rendered words come from the
+     * smart home and are capitalised.
      *
      * <p>Deliberately a standalone, classic discovery message rather than one more component in
      * the device-based {@code cmps} bundle. A component in that bundle inherits the device's
@@ -1611,8 +1593,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject sensor = new JSONObject();
         sensor.put("p", "sensor");
         sensor.put("name", name);
-        sensor.put("unique_id", config.deviceId + "_" + name
-                .toLowerCase(java.util.Locale.ROOT).replace(' ', '_'));
         sensor.put("value_template", valueTemplate);
         if (deviceClass != null) {
             sensor.put("device_class", deviceClass);
@@ -1637,7 +1617,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject number = new JSONObject();
         number.put("p", "number");
         number.put("name", name);
-        number.put("unique_id", uniqueId(name));
         number.put("command_topic", topicPrefix + "command");
         number.put("command_template", commandTemplate);
         number.put("value_template", valueTemplate);
@@ -1654,7 +1633,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject light = new JSONObject();
         light.put("p", "light");
         light.put("name", "Status light");
-        light.put("unique_id", uniqueId("Status light"));
         light.put("schema", "template");
         light.put("command_topic", topicPrefix + "command");
         light.put("command_on_template", "{\"command\":\"light.on\",\"args\":{\"value\":\""
@@ -1685,7 +1663,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject toggle = new JSONObject();
         toggle.put("p", "switch");
         toggle.put("name", name);
-        toggle.put("unique_id", uniqueId(name));
         toggle.put("command_topic", topicPrefix + "command");
         toggle.put("payload_on", payloadOn);
         toggle.put("payload_off", payloadOff);
@@ -1696,7 +1673,7 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * A number a person types or nudges in Home Assistant. Box mode rather than a slider: these
+     * A number a person types or nudges in the smart home. Box mode rather than a slider: these
      * are durations in seconds, where a slider's resolution is a guess and a typed value is
      * exact.
      */
@@ -1705,7 +1682,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject box = new JSONObject();
         box.put("p", "number");
         box.put("name", name);
-        box.put("unique_id", uniqueId(name));
         box.put("command_topic", topicPrefix + "command");
         box.put("command_template",
                 "{\"command\":\"" + command + "\",\"args\":{\"value\":\"{{ value | int }}\"}}");
@@ -1735,7 +1711,7 @@ final class MqttController implements MqttCallbackExtended {
      * parameter would otherwise produce a broken envelope, and this box exists precisely for
      * URLs with parameters.
      *
-     * <p>{@code max} is Home Assistant's own ceiling for a text entity (255). A longer URL has to
+     * <p>{@code max} is the MQTT text entity's own ceiling (255). A longer URL has to
      * go through a command payload; the box would refuse it in the frontend before it ever
      * reached the panel.
      */
@@ -1744,7 +1720,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject box = new JSONObject();
         box.put("p", "text");
         box.put("name", name);
-        box.put("unique_id", uniqueId(name));
         box.put("command_topic", topicPrefix + "command");
         box.put("command_template",
                 "{\"command\":\"" + command + "\",\"args\":{\"url\":{{ value | tojson }}}}");
@@ -1766,7 +1741,6 @@ final class MqttController implements MqttCallbackExtended {
         JSONObject select = new JSONObject();
         select.put("p", "select");
         select.put("name", name);
-        select.put("unique_id", uniqueId(name));
         select.put("command_topic", topicPrefix + "command");
         select.put("command_template",
                 "{\"command\":\"" + command + "\",\"args\":{\"value\":{{ value | tojson }}}}");
@@ -1776,32 +1750,46 @@ final class MqttController implements MqttCallbackExtended {
     }
 
     /**
-     * What the playlist select shows and sends when no playlist is in use, and what the camera
-     * view select shows and sends for the web page.
+     * What the playlist select shows and sends when no playlist is in use.
      *
-     * <p>A select cannot hold an empty option, and Home Assistant renders a state that is not one
-     * of the options as unknown, so these need words of their own; never "None", which Home
-     * Assistant's MQTT select reads as no state at all and shows as unknown. The command side
-     * turns them back into nothing.
+     * <p>A select cannot hold an empty option, and the smart home renders a state that is not one
+     * of the options as unknown, so this needs words of its own; never "None", which the
+     * MQTT select reads as no state at all and shows as unknown. The command side
+     * turns it back into nothing.
      */
     static final String PLAYLIST_NONE = "No playlist";
-    static final String CAMERA_VIEW_PAGE = Cameras.CAMERA_VIEW_PAGE;
-    /** The Ambient transition select's word for no transition, for the same reason. */
-    static final String TRANSITION_NONE_OPTION = "No transition";
 
     /** A press. Stateless, so it needs no template and reads nothing. */
     private JSONObject button(String name, String command) throws JSONException {
         JSONObject button = new JSONObject();
         button.put("p", "button");
         button.put("name", name);
-        button.put("unique_id", uniqueId(name));
         button.put("command_topic", topicPrefix + "command");
         button.put("payload_press", command);
         return button;
     }
 
-    private String uniqueId(String name) {
-        return config.deviceId + "_" + name.toLowerCase(java.util.Locale.ROOT).replace(' ', '_');
+    /** Puts {@code entity} under the key its name gives; see KioskCommandDispatcher.entityKey. */
+    private static void add(JSONObject components, JSONObject entity) throws JSONException {
+        components.put(KioskCommandDispatcher.entityKey(entity.getString("name")), entity);
+    }
+
+    /**
+     * A select whose options are the words of {@code words} (key, word pairs), the words every
+     * surface shows; the templates turn the word picked into its key for the command, and the
+     * key the state holds at {@code field} back into its word.
+     */
+    private JSONObject wordSelect(String name, String command, String[][] words, String field)
+            throws JSONException {
+        org.json.JSONArray options = new org.json.JSONArray();
+        for (String[] choice : words) {
+            options.put(choice[1]);
+        }
+        JSONObject select = select(name, command, options,
+                KioskCommandDispatcher.selectValueTemplate(field, words));
+        select.put("command_template",
+                KioskCommandDispatcher.selectCommandTemplate(command, words));
+        return select;
     }
 
 }

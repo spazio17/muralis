@@ -107,7 +107,7 @@ final class SettingProbe {
 
     /**
      * Any HTTP status counts as reachable, a 404 included: the question this answers is "is there
-     * a web server at this address", not "is the path right", and a Home Assistant login redirect
+     * a web server at this address", not "is the path right", and a smart-home login redirect
      * or an error page both prove the server is there.
      */
     static Verdict dashboardUrl(String value) {

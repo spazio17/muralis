@@ -85,11 +85,11 @@ public final class IntegrationsTest {
         over.level = -5;
         require(Automations.validate(over, counted) == null, "a negative level was refused");
 
-        // A stored rule keeps its match, and an older rule's "tag" still reads.
+        // A stored rule keeps its match.
         Automations.Rule stored = Automations.parseRule(new org.json.JSONObject()
-                .put("id", "nfc").put("sensor", "nfc").put("event", "tag").put("tag", "04A3")
+                .put("id", "nfc").put("sensor", "nfc_tag").put("event", "tag").put("match", "04A3")
                 .put("action", "display_on"));
-        require(stored.match.equals("04A3"), "an older NFC rule lost its tag");
+        require(stored.match.equals("04A3"), "a stored NFC rule lost its tag");
 
         instances();
         System.out.println("IntegrationsTest passed");

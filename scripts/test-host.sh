@@ -383,7 +383,7 @@ javac -d "${test_dir}/fleetalerts" \
     "${host_test_dir}/FleetAlertsTest.java"
 java -cp "${test_dir}/fleetalerts" org.spazio17.muralis.FleetAlertsTest
 
-# What a panel withdraws from Home Assistant: only what it announced itself.
+# What a panel withdraws over MQTT discovery: only what it announced itself.
 mkdir -p "${test_dir}/withdrawals"
 javac -d "${test_dir}/withdrawals" \
     "${pure_java_dir}/DiscoveryWithdrawals.java" \

@@ -39,7 +39,7 @@ final class TelemetryCollector {
 
     /**
      * The installed version name, for every surface that reports what build is running: the
-     * telemetry document (and through it {@code /api/stats} and the Home Assistant sensor) and
+     * telemetry document (and through it {@code /api/stats} and the MQTT sensor) and
      * MQTT discovery's device info. Since versions are derived from git, this names the exact
      * commit on the device, which is the point: "what is this panel running" should never need a
      * cable again.
