@@ -474,6 +474,53 @@ html:root ul.list.seg li:first-child:has(+ li.refusal:last-child){border-radius:
 html.js .events{display:none}html.js .events.on{display:block}
 label.radio.one input{position:absolute;opacity:0;pointer-events:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* The automation editor (2026-10-23): a card per When with "or" between, its actions in order
+   as dashed rows, the If card's conditions the same way. The moves and Remove are 48 px icon
+   buttons at a row's end; the days of a time of day are Material's filter chips over
+   checkboxes, the tick shown on a chosen day. The Save that Enter presses is first in the form
+   and out of sight; the visible one stays in the editor's row. */
+form.automation{position:relative}
+form.automation>button.enter{position:absolute;width:1px;height:1px;padding:0;border:0;overflow:hidden;opacity:0;pointer-events:none}
+.card.when{margin-top:16px}.or+.card.when{margin-top:0}
+.when .cardhead h2,h2.part,h3.then{display:flex;align-items:center;gap:8px}
+.when .cardhead h2 svg,h2.part svg,h3.then svg{width:20px;height:20px;flex:none;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.or{margin:8px 0;text-align:center;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;letter-spacing:.1px}
+/* The Add of one more When stands on an "or" line after the last When card. */
+.or.more{display:flex;align-items:center;justify-content:center;gap:4px}
+.or.more button{position:relative}.or.more button::after{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
+.then{margin:24px 0 0;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;letter-spacing:.1px}
+.step,.cond{border:1px dashed var(--outline);border-radius:12px;padding:0 12px 8px;margin-top:12px}
+.step>.menurow:first-child .field{margin-top:20px}.step>.menurow:first-child button.choose{margin-top:28px}
+.step .moves{display:flex;justify-content:flex-end;margin:8px -4px 0 0}
+/* From 600 px an action's moves and Remove stand beside its Action menu, as a condition's Remove
+   beside its Sensor menu; every other box spans the row under them. */
+@media (min-width:600px){
+.step.moving{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:4px;align-items:start}
+.step.moving>*{grid-column:1/-1}
+.step.moving>.menurow:first-child{grid-column:1;grid-row:1}
+.step.moving>.moves{grid-column:2;grid-row:1;margin:24px -4px 0 0}
+}
+.cond .condhead{display:flex;align-items:flex-start;gap:4px}.cond .condhead .field{flex:1 1 auto;margin-top:20px}.cond .condhead .ib{margin-top:24px;margin-right:-4px}
+.radios.join{margin-top:8px}
+/* A Sensor or Action menu's Choose, beside it, for a page without scripting; the script presses
+   it when the menu changes. */
+.menurow{display:flex;align-items:flex-start;gap:8px}.menurow .field{flex:1 1 auto}.menurow button.choose{margin-top:32px}
+.cond .condhead button.choose{margin-top:28px}
+html.js button.choose{display:none}
+.field .lead{display:none}
+.field.wait .lead{display:block;position:absolute;left:12px;top:16px;width:24px;height:24px;color:var(--subtext);pointer-events:none}
+.field.wait .lead svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.field.wait input{padding-left:48px}.field.wait input:focus{padding-left:47px}
+.days{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+label.fchip{position:relative;display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 16px;border:1px solid var(--outline);border-radius:8px;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;letter-spacing:.1px;cursor:pointer;margin:8px 0 0}
+label.fchip::after{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px}
+label.fchip input{position:absolute;width:1px;height:1px;margin:0;opacity:0}
+label.fchip svg{display:none;width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+label.fchip:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
+label.fchip:has(input:checked){padding-left:8px;border-color:transparent;background:var(--secondary-container);color:var(--on-secondary-container)}
+label.fchip:has(input:checked) svg{display:block}
+label.fchip:has(input:checked):hover{background:color-mix(in srgb,var(--accent-alt) 10%,var(--secondary-container))}
+label.fchip:has(input:focus-visible){outline:2px solid var(--accent-alt);outline-offset:2px}
 .text .field{margin-top:8px}
 .text .field .support{margin-top:2px}
 

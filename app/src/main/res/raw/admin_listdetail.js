@@ -21,16 +21,20 @@ if(history.replaceState){history.replaceState(null,'',id?base+encodeURIComponent
 // row a bookmark opened it on (review, 2026-10-01).
 if(title&&ld.dataset.title){title.textContent=ld.dataset.title;}
 }
+// The Automations page holds the open rule's pane alone: a row or Add whose pane is not on the
+// page opens its own page instead.
+function hasPane(id){return Array.prototype.some.call(ld.querySelectorAll('.detail>.pane'),function(pane){return pane.dataset.id===id;});}
+function open(id){if(hasPane(id)){select(id);}else{location.href=base+encodeURIComponent(id);}}
 ld.addEventListener('click',function(e){
 if(!wide.matches){return;}
 if(e.target.closest('input,button,label,select')){return;}
 var add=e.target.closest('.nav a[href="/automation"]');
-if(add){e.preventDefault();select('');return;}
+if(add){if(hasPane('')){e.preventDefault();select('');}return;}
 // An add link naming its pane (Cameras: a camera or a group).
 var pane=e.target.closest('.nav a[data-pane]');
 if(pane){e.preventDefault();select(pane.dataset.pane);return;}
 var li=e.target.closest('.nav li[data-id]');
-if(li){e.preventDefault();select(li.dataset.id);}
+if(li){e.preventDefault();open(li.dataset.id);}
 });
 // A row without a link is chosen with the keyboard too: Enter or Space, as on a button. The
 // row's words are the button, not the row, which holds a switch of its own: a control inside a
@@ -43,7 +47,7 @@ if(on){words.setAttribute('tabindex','0');words.setAttribute('role','button');}e
 ld.addEventListener('keydown',function(e){
 if(!wide.matches||(e.key!=='Enter'&&e.key!==' ')){return;}
 var li=e.target.closest?e.target.closest('.nav li[data-id]'):null;
-if(li&&e.target.getAttribute('role')==='button'){e.preventDefault();select(li.dataset.id);}});
+if(li&&e.target.getAttribute('role')==='button'){e.preventDefault();open(li.dataset.id);}});
 reachable();if(wide.addEventListener){wide.addEventListener('change',reachable);}
 if(wide.matches&&title&&ld.dataset.title&&ld.dataset.page==='detail'){title.textContent=ld.dataset.title;}
 })();
