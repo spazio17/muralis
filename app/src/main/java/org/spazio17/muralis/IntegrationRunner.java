@@ -54,10 +54,11 @@ final class IntegrationRunner {
     /** The longest one ask may take, redirects and a slow answer included. */
     private static final long TOTAL_DEADLINE_MS = 30_000;
     /**
-     * The longest a Try may take: two asks, the most any integration here makes at once (Uptime
-     * Kuma reads the page, then the beats). The web admin keeps a Try's connection open this long.
+     * The longest a Try may take: three asks, the most any integration here makes at once
+     * (Bitcoin reads the height, the fees and the prices). The web admin keeps a Try's connection
+     * open this long.
      */
-    static final long TRY_DEADLINE_MS = 2 * TOTAL_DEADLINE_MS;
+    static final long TRY_DEADLINE_MS = 3 * TOTAL_DEADLINE_MS;
     private static final int ASKING_THREADS = 3;
     /** How often the roles for the fleet's shared instances are worked out again. */
     private static final long ROLE_EVERY_MS = 10_000;

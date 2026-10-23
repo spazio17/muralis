@@ -1,0 +1,7 @@
+{
+  "id": "bitcoin",
+  "class": "BitcoinIntegration",
+  "name": "Bitcoin",
+  "kind": "cloud",
+  "codeowners": ["@Nihvel"]
+}
