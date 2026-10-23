@@ -1201,7 +1201,7 @@ public final class KioskActivity extends Activity {
         note.setTextColor(secure ? theme.subtext : theme.bad);
         note.setText(secure ? AdminCertificate.servedSentence(KioskConfig.CERTIFICATE_UPLOADED
                 .equals(KioskRuntimeState.httpAdminCertificate()), "that page")
-                : AdminCertificate.PLAIN_HTTP_SENTENCE);
+                : AdminCertificate.CLOSED_WITHOUT_TLS_SENTENCE);
         choice.removeAllViews();
         LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -6559,7 +6559,7 @@ public final class KioskActivity extends Activity {
     private String webAdminSummary(KioskConfig config) {
         return "Port " + config.httpPort
                 + (!KioskRuntimeState.httpAdminListening() ? ""
-                        : KioskRuntimeState.httpAdminSecure() ? " · HTTPS" : " · HTTP")
+                        : KioskRuntimeState.httpAdminSecure() ? " · HTTPS" : " · closed")
                 + (config.webAdminEnabled ? "" : " · off");
     }
 

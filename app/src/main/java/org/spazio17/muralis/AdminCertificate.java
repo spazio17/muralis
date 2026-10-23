@@ -82,9 +82,9 @@ final class AdminCertificate {
     private static final String ALIAS = "muralis-admin-tls";
     private static final int VALID_YEARS = 10;
 
-    /** Null when no certificate can be had right now: the web admin then speaks plain HTTP. */
+    /** Null when no certificate can be had right now: the web admin then stays closed. */
     final SSLSocketFactory socketFactory;
-    /** SHA-256 of the certificate, colon-separated, the format browsers show; empty on plain HTTP. */
+    /** SHA-256 of the certificate, colon-separated, the format browsers show; empty while closed. */
     final String fingerprint;
     /** Whether the uploaded certificate is the one served. */
     final boolean uploaded;
@@ -99,7 +99,7 @@ final class AdminCertificate {
         this.uploadProblem = uploadProblem;
     }
 
-    /** Whether a certificate is served at all, HTTPS rather than plain HTTP. */
+    /** Whether a certificate is served at all, HTTPS rather than the closed admin. */
     boolean secure() {
         return socketFactory != null;
     }
@@ -260,19 +260,15 @@ final class AdminCertificate {
                 + page + ":";
     }
 
-    static final String PLAIN_HTTP_SENTENCE = "Served over plain HTTP: this panel cannot use its "
-            + "certificate right now, so the password travels unencrypted. Use it on a trusted "
-            + "network only.";
+    static final String CLOSED_WITHOUT_TLS_SENTENCE = "Closed: this panel cannot use its "
+            + "certificate right now, and the web admin never takes the password unencrypted. "
+            + "After a restart it opens once the device has been unlocked.";
 
     /** Why the uploaded certificate, chosen, is not served, and what is served instead. */
     static String notServedSentence(String problem, boolean ownServed) {
         return "The uploaded certificate is not served: " + problem + "."
                 + (ownServed ? " This panel's own is." : "");
     }
-
-    /** The reason beside the greyed upload while the page is plain HTTP. */
-    static final String UPLOAD_NEEDS_HTTPS =
-            "Uploads need HTTPS: a private key must not cross the network unencrypted.";
 
     /** The reason beside the greyed Uploaded choice while nothing is uploaded, on the web admin. */
     static final String NOTHING_UPLOADED = "Nothing is uploaded yet.";
@@ -349,13 +345,13 @@ final class AdminCertificate {
             SecretStore secrets = new SecretStore(KioskConfig.storageContext(context));
             if (!secrets.has(KEY_NAME) && !adoptCredentialStoredKey(context, secrets)
                     && !isUserUnlocked(context)) {
-                Log.i(TAG, "No TLS key readable before the first unlock; plain HTTP until then");
+                Log.i(TAG, "No TLS key readable before the first unlock; web admin closed until then");
                 return null;
             }
             String storedKey = secrets.getOrNull(KEY_NAME);
             String storedCertificate = secrets.getOrNull(CERTIFICATE_NAME);
             if (storedKey == null || storedCertificate == null) {
-                Log.e(TAG, "The web admin's TLS key cannot be read right now; staying on plain HTTP");
+                Log.e(TAG, "The web admin's TLS key cannot be read right now; web admin closed");
                 return null;
             }
             PrivateKey key;
@@ -388,7 +384,7 @@ final class AdminCertificate {
             return new AdminCertificate(tls.getSocketFactory(),
                     TlsPresentation.fingerprint(certificate.getEncoded()), false, null);
         } catch (GeneralSecurityException | RuntimeException failure) {
-            Log.e(TAG, "This device cannot serve HTTPS; the web admin stays on plain HTTP", failure);
+            Log.e(TAG, "This device cannot serve HTTPS; the web admin stays closed", failure);
             return null;
         }
     }

@@ -293,7 +293,7 @@ final class KioskRuntimeState {
     /**
      * Whether the running server speaks HTTPS, and with which certificate; see AdminCertificate.
      *
-     * @param certificate "own" or "uploaded", which one is served; empty on plain HTTP
+     * @param certificate "own" or "uploaded", which one is served; empty while closed
      * @param problem why the uploaded certificate, chosen, is not the one served; empty when none
      */
     static void publishHttpAdminTls(boolean secure, String fingerprint, String certificate,
@@ -304,7 +304,7 @@ final class KioskRuntimeState {
         httpAdminCertificateProblem = problem == null ? "" : problem;
     }
 
-    /** "own" or "uploaded", the certificate the running web admin serves; empty on plain HTTP. */
+    /** "own" or "uploaded", the certificate the running web admin serves; empty while closed. */
     static String httpAdminCertificate() {
         return httpAdminCertificate;
     }
@@ -318,7 +318,7 @@ final class KioskRuntimeState {
         return httpAdminSecure;
     }
 
-    /** Colon-separated SHA-256 of the served certificate, empty on plain HTTP. */
+    /** Colon-separated SHA-256 of the served certificate, empty while closed. */
     static String httpAdminFingerprint() {
         return httpAdminFingerprint;
     }

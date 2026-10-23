@@ -205,8 +205,8 @@ final class HttpAdminServer {
      * The certificate served, one object read once wherever it is used, so a reload never pairs
      * one certificate's words with another's fingerprint (review, 2026-10-05). Its socket factory
      * is null when the stored key cannot be read yet, before the first unlock, or HTTPS could not
-     * be set up at all (see AdminCertificate); then the server speaks plain HTTP as it did before
-     * 2026-09-09, and says so. Otherwise every accepted connection is expected to start a TLS
+     * be set up at all (see AdminCertificate); then the server answers every request closed
+     * and never asks for the password. Otherwise every accepted connection is expected to start a TLS
      * handshake, and one that does not is sent to the https address without ever being asked
      * for a password. Null only before the first start.
      */
@@ -370,7 +370,7 @@ final class HttpAdminServer {
             AdminCertificate current = served;
             if (!loaded.secure() && current != null && current.secure()) {
                 // Nothing could be read this moment (a Keystore briefly away): the certificate
-                // already serving stays, never a fall to plain HTTP mid-life, and the read is
+                // already serving stays, never a close mid-life, and the read is
                 // tried once more, so a Delete does not leave its certificate served until the
                 // next restart (review, 2026-10-05).
                 Log.w(TAG, "No certificate could be read; the one served stays"
@@ -398,7 +398,7 @@ final class HttpAdminServer {
         for (Socket idle : idleKept) {
             closeQuietly(idle);
         }
-        Log.i(TAG, "Web admin now serves " + (!loaded.secure() ? "plain HTTP"
+        Log.i(TAG, "Web admin now serves " + (!loaded.secure() ? "nothing (closed until a certificate can be used)"
                 : loaded.uploaded ? "the uploaded certificate" : "this panel's own certificate"));
     }
 
@@ -588,7 +588,11 @@ final class HttpAdminServer {
                 channel = tls;
                 plain = tls.getInputStream();
             } else {
-                plain = socket.getInputStream();
+                // No certificate can be used right now (before the first unlock after a restart,
+                // or none could be made): the admin stays closed rather than take the password
+                // over plain text. Nothing is asked and nothing of the request is read.
+                answerClosed(socket);
+                return;
             }
             // Wrapped, so both readLine and readBody inherit the whole-request deadline without
             // either of them having to know about it. See REQUEST_DEADLINE_MS.
@@ -804,11 +808,7 @@ final class HttpAdminServer {
                 keepOpen.set(mayKeepOpen(method, parts, headers, headersWhole, requests));
                 answeredOpen.set(false);
                 try {
-                    // Whether this request came over TLS, from the connection itself: a reload
-                    // can change what the server serves while a request is on its way (review,
-                    // 2026-10-05).
-                    route(method, target, headers, body, output, socket,
-                            channel instanceof SSLSocket);
+                    route(method, target, headers, body, output, socket);
                 } finally {
                     keepOpen.set(false);
                 }
@@ -875,7 +875,7 @@ final class HttpAdminServer {
 
     private void route(
             String method, String target, Map<String, String> headers, byte[] body,
-            OutputStream output, java.net.Socket socket, boolean overTls) throws IOException {
+            OutputStream output, java.net.Socket socket) throws IOException {
         String path = target;
         String query = "";
         int questionMark = target.indexOf('?');
@@ -889,7 +889,7 @@ final class HttpAdminServer {
         } else if (path.equals("/") && method.equals("POST") && isMultipart(headers)) {
             // The web admin box's upload, posted to the page's own address so a refusal is drawn
             // there and not under an address that answers only a POST (review, 2026-10-05).
-            handleCertificateUpload(headers, body, output, overTls, true);
+            handleCertificateUpload(headers, body, output, true);
         } else if (path.equals("/") && method.equals("POST")
                 && "certificate".equals(parseFormBody(headers, body).get("section"))) {
             handleCertificateDelete(parseFormBody(headers, body), output, true);
@@ -906,9 +906,9 @@ final class HttpAdminServer {
         } else if (path.equals("/api/setting") && method.equals("POST")) {
             handleSetting(parseFormBody(headers, body), output);
         } else if (path.equals("/api/certificate") && method.equals("POST")) {
-            handleCertificateUpload(headers, body, output, overTls, false);
+            handleCertificateUpload(headers, body, output, false);
         } else if (path.equals("/mqtt-certificate") && method.equals("POST")) {
-            handleMqttClientUpload(headers, body, output, overTls);
+            handleMqttClientUpload(headers, body, output);
         } else if (path.equals("/api/certificate/delete") && method.equals("POST")) {
             handleCertificateDelete(parseFormBody(headers, body), output, false);
         } else if (path.equals("/sensors") && method.equals("GET")) {
@@ -4660,20 +4660,16 @@ final class HttpAdminServer {
                     .append(" class=\"text\">").append(asking ? "Trust" : "Remove")
                     .append("</button></div></form>");
         }
-        // The client certificate: uploaded here only, since files go through the web admin, and
-        // like the admin's own certificate never over plain HTTP, where its key would travel
-        // in clear.
-        String locked = KioskRuntimeState.httpAdminSecure() ? "" : " disabled title=\""
-                + escapeHtml(AdminCertificate.UPLOAD_NEEDS_HTTPS) + "\"";
+        // The client certificate: uploaded here only, since files go through the web admin.
         trust.append("<p class=\"hint\">")
                 .append(escapeHtml(MqttTls.clientLine(config.mqttClientName,
                         config.mqttClientUntil))).append("</p>")
                 .append("<form method=\"post\" action=\"/mqtt-certificate\""
                         + " enctype=\"multipart/form-data\">")
-                .append(fileRow("mqtt-client-file", "certificate", "Client certificate", locked))
-                .append(fileRow("mqtt-client-key", "key", "Its private key", locked))
-                .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\"")
-                .append(locked).append(">Upload</button></div></form>");
+                .append(fileRow("mqtt-client-file", "certificate", "Client certificate"))
+                .append(fileRow("mqtt-client-key", "key", "Its private key"))
+                .append("<div class=\"actions\"><button class=\"tonal\" type=\"submit\">")
+                .append("Upload</button></div></form>");
         if (!config.mqttClientName.isEmpty()) {
             trust.append("<form method=\"post\" action=\"").append(settingsAt("mqtt"))
                     .append("\" class=\"actions\"><input type=\"hidden\" name=\"section\""
@@ -4963,14 +4959,12 @@ final class HttpAdminServer {
      * outside that form, since the upload is a form of its own and forms do not nest. Both post
      * to the page's own address. The block carries its state key, so the stats poll draws it
      * again when the panel or the server changed it (AdminCertificate.stateKey, review
-     * 2026-10-05). On plain HTTP the upload is greyed with its reason, so no private key is ever
-     * sent before the refusal could stop it.
+     * 2026-10-05).
      */
     private String certificateControls(String notice, String noticeSection) {
         KioskConfig facts = KioskConfig.certificateFacts(context);
         AdminCertificate certificate = served;
         boolean kept = !facts.httpUploadSha256.isEmpty();
-        boolean overTls = certificate != null && certificate.secure();
         long now = System.currentTimeMillis();
         String radios = radioOf("http_certificate", "http_certificate",
                 KioskConfig.CERTIFICATE_OWN, facts.httpCertificate,
@@ -4983,8 +4977,6 @@ final class HttpAdminServer {
                                 + "</span></span>", kept ? null : AdminCertificate.NOTHING_UPLOADED);
         String problem = certificate == null || certificate.uploadProblem == null ? ""
                 : certificate.uploadProblem;
-        String locked = overTls ? "" : " disabled title=\""
-                + escapeHtml(AdminCertificate.UPLOAD_NEEDS_HTTPS) + "\"";
         return "<div class=\"certificate\" id=\"certificate\" data-lists-kind=\"certificate\" "
                 + "data-lists=\"" + escapeHtml(AdminCertificate.stateKey(facts)) + "\">"
                 // An upload or a Delete answers here, by the controls that asked, not at the top
@@ -4993,16 +4985,16 @@ final class HttpAdminServer {
                         ? "<p class=\"notice\">" + escapeHtml(notice) + "</p>" : "")
                 + choice("http_certificate", "Certificate", radios)
                 + (problem.isEmpty() ? "" : "<p class=\"hint bad\">"
-                        + escapeHtml(AdminCertificate.notServedSentence(problem, overTls)) + "</p>")
+                        + escapeHtml(AdminCertificate.notServedSentence(problem, true)) + "</p>")
                 + certificateHint(certificate)
                 // The two files, each a button with the name chosen beside it, as the pictures'
                 // upload; one file holding both, or the two swapped, work too.
                 + "<form method=\"post\" action=\"" + settingsAt("webadmin") + "\" "
                 + "enctype=\"multipart/form-data\" id=\"certificate-upload\">"
-                + fileRow("certificate-file", "certificate", "Certificate", locked)
-                + fileRow("certificate-key", "key", "Private key", locked)
-                + "<div class=\"actions\"><button class=\"primary\" type=\"submit\"" + locked
-                + ">Upload</button></div></form>"
+                + fileRow("certificate-file", "certificate", "Certificate")
+                + fileRow("certificate-key", "key", "Private key")
+                + "<div class=\"actions\"><button class=\"primary\" type=\"submit\">"
+                + "Upload</button></div></form>"
                 + (kept ? "<form method=\"post\" action=\"" + settingsAt("webadmin") + "\" "
                         + "class=\"actions\" data-native=\"1\">"
                         + "<input type=\"hidden\" name=\"section\" value=\"certificate\">"
@@ -5018,16 +5010,14 @@ final class HttpAdminServer {
 
     /**
      * One file to choose: its button, then the name chosen, as the pictures' upload row has
-     * them. Greyed with its reason on the visible button too, since the input itself is off
-     * screen (review, 2026-10-05).
+     * them.
      */
-    private static String fileRow(String id, String name, String label, String locked) {
+    private static String fileRow(String id, String name, String label) {
         return "<div class=\"uploadrow\">"
                 + "<input type=\"file\" id=\"" + id + "\" name=\"" + name + "\" "
                 + "accept=\".pem,.crt,.cer,.key,.txt\" class=\"offscreen\" "
-                + "data-chosen=\"" + id + "-chosen\"" + locked + ">"
-                + "<label class=\"filebutton\" for=\"" + id + "\""
-                + (locked.isEmpty() ? "" : locked.replace(" disabled", "")) + ">" + glyph("upload")
+                + "data-chosen=\"" + id + "-chosen\">"
+                + "<label class=\"filebutton\" for=\"" + id + "\">" + glyph("upload")
                 + label + "</label>"
                 + "<span class=\"chosen\" id=\"" + id + "-chosen\">No file chosen</span>"
                 + "</div>";
@@ -5036,13 +5026,12 @@ final class HttpAdminServer {
     /**
      * A certificate and its key, posted as files by the web admin's form (to the page's own
      * address) or by curl to /api/certificate
-     * ({@code -F certificate=@fullchain.pem -F key=@privkey.pem}). Refused when the request did
-     * not come over TLS, since a private key must not cross the network unencrypted, and with
+     * ({@code -F certificate=@fullchain.pem -F key=@privkey.pem}). Refused with
      * every reason {@link CertificateUpload} gives. The form's post is answered with the settings
      * page, a script's with JSON.
      */
     private void handleCertificateUpload(Map<String, String> headers, byte[] body,
-            OutputStream output, boolean overTls, boolean fromPage) throws IOException {
+            OutputStream output, boolean fromPage) throws IOException {
         String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
         java.util.List<MultipartForm.Part> parts = boundary == null
                 ? java.util.Collections.emptyList() : MultipartForm.parse(body, boundary);
@@ -5056,10 +5045,7 @@ final class HttpAdminServer {
             }
         }
         String problem;
-        if (!overTls) {
-            problem = "this page is served over plain HTTP right now, and a private key must not "
-                    + "cross the network unencrypted";
-        } else if (boundary == null) {
+        if (boundary == null) {
             problem = "the request was not a file upload";
         } else if (parts.isEmpty() && body.length > 0) {
             problem = "the upload did not arrive complete; please try again";
@@ -5075,10 +5061,10 @@ final class HttpAdminServer {
 
     /**
      * The MQTT client certificate and its key, posted as files by the MQTT box's form; refused
-     * over plain HTTP like the web admin's own key. Answered with the settings page.
+     * Answered with the settings page.
      */
     private void handleMqttClientUpload(Map<String, String> headers, byte[] body,
-            OutputStream output, boolean overTls) throws IOException {
+            OutputStream output) throws IOException {
         String boundary = MultipartForm.boundaryOf(headers.get("content-type"));
         java.util.List<MultipartForm.Part> parts = boundary == null
                 ? java.util.Collections.emptyList() : MultipartForm.parse(body, boundary);
@@ -5092,10 +5078,7 @@ final class HttpAdminServer {
             }
         }
         String problem;
-        if (!overTls) {
-            problem = "this page is served over plain HTTP right now, and a private key must not "
-                    + "cross the network unencrypted";
-        } else if (boundary == null) {
+        if (boundary == null) {
             problem = "the request was not a file upload";
         } else if (parts.isEmpty() && body.length > 0) {
             problem = "the upload did not arrive complete; please try again";
@@ -7805,7 +7788,8 @@ final class HttpAdminServer {
      */
     private String certificateHint(AdminCertificate certificate) {
         if (certificate == null || !certificate.secure()) {
-            return "<p class=\"hint bad\">" + AdminCertificate.PLAIN_HTTP_SENTENCE + "</p>";
+            // Not reached: without a certificate the server answers every request closed.
+            return "";
         }
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
         // to break at, so inline in the sentence it wrapped mid-value (2026-09-23).
@@ -7829,6 +7813,16 @@ final class HttpAdminServer {
             }
         }
         return false;
+    }
+
+    /**
+     * Every request while no certificate can be served: 503 with the reason, and no
+     * WWW-Authenticate, so a browser never offers to send the password in clear.
+     */
+    private void answerClosed(Socket socket) throws IOException {
+        writeResponse(socket.getOutputStream(), 503, "text/plain; charset=utf-8",
+                bytes(AdminCertificate.CLOSED_WITHOUT_TLS_SENTENCE),
+                Collections.singletonMap("Retry-After", "30"));
     }
 
     /**
