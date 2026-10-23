@@ -24,6 +24,8 @@ var silent=stops&&stops.getAttribute('data-silent')?stops.getAttribute('data-sil
 function box(el){return el?el.parentNode:null;}
 function show(el,on){var b=box(el);if(b){b.classList.toggle('gone',!on);}}
 function label(el,text){var b=box(el);if(!b){return;}var l=b.querySelector('label');if(l){l.textContent=text;}}
+// The event shown at the last paint; undefined before the first.
+var lastEvent;
 function paint(){
 var chosen=sensor?sensor.value:'';
 if(stops){stops.classList.toggle('gone',silent.indexOf(chosen)<0);}
@@ -44,15 +46,23 @@ show(at,unit==='time');
 if(hasLevel&&unit!=='time'){label(level,unit?'Level ('+unit+')':'Level');}
 show(minutes,!!(checked&&checked.getAttribute('data-holds')));
 var tagged=!!(checked&&checked.getAttribute('data-tag')),cam=!!(checked&&checked.getAttribute('data-camera'));
-// A camera's event names a camera or group in place of a tag; both wait a while before again.
-show(tag,tagged&&!cam);show(camera,cam);show(cooldown,tagged);
+// A camera's event names a camera or group in place of a tag; both, and a Changes, wait a
+// while before again. Picking another such event starts the box at its own default (60 s for
+// a tag or a camera, 0 for a Changes); the event the editor opened with keeps what is stored.
+var cools=!!(checked&&checked.getAttribute('data-cools'));
+show(tag,tagged&&!cam);show(camera,cam);show(cooldown,cools);
+if(cooldown&&cools&&lastEvent!==undefined&&checked!==lastEvent){cooldown.value=checked.getAttribute('data-cooldown');}
+lastEvent=checked;
 // The text an integration's value must become.
 show(text,!!(checked&&checked.getAttribute('data-text')));
 var opt=action&&action.options[action.selectedIndex];
 var arg=opt?opt.getAttribute('data-argument'):'';
 show(argument,!!arg);
 var shows=!!(opt&&opt.getAttribute('data-shows')),camAct=!!(opt&&opt.getAttribute('data-camera'));
-show(target,camAct);show(shown,camAct);show(seconds,shows);show(chime,shows);
+// A Wait's length is the same box.
+var wait=!!(opt&&opt.getAttribute('data-wait'));
+show(target,camAct);show(shown,camAct);show(seconds,shows||wait);show(chime,shows);
+if(wait||shows){label(seconds,wait?'Seconds':'For (seconds, 0 = until touched or closed)');}
 if(arg){label(argument,arg);}
 // The address keyboard for a sound address, as the panel's box has it.
 if(argument){if(opt&&(opt.value==='play_sound'||opt.value==='open_page'||opt.value==='call_url')){argument.setAttribute('inputmode','url');}else{argument.removeAttribute('inputmode');}}

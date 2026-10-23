@@ -32,7 +32,8 @@ import android.provider.Settings;
 import android.os.SystemClock;
 import android.util.Log;
 
-public final class KioskService extends Service implements KioskCommandDispatcher.Executor {
+public final class KioskService extends Service implements KioskCommandDispatcher.Executor,
+        Automations.Clock {
     private static final String TAG = "MuralisService";
     private static final String ACTION_RELOAD_CONFIGURATION =
             "org.spazio17.muralis.action.RELOAD_CONFIGURATION";
@@ -685,7 +686,17 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // broker asks for, and the first status document, must see the stored switches and
         // rules, not an empty hub (review, 2026-09-27).
         KioskConfig.dropRetiredSettings(this);
-        automations = new Automations.Engine(this::runAutomation);
+        automations = new Automations.Engine(new Automations.Runner() {
+            @Override
+            public void run(Automations.Rule rule, Automations.Step step) {
+                runStep(rule, step);
+            }
+
+            @Override
+            public void note(Automations.Rule rule, String why) {
+                Log.i(TAG, "Automation \"" + rule.name + "\": " + why);
+            }
+        }, this::scheduleRuleStep, this);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
         // The integrations feed the same engine, their values sensors of their own.
@@ -832,6 +843,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (camera != null) {
             camera.stop();
         }
+        // A rule in the middle of a Wait ends with the service; nothing of it runs later.
+        rulesThread.shutdownNow();
         live = null;
         stopAudio();
         stopSpeech();
@@ -1878,7 +1891,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 // For the web page, which draws a list again when its key moves: see
                 // Sensors.listKeys. The rules as stored, the same the page is drawn from.
                 org.json.JSONObject lists = Sensors.listKeys(KioskRuntimeState.sensors(),
-                        Automations.toJson(KioskConfig.automationsOf(this), true));
+                        Automations.statusJson(KioskConfig.automationsOf(this)));
                 // The web admin box's certificate block follows the panel and the server too.
                 lists.put("certificate",
                         AdminCertificate.stateKey(KioskConfig.certificateFacts(this)));
@@ -3295,73 +3308,112 @@ public final class KioskService extends Service implements KioskCommandDispatche
         publishStateSoon();
     }
 
-    /** Runs one automation's action; the engine decided it is due. */
-    private void runAutomation(Automations.Rule rule) {
+    /**
+     * The one thread every rule's actions run on, in order; a Wait is a task scheduled on it.
+     * Shut down with the service, which drops whatever was still waiting.
+     */
+    private final java.util.concurrent.ScheduledExecutorService rulesThread =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(
+                    task -> new Thread(task, "MuralisRules"));
+
+    /** The engine's Scheduler: {@code task} on the rules thread after {@code delayMs}. */
+    private void scheduleRuleStep(long delayMs, Runnable task) {
+        try {
+            rulesThread.schedule(task, delayMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException stopped) {
+            // The service is going: the rest of the rule is dropped with it.
+        }
+    }
+
+    /** Counts while the device sleeps, so a Wait the panel slept through is seen as late. */
+    @Override
+    public long nowMs() {
+        return SystemClock.elapsedRealtime();
+    }
+
+    @Override
+    public int minuteOfDay() {
+        java.time.LocalTime now = java.time.LocalTime.now();
+        return now.getHour() * 60 + now.getMinute();
+    }
+
+    @Override
+    public int isoDay() {
+        return java.time.LocalDate.now().getDayOfWeek().getValue();
+    }
+
+    @Override
+    public long epochDay() {
+        return java.time.LocalDate.now().toEpochDay();
+    }
+
+    /** Runs one action of an automation, on the rules thread; the engine decided it is due. */
+    private void runStep(Automations.Rule rule, Automations.Step step) {
         if (KioskRuntimeState.wizardOnScreen() || KioskConfig.kioskStopped(this)) {
             Log.i(TAG, "Automation \"" + rule.name + "\" not run: the panel is being set up "
                     + "or the kiosk is stopped");
             return;
         }
-        Log.i(TAG, "Automation \"" + rule.name + "\": " + rule.action);
+        Log.i(TAG, "Automation \"" + rule.name + "\": " + step.action);
         String problem = null;
-        switch (rule.action) {
+        switch (step.action) {
             case "display_on": displayWake(); break;
             case "display_off": displayVisualOff(); break;
             case "dashboard": showMainDashboard(); break;
             case "ambient": problem = screensaverStart(); break;
-            case "play_sound": problem = playAudio(rule.argument); break;
-            case "say": problem = say(rule.argument); break;
+            case "play_sound": problem = playAudio(step.argument); break;
+            case "say": problem = say(step.argument); break;
             case "reload": kioskReload(); break;
             case "light_on": {
                 KioskCommandDispatcher.Result lit = dispatch("light.on",
-                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument));
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, step.argument));
                 problem = "accepted".equals(lit.status) ? null : lit.detail;
                 break;
             }
             case "popup": {
-                // The rule's own time and chime; a pop-up always wakes the screen.
+                // The action's own time and chime; a pop-up always wakes the screen.
                 java.util.Map<String, String> named = new java.util.HashMap<>();
-                named.put("seconds", Integer.toString(rule.seconds));
-                named.put("chime", rule.chime ? "true" : "false");
+                named.put("seconds", Integer.toString(step.seconds));
+                named.put("chime", step.chime ? "true" : "false");
                 problem = refusalOf(dispatch("panel.notify", new KioskCommandDispatcher.CommandArgs(
-                        -1, null, null, rule.argument, null, named)));
+                        -1, null, null, step.argument, null, named)));
                 break;
             }
             case "camera":
-                problem = showCamera(rule.argument, Automations.SHOW_FULLSCREEN.equals(rule.show),
-                        rule.seconds, rule.chime);
+                problem = showCamera(step.argument, Automations.SHOW_FULLSCREEN.equals(step.show),
+                        step.seconds, step.chime);
                 break;
             case "light_off":
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);
                 break;
             case "open_page":
                 problem = refusalOf(dispatch("dashboard.open_once",
-                        new KioskCommandDispatcher.CommandArgs(-1, rule.argument)));
+                        new KioskCommandDispatcher.CommandArgs(-1, step.argument)));
                 break;
             case "brightness":
                 problem = refusalOf(dispatch("display.brightness",
                         new KioskCommandDispatcher.CommandArgs(
-                                Integer.parseInt(rule.argument), null)));
+                                Integer.parseInt(step.argument), null)));
                 break;
             case "ambient_mode":
                 problem = refusalOf(dispatch("ambient.mode",
-                        new KioskCommandDispatcher.CommandArgs(-1, null, null, rule.argument)));
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, step.argument)));
                 break;
             case "mqtt_publish": {
-                int space = rule.argument.indexOf(' ');
+                int space = step.argument.indexOf(' ');
                 MqttController mqtt = mqttController;
-                if (mqtt == null || !mqtt.publishAlert(rule.argument.substring(0, space),
-                        rule.argument.substring(space + 1))) {
+                if (mqtt == null || !mqtt.publishAlert(step.argument.substring(0, space),
+                        step.argument.substring(space + 1))) {
                     problem = "MQTT is not connected";
                 }
                 break;
             }
             case "call_url": {
-                String address = rule.argument;
+                String address = step.argument;
                 new Thread(() -> callAddress(rule.name, address), "MuralisRuleCall").start();
                 break;
             }
-            default: problem = "no action is called " + rule.action;
+            default: problem = "no action is called " + step.action;
         }
         if (problem != null) {
             Log.w(TAG, "Automation \"" + rule.name + "\" not done: " + problem);
@@ -4033,8 +4085,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private void publishSensorBlock() {
         Sensors hub = sensors;
         KioskRuntimeState.publishSensors(hub == null ? new org.json.JSONObject() : hub.snapshot());
-        KioskRuntimeState.publishAutomations(Automations.toJson(
-                automations == null ? Automations.defaults() : automations.rules(), true));
+        KioskRuntimeState.publishAutomations(Automations.statusJson(
+                automations == null ? Automations.defaults() : automations.rules()));
     }
 
     /**

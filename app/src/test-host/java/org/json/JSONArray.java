@@ -39,6 +39,11 @@ public class JSONArray {
         return value instanceof Map ? new JSONObject(org.spazio17.muralis.HostJson.object(value)) : null;
     }
 
+    public int optInt(int index, int fallback) {
+        Object value = index < list.size() ? list.get(index) : null;
+        return value instanceof Number ? ((Number) value).intValue() : fallback;
+    }
+
     @Override
     public String toString() {
         return org.spazio17.muralis.HostJson.write(list);

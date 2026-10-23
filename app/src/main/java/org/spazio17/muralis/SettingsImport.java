@@ -295,8 +295,7 @@ final class SettingsImport {
             case "automations": {
                 List<Automations.Rule> rules = Automations.parse(text);
                 for (Automations.Rule rule : rules) {
-                    if (Integrations.isSensorId(rule.sensor)
-                            && Integrations.lookup.valueOf(rule.sensor) == null) {
+                    if (readsMissingIntegration(rule)) {
                         // A rule on an integration this panel does not hold (yet) is kept as
                         // it came, as one is when its integration is removed: it waits, and
                         // never fires until the integration is added here.
@@ -306,6 +305,10 @@ final class SettingsImport {
                     if (problem != null) {
                         return "the rule \"" + rule.name + "\": " + problem;
                     }
+                }
+                String tooMuch = Automations.checkList(rules);
+                if (tooMuch != null) {
+                    return tooMuch;
                 }
                 return text.isEmpty() || !rules.isEmpty() ? null : "not a list of rules";
             }
@@ -384,6 +387,16 @@ final class SettingsImport {
                 || Cameras.findGroup(groups, chosen) != null);
         return KioskCommandDispatcher.dashboardShowProblem(value, app,
                 !cameras.isEmpty() || !groups.isEmpty(), exists);
+    }
+
+    /** Whether a When or a condition of the rule reads an integration this panel lacks. */
+    private static boolean readsMissingIntegration(Automations.Rule rule) {
+        for (String sensor : rule.sensors()) {
+            if (Integrations.isSensorId(sensor) && Integrations.lookup.valueOf(sensor) == null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String permitted(Context context, Object value, String permission) {
