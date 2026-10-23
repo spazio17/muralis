@@ -35,11 +35,13 @@ if(on){var c=group.querySelector('input:checked');
 // Ticked as the default too, so the stats poll does not take the tick for an edit.
 if(!c){var first=group.querySelector('input');if(first){first.checked=true;first.defaultChecked=true;c=first;}}
 checked=c;}});
-var unit=checked?checked.getAttribute('data-level'):'';
+// A level where the event has one; its unit may be empty (a count of things).
+var hasLevel=!!checked&&checked.hasAttribute('data-level');
+var unit=hasLevel?checked.getAttribute('data-level'):'';
 // A time of day has its own box, the browser's time picker.
-show(level,!!unit&&unit!=='time');
+show(level,hasLevel&&unit!=='time');
 show(at,unit==='time');
-if(unit&&unit!=='time'){label(level,'Level ('+unit+')');}
+if(hasLevel&&unit!=='time'){label(level,unit?'Level ('+unit+')':'Level');}
 show(minutes,!!(checked&&checked.getAttribute('data-holds')));
 var tagged=!!(checked&&checked.getAttribute('data-tag')),cam=!!(checked&&checked.getAttribute('data-camera'));
 // A camera's event names a camera or group in place of a tag; both wait a while before again.

@@ -7559,14 +7559,14 @@ public final class KioskActivity extends Activity {
         for (String tag : tagsRead) {
             tagMenu.add(tag, tag);
         }
-        if (!draft.tag.isEmpty() && !tagsRead.contains(draft.tag)) {
-            tagMenu.add(draft.tag, draft.tag);
+        if (!draft.match.isEmpty() && !tagsRead.contains(draft.match)) {
+            tagMenu.add(draft.match, draft.match);
         }
-        tagMenu.select(draft.tag);
+        tagMenu.select(draft.match);
         View tagBox = (View) tagMenu.box.getParent();
         // The camera or group a camera's event names, in place of the tag.
         MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group", cameraNames,
-                groupNames, Automations.CAMERAS.equals(draft.sensor) ? draft.tag : "");
+                groupNames, Automations.CAMERAS.equals(draft.sensor) ? draft.match : "");
         View cameraBox = (View) cameraMenu.box.getParent();
         EditText cooldownInput = themedInput(theme, Integer.toString(draft.cooldown), false);
         cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -7587,12 +7587,13 @@ public final class KioskActivity extends Activity {
                 levelInput.setInputType(InputType.TYPE_CLASS_DATETIME
                         | InputType.TYPE_DATETIME_VARIATION_TIME);
             } else if (level) {
-                levelCaption.setText("Level (" + event.levelUnit + ")");
+                levelCaption.setText(event.levelUnit.isEmpty() ? "Level"
+                        : "Level (" + event.levelUnit + ")");
                 levelInput.setInputType(InputType.TYPE_CLASS_NUMBER
                         | InputType.TYPE_NUMBER_FLAG_DECIMAL);
             }
             minutesBox.setVisibility(event != null && event.holds ? View.VISIBLE : View.GONE);
-            boolean tag = event != null && event.tag;
+            boolean tag = event != null && event.oneShot;
             boolean camera = tag && Automations.CAMERAS.equals(sensor);
             tagBox.setVisibility(tag && !camera ? View.VISIBLE : View.GONE);
             cameraBox.setVisibility(camera ? View.VISIBLE : View.GONE);
@@ -7747,7 +7748,7 @@ public final class KioskActivity extends Activity {
             // as the web refuses it, rather than quietly meaning 0.
             draft.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
-            draft.tag = Automations.CAMERAS.equals(draft.sensor) ? cameraMenu.value()
+            draft.match = Automations.CAMERAS.equals(draft.sensor) ? cameraMenu.value()
                     : tagMenu.value();
             String cooldown = cooldownInput.getText().toString().trim();
             draft.cooldown = cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;

@@ -173,6 +173,7 @@ javac -d "${test_dir}/automations" \
     "${pure_java_dir}/DisplayOffPolicy.java" \
     "${pure_java_dir}/BrowserOptions.java" \
     "${pure_java_dir}/CertificatePins.java" \
+    "${pure_java_dir}/Integrations.java" \
     "${pure_java_dir}/StatusLight.java" \
     "${pure_java_dir}/ScreensaverPolicy.java" \
     "${pure_java_dir}/TinyJson.java" \
@@ -180,8 +181,11 @@ javac -d "${test_dir}/automations" \
     "${host_test_dir}/../../json/JSONException.java" \
     "${host_test_dir}/../../json/JSONObject.java" \
     "${host_test_dir}/../../json/JSONArray.java" \
-    "${host_test_dir}/AutomationsTest.java"
+    "${host_test_dir}/AutomationsTest.java" \
+    "${host_test_dir}/IntegrationsTest.java"
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
+# Integrations: the model, and the automations acting on their values.
+java -cp "${test_dir}/automations" org.spazio17.muralis.IntegrationsTest
 
 # The beacon distance: the trimmed running average, the model and the two calibration steps.
 javac -d "${test_dir}/beacons" \

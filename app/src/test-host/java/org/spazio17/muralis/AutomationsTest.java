@@ -385,7 +385,7 @@ public final class AutomationsTest {
         Automations.Rule any = rule("nfc", "tag", "display_on");
         Automations.Rule one = rule("nfc", "tag", "reload");
         one.id = "r2";
-        one.tag = "04A32B9C";
+        one.match = "04A32B9C";
         any.cooldown = 0;
         one.cooldown = 0;
         engine.rules(java.util.Arrays.asList(any, one));
@@ -398,7 +398,7 @@ public final class AutomationsTest {
     /** A camera's event: named, a group's rules too, the "not again within", the sentence. */
     private static void testCameraEvents() throws org.json.JSONException {
         Automations.Rule door = rule(Automations.CAMERAS, "triggered", "camera");
-        door.tag = "Door";
+        door.match = "Door";
         door.argument = "Front";
         door.show = Automations.SHOW_FULLSCREEN;
         door.seconds = 20;
@@ -411,7 +411,7 @@ public final class AutomationsTest {
         Automations.Rule none = rule(Automations.CAMERAS, "triggered", "display_on");
         require(Automations.validate(none, names()) != null, "a camera rule names its camera");
         Automations.Rule bad = rule(Automations.CAMERAS, "triggered", "camera");
-        bad.tag = "Door";
+        bad.match = "Door";
         bad.argument = "Front";
         bad.show = "sideways";
         require(Automations.validate(bad, names()) != null, "show is pop-up or full screen");
@@ -426,7 +426,7 @@ public final class AutomationsTest {
                 && !light.chime, "not again within and chime only where they apply");
         Automations.Rule group = rule(Automations.CAMERAS, "triggered", "reload");
         group.id = "r2";
-        group.tag = "Outside";
+        group.match = "Outside";
         group.cooldown = 0;
         Runs runs = new Runs();
         Automations.Engine engine = new Automations.Engine(runs);
