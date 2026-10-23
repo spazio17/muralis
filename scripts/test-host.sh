@@ -186,6 +186,12 @@ javac -d "${test_dir}/automations" \
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
 # Integrations: the model, and the automations acting on their values.
 java -cp "${test_dir}/automations" org.spazio17.muralis.IntegrationsTest
+# When an integration asks its service: interval, floor, Retry-After, unavailable, reauth.
+mkdir -p "${test_dir}/integrationschedule"
+javac -d "${test_dir}/integrationschedule" \
+    "${pure_java_dir}/IntegrationSchedule.java" \
+    "${host_test_dir}/IntegrationScheduleTest.java"
+java -cp "${test_dir}/integrationschedule" org.spazio17.muralis.IntegrationScheduleTest
 
 # The beacon distance: the trimmed running average, the model and the two calibration steps.
 javac -d "${test_dir}/beacons" \
