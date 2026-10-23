@@ -461,6 +461,8 @@ final class Sensors implements SensorEventListener {
         // Not a sensor, but a When choice of its own.
         names.put(Automations.TIME, Automations.TIME_NAME);
         names.put(Automations.CAMERAS, Automations.CAMERAS_NAME);
+        // The integrations' values, which the automations take as sensors of their own.
+        names.putAll(IntegrationRunner.sensorNames(KioskRuntimeState.integrations()));
         return names;
     }
 

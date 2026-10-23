@@ -2852,6 +2852,409 @@ public final class KioskActivity extends Activity {
         overlayWatch = null;
     }
 
+    /** The Integrations section's line, the web's words: how many are added and on. */
+    private static String integrationsSummary() {
+        org.json.JSONArray block = KioskRuntimeState.integrations();
+        if (block.length() == 0) {
+            return "None yet";
+        }
+        int on = 0;
+        for (int index = 0; index < block.length(); index++) {
+            org.json.JSONObject entry = block.optJSONObject(index);
+            if (entry != null && entry.optBoolean("enabled")) {
+                on++;
+            }
+        }
+        return on + " of " + block.length() + " on";
+    }
+
+    /** A row's line: the values in words while it answers, else its status line. */
+    private static String integrationLine(org.json.JSONObject entry) {
+        if (!"ok".equals(entry.optString("state"))) {
+            return entry.optString("status");
+        }
+        org.json.JSONObject values = entry.optJSONObject("values");
+        StringBuilder line = new StringBuilder();
+        java.util.Iterator<String> ids = values == null
+                ? java.util.Collections.emptyIterator() : values.keys();
+        while (ids.hasNext()) {
+            org.json.JSONObject value = values.optJSONObject(ids.next());
+            if (value == null) {
+                continue;
+            }
+            if (line.length() > 0) {
+                line.append(", ");
+            }
+            if (values.length() > 1) {
+                line.append(value.optString("name")).append(' ');
+            }
+            line.append(integrationValueWords(value));
+        }
+        return line.length() == 0 ? entry.optString("status") : line.toString();
+    }
+
+    private static String integrationValueWords(org.json.JSONObject value) {
+        if (!value.optBoolean("available") || value.isNull("value")) {
+            return "unknown";
+        }
+        switch (value.optString("type")) {
+            case "flag":
+                return value.optBoolean("value") ? "on" : "off";
+            case "text":
+                return "\"" + value.optString("value") + "\"";
+            default: {
+                double number = value.optDouble("value");
+                String figure = number == Math.rint(number) && Math.abs(number) < 1e15
+                        ? Long.toString((long) number) : Double.toString(number);
+                String unit = value.optString("unit");
+                return unit.isEmpty() ? figure : figure + " " + unit;
+            }
+        }
+    }
+
+    /** The integration chosen on the Integrations page: "i:" and an id, or "d:" and a kind to add. */
+    private String selectedIntegrationItem;
+
+    /**
+     * The Integrations page, as Cameras is: from 840 dp the added integrations stand at the left
+     * with their status lines, then the kinds this version offers to add, and the chosen one's box
+     * at the right; below that one list, and a box is a page of its own.
+     */
+    private void showIntegrationsPage(String select) {
+        boolean wide = widthClass() == 2;
+        if (!wide && select != null) {
+            showIntegrationItemPage(select);
+            return;
+        }
+        currentScreen = () -> showIntegrationsPage(null);
+        LinearLayout page = subPage("Integrations", this::showSettings);
+        KioskTheme theme = currentTheme();
+        java.util.List<Integrations.Instance> instances = KioskConfig.integrationsOf(this);
+        String chosen = null;
+        if (wide) {
+            chosen = integrationItemOrFirst(select != null ? select : selectedIntegrationItem,
+                    instances);
+            selectedIntegrationItem = chosen;
+        }
+        java.util.Map<String, org.json.JSONObject> status = integrationStatus();
+        LinearLayout list = wide ? navPanel(theme) : card(theme, null);
+        TextView count = new FlushText(this);
+        count.setText(integrationsSummary());
+        list.addView(listHead(theme, "Integrations", count), listHeadParams(wide));
+        if (instances.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setText("None added yet.");
+            none.setTextColor(theme.subtext);
+            none.setTextSize(14);
+            if (wide) {
+                none.setPadding(dp(12), dp(12), dp(12), dp(12));
+            }
+            list.addView(none, matchWrap());
+        }
+        for (Integrations.Instance instance : instances) {
+            org.json.JSONObject entry = status.get(instance.id);
+            addIntegrationRow(list, theme, wide, "i:" + instance.id, instance.name,
+                    entry == null ? "" : integrationLine(entry), instance == instances.get(0),
+                    chosen);
+        }
+        if (instances.size() < Integrations.MAX_INSTANCES) {
+            LinearLayout.LayoutParams addHead = listHeadParams(wide);
+            addHead.topMargin = dp(24);
+            // No count beside it, as the web's head: what can be added is not a tally.
+            list.addView(listHead(theme, "Add", new FlushText(this)), addHead);
+            list.setTag(null);
+            boolean first = true;
+            for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+                if ("business".equals(definition.edition)) {
+                    // Business does not exist yet: nothing of it is offered.
+                    continue;
+                }
+                addIntegrationRow(list, theme, wide, "d:" + definition.id, definition.name,
+                        definition.summary, first, chosen);
+                first = false;
+            }
+        }
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        if (wide) {
+            final String shown = chosen;
+            currentScreen = () -> showIntegrationsPage(shown);
+            page.addView(listDetailPair(list, integrationBox(theme, chosen, true)), params);
+        } else {
+            page.addView(paneOf(list), params);
+        }
+        setContentView(scrollPage(theme, page));
+        // An integration added, changed or failing on the web admin or here shows at once.
+        Runnable redraw = currentScreen;
+        watchLists("integrations", page, () -> redrawInPlace(redraw));
+    }
+
+    private java.util.Map<String, org.json.JSONObject> integrationStatus() {
+        java.util.Map<String, org.json.JSONObject> status = new java.util.HashMap<>();
+        org.json.JSONArray block = KioskRuntimeState.integrations();
+        for (int index = 0; index < block.length(); index++) {
+            org.json.JSONObject entry = block.optJSONObject(index);
+            if (entry != null) {
+                status.put(entry.optString("id"), entry);
+            }
+        }
+        return status;
+    }
+
+    private void addIntegrationRow(LinearLayout list, KioskTheme theme, boolean wide,
+            String item, String name, String sub, boolean first, String chosen) {
+        Runnable open = () -> openIntegrationItem(wide, item);
+        LinearLayout row = glyphRow(theme, R.drawable.ic_integrations, name, sub, null, open,
+                false, !wide);
+        if (wide) {
+            addMenuRow(list, theme, row, first, item.equals(chosen), open);
+        } else {
+            addListRow(list, theme, row, first);
+        }
+    }
+
+    private void openIntegrationItem(boolean wide, String item) {
+        hideKeyboardIfShown();
+        if (wide) {
+            redrawInPlace(() -> showIntegrationsPage(item));
+        } else {
+            showIntegrationItemPage(item);
+        }
+    }
+
+    /** The item to show: the one asked for when it exists, else the first added, else the first kind. */
+    private static String integrationItemOrFirst(String item,
+            java.util.List<Integrations.Instance> instances) {
+        if (item != null) {
+            if (item.startsWith("d:") && Integrations.DEFINITIONS.containsKey(item.substring(2))
+                    && instances.size() < Integrations.MAX_INSTANCES) {
+                return item;
+            }
+            for (Integrations.Instance instance : instances) {
+                if (item.equals("i:" + instance.id)) {
+                    return item;
+                }
+            }
+        }
+        return instances.isEmpty() ? "d:" + Integrations.DEFINITIONS.keySet().iterator().next()
+                : "i:" + instances.get(0).id;
+    }
+
+    /** Below 840 dp, an integration's box as a page of its own, back to the list. */
+    private void showIntegrationItemPage(String select) {
+        if (widthClass() == 2) {
+            showIntegrationsPage(select);
+            return;
+        }
+        String item = integrationItemOrFirst(select, KioskConfig.integrationsOf(this));
+        currentScreen = () -> showIntegrationItemPage(item);
+        LinearLayout page = subPage(item.startsWith("d:") ? "New integration"
+                : "Edit integration", () -> showIntegrationsPage(null));
+        KioskTheme theme = currentTheme();
+        page.addView(paneOf(integrationBox(theme, item, false)), matchWrap());
+        setContentView(scrollPage(theme, page));
+        Runnable redraw = currentScreen;
+        watchLists("integrations", page, () -> redrawInPlace(redraw));
+    }
+
+    /** After a save, a switch or a removal: the page again, on {@code item}. */
+    private void afterIntegrationChange(boolean wide, String item) {
+        if (wide) {
+            redrawInPlace(() -> showIntegrationsPage(item));
+        } else if (item != null) {
+            showIntegrationItemPage(item);
+        } else {
+            showIntegrationsPage(null);
+        }
+    }
+
+    /**
+     * One integration's box: its name, its settings drawn from the definition's fields, its status
+     * and values while added, and Add or Save, Try, Switch off or on, Remove; the web's box.
+     */
+    private LinearLayout integrationBox(KioskTheme theme, String item, boolean wide) {
+        Integrations.Instance instance = null;
+        Integrations.Definition definition;
+        if (item.startsWith("i:")) {
+            for (Integrations.Instance one : KioskConfig.integrationsOf(this)) {
+                if (item.equals("i:" + one.id)) {
+                    instance = one;
+                }
+            }
+            definition = instance == null ? null
+                    : Integrations.DEFINITIONS.get(instance.definition);
+        } else {
+            definition = Integrations.DEFINITIONS.get(item.substring(2));
+        }
+        boolean fresh = instance == null;
+        if (definition == null) {
+            LinearLayout card = card(theme, instance == null ? "Integration" : instance.name);
+            TextView note = new FlushText(this);
+            note.setText("This version of Muralis does not have this integration. A newer"
+                    + " version added it.");
+            note.setTextColor(theme.subtext);
+            card.addView(note, matchWrap());
+            if (instance != null) {
+                String id = instance.id;
+                String name = instance.name;
+                Button remove = textButton(theme, "Remove");
+                remove.setOnClickListener(view -> confirmRemove("Remove \"" + name + "\"?",
+                        IntegrationSettings.REMOVED, () -> {
+                            IntegrationSettings.remove(this, id);
+                            afterIntegrationChange(wide, null);
+                        }));
+                card.addView(fittingButtonRow(remove), matchWrap());
+            }
+            return card;
+        }
+        org.json.JSONObject entry = fresh ? null : integrationStatus().get(instance.id);
+        LinearLayout card = card(theme, fresh ? definition.name : instance.name);
+        TextView about = new FlushText(this);
+        about.setText(fresh ? definition.summary : definition.name + ". "
+                + (entry == null ? "" : entry.optString("status")));
+        about.setTextColor(theme.subtext);
+        about.setTextSize(14);
+        card.addView(about, matchWrap());
+        if (entry != null && "ok".equals(entry.optString("state"))) {
+            org.json.JSONObject values = entry.optJSONObject("values");
+            java.util.Iterator<String> ids = values == null
+                    ? java.util.Collections.emptyIterator() : values.keys();
+            while (ids.hasNext()) {
+                org.json.JSONObject value = values.optJSONObject(ids.next());
+                if (value != null) {
+                    addListRow(card, theme, glyphRow(theme, R.drawable.ic_integrations,
+                            integrationValueWords(value), value.optString("name") + " · "
+                                    + value.optString("sensor"), null, null, false, false),
+                            false);
+                }
+            }
+        }
+        EditText nameInput = proseInput(theme, fresh ? definition.name : instance.name);
+        addField(card, theme, "Name", nameInput);
+        java.util.Map<String, java.util.function.Supplier<String>> readers =
+                new java.util.LinkedHashMap<>();
+        for (Integrations.Field field : definition.fields) {
+            // "(optional)" only where empty means nothing: a menu always holds a choice, and a
+            // box with a fallback says what empty means under it.
+            boolean optional = !field.required && field.fallback.isEmpty();
+            String label = field.label + (optional ? " (optional)" : "");
+            boolean stored = entry != null && integrationSecretSet(entry, field.id);
+            String support = field.secret && stored ? "Stored. Empty keeps it."
+                    : !field.hint.isEmpty() ? field.hint
+                    : field.kind == Integrations.Kind.NUMBER && !field.fallback.isEmpty()
+                            ? "Empty means " + field.fallback + "." : null;
+            if (field.kind == Integrations.Kind.CHOICE) {
+                MenuField menu = new MenuField(card, theme, label);
+                for (String option : field.options) {
+                    menu.add(option, option);
+                }
+                String current = fresh ? "" : instance.settings.getOrDefault(field.id, "");
+                menu.select(current.isEmpty() ? field.fallback : current);
+                readers.put(field.id, menu::value);
+                continue;
+            }
+            EditText input = themedInput(theme, field.secret || fresh ? ""
+                    : instance.settings.getOrDefault(field.id, ""), field.secret);
+            if (field.kind == Integrations.Kind.URL) {
+                input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            } else if (field.kind == Integrations.Kind.NUMBER) {
+                input.setInputType(InputType.TYPE_CLASS_NUMBER);
+            }
+            if (support == null) {
+                addField(card, theme, label, input);
+            } else {
+                addField(card, theme, label, input, support);
+            }
+            readers.put(field.id, () -> input.getText().toString());
+        }
+        TextView answer = new FlushText(this);
+        answer.setTextColor(theme.subtext);
+        answer.setTextSize(14);
+        answer.setVisibility(View.GONE);
+        String id = fresh ? "" : instance.id;
+        String kind = definition.id;
+        java.util.function.Supplier<java.util.Map<String, String>> typed = () -> {
+            java.util.Map<String, String> values = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<String, java.util.function.Supplier<String>> reader
+                    : readers.entrySet()) {
+                values.put(reader.getKey(), reader.getValue().get());
+            }
+            return values;
+        };
+        Button save = primaryButton(theme, fresh ? "Add" : "Save");
+        save.setOnClickListener(view -> {
+            IntegrationSettings.Saved saved = IntegrationSettings.save(this, id, kind,
+                    nameInput.getText().toString(), typed.get());
+            if (saved.problem != null) {
+                Toast.makeText(this, "Not saved: " + saved.problem + ".", Toast.LENGTH_LONG)
+                        .show();
+                if (saved.problem.endsWith("removed meanwhile")) {
+                    afterIntegrationChange(wide, null);
+                }
+                return;
+            }
+            Toast.makeText(this, fresh ? "Added. It asks its service now." : "Saved.",
+                    Toast.LENGTH_SHORT).show();
+            afterIntegrationChange(wide, "i:" + saved.id);
+        });
+        Button tryIt = textButton(theme, "Try");
+        tryIt.setOnClickListener(view -> {
+            java.util.Map<String, String> values = typed.get();
+            tryIt.setEnabled(false);
+            answer.setText("Asking…");
+            answer.setVisibility(View.VISIBLE);
+            // The asking waits on the network: never on the main thread.
+            new Thread(() -> {
+                String said = IntegrationSettings.test(this, id, kind, values);
+                runOnUiThread(() -> {
+                    answer.setText(said);
+                    tryIt.setEnabled(true);
+                });
+            }, "MuralisIntegrationTry").start();
+        });
+        java.util.List<Button> buttons = new java.util.ArrayList<>();
+        buttons.add(save);
+        buttons.add(tryIt);
+        if (!fresh) {
+            boolean on = instance.enabled;
+            String name = instance.name;
+            Button toggle = textButton(theme, on ? "Switch off" : "Switch on");
+            toggle.setOnClickListener(view -> {
+                String problem = IntegrationSettings.setEnabled(this, id, !on);
+                if (problem != null) {
+                    Toast.makeText(this, "Not changed: " + problem + ".", Toast.LENGTH_LONG)
+                            .show();
+                    return;
+                }
+                afterIntegrationChange(wide, "i:" + id);
+            });
+            Button remove = textButton(theme, "Remove");
+            remove.setOnClickListener(view -> confirmRemove("Remove \"" + name + "\"?",
+                    IntegrationSettings.REMOVED, () -> {
+                        IntegrationSettings.remove(this, id);
+                        afterIntegrationChange(wide, null);
+                    }));
+            buttons.add(toggle);
+            buttons.add(remove);
+        }
+        card.addView(fittingButtonRow(buttons.toArray(new Button[0])), matchWrap());
+        LinearLayout.LayoutParams answerParams = matchWrap();
+        answerParams.topMargin = dp(8);
+        card.addView(answer, answerParams);
+        return card;
+    }
+
+    private static boolean integrationSecretSet(org.json.JSONObject entry, String fieldId) {
+        org.json.JSONArray set = entry.optJSONArray("secrets_set");
+        for (int index = 0; set != null && index < set.length(); index++) {
+            if (fieldId.equals(set.optString(index))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The camera or group chosen on the Cameras page: "c:" or "g:" and its name, empty to add. */
     private String selectedCameraItem;
 
@@ -4114,11 +4517,30 @@ public final class KioskActivity extends Activity {
         camerasMore.setOnClickListener(view -> showCamerasPage());
         camerasCard.addView(buttonRow(camerasMore), matchWrap());
 
-        // Integrations (2026-10-15): in the menu already, empty until the first ones come.
+        // Integrations: one row an added integration with its status line, then More
+        // integration settings, as Cameras lists its cameras; a row opens the Integrations page.
         LinearLayout integrationsCard = sectionBody(theme);
-        integrationsCard.addView(emptyState(theme, "No integrations yet",
-                "Muralis will show and act on data from other services. The first integrations"
-                        + " come in an update."), matchWrap());
+        org.json.JSONArray integrationBlock = KioskRuntimeState.integrations();
+        for (int index = 0; index < integrationBlock.length(); index++) {
+            org.json.JSONObject entry = integrationBlock.optJSONObject(index);
+            if (entry == null) {
+                continue;
+            }
+            String item = "i:" + entry.optString("id");
+            addListRow(integrationsCard, theme, glyphRow(theme, R.drawable.ic_integrations,
+                    entry.optString("name"), integrationLine(entry), null,
+                    () -> showIntegrationsPage(item), false, false),
+                    integrationsCard.getChildCount() == 0);
+        }
+        if (integrationBlock.length() == 0) {
+            integrationsCard.addView(emptyState(theme, "No integrations yet",
+                    "An integration brings data from another service to the panel, for the"
+                            + " automations and MQTT."), matchWrap());
+        }
+        Button integrationsMore = textButtonOnward(theme, integrationBlock.length() == 0
+                ? "Add an integration" : "More integration settings");
+        integrationsMore.setOnClickListener(view -> showIntegrationsPage(null));
+        integrationsCard.addView(buttonRow(integrationsMore), matchWrap());
 
         // The Pro state lives in This panel (About until 2026-09-27; moved here 2026-08-29, by
         // decision of that day): it is a fact about this installation, like the version line
@@ -4396,7 +4818,7 @@ public final class KioskActivity extends Activity {
                 new Section(GROUP_AUTOMATION, R.drawable.ic_automations, "Automations",
                         automationsSummary(), automationsCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_integrations, "Integrations",
-                        "Coming soon", integrationsCard),
+                        integrationsSummary(), integrationsCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_mqtt, "MQTT",
                         config.mqttHost.isEmpty() ? "Not configured"
                                 : config.mqttHost + ":" + config.mqttPort, mqttCard),
@@ -5860,10 +6282,14 @@ public final class KioskActivity extends Activity {
             }
             return key.toString();
         }
+        if ("integrations".equals(kind)) {
+            return IntegrationRunner.panelListKey(KioskRuntimeState.integrations());
+        }
         org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors(),
                 Automations.toJson(KioskConfig.automationsOf(this), true));
         return "home".equals(kind)
                 ? keys.optString("sensors_home") + keys.optString("automations_home")
+                        + IntegrationRunner.panelListKey(KioskRuntimeState.integrations())
                 : keys.optString(kind + "_page");
     }
 
@@ -7512,6 +7938,14 @@ public final class KioskActivity extends Activity {
         if (anyCamera || Automations.CAMERAS.equals(draft.sensor)) {
             sensorMenu.add(Automations.CAMERAS_NAME, Automations.CAMERAS);
         }
+        // The integrations' values, each a sensor of its own.
+        for (java.util.Map.Entry<String, String> value : IntegrationRunner.sensorNames(
+                KioskRuntimeState.integrations()).entrySet()) {
+            java.util.List<Automations.Event> list = Automations.events(value.getKey());
+            if (list != null && !list.isEmpty()) {
+                sensorMenu.add(value.getValue(), value.getKey());
+            }
+        }
         if (!draft.sensor.isEmpty() && !sensorMenu.values.contains(draft.sensor)) {
             // A rule on a sensor this device lacks keeps it: opening and saving the rule for
             // its name must not move it to the first sensor in the menu (review, 2026-10-01).
@@ -7568,6 +8002,14 @@ public final class KioskActivity extends Activity {
         MenuField cameraMenu = cameraTargetMenu(whenCard, theme, "Camera or group", cameraNames,
                 groupNames, Automations.CAMERAS.equals(draft.sensor) ? draft.match : "");
         View cameraBox = (View) cameraMenu.box.getParent();
+        // The text an integration's value must become ("Busy"), upper and lower case alike.
+        EditText textInput = proseInput(theme,
+                Integrations.isSensorId(draft.sensor) ? draft.match : "");
+        // In a column of its own, so the box and its helper line hide together.
+        LinearLayout textBox = new LinearLayout(this);
+        textBox.setOrientation(LinearLayout.VERTICAL);
+        addField(textBox, theme, "Text", textInput, "Upper and lower case count the same.");
+        whenCard.addView(textBox, matchWrapClose());
         EditText cooldownInput = themedInput(theme, Integer.toString(draft.cooldown), false);
         cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         addField(whenCard, theme, "Not again within (seconds)", cooldownInput);
@@ -7598,14 +8040,16 @@ public final class KioskActivity extends Activity {
             tagBox.setVisibility(tag && !camera ? View.VISIBLE : View.GONE);
             cameraBox.setVisibility(camera ? View.VISIBLE : View.GONE);
             cooldownBox.setVisibility(tag ? View.VISIBLE : View.GONE);
+            textBox.setVisibility(event != null && event.matches && !event.oneShot
+                    ? View.VISIBLE : View.GONE);
         };
         Runnable paintSensor = () -> {
             String sensor = sensorMenu.value();
             stopsNote.setVisibility(KioskService.stopsWhileAsleep(this, sensor)
                     ? View.VISIBLE : View.GONE);
             eventGroup.removeAllViews();
-            java.util.List<Automations.Event> events = Automations.EVENTS.get(sensor);
-            if (events != null) {
+            java.util.List<Automations.Event> events = Automations.events(sensor);
+            if (events != null && !events.isEmpty()) {
                 for (Automations.Event event : events) {
                     radioChoice(theme, eventGroup, event.label, event.id);
                 }
@@ -7749,6 +8193,7 @@ public final class KioskActivity extends Activity {
             draft.minutes = minutes.isEmpty() ? 0
                     : minutes.matches("\\d{1,4}") ? Integer.parseInt(minutes) : -1;
             draft.match = Automations.CAMERAS.equals(draft.sensor) ? cameraMenu.value()
+                    : Integrations.isSensorId(draft.sensor) ? textInput.getText().toString()
                     : tagMenu.value();
             String cooldown = cooldownInput.getText().toString().trim();
             draft.cooldown = cooldown.matches("\\d{1,5}") ? Integer.parseInt(cooldown) : -1;

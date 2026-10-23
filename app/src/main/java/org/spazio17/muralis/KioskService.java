@@ -684,6 +684,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
+        // The integrations feed the same engine, their values sensors of their own.
+        integrations = new IntegrationRunner(this, automations, this::publishStateSoon);
+        integrations.start();
         beacons = new Beacons(this);
         microphone = new Microphone(this);
         camera = new PanelCamera(this, this::onCameraMotion);
@@ -760,6 +763,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
             publishStateSoon();
             // A change was made somewhere: a shared section changed here goes to the fleet.
             FleetServer.syncProfileSoon(this, "change");
+        } else if (intent != null && ACTION_REFRESH_INTEGRATIONS.equals(intent.getAction())) {
+            if (integrations != null) {
+                integrations.reload();
+                String renewed = intent.getStringExtra(EXTRA_INTEGRATION_RENEWED);
+                if (renewed != null) {
+                    integrations.credentialsReplaced(renewed);
+                }
+            }
         } else if (intent != null && ACTION_REFRESH_SENSORS.equals(intent.getAction())) {
             automations.rules(KioskConfig.automationsOf(this));
             refreshSensors();
@@ -802,6 +813,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         stopControllers();
         stopTelemetry();
+        if (integrations != null) {
+            integrations.stop();
+        }
         if (sensors != null) {
             sensors.stop();
         }
@@ -1748,6 +1762,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
             publishSensorBlock();
             stats.put("sensors", KioskRuntimeState.sensors());
             stats.put("automations", KioskRuntimeState.automations());
+            // The integrations added on this panel, their states and values; never a secret.
+            org.json.JSONArray integrationBlock = KioskRuntimeState.integrations();
+            // Their settings only to the web admin: an address may carry a key in its query, and
+            // MQTT's state is retained on a broker others read, as camera addresses are kept off.
+            stats.put("integrations", includeAdminDetail ? integrationBlock
+                    : IntegrationRunner.withoutSettings(integrationBlock));
+            // The same values flat by sensor id, what discovery's value templates read.
+            org.json.JSONObject integrationValues = new org.json.JSONObject();
+            for (int index = 0; index < integrationBlock.length(); index++) {
+                org.json.JSONObject values = integrationBlock.getJSONObject(index)
+                        .optJSONObject("values");
+                java.util.Iterator<String> ids = values == null
+                        ? java.util.Collections.emptyIterator() : values.keys();
+                while (ids.hasNext()) {
+                    org.json.JSONObject value = values.getJSONObject(ids.next());
+                    integrationValues.put(value.getString("sensor"), value.opt("value"));
+                }
+            }
+            stats.put("integration_values", integrationValues);
             if (includeAdminDetail) {
                 // For the web page, which draws a list again when its key moves: see
                 // Sensors.listKeys. The rules as stored, the same the page is drawn from.
@@ -1761,6 +1794,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 java.util.Map<String, String> beaconLines = beacons == null
                         ? java.util.Collections.<String, String>emptyMap() : beacons.lines();
                 lists.put("beacons", Beacons.listKey(beaconLines.keySet()));
+                String integrationsKey = IntegrationRunner.listKey(
+                        KioskRuntimeState.integrations());
+                lists.put("integrations_home", integrationsKey);
+                lists.put("integrations_page", integrationsKey);
                 stats.put("lists", lists);
                 stats.put("beacon_lines", new org.json.JSONObject(beaconLines));
             }
@@ -3070,6 +3107,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
     private Automations.Engine automations;
+    private IntegrationRunner integrations;
     private Beacons beacons;
     private Microphone microphone;
     private PanelCamera camera;
@@ -3831,6 +3869,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     static final String ACTION_REFRESH_SENSORS = "org.spazio17.muralis.REFRESH_SENSORS";
+
+    static final String ACTION_REFRESH_INTEGRATIONS = "org.spazio17.muralis.REFRESH_INTEGRATIONS";
+    static final String EXTRA_INTEGRATION_RENEWED = "renewed";
+
+    /**
+     * A settings surface changed the stored integrations: the runner reads them again, and an
+     * instance whose secrets were replaced asks its service at once.
+     */
+    static void refreshIntegrationsSoon(Context context, String renewedInstance) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_REFRESH_INTEGRATIONS);
+        if (renewedInstance != null) {
+            intent.putExtra(EXTRA_INTEGRATION_RENEWED, renewedInstance);
+        }
+        context.startService(intent);
+    }
 
     /** The sensors' readings and the rules, where the panel, the web page and discovery read them. */
     private void publishSensorBlock() {

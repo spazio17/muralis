@@ -359,6 +359,17 @@ final class KioskRuntimeState {
         return sensors;
     }
 
+    /** The integrations block, as IntegrationRunner.snapshot last built it. */
+    private static volatile org.json.JSONArray integrations = new org.json.JSONArray();
+
+    static void publishIntegrations(org.json.JSONArray block) {
+        integrations = block == null ? new org.json.JSONArray() : block;
+    }
+
+    static org.json.JSONArray integrations() {
+        return integrations;
+    }
+
     /** The automations block of the last status document built; see Automations. */
     private static volatile org.json.JSONArray automations = new org.json.JSONArray();
 
