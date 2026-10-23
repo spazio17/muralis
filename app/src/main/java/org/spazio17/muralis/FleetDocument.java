@@ -178,7 +178,7 @@ final class FleetDocument {
      * port, escape combinations and PIN, calibrations and what belongs to its hardware.
      */
     static final String[] SECTIONS = {"dashboard", "mqtt", "web_admin", "display", "ambient",
-            "alerts"};
+            "integrations", "alerts"};
     /** A section's words on both surfaces. */
     static String sectionLabel(String section) {
         switch (section) {
@@ -187,12 +187,14 @@ final class FleetDocument {
             case "web_admin": return "Web admin";
             case "display": return "Display";
             case "alerts": return "Alerts";
+            case "integrations": return "Integrations";
             default: return "Ambient";
         }
     }
 
     /** Values that are secrets: carried only on the wire, blanked in every stored copy. */
-    static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password"};
+    static final String[] SECRET_KEYS = {"mqtt_password", "http_admin_password",
+            "integration_secrets"};
 
     /**
      * The scope of the whole fleet, which is no group a person sees; the groups are made by a

@@ -36,7 +36,8 @@ final class SettingsTransfer {
 
     /** The secrets a file may carry when the person asks for them. */
     static final String[] SECRETS = {"mqtt_username", "mqtt_password", "http_admin_password",
-            "browser_user", "browser_password", "escape_pin_hash", "camera_logins"};
+            "browser_user", "browser_password", "escape_pin_hash", "camera_logins",
+            "integration_secrets"};
 
     private static Map<String, Character> keys() {
         Map<String, Character> keys = new LinkedHashMap<>();
@@ -45,7 +46,7 @@ final class SettingsTransfer {
                 "orientation", "display_off_method", "screensaver_mode",
                 "screensaver_on_wake", "screensaver_transition", "screensaver_picture_fit",
                 "screensaver_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock"}) {
+                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock", "integrations"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",

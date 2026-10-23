@@ -6455,6 +6455,7 @@ public final class KioskActivity extends Activity {
             case "humidity": return R.drawable.ic_sensor_humidity;
             case "display": return R.drawable.ic_sensor_display;
             case "ambient": return R.drawable.ic_sensor_screensaver;
+            case "integrations": return R.drawable.ic_integrations;
             case "battery": return R.drawable.ic_sensor_battery;
             case "power": return R.drawable.ic_sensor_power;
             case "network": return R.drawable.ic_sensor_network;

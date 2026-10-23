@@ -88,6 +88,27 @@ final class SettingsImport {
                 refused.add("escape_pin_hash: not a PIN this app wrote");
                 continue;
             }
+            if ("integration_secrets".equals(secret.getKey())) {
+                // Each as the integration keeps it; a name out of shape is left out.
+                java.util.Map<String, Object> all;
+                try {
+                    all = TinyJson.object(TinyJson.parse(secret.getValue()));
+                } catch (IllegalArgumentException unreadable) {
+                    all = null;
+                }
+                if (all == null) {
+                    refused.add("integration_secrets: not readable");
+                    continue;
+                }
+                SecretStore store = new SecretStore(KioskConfig.storageContext(context));
+                for (java.util.Map.Entry<String, Object> one : all.entrySet()) {
+                    if (one.getKey().matches(Integrations.INSTANCE_SHAPE
+                            + "_[a-z0-9_]{1,24}") && one.getValue() instanceof String) {
+                        store.put("integration_" + one.getKey(), (String) one.getValue());
+                    }
+                }
+                continue;
+            }
             if ("camera_logins".equals(secret.getKey())) {
                 // In the form the panel writes it, anything unreadable left out.
                 editor.cameraLogins(Cameras.parseLogins(secret.getValue()));
@@ -100,6 +121,7 @@ final class SettingsImport {
             KioskService.alertsChanged(context);
         }
         KioskService.refreshSensorsSoon(context);
+        KioskService.refreshIntegrationsSoon(context, null);
         KioskService.reloadConfiguration(context);
         KioskService.settingsImported(context);
         KioskService.publishTelemetrySoon(context);
@@ -115,6 +137,8 @@ final class SettingsImport {
                 return Cameras.formatGroups(Cameras.parseGroups((String) value));
             case "certificate_pins":
                 return CertificatePins.format(CertificatePins.parse((String) value));
+            case "integrations":
+                return Integrations.storeInstances(Integrations.parseInstances((String) value));
             default:
                 // Trimmed, as the boxes store what a person types: the checks read it trimmed.
                 return value instanceof String ? ((String) value).trim() : value;
@@ -255,6 +279,39 @@ final class SettingsImport {
             case "cameras":
                 return Cameras.parse(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
                         ? "not a list of cameras" : null;
+            case "integrations": {
+                // Each integration this version knows by the checks its own Save takes; its
+                // secrets come in the sealed block, so a secret box counts as kept. One this
+                // version does not know is kept as it came, as the panel keeps such entries.
+                List<Integrations.Instance> instances = Integrations.parseInstances(text);
+                if (instances.isEmpty() && !text.isEmpty() && !text.equals("[]")) {
+                    return "not a list of integrations";
+                }
+                if (instances.size() > Integrations.MAX_INSTANCES) {
+                    return "more than " + Integrations.MAX_INSTANCES + " integrations";
+                }
+                for (Integrations.Instance instance : instances) {
+                    Integrations.Definition definition =
+                            Integrations.DEFINITIONS.get(instance.definition);
+                    if (definition == null) {
+                        continue;
+                    }
+                    java.util.Set<String> secretFields = new java.util.HashSet<>();
+                    for (Integrations.Field field : definition.fields) {
+                        if (field.secret) {
+                            secretFields.add(field.id);
+                        }
+                    }
+                    String problem = Integrations.checkName(instance.name);
+                    if (problem == null) {
+                        problem = Integrations.check(definition, instance.settings, secretFields);
+                    }
+                    if (problem != null) {
+                        return "the integration \"" + instance.name + "\": " + problem;
+                    }
+                }
+                return null;
+            }
             case "camera_groups":
                 return Cameras.parseGroups(text).isEmpty() && !text.equals("[]") && !text.isEmpty()
                         ? "not a list of camera groups" : null;

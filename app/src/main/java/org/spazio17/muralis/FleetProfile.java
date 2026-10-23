@@ -79,6 +79,11 @@ final class FleetProfile {
                 values.put("credit_corner", saver.creditCorner);
                 break;
             }
+            case "integrations":
+                values.put("instances", Integrations.storeInstances(
+                        IntegrationSettings.sharedPart(KioskConfig.integrationsOf(context))));
+                values.put("integration_secrets", IntegrationSettings.sharedSecrets(context));
+                break;
             case "alerts":
                 values.put("alert_offline_minutes", config.alerts.offlineMinutes);
                 values.put("alert_page_error", config.alerts.pageError);
@@ -194,6 +199,10 @@ final class FleetProfile {
                     command(service, "ambient." + key, null, null, flag(values, key, false),
                             key, now, values, refused);
                 }
+                break;
+            case "integrations":
+                refused.addAll(IntegrationSettings.applyShared(context,
+                        text(values, "instances"), text(values, "integration_secrets")));
                 break;
             case "alerts":
                 for (Field field : fields(section)) {

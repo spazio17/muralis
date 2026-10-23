@@ -1576,11 +1576,42 @@ final class KioskConfig {
         return settings;
     }
 
+    /**
+     * Every integration's secret settings as one JSON object, {@code "<instance>_<field>": value},
+     * for the settings file's sealed block; "" when there are none or one cannot be read now.
+     */
+    static String integrationSecretsOf(Context context, SecretStore store) {
+        java.util.Map<String, Object> all = new java.util.LinkedHashMap<>();
+        for (Integrations.Instance instance : integrationsOf(context)) {
+            Integrations.Definition definition = Integrations.DEFINITIONS.get(instance.definition);
+            if (definition == null) {
+                continue;
+            }
+            for (Integrations.Field field : definition.fields) {
+                if (!field.secret) {
+                    continue;
+                }
+                String value = store.getOrNull(Integrations.secretName(instance.id, field.id));
+                if (value != null && !value.isEmpty()) {
+                    all.put(instance.id + "_" + field.id, value);
+                }
+            }
+        }
+        return all.isEmpty() ? "" : TinyJson.write(all);
+    }
+
     /** The passwords a settings file may carry, read only when the person asks for them. */
     static java.util.Map<String, String> transferableSecrets(Context context) {
         SecretStore store = new SecretStore(storageContext(context));
         java.util.Map<String, String> secrets = new java.util.LinkedHashMap<>();
         for (String key : SettingsTransfer.SECRETS) {
+            if ("integration_secrets".equals(key)) {
+                String all = integrationSecretsOf(context, store);
+                if (!all.isEmpty()) {
+                    secrets.put(key, all);
+                }
+                continue;
+            }
             String value = store.getOrNull(key);
             if (value != null && !value.isEmpty()) {
                 secrets.put(key, value);
