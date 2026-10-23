@@ -12,9 +12,9 @@ public final class KioskCommandDispatcherTest {
         RecordingExecutor executor = new RecordingExecutor();
 
         require(KioskCommandDispatcher.dispatch(
-                "kiosk.reload", KioskCommandDispatcher.CommandArgs.EMPTY, executor)
-                .status.equals("accepted"), "kiosk.reload should be accepted");
-        require(executor.calls.contains("kioskReload"), "kiosk.reload did not reach executor");
+                "dashboard.reload", KioskCommandDispatcher.CommandArgs.EMPTY, executor)
+                .status.equals("accepted"), "dashboard.reload should be accepted");
+        require(executor.calls.contains("kioskReload"), "dashboard.reload did not reach executor");
 
         testStatusLightCommands();
         testBrowserOptions();
@@ -33,6 +33,8 @@ public final class KioskCommandDispatcherTest {
         testEnabledFlagParsing();
         testScreensaverCommands();
         testSensorCommands();
+        testDashboardShows();
+        testWordsAndKeys();
 
         KioskCommandDispatcher.Result badBrightness = KioskCommandDispatcher.dispatch(
                 "display.brightness", new KioskCommandDispatcher.CommandArgs(150, null), executor);
@@ -123,29 +125,29 @@ public final class KioskCommandDispatcherTest {
         executor.deviceOwner = true;
 
         KioskCommandDispatcher.Result badUrl = KioskCommandDispatcher.dispatch(
-                "kiosk.set_url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
+                "dashboard.url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
                 executor);
         require(badUrl.status.equals("rejected"), "non-http(s) url accepted");
 
         KioskCommandDispatcher.Result emptyUrl = KioskCommandDispatcher.dispatch(
-                "kiosk.set_url", new KioskCommandDispatcher.CommandArgs(-1, "   "), executor);
+                "dashboard.url", new KioskCommandDispatcher.CommandArgs(-1, "   "), executor);
         require(emptyUrl.status.equals("rejected"), "blank url accepted");
 
         KioskCommandDispatcher.Result okUrl = KioskCommandDispatcher.dispatch(
-                "kiosk.set_url",
-                new KioskCommandDispatcher.CommandArgs(-1, "https://homeassistant.local:8123/"),
+                "dashboard.url",
+                new KioskCommandDispatcher.CommandArgs(-1, "https://home.local:8123/"),
                 executor);
         require(okUrl.status.equals("accepted"), "valid https url rejected");
-        require("https://homeassistant.local:8123/".equals(executor.lastUrl),
+        require("https://home.local:8123/".equals(executor.lastUrl),
                 "url value not forwarded");
 
         KioskCommandDispatcher.Result paddedUrl = KioskCommandDispatcher.dispatch(
-                "kiosk.set_url",
+                "dashboard.url",
                 new KioskCommandDispatcher.CommandArgs(
-                        -1, "  https://homeassistant.local:8123/dashboard  "),
+                        -1, "  https://home.local:8123/dashboard  "),
                 executor);
         require(paddedUrl.status.equals("accepted"), "padded valid URL rejected");
-        require("https://homeassistant.local:8123/dashboard".equals(executor.lastUrl),
+        require("https://home.local:8123/dashboard".equals(executor.lastUrl),
                 "validated URL was not normalized before persistence");
 
         KioskCommandDispatcher.Result unknown = KioskCommandDispatcher.dispatch(
@@ -161,8 +163,8 @@ public final class KioskCommandDispatcherTest {
      *
      * <p>This guards a bug that was live on hardware on 2026-08-19: {@code system.shutdown} returned
      * {@code {"status":"accepted","detail":"shutting down"}} from a build with no way to power the
-     * device off, and {@code system.reboot} did the same without device-owner status. A Home
-     * Assistant automation would have believed it switched the panel off and stopped watching it.
+     * device off, and {@code system.reboot} did the same without device-owner status. A smart-home
+     * automation would have believed it switched the panel off and stopped watching it.
      * Silent success is the worst possible answer here, so it is pinned by a test.
      */
     private static void testPowerCommandsTellTheTruth() {
@@ -237,48 +239,48 @@ public final class KioskCommandDispatcherTest {
     /**
      * A one-off URL is shown but never stored, and there is a way back to the stored one.
      *
-     * <p>The distinction is the whole point: kiosk.set_url replaces the panel's dashboard, while
-     * kiosk.open_url shows a URL with one-off query parameters and leaves storage alone, so a
-     * restart or the nightly clean returns to the dashboard. kiosk.open_url validates its URL
+     * <p>The distinction is the whole point: dashboard.url replaces the panel's dashboard, while
+     * dashboard.open_once shows a URL with one-off query parameters and leaves storage alone, so a
+     * restart or the nightly clean returns to the dashboard. dashboard.open_once validates its URL
      * exactly like set_url, because an unusable one-off is still worth refusing with a reason.
      */
     private static void testOneOffUrlAndHome() {
         RecordingExecutor executor = new RecordingExecutor();
 
         KioskCommandDispatcher.Result badUrl = KioskCommandDispatcher.dispatch(
-                "kiosk.open_url", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
+                "dashboard.open_once", new KioskCommandDispatcher.CommandArgs(-1, "ftp://example.com"),
                 executor);
         require(badUrl.status.equals("rejected"), "a non-http(s) one-off URL was accepted");
         require(!executor.calls.contains("openUrlOnce"), "executor ran despite rejection");
 
         KioskCommandDispatcher.Result blank = KioskCommandDispatcher.dispatch(
-                "kiosk.open_url", new KioskCommandDispatcher.CommandArgs(-1, "   "), executor);
+                "dashboard.open_once", new KioskCommandDispatcher.CommandArgs(-1, "   "), executor);
         require(blank.status.equals("rejected"), "a blank one-off URL was accepted");
 
         KioskCommandDispatcher.Result once = KioskCommandDispatcher.dispatch(
-                "kiosk.open_url",
+                "dashboard.open_once",
                 new KioskCommandDispatcher.CommandArgs(
-                        -1, "  http://ha.local:8123/lovelace/0?kiosk  "),
+                        -1, "  http://home.local:8123/dashboard/0?kiosk  "),
                 executor);
         require(once.status.equals("accepted"), "a valid one-off URL was rejected");
-        require("http://ha.local:8123/lovelace/0?kiosk".equals(executor.lastOnceUrl),
+        require("http://home.local:8123/dashboard/0?kiosk".equals(executor.lastOnceUrl),
                 "one-off URL not trimmed and forwarded: " + executor.lastOnceUrl);
         // The one-off path must never reach the setter that persists.
         require(!executor.calls.contains("setDashboardUrl"),
                 "a one-off URL must not be stored as the dashboard");
 
         KioskCommandDispatcher.Result home = KioskCommandDispatcher.dispatch(
-                "kiosk.home", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
-        require(home.status.equals("accepted"), "kiosk.home was rejected");
-        require(executor.calls.contains("showMainDashboard"), "kiosk.home did not reach executor");
+                "dashboard.open", KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(home.status.equals("accepted"), "dashboard.open was rejected");
+        require(executor.calls.contains("showMainDashboard"), "dashboard.open did not reach executor");
         require(!executor.calls.contains("setDashboardUrl"),
-                "kiosk.home must not write anything");
+                "dashboard.open must not write anything");
     }
 
     /**
      * webadmin.enabled flips the surface without touching the password: the flag is required (no
      * guessing), forwarded exactly, and the same envelope shape as every other enabled command,
-     * so the Home Assistant switch and a curl both drive it.
+     * so the MQTT switch and a curl both drive it.
      */
     private static void testWebAdminToggle() {
         RecordingExecutor executor = new RecordingExecutor();
@@ -378,7 +380,7 @@ public final class KioskCommandDispatcherTest {
      * <p>Guards the audited failure mode: an id with a space or a topic metacharacter was stored
      * by both settings surfaces, answered with success, and MQTT then refused to start with one
      * logcat line nobody reads. An empty id is refused separately because KioskConfig.load treats
-     * it as "never provisioned" and re-mints the panel's identity, orphaning every Home Assistant
+     * it as "never provisioned" and re-mints the panel's identity, orphaning every MQTT discovery
      * entity.
      */
     private static void testDeviceIdValidation() {
@@ -416,14 +418,14 @@ public final class KioskCommandDispatcherTest {
         RecordingExecutor executor = new RecordingExecutor();
         KioskCommandDispatcher.Result r;
         r = KioskCommandDispatcher.dispatch("sensor.enabled",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "light"), executor);
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "illuminance"), executor);
         require(r.status.equals("rejected"), "sensor.enabled without enabled accepted");
         r = KioskCommandDispatcher.dispatch("sensor.enabled",
                 new KioskCommandDispatcher.CommandArgs(-1, null, true, null), executor);
         require(r.status.equals("rejected"), "sensor.enabled without a sensor accepted");
         r = KioskCommandDispatcher.dispatch("sensor.enabled",
-                new KioskCommandDispatcher.CommandArgs(-1, null, true, "light"), executor);
-        require(r.status.equals("accepted") && executor.calls.contains("setSensorEnabled:light:true"),
+                new KioskCommandDispatcher.CommandArgs(-1, null, true, "illuminance"), executor);
+        require(r.status.equals("accepted") && executor.calls.contains("setSensorEnabled:illuminance:true"),
                 "sensor.enabled did not reach the executor");
         r = KioskCommandDispatcher.dispatch("automation.enabled",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "wake"), executor);
@@ -443,39 +445,39 @@ public final class KioskCommandDispatcherTest {
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(r.status.equals("accepted") && executor.calls.contains("cameraSnapshot"),
                 "camera.snapshot did not reach the executor");
-        r = KioskCommandDispatcher.dispatch("kiosk.screenshot",
+        r = KioskCommandDispatcher.dispatch("panel.screenshot",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(r.status.equals("accepted") && executor.calls.contains("screenshot"),
-                "kiosk.screenshot did not reach the executor");
+                "panel.screenshot did not reach the executor");
         executor.screenshotProblem = "The panel is not showing its screen";
-        r = KioskCommandDispatcher.dispatch("kiosk.screenshot",
+        r = KioskCommandDispatcher.dispatch("panel.screenshot",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(r.status.equals("rejected") && r.detail.equals(executor.screenshotProblem),
-                "kiosk.screenshot did not carry the executor's refusal");
+                "panel.screenshot did not carry the executor's refusal");
         executor.screenshotProblem = null;
-        r = KioskCommandDispatcher.dispatch("kiosk.identify",
+        r = KioskCommandDispatcher.dispatch("panel.identify",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(r.status.equals("accepted") && executor.calls.contains("identify"),
-                "kiosk.identify did not reach the executor");
+                "panel.identify did not reach the executor");
         executor.identifyProblem = "The panel is not showing its screen";
-        r = KioskCommandDispatcher.dispatch("kiosk.identify",
+        r = KioskCommandDispatcher.dispatch("panel.identify",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor);
         require(r.status.equals("rejected") && r.detail.equals(executor.identifyProblem),
-                "kiosk.identify did not carry the executor's refusal");
+                "panel.identify did not carry the executor's refusal");
         executor.identifyProblem = null;
         r = KioskCommandDispatcher.dispatch("proximity.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
                 "proximity.calibrate did not carry its step");
-        r = KioskCommandDispatcher.dispatch("microphone.calibrate",
+        r = KioskCommandDispatcher.dispatch("sound_level.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "quiet"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateMicrophone:quiet"),
-                "microphone.calibrate did not carry its step");
-        r = KioskCommandDispatcher.dispatch("beacons.calibrate",
+                "sound_level.calibrate did not carry its step");
+        r = KioskCommandDispatcher.dispatch("bluetooth_beacons.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "far", "u:1:2"), executor);
         require(r.status.equals("accepted")
                 && executor.calls.contains("calibrateBeacons:far:u:1:2"),
-                "beacons.calibrate did not carry its step and beacon");
+                "bluetooth_beacons.calibrate did not carry its step and beacon");
         r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "proximity"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("sleepTest:proximity"),
@@ -514,7 +516,7 @@ public final class KioskCommandDispatcherTest {
             }
         };
         r = KioskCommandDispatcher.dispatch("sensor.sleep_test",
-                new KioskCommandDispatcher.CommandArgs(-1, null, null, "light"), refusing);
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "illuminance"), refusing);
         require(r.status.equals("rejected") && r.detail.equals("the panel did not sleep"),
                 "the executor's refusal did not reach the reply");
     }
@@ -529,8 +531,8 @@ public final class KioskCommandDispatcherTest {
      * The recycle commands are gone, and this pins that they answer "unsupported" rather than
      * quietly succeeding.
      *
-     * <p>Worth a test rather than a deletion. Both were announced over MQTT discovery, so a Home
-     * Assistant somewhere may still hold an automation that publishes them, and an automation whose
+     * <p>Worth a test rather than a deletion. Both were announced over MQTT discovery, so a smart
+     * home somewhere may still hold an automation that publishes them, and an automation whose
      * command is silently accepted while nothing happens is the exact failure this project deleted
      * system.shutdown to avoid. "unsupported" is the honest answer and it is what a caller needs to
      * see. See RecyclePolicy for why the controls went.
@@ -623,11 +625,12 @@ public final class KioskCommandDispatcherTest {
     private static void testScreensaverSettingCommands() {
         RecordingExecutor executor = new RecordingExecutor();
         String[][] good = {
-                {"ambient.idle_seconds", " 45 ", "IDLE_SECONDS", "45"},
+                {"ambient.start_after_seconds", " 45 ", "START_AFTER_SECONDS", "45"},
                 {"ambient.off_seconds", "0", "OFF_SECONDS", "0"},
                 {"ambient.picture_seconds", "30", "PICTURE_SECONDS", "30"},
                 {"ambient.dim_percent", "8", "DIM_PERCENT", "8"},
                 {"ambient.transition", "slide", "TRANSITION", "slide"},
+                {"ambient.transition", "cut", "TRANSITION", "cut"},
                 {"ambient.picture_fit", "fill", "PICTURE_FIT", "fill"},
                 {"ambient.credit_corner", "top_right", "CREDIT_CORNER", "top_right"},
                 {"ambient.on_wake", "dashboard", "ON_WAKE", "dashboard"},
@@ -642,7 +645,8 @@ public final class KioskCommandDispatcherTest {
                             KioskCommandDispatcher.ScreensaverSetting.valueOf(row[2])));
         }
         String[][] bad = {
-                {"ambient.idle_seconds", "2 min"},
+                {"ambient.start_after_seconds", "2 min"},
+                {"ambient.transition", "none"},
                 {"ambient.off_seconds", "-1"},
                 {"ambient.picture_seconds", "0"},
                 {"ambient.dim_percent", "0"},
@@ -666,7 +670,7 @@ public final class KioskCommandDispatcherTest {
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, null), executor)
                 .status.equals("unsupported"), "the old screensaver.* names are gone");
         // The three flags take the same enabled parsing as every other flag in this app.
-        for (String command : new String[] {"ambient.shuffle", "ambient.one_per_cycle",
+        for (String command : new String[] {"ambient.shuffle", "ambient.one_per_start",
                 "ambient.credit"}) {
             require(KioskCommandDispatcher.dispatch(command,
                     KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
@@ -815,15 +819,16 @@ public final class KioskCommandDispatcherTest {
                 .equals("Mozilla/5.0 X Muralis/0.7.0")
                 && BrowserOptions.userAgent(" Own/1 ", "Mozilla/5.0 X", "0.7.0").equals("Own/1"),
                 "the user agent the page sees");
-        require(BrowserOptions.signInHost("https://ha.example.net:8123/lovelace", "ha.example.net")
-                && !BrowserOptions.signInHost("https://ha.example.net/", "evil.example")
-                && !BrowserOptions.signInHost("not a url", "ha.example.net"),
+        require(BrowserOptions.signInHost("https://home.example.net:8123/dashboard",
+                        "home.example.net")
+                && !BrowserOptions.signInHost("https://home.example.net/", "evil.example")
+                && !BrowserOptions.signInHost("not a url", "home.example.net"),
                 "the sign-in goes to the dashboard's own host only");
         require(BrowserOptions.checkSignInUser("anna") == null
                 && BrowserOptions.checkSignInUser("a:b") != null
                 && BrowserOptions.checkSignInUser("") == null, "sign-in names");
-        require(!BrowserOptions.awayFrom("https://h/lovelace/0#x", "https://h/lovelace/0/")
-                && BrowserOptions.awayFrom("https://h/lovelace/1", "https://h/lovelace/0"),
+        require(!BrowserOptions.awayFrom("https://h/dashboard/0#x", "https://h/dashboard/0/")
+                && BrowserOptions.awayFrom("https://h/dashboard/1", "https://h/dashboard/0"),
                 "a fragment or a trailing slash is not away");
         require(BrowserOptions.timeToGoBack(true, 60_000, 60)
                 && !BrowserOptions.timeToGoBack(true, 59_999, 60)
@@ -853,9 +858,9 @@ public final class KioskCommandDispatcherTest {
         require(CertificatePins.isFingerprint(fp) && fp.length() == 95,
                 "SHA-256 in 32 colon-separated pairs: " + fp);
         java.util.Map<String, String> pins = CertificatePins.with(new java.util.LinkedHashMap<>(),
-                "HA.local", fp);
-        require(CertificatePins.trusted(pins, "ha.local", fp)
-                && !CertificatePins.trusted(pins, "ha.local", fp.replace('A', 'B'))
+                "HOME.local", fp);
+        require(CertificatePins.trusted(pins, "home.local", fp)
+                && !CertificatePins.trusted(pins, "home.local", fp.replace('A', 'B'))
                 && !CertificatePins.trusted(pins, "other.local", fp)
                 && !CertificatePins.trusted(pins, null, fp), "one fingerprint for one host");
         java.util.Map<String, String> back = CertificatePins.parse(CertificatePins.format(pins)
@@ -961,9 +966,8 @@ public final class KioskCommandDispatcherTest {
         require(Cameras.withLogin(logins, "Front", "Front", "", "x").isEmpty(),
                 "an emptied user removes the sign-in");
         require(Cameras.checkLogin("a:b", "x") != null, "a user with a colon is refused");
-        require(Cameras.check("Web page", "http://x") != null
-                && Cameras.check("web PAGE", "http://x") != null
-                && Cameras.check("None", "http://x") == null, "Web page is taken by the web page");
+        require(Cameras.check("Web page", "http://x") == null,
+                "Web page is a camera name like any other: the dashboard's page is its own choice");
         require(Cameras.checkFull("") == null && Cameras.checkFull("http://cam/main") == null
                 && Cameras.checkFull("rtsp://cam/main") != null, "the full-screen address");
         java.util.List<Cameras.Camera> withFull = Cameras.parse(Cameras.format(
@@ -1066,18 +1070,129 @@ public final class KioskCommandDispatcherTest {
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door"), executor)
                 .status.equals("accepted") && "popup".equals(executor.cameraAs),
                 "camera.show is a pop-up by default");
-        require(KioskCommandDispatcher.dispatch("kiosk.set_cameras",
+        require(KioskCommandDispatcher.dispatch("dashboard.cameras",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, " Front "), executor)
                 .status.equals("accepted") && "Front".equals(executor.dashboardCameras),
-                "kiosk.set_cameras reaches the executor trimmed");
+                "dashboard.cameras reaches the executor trimmed");
+        executor.dashboardCameras = null;
+        require(KioskCommandDispatcher.dispatch("dashboard.cameras",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected")
+                && executor.dashboardCameras == null,
+                "dashboard.cameras needs a name: the page is dashboard.show's, not an empty camera");
         require(KioskCommandDispatcher.dispatch("kiosk.set_cameras",
-                KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
-                && "".equals(executor.dashboardCameras), "an empty name is the web page again");
+                new KioskCommandDispatcher.CommandArgs(-1, null, null, "Front"), executor)
+                .status.equals("unsupported"), "kiosk.set_cameras is gone, with no alias");
         java.util.Map<String, String> asBad = new java.util.HashMap<>();
         asBad.put("as", "sideways");
         require(KioskCommandDispatcher.dispatch("camera.show",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Door", null, asBad),
                 executor).status.equals("rejected"), "a bad as is refused");
+    }
+
+    /**
+     * dashboard.show: the three keys reach the executor, anything else is refused; and the rule
+     * every surface asks before switching, that the app and the cameras need a choice first.
+     */
+    private static void testDashboardShows() {
+        RecordingExecutor executor = new RecordingExecutor();
+        for (String value : new String[] {"page", "app", "cameras"}) {
+            require(KioskCommandDispatcher.dispatch("dashboard.show",
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, value), executor)
+                    .status.equals("accepted") && value.equals(executor.dashboardShows),
+                    "dashboard.show " + value + " reaches the executor");
+        }
+        executor.dashboardShows = null;
+        for (String value : new String[] {null, "", "App", "web", "Web page"}) {
+            KioskCommandDispatcher.Result result = KioskCommandDispatcher.dispatch(
+                    "dashboard.show",
+                    new KioskCommandDispatcher.CommandArgs(-1, null, null, value), executor);
+            require(result.status.equals("rejected") && !result.detail.isEmpty()
+                    && executor.dashboardShows == null,
+                    "dashboard.show refuses " + value + " with a reason, as a key and not a word");
+        }
+        require(KioskCommandDispatcher.dashboardShowProblem("page", "", false, false) == null,
+                "the page always can");
+        require(KioskCommandDispatcher.NO_APP_CHOSEN.equals(
+                KioskCommandDispatcher.dashboardShowProblem("app", "", true, true)),
+                "the app needs one chosen");
+        require(KioskCommandDispatcher.dashboardShowProblem("app", "com.example", false, false)
+                == null, "an app chosen can be shown");
+        require(KioskCommandDispatcher.NO_CAMERA.equals(
+                KioskCommandDispatcher.dashboardShowProblem("cameras", "x", false, false)),
+                "the cameras need a camera first");
+        require(KioskCommandDispatcher.NO_CAMERA_CHOSEN.equals(
+                KioskCommandDispatcher.dashboardShowProblem("cameras", "", true, false)),
+                "the cameras need one chosen that still exists");
+        require(KioskCommandDispatcher.dashboardShowProblem("cameras", "", true, true) == null,
+                "a chosen camera can be shown, with no app chosen");
+        for (String gone : new String[] {"kiosk.home", "kiosk.set_url", "kiosk.open_url",
+                "kiosk.reload", "kiosk.restart", "kiosk.identify", "kiosk.screenshot",
+                "ambient.idle_seconds", "ambient.one_per_cycle"}) {
+            require(KioskCommandDispatcher.dispatch(gone,
+                    new KioskCommandDispatcher.CommandArgs(-1, "https://example.com", true, "1"),
+                    executor).status.equals("unsupported"), gone + " is gone, with no alias");
+        }
+    }
+
+    /**
+     * The words every surface shows for a choice and the keys the commands carry: each table
+     * goes both ways, every key is one the command takes, and the MQTT templates hold both.
+     */
+    private static void testWordsAndKeys() {
+        String[][][] tables = {KioskCommandDispatcher.DASHBOARD_WORDS,
+                KioskCommandDispatcher.ORIENTATION_WORDS, KioskCommandDispatcher.DISPLAY_OFF_WORDS,
+                KioskCommandDispatcher.AMBIENT_MODE_WORDS,
+                KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS,
+                KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS,
+                KioskCommandDispatcher.AMBIENT_FIT_WORDS, KioskCommandDispatcher.AMBIENT_CORNER_WORDS};
+        for (String[][] table : tables) {
+            for (String[] pair : table) {
+                require(pair[1].equals(KioskCommandDispatcher.wordOf(table, pair[0]))
+                        && pair[0].equals(KioskCommandDispatcher.keyOf(table, pair[1])),
+                        pair[0] + " and " + pair[1] + " go both ways");
+                require(!pair[1].contains("'") && !pair[0].contains("'"),
+                        pair[1] + " can stand in a template's quotes");
+            }
+        }
+        require(KioskCommandDispatcher.keyOf(KioskCommandDispatcher.DASHBOARD_WORDS, "page") == null,
+                "a key is not a word");
+        require("Auto-rotate".equals(KioskCommandDispatcher.wordOf(
+                KioskCommandDispatcher.ORIENTATION_WORDS, "auto"))
+                && "Cut".equals(KioskCommandDispatcher.wordOf(
+                        KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS, "cut"))
+                && "Ambient first".equals(KioskCommandDispatcher.wordOf(
+                        KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS, "ambient")),
+                "the panel's words");
+        require("zoom".equals(KioskCommandDispatcher.wordOf(
+                KioskCommandDispatcher.AMBIENT_FIT_WORDS, "zoom")), "an unknown key reads as itself");
+        RecordingExecutor executor = new RecordingExecutor();
+        String[][] commands = {{"dashboard.show"}, {"display.orientation"},
+                {"display.off_method"}, {"ambient.mode"}, {"ambient.on_wake"},
+                {"ambient.transition"}, {"ambient.picture_fit"}, {"ambient.credit_corner"}};
+        for (int index = 0; index < tables.length; index++) {
+            for (String[] pair : tables[index]) {
+                require(!KioskCommandDispatcher.dispatch(commands[index][0],
+                        new KioskCommandDispatcher.CommandArgs(-1, null, null, pair[0]), executor)
+                        .detail.startsWith("value must"), commands[index][0] + " takes " + pair[0]);
+            }
+        }
+        String command = KioskCommandDispatcher.selectCommandTemplate("dashboard.show",
+                KioskCommandDispatcher.DASHBOARD_WORDS);
+        require(command.contains("'Web page': 'page'") && command.contains("'Cameras': 'cameras'")
+                && command.contains("\"command\":\"dashboard.show\""),
+                "the command template sends the key: " + command);
+        String value = KioskCommandDispatcher.selectValueTemplate("value_json.config.dashboard_shows",
+                KioskCommandDispatcher.DASHBOARD_WORDS);
+        require(value.contains("'page': 'Web page'")
+                && value.contains("value_json.config.dashboard_shows"),
+                "the value template shows the word: " + value);
+        require("ambient_start_after".equals(KioskCommandDispatcher.entityKey("Ambient start after"))
+                && "pop_up".equals(KioskCommandDispatcher.entityKey("Pop-up"))
+                && "open_once".equals(KioskCommandDispatcher.entityKey("Open once"))
+                && "nfc_tag".equals(KioskCommandDispatcher.entityKey("NFC tag"))
+                && "show_door_1".equals(KioskCommandDispatcher.entityKey("Show Door-1 "))
+                && "entity".equals(KioskCommandDispatcher.entityKey("--")),
+                "a discovery key is its name, snake-cased");
     }
 
     private static class RecordingExecutor implements KioskCommandDispatcher.Executor {
@@ -1086,6 +1201,7 @@ public final class KioskCommandDispatcherTest {
         boolean cameraTrigger;
         String cameraAs;
         String dashboardCameras;
+        String dashboardShows;
         final java.util.Map<KioskCommandDispatcher.BrowserOption, String> browserOptions =
                 new java.util.EnumMap<>(KioskCommandDispatcher.BrowserOption.class);
         Boolean lightOn;
@@ -1252,6 +1368,12 @@ public final class KioskCommandDispatcherTest {
         @Override
         public String setDashboardCameras(String name) {
             dashboardCameras = name;
+            return null;
+        }
+
+        @Override
+        public String setDashboardShows(String value) {
+            dashboardShows = value;
             return null;
         }
 

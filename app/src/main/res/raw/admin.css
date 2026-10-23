@@ -66,7 +66,7 @@ html:not(.js) .themetoggle{display:none}
 .themetoggle svg{width:24px;height:24px;margin:0;fill:currentColor;stroke:none}
 .themetoggle>span{display:none}
 html[data-theme=light] .themetoggle .m-light,html[data-theme=dark] .themetoggle .m-dark,html[data-theme=system] .themetoggle .m-system{display:inline-flex}
-/* Material's segmented button with text segments, Dashboard's "The panel shows": outlined, round
+/* Material's segmented button with text segments, the Dashboard choice: outlined, round
    ends, the chosen segment filled with a check before its words; 40 px drawn. */
 .segmented{display:flex;max-width:360px;height:40px;margin:8px 0 16px;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
 .segmented>form{display:flex;flex:1 1 0;min-width:0;margin:0}
@@ -77,7 +77,7 @@ html[data-theme=light] .themetoggle .m-light,html[data-theme=dark] .themetoggle 
 .segmented button:hover,.segmented>a:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
 .segmented [aria-pressed=true]:hover{background:var(--secondary-container)}
 .appline{margin:0 0 4px;font-size:16px;line-height:24px}
-/* The commands (Reload, Restart kiosk, Reboot): Material's overflow menu at the end of the
+/* The commands (Reload dashboard, Restart app, Reboot): Material's overflow menu at the end of the
    settings page's app bar, its items full-width rows; without scripting the menu cannot open, so
    its three buttons stand in a row there instead. */
 .overflow{position:relative;flex:none}
@@ -410,6 +410,8 @@ div.doc h2{color:var(--accent);font-size:13px;letter-spacing:.1em;margin:26px 0 
 p.doc{margin:8px 0}
 
 ul.list.gap{margin-top:16px}
+/* An integration's values above its settings, apart from the first box. */
+ul.list.values{margin-bottom:16px}
 
 /* ---- sensors and automations (2026-09-27) ---- */
 /* A sensor this device has not: its words in the quieter colour, still readable (axe contrast). */

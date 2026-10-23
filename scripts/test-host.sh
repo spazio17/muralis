@@ -125,7 +125,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
-            FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer; do
+            FleetAsker FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -163,6 +163,13 @@ javac -d "${test_dir}/settings" \
     "${host_test_dir}/SettingsTransferTest.java"
 java -cp "${test_dir}/settings" org.spazio17.muralis.SettingsTransferTest
 
+# The integrations, one folder each: the registry generated as the build generates it, every
+# integration's code compiled with the engine (an Android import fails here: an integration speaks
+# only to the engine), and each folder's own test run below.
+integrations_dir=${project_dir}/app/src/main/integrations
+python3 "${project_dir}/scripts/integration-registry.py" \
+    "${integrations_dir}" "${test_dir}/generated"
+mapfile -t integration_sources < <(find "${integrations_dir}" -name '*.java' | sort)
 # The automations: vocabulary, storage and engine, over a small org.json stand-in in the test
 # tree, since the class speaks Android's org.json and the host has none.
 javac -d "${test_dir}/automations" \
@@ -174,6 +181,8 @@ javac -d "${test_dir}/automations" \
     "${pure_java_dir}/BrowserOptions.java" \
     "${pure_java_dir}/CertificatePins.java" \
     "${pure_java_dir}/Integrations.java" \
+    "${test_dir}/generated/org/spazio17/muralis/IntegrationRegistry.java" \
+    "${integration_sources[@]}" \
     "${pure_java_dir}/StatusLight.java" \
     "${pure_java_dir}/ScreensaverPolicy.java" \
     "${pure_java_dir}/TinyJson.java" \
@@ -186,12 +195,23 @@ javac -d "${test_dir}/automations" \
 java -cp "${test_dir}/automations" org.spazio17.muralis.AutomationsTest
 # Integrations: the model, and the automations acting on their values.
 java -cp "${test_dir}/automations" org.spazio17.muralis.IntegrationsTest
+for integration_test in $(find "${integrations_dir}" -name '*Test.java' | sort); do
+    java -cp "${test_dir}/automations" \
+        "org.spazio17.muralis.integrations.$(basename "${integration_test}" .java)"
+done
 # When an integration asks its service: interval, floor, Retry-After, unavailable, reauth.
 mkdir -p "${test_dir}/integrationschedule"
 javac -d "${test_dir}/integrationschedule" \
     "${pure_java_dir}/IntegrationSchedule.java" \
     "${host_test_dir}/IntegrationScheduleTest.java"
 java -cp "${test_dir}/integrationschedule" org.spazio17.muralis.IntegrationScheduleTest
+
+# Which panel asks for an integration the fleet shares, and when the values it passed on are old.
+mkdir -p "${test_dir}/fleetasker"
+javac -d "${test_dir}/fleetasker" \
+    "${pure_java_dir}/FleetAsker.java" \
+    "${host_test_dir}/FleetAskerTest.java"
+java -cp "${test_dir}/fleetasker" org.spazio17.muralis.FleetAskerTest
 
 # The beacon distance: the trimmed running average, the model and the two calibration steps.
 javac -d "${test_dir}/beacons" \
@@ -370,7 +390,7 @@ javac -d "${test_dir}/fleetalerts" \
     "${host_test_dir}/FleetAlertsTest.java"
 java -cp "${test_dir}/fleetalerts" org.spazio17.muralis.FleetAlertsTest
 
-# What a panel withdraws from Home Assistant: only what it announced itself.
+# What a panel withdraws over MQTT discovery: only what it announced itself.
 mkdir -p "${test_dir}/withdrawals"
 javac -d "${test_dir}/withdrawals" \
     "${pure_java_dir}/DiscoveryWithdrawals.java" \

@@ -15,7 +15,7 @@ form.dataset.bound='1';
 function by(prefix){return form.querySelector('[id^="'+prefix+'-"]');}
 var sensor=by('a-sensor'),action=by('a-action');
 var level=by('a-level'),at=by('a-at'),minutes=by('a-minutes'),tag=by('a-tag');
-var camera=by('a-camera'),cooldown=by('a-cooldown');
+var camera=by('a-camera'),cooldown=by('a-cooldown'),text=by('a-text');
 var argument=by('a-argument'),target=by('a-target'),shown=by('a-show'),seconds=by('a-seconds'),chime=by('a-chime');
 var only=by('a-only'),from=by('a-from'),to=by('a-to');
 // The note under the sensor for one that is not running while the display sleeps.
@@ -46,6 +46,8 @@ show(minutes,!!(checked&&checked.getAttribute('data-holds')));
 var tagged=!!(checked&&checked.getAttribute('data-tag')),cam=!!(checked&&checked.getAttribute('data-camera'));
 // A camera's event names a camera or group in place of a tag; both wait a while before again.
 show(tag,tagged&&!cam);show(camera,cam);show(cooldown,tagged);
+// The text an integration's value must become.
+show(text,!!(checked&&checked.getAttribute('data-text')));
 var opt=action&&action.options[action.selectedIndex];
 var arg=opt?opt.getAttribute('data-argument'):'';
 show(argument,!!arg);

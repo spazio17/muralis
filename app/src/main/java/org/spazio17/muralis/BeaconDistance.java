@@ -9,8 +9,8 @@ import java.util.Arrays;
 /**
  * How far a beacon is, from its signal. The signal is averaged over the last
  * {@link #WINDOW_MS}, the highest and the lowest tenth of the readings thrown out first, so one
- * reflected packet does not move the distance (AltBeacon's running average, which Home
- * Assistant's companion app uses).
+ * reflected packet does not move the distance (AltBeacon's running average, which a smart-home
+ * companion app uses).
  *
  * <p>The distance is the log-distance model, d = 10^((t - r) / (10 n)): r the averaged signal,
  * t the signal at one metre, n how fast the signal fades with distance. Each beacon can be

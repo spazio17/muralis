@@ -41,9 +41,9 @@ public final class ScreensaverPolicyTest {
         }
         require(!ScreensaverPolicy.isMode("photos") && !ScreensaverPolicy.isMode("")
                 && !ScreensaverPolicy.isMode(null), "anything else must be refused");
-        require(ScreensaverPolicy.isTransition("none") && ScreensaverPolicy.isTransition("fade")
-                && ScreensaverPolicy.isTransition("slide") && !ScreensaverPolicy.isTransition("zoom"),
-                "three transitions");
+        require(ScreensaverPolicy.isTransition("cut") && ScreensaverPolicy.isTransition("fade")
+                && ScreensaverPolicy.isTransition("slide") && !ScreensaverPolicy.isTransition("zoom")
+                && !ScreensaverPolicy.isTransition("none"), "three transitions, cut not none");
         require(ScreensaverPolicy.isCorner("bottom_left") && ScreensaverPolicy.isCorner("top_right")
                 && !ScreensaverPolicy.isCorner("centre"), "four corners");
         require(ScreensaverPolicy.isFit("fit") && ScreensaverPolicy.isFit("fill")

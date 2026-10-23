@@ -1,8 +1,8 @@
 # CI: every push to any branch runs the host tests and builds an installable debug APK.
 #
 # There is deliberately no pull_request trigger: check runs attach to the commit, so a PR shows
-# these results anyway, and a second trigger would build every PR push twice for a repo with one
-# committer and no forks.
+# these results anyway, and a second trigger would build every PR push twice. Pull requests from
+# forks (contributed integrations) are built and tested by integration-contribution.yml.
 #
 # The debug keystore comes from the DEBUG_KEYSTORE_B64 secret and must stay the same file
 # scripts/gradle.sh created locally (.gradle/kiosk-debug.keystore): Android refuses to update an

@@ -85,12 +85,48 @@ public final class IntegrationsTest {
         over.level = -5;
         require(Automations.validate(over, counted) == null, "a negative level was refused");
 
-        // A stored rule keeps its match, and an older rule's "tag" still reads.
+        // A stored rule keeps its match.
         Automations.Rule stored = Automations.parseRule(new org.json.JSONObject()
-                .put("id", "nfc").put("sensor", "nfc").put("event", "tag").put("tag", "04A3")
+                .put("id", "nfc").put("sensor", "nfc_tag").put("event", "tag").put("match", "04A3")
                 .put("action", "display_on"));
-        require(stored.match.equals("04A3"), "an older NFC rule lost its tag");
+        require(stored.match.equals("04A3"), "a stored NFC rule lost its tag");
+
+        instances();
         System.out.println("IntegrationsTest passed");
+    }
+
+    /** Stored instances: a round trip, malformed entries dropped one by one, fresh ids. */
+    private static void instances() {
+        java.util.Map<String, String> settings = new java.util.LinkedHashMap<>();
+        settings.put("url", "http://pi.hole/admin/api.php");
+        settings.put("path", "ads_blocked_today");
+        Integrations.Instance one = new Integrations.Instance("webvalue1", "webvalue", "Pi-hole",
+                true, settings);
+        List<Integrations.Instance> back = Integrations.parseInstances(
+                Integrations.storeInstances(java.util.Arrays.asList(one,
+                        new Integrations.Instance("later1", "from_a_newer_app", "x", false,
+                                Collections.emptyMap()))));
+        require(back.size() == 2 && back.get(0).settings.equals(settings)
+                && back.get(0).name.equals("Pi-hole") && !back.get(1).enabled
+                && back.get(1).definition.equals("from_a_newer_app"),
+                "instances did not round trip");
+        List<Integrations.Instance> bad = Integrations.parseInstances("[{\"id\":\"Bad_Id\","
+                + "\"definition\":\"webvalue\"},{\"id\":\"ok1\",\"definition\":\"webvalue\"},"
+                + "{\"id\":\"ok1\",\"definition\":\"webvalue\"},7,{\"id\":\"nodef\"}]");
+        require(bad.size() == 1 && bad.get(0).id.equals("ok1") && bad.get(0).enabled,
+                "malformed instances were kept: " + bad.size());
+        require(Integrations.parseInstances("not json").isEmpty()
+                && Integrations.parseInstances(null).isEmpty(), "unreadable list");
+        java.util.Set<String> taken = new java.util.HashSet<>(
+                java.util.Arrays.asList("webvalue1", "webvalue2"));
+        String fresh = Integrations.newInstanceId("webvalue", taken);
+        require(fresh.equals("webvalue3") && fresh.matches(Integrations.INSTANCE_SHAPE),
+                "fresh id: " + fresh);
+        require(Integrations.newInstanceId("Ümlaut_and_more_letters", taken)
+                .matches(Integrations.INSTANCE_SHAPE), "a fresh id out of shape");
+        require(Integrations.checkName("") != null && Integrations.checkName("a\nb") != null
+                && Integrations.checkName("x".repeat(41)) != null
+                && Integrations.checkName("Kitchen") == null, "names");
     }
 
     private static Automations.Rule rule(String id, String sensor, String event, double level,

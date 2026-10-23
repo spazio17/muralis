@@ -73,7 +73,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     private static final long TELEMETRY_INTERVAL_MS = 60_000L;
     /**
      * How long after an accepted command the panel republishes its state. Long enough for the
-     * command's effect to be readable, short enough that a Home Assistant control does not visibly
+     * command's effect to be readable, short enough that a smart-home control does not visibly
      * spring back before the truth arrives.
      */
     private static final long STATE_ECHO_DELAY_MS = 400L;
@@ -161,7 +161,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             long now = KioskRuntimeState.nowMs();
             maybeMaintainDashboard(now);
 
-            // Liveness for Home Assistant, on this 2-second sampler rather than on the telemetry
+            // Liveness for the smart home, on this 2-second sampler rather than on the telemetry
             // interval, because that interval is an operator preset that reaches five minutes and
             // nothing about detecting a dead panel should inherit it. See
             // MqttController.heartbeat, which is a no-op when there is no session, that silence
@@ -617,10 +617,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>{@link KioskActivity} records a renderer death or a page load failure directly on
      * {@link KioskRuntimeState}, but only {@code KioskService} holds the MQTT client, so telling
-     * Home Assistant about either needs this bridge. Same mechanism as {@link #reloadConfiguration},
-     * an intent the already-running service acts on in {@link #onStartCommand}, rather than a new
-     * one: a service this app depends on staying alive should have as few ways to be woken as
-     * possible.
+     * the smart home about either needs this bridge. Same mechanism as
+     * {@link #reloadConfiguration}, an intent the already-running service acts on in
+     * {@link #onStartCommand}, rather than a new one: a service this app depends on staying alive
+     * should have as few ways to be woken as possible.
      */
     static void publishTelemetrySoon(Context context) {
         context.startForegroundService(new Intent(context, KioskService.class)
@@ -684,6 +684,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         automations = new Automations.Engine(this::runAutomation);
         automations.rules(KioskConfig.automationsOf(this));
         sensors = new Sensors(this, automations);
+        // The integrations feed the same engine, their values sensors of their own.
+        integrations = new IntegrationRunner(this, automations, this::publishStateSoon);
+        integrations.start();
         beacons = new Beacons(this);
         microphone = new Microphone(this);
         camera = new PanelCamera(this, this::onCameraMotion);
@@ -760,6 +763,14 @@ public final class KioskService extends Service implements KioskCommandDispatche
             publishStateSoon();
             // A change was made somewhere: a shared section changed here goes to the fleet.
             FleetServer.syncProfileSoon(this, "change");
+        } else if (intent != null && ACTION_REFRESH_INTEGRATIONS.equals(intent.getAction())) {
+            if (integrations != null) {
+                integrations.reload();
+                String renewed = intent.getStringExtra(EXTRA_INTEGRATION_RENEWED);
+                if (renewed != null) {
+                    integrations.credentialsReplaced(renewed);
+                }
+            }
         } else if (intent != null && ACTION_REFRESH_SENSORS.equals(intent.getAction())) {
             automations.rules(KioskConfig.automationsOf(this));
             refreshSensors();
@@ -769,7 +780,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } else if (intent != null && ACTION_DISPLAY_OFF.equals(intent.getAction())) {
             displayVisualOff();
             // Not a dispatched command, so nothing else republishes: without this the Ambient
-            // switch and display.source stay stale in Home Assistant for up to a minute.
+            // switch and display.source stay stale in the smart home for up to a minute.
             publishStateSoon();
         }
         return START_STICKY;
@@ -802,6 +813,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         stopControllers();
         stopTelemetry();
+        if (integrations != null) {
+            integrations.stop();
+        }
         if (sensors != null) {
             sensors.stop();
         }
@@ -858,9 +872,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * Publishes state shortly after a command changed something, instead of waiting for the next
      * 30-second tick.
      *
-     * <p>Home Assistant's MQTT switch and number are not optimistic when a state topic is given:
+     * <p>The smart home's MQTT switch and number are not optimistic when a state topic is given:
      * after a toggle they keep showing the last state the device reported, so a control moved in
-     * Home Assistant **visibly sprang back** and stayed wrong for up to thirty seconds. Reported
+     * the smart home **visibly sprang back** and stayed wrong for up to thirty seconds. Reported
      * 2026-08-20. Nothing was actually wrong with the panel, it simply had not said so yet.
      *
      * <p>The short delay lets a command's effect land first; the write itself is synchronous but the
@@ -1399,8 +1413,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>This used to stop and start both unconditionally. Stopping the MQTT client publishes a
      * retained {@code availability: offline}, so *every* settings save, including ones with
-     * nothing to do with MQTT, like the escape sequences or the dashboard URL, made every Home
-     * Assistant entity for the panel drop to unavailable and the "Connected" sensor read
+     * nothing to do with MQTT, like the escape sequences or the dashboard URL, made every MQTT
+     * entity for the panel drop to unavailable and the "Connected" sensor read
      * disconnected, then recover a second or two later. On a panel whose whole job is to look
      * dependable, a save should not make it briefly look dead.
      *
@@ -1617,7 +1631,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      *
      * <p>MQTT used to publish {@code telemetryCollector.snapshot()} raw, which meant the broker was
      * told strictly less than the web page: no {@code display} block and no {@code config} block at
-     * all. So a Home Assistant brightness control or an auto-brightness switch had no state to read,
+     * all. So a smart-home brightness control or an auto-brightness switch had no state to read,
      * and could not be offered however willing MQTT was to carry it. Reported 2026-08-20.
      *
      * <p>The escape sequences, the admin port and the broker's own address are deliberately left
@@ -1652,6 +1666,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             KioskConfig config = KioskConfig.load(this);
             org.json.JSONObject applied = new org.json.JSONObject();
             applied.put("dashboard_url", config.dashboardUrl);
+            applied.put("dashboard_shows", KioskConfig.dashboardShowsOf(this));
             applied.put("dashboard_cameras", KioskConfig.dashboardCamerasOf(this));
             applied.put("camera_layout", KioskConfig.cameraLayoutOf(this));
             applied.put("camera_big", KioskConfig.cameraBigOf(this));
@@ -1672,11 +1687,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // the tablet's own auto-brightness toggle however it was changed.
             applied.put("has_light_sensor", hasLightSensor(this));
             applied.put("auto_brightness", isAutoBrightnessOn(this));
-            // In the shared block, not behind includeAdminDetail: the Home Assistant "Web admin"
+            // In the shared block, not behind includeAdminDetail: the MQTT "Web admin"
             // switch reads this field, and a redacted field is an undefined template, which Jinja
             // quietly renders as OFF, so the switch showed off against a running server and
-            // snapped back on every toggle (reported from HA 2026-08-24). The flag says only
-            // whether the surface is allowed to exist; the port and addresses stay admin-only.
+            // snapped back on every toggle (reported from the smart home 2026-08-24). The flag says
+            // only whether the surface is allowed to exist; the port and addresses stay admin-only.
             applied.put("web_admin_enabled", config.webAdminEnabled);
             // The page's browser options; of the sign-in only whether one is stored, since the
             // name and the password are secrets.
@@ -1734,8 +1749,9 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     .put("on", light.on)
                     .put("color", StatusLight.formatColor(light.color))
                     .put("brightness", light.percent));
-            // App lock: which app the panel shows instead of the page, if any.
-            String locked = KioskConfig.appLockOf(this);
+            // App lock: the app chosen for the dashboard, whether or not it shows it now
+            // (config.dashboard_shows says that), so a smart home can name it before switching.
+            String locked = KioskConfig.chosenAppOf(this);
             stats.put("app_lock", new org.json.JSONObject()
                     .put("package", locked)
                     .put("app", locked.isEmpty() ? "" : AppLock.labelOf(this, locked))
@@ -1748,6 +1764,25 @@ public final class KioskService extends Service implements KioskCommandDispatche
             publishSensorBlock();
             stats.put("sensors", KioskRuntimeState.sensors());
             stats.put("automations", KioskRuntimeState.automations());
+            // The integrations added on this panel, their states and values; never a secret.
+            org.json.JSONArray integrationBlock = KioskRuntimeState.integrations();
+            // Their settings only to the web admin: an address may carry a key in its query, and
+            // MQTT's state is retained on a broker others read, as camera addresses are kept off.
+            stats.put("integrations", includeAdminDetail ? integrationBlock
+                    : IntegrationRunner.withoutSettings(integrationBlock));
+            // The same values flat by sensor id, what discovery's value templates read.
+            org.json.JSONObject integrationValues = new org.json.JSONObject();
+            for (int index = 0; index < integrationBlock.length(); index++) {
+                org.json.JSONObject values = integrationBlock.getJSONObject(index)
+                        .optJSONObject("values");
+                java.util.Iterator<String> ids = values == null
+                        ? java.util.Collections.emptyIterator() : values.keys();
+                while (ids.hasNext()) {
+                    org.json.JSONObject value = values.getJSONObject(ids.next());
+                    integrationValues.put(value.getString("sensor"), value.opt("value"));
+                }
+            }
+            stats.put("integration_values", integrationValues);
             if (includeAdminDetail) {
                 // For the web page, which draws a list again when its key moves: see
                 // Sensors.listKeys. The rules as stored, the same the page is drawn from.
@@ -1761,6 +1796,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 java.util.Map<String, String> beaconLines = beacons == null
                         ? java.util.Collections.<String, String>emptyMap() : beacons.lines();
                 lists.put("beacons", Beacons.listKey(beaconLines.keySet()));
+                String integrationsKey = IntegrationRunner.listKey(
+                        KioskRuntimeState.integrations());
+                lists.put("integrations_home", integrationsKey);
+                lists.put("integrations_page", integrationsKey);
                 stats.put("lists", lists);
                 stats.put("beacon_lines", new org.json.JSONObject(beaconLines));
             }
@@ -1803,7 +1842,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * Ambient as set and as showing. The page address is in the shared block, for the
-     * reason at the field: the Home Assistant text entity reads it. The sentence is the one every surface
+     * reason at the field: the MQTT text entity reads it. The sentence is the one every surface
      * prints, so the web admin's box and the tablet's card cannot describe the rule differently.
      */
     private org.json.JSONObject screensaverSnapshot(boolean includeAdminDetail) {
@@ -1815,12 +1854,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         try {
             saver.put("active", active);
             saver.put("mode", settings.mode);
-            saver.put("idle_s", settings.idleSeconds);
+            saver.put("start_after_s", settings.idleSeconds);
             saver.put("off_s", settings.offSeconds);
             saver.put("dim_percent", settings.dimPercent);
             saver.put("on_wake", settings.onWake);
-            // The page address is in the shared block, not behind includeAdminDetail: the Home
-            // Assistant text entity reads it, and a redacted field is an undefined template,
+            // The page address is in the shared block, not behind includeAdminDetail: the MQTT
+            // text entity reads it, and a redacted field is an undefined template,
             // which Jinja renders as empty and snaps back on every edit, the trap the web-admin
             // switch fell into in 2026-08. It is an address on the operator's own network, the
             // same class of value as the dashboard URL, which is shared for the same reason.
@@ -1829,11 +1868,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
             saver.put("transition", settings.transition);
             saver.put("picture_fit", settings.pictureFit);
             saver.put("shuffle", settings.shuffle);
-            saver.put("one_per_cycle", settings.onePerCycle);
+            saver.put("one_per_start", settings.onePerCycle);
             saver.put("credit", settings.credit);
             saver.put("credit_corner", settings.creditCorner);
             // The playlist's own sentence and the picture on the glass, so the web admin and a
-            // Home Assistant card can say "7 pictures from Kitchen" and name what is up.
+            // smart-home card can say "7 pictures from Kitchen" and name what is up.
             PictureLibrary library = PictureLibrary.get(this);
             saver.put("pictures_state", library.state());
             String picturesProblem = library.problem();
@@ -1916,7 +1955,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (!screenOn) {
                 // Judged before the override: a dark screen reads as zero, whatever override the
                 // Ambient's dim floor left behind on the way down. Zero rather than null
-                // (2026-09-23): a Home Assistant number showing "unknown" for a panel that
+                // (2026-09-23): a smart-home number showing "unknown" for a panel that
                 // is simply off looked like a fault, and a slider at zero is what a dark screen is.
                 source = "display_off";
                 percent = 0;
@@ -2118,22 +2157,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     @Override
     public void kioskStart() {
-        sendUiCommand("kiosk.start", -1, null);
+        sendUiCommand("dashboard.start", -1, null);
     }
 
     @Override
     public void kioskStop() {
-        sendUiCommand("kiosk.stop", -1, null);
+        sendUiCommand("dashboard.stop", -1, null);
     }
 
     @Override
     public void kioskReload() {
-        sendUiCommand("kiosk.reload", -1, null);
+        sendUiCommand("dashboard.reload", -1, null);
     }
 
     @Override
     public void kioskRestart() {
-        sendUiCommand("kiosk.restart", -1, null);
+        sendUiCommand("app.restart", -1, null);
     }
 
     @Override
@@ -2306,7 +2345,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     };
 
     /**
-     * Either edge of the screen is worth telling Home Assistant about at once, since
+     * Either edge of the screen is worth telling the smart home about at once, since
      * {@code display.source} follows it. Nothing is decided here: the broadcast is not evidence of
      * the screen's state, see {@link #beatWhileDark}, only a reason to publish the state that is.
      */
@@ -2395,11 +2434,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // shows the stored page when it is done.
         if (KioskConfig.load(this).escapeSequencesConfigured()
                 && !KioskRuntimeState.wizardOnScreen()) {
-            sendUiCommand("kiosk.set_url", -1, url);
+            sendUiCommand("dashboard.url", -1, url);
         }
         // dashboard_url rides in the telemetry document, and the web admin calls this method
         // directly, bypassing the dispatcher wrapper that republishes after accepted commands.
-        // Without this line a URL saved on the page stayed stale in Home Assistant for up to a
+        // Without this line a URL saved on the page stayed stale in the smart home for up to a
         // minute; same rule as setOrientation below. The dispatcher path publishes twice as a
         // result, which publishStateSoon's debounce coalesces.
         publishTelemetrySoon(this);
@@ -2408,23 +2447,46 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public String setDashboardCameras(String name) {
         String chosen = name == null ? "" : name.trim();
-        // "Web page" is what Home Assistant's select sends for the web page.
-        if (MqttController.CAMERA_VIEW_PAGE.equalsIgnoreCase(chosen)) {
-            chosen = "";
+        if (chosen.isEmpty()) {
+            return "value must name the camera or group";
         }
-        if (!chosen.isEmpty()) {
-            Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(this), chosen);
-            Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), chosen);
-            if (camera == null && group == null) {
-                return "no camera or group has that name";
-            }
-            chosen = camera != null ? camera.name : group.name;
+        Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(this), chosen);
+        Cameras.Group group = Cameras.findGroup(KioskConfig.cameraGroupsOf(this), chosen);
+        if (camera == null && group == null) {
+            return "no camera or group has that name";
         }
-        KioskConfig.edit(this).dashboardCameras(chosen).apply();
-        // As set_url: not shown over the first-start screens, which show it when they are done.
-        if (KioskConfig.load(this).escapeSequencesConfigured()
+        KioskConfig.edit(this).dashboardCameras(camera != null ? camera.name : group.name).apply();
+        // Shown at once only while the dashboard shows cameras; otherwise kept for the next
+        // time it does. As dashboard.url: not over the first-start screens either, which show
+        // the dashboard when they are done.
+        if (KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(KioskConfig.dashboardShowsOf(this))
+                && KioskConfig.load(this).escapeSequencesConfigured()
                 && !KioskRuntimeState.wizardOnScreen()) {
             sendUiCommand("dashboard.changed", -1, null);
+        }
+        publishTelemetrySoon(this);
+        return null;
+    }
+
+    @Override
+    public String setDashboardShows(String value) {
+        java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
+        java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
+        String chosen = KioskConfig.dashboardCamerasOf(this);
+        boolean exists = !chosen.isEmpty() && (Cameras.find(cameras, chosen) != null
+                || Cameras.findGroup(groups, chosen) != null);
+        String problem = KioskCommandDispatcher.dashboardShowProblem(value,
+                KioskConfig.chosenAppOf(this), !cameras.isEmpty() || !groups.isEmpty(), exists);
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.edit(this).dashboardShows(value).apply();
+        // The panel follows as it does any App lock change: over the app it comes forward, in
+        // front it shows the new view and hands the lock-task allowlist the app or takes it away.
+        // Not over the first-start screens, which show the dashboard when they are done.
+        if (KioskConfig.load(this).escapeSequencesConfigured()
+                && !KioskRuntimeState.wizardOnScreen()) {
+            sendUiCommand("applock.changed", -1, null);
         }
         publishTelemetrySoon(this);
         return null;
@@ -2436,7 +2498,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * <p>The activity owns the window, so it has to be told; it reads the stored setting back
      * rather than trusting a value carried in the broadcast, so there is one source of truth.
      * Telemetry is republished immediately because this is applied outside the dispatcher's own
-     * republish path, and without it Home Assistant would show the old value for up to a full
+     * republish path, and without it the smart home would show the old value for up to a full
      * publish interval.
      *
      * @return false when "auto" is asked of a device with no accelerometer, before anything is
@@ -2525,19 +2587,36 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     static void cameraViewMayHaveChanged(Context context) {
         KioskService service = liveService();
-        if (service != null && !KioskConfig.dashboardCamerasOf(context).isEmpty()) {
+        if (service != null && !KioskConfig.shownCamerasOf(context).isEmpty()) {
             service.sendUiCommand("dashboard.changed", -1, null);
         }
     }
 
     static void removeCamera(Context context, String name) {
-        KioskConfig.edit(context)
+        boolean chosen = name.equalsIgnoreCase(KioskConfig.dashboardCamerasOf(context));
+        KioskConfig.Editor edit = KioskConfig.edit(context)
                 .cameras(Cameras.without(KioskConfig.camerasOf(context), name))
                 .cameraGroups(Cameras.afterCamera(KioskConfig.cameraGroupsOf(context), name, ""))
-                .cameraLogins(Cameras.withoutLogin(KioskConfig.cameraLoginsOf(context), name))
-                .apply();
+                .cameraLogins(Cameras.withoutLogin(KioskConfig.cameraLoginsOf(context), name));
+        if (chosen) {
+            edit.dashboardCameras("");
+        }
+        edit.apply();
         publishTelemetrySoon(context);
-        cameraViewMayHaveChanged(context);
+        dashboardCamerasRemoved(context, chosen);
+    }
+
+    /**
+     * After a removal: the chosen dashboard cameras gone, the dashboard falls back to its page and
+     * is drawn again, so a deleted camera never keeps streaming; otherwise as any camera change.
+     */
+    private static void dashboardCamerasRemoved(Context context, boolean chosen) {
+        KioskService service = liveService();
+        if (chosen && service != null) {
+            service.sendUiCommand("dashboard.changed", -1, null);
+        } else {
+            cameraViewMayHaveChanged(context);
+        }
     }
 
     /** Stores one group from either surface; null when saved, otherwise the reason. */
@@ -2573,11 +2652,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     static void removeCameraGroup(Context context, String name) {
-        KioskConfig.edit(context)
-                .cameraGroups(Cameras.withoutGroup(KioskConfig.cameraGroupsOf(context), name))
-                .apply();
+        boolean chosen = name.equalsIgnoreCase(KioskConfig.dashboardCamerasOf(context));
+        KioskConfig.Editor edit = KioskConfig.edit(context)
+                .cameraGroups(Cameras.withoutGroup(KioskConfig.cameraGroupsOf(context), name));
+        if (chosen) {
+            edit.dashboardCameras("");
+        }
+        edit.apply();
         publishTelemetrySoon(context);
-        cameraViewMayHaveChanged(context);
+        dashboardCamerasRemoved(context, chosen);
     }
 
     /** What a camera's or a group's name shows, with each camera's sign-in; empty when unknown. */
@@ -2959,12 +3042,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     @Override
     public void openUrlOnce(String url) {
         // Deliberately no KioskConfig write: that is the whole difference from setDashboardUrl.
-        sendUiCommand("kiosk.open_url", -1, url);
+        sendUiCommand("dashboard.open_once", -1, url);
     }
 
     @Override
     public void showMainDashboard() {
-        sendUiCommand("kiosk.home", -1, null);
+        sendUiCommand("dashboard.open", -1, null);
     }
 
     @Override
@@ -3028,7 +3111,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /**
      * Makes the named playlist the one in use, or none when the name is empty.
      *
-     * <p>By name because that is what the caller has: Home Assistant's select carries the names it
+     * <p>By name because that is what the caller has: the MQTT select carries the names it
      * was told about, and an id means nothing to anyone. An unknown name is refused with the names
      * that do exist, so a fleet operator who mistypes one is told what to type instead.
      */
@@ -3041,7 +3124,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         String refusal = library.editPlaylists(document -> {
             String wanted = asked;
             PlaylistDocument.Playlist named = wanted.isEmpty() ? null : document.byName(wanted);
-            // The Home Assistant select's own "no playlist" option is the words No playlist, because a
+            // The MQTT select's own "no playlist" option is the words No playlist, because a
             // select cannot hold an empty option, so the word has to mean what the entity says
             // it means or clearing the playlist from a card is refused (measured over MQTT
             // 2026-09-10). A playlist actually called "No playlist" still wins, which is why the lookup
@@ -3070,6 +3153,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** The panel's sensors; built in onCreate, dropped in onDestroy. */
     private Sensors sensors;
     private Automations.Engine automations;
+    private IntegrationRunner integrations;
     private Beacons beacons;
     private Microphone microphone;
     private PanelCamera camera;
@@ -3079,7 +3163,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /**
      * The activity's reader mode saw a tag: the chip's id, and the tag's text and addresses.
-     * The reading, the automations, Home Assistant.
+     * The reading, the automations, MQTT.
      */
     static void tagReadSoon(Context context, String chipId, String content) {
         Intent intent = new Intent(context, KioskService.class);
@@ -3090,16 +3174,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     /**
-     * One tag, as Home Assistant's app reports it: the Home Assistant tag id a tag written by
-     * Home Assistant carries, else the chip's id; the tag's text and addresses ride along.
+     * One tag, as a smart-home companion app reports it: the tag id a tag in the companion app's
+     * format carries, else the chip's id; the tag's text and addresses ride along.
      */
     private void tagRead(String chipId, String content) {
         if (sensors == null || !sensors.on(Sensors.NFC)) {
             return;
         }
         String read = content == null ? "" : content;
-        String homeAssistant = Sensors.homeAssistantTagId(read);
-        String tagId = homeAssistant != null ? homeAssistant : chipId == null ? "" : chipId;
+        String companionTagId = Sensors.homeAssistantTagId(read);
+        String tagId = companionTagId != null ? companionTagId : chipId == null ? "" : chipId;
         if (tagId.isEmpty() && read.isEmpty()) {
             Log.i(TAG, "Tag read, with nothing to report: no content on it");
             return;
@@ -3160,7 +3244,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 dispatch("light.off", KioskCommandDispatcher.CommandArgs.EMPTY);
                 break;
             case "open_page":
-                problem = refusalOf(dispatch("kiosk.open_url",
+                problem = refusalOf(dispatch("dashboard.open_once",
                         new KioskCommandDispatcher.CommandArgs(-1, rule.argument)));
                 break;
             case "brightness":
@@ -3516,7 +3600,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (!KioskRuntimeState.activityInFront() && !AppLock.appUp) {
             return SCREEN_NOT_SHOWING;
         }
-        sendUiCommand("kiosk.identify", -1, null);
+        sendUiCommand("panel.identify", -1, null);
         return null;
     }
 
@@ -3603,7 +3687,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             if (screenshotInFlight == null || screenshotInFlight.isDone()) {
                 screenshotInFlight = new java.util.concurrent.CompletableFuture<>();
                 KioskRuntimeState.publishScreenshotRequest(screenshotInFlight);
-                sendUiCommand("kiosk.screenshot", -1, null);
+                sendUiCommand("panel.screenshot", -1, null);
             }
             capture = screenshotInFlight;
         }
@@ -3773,6 +3857,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
         return live;
     }
 
+    /** The running integrations, for values the fleet passes on; null while not running. */
+    static IntegrationRunner integrationsOf() {
+        KioskService service = live;
+        return service == null ? null : service.integrations;
+    }
+
     static Beacons beaconsOf(Context context) {
         KioskService service = live;
         return service == null ? null : service.beacons;
@@ -3831,6 +3921,22 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     static final String ACTION_REFRESH_SENSORS = "org.spazio17.muralis.REFRESH_SENSORS";
+
+    static final String ACTION_REFRESH_INTEGRATIONS = "org.spazio17.muralis.REFRESH_INTEGRATIONS";
+    static final String EXTRA_INTEGRATION_RENEWED = "renewed";
+
+    /**
+     * A settings surface changed the stored integrations: the runner reads them again, and an
+     * instance whose secrets were replaced asks its service at once.
+     */
+    static void refreshIntegrationsSoon(Context context, String renewedInstance) {
+        Intent intent = new Intent(context, KioskService.class);
+        intent.setAction(ACTION_REFRESH_INTEGRATIONS);
+        if (renewedInstance != null) {
+            intent.putExtra(EXTRA_INTEGRATION_RENEWED, renewedInstance);
+        }
+        context.startService(intent);
+    }
 
     /** The sensors' readings and the rules, where the panel, the web page and discovery read them. */
     private void publishSensorBlock() {
@@ -4131,7 +4237,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             case MODE:
                 editor.screensaverMode(value);
                 break;
-            case IDLE_SECONDS:
+            case START_AFTER_SECONDS:
                 editor.screensaverIdleSeconds(Integer.parseInt(value));
                 break;
             case OFF_SECONDS:
@@ -4161,7 +4267,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             case SHUFFLE:
                 editor.screensaverShuffle(Boolean.parseBoolean(value));
                 break;
-            case ONE_PER_CYCLE:
+            case ONE_PER_START:
                 editor.screensaverOnePerCycle(Boolean.parseBoolean(value));
                 break;
             case CREDIT:
@@ -4246,7 +4352,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         }
         KioskConfig config = KioskConfig.load(service);
         if (config.escapeSequencesConfigured() && !KioskRuntimeState.wizardOnScreen()) {
-            service.sendUiCommand("kiosk.set_url", -1, config.dashboardUrl);
+            service.sendUiCommand("dashboard.url", -1, config.dashboardUrl);
         }
         service.sendUiCommand("applock.changed", -1, null);
         service.sendUiCommand("browser.changed", -1, null);

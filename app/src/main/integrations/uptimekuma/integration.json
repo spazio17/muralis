@@ -1,0 +1,7 @@
+{
+  "id": "uptimekuma",
+  "class": "UptimeKumaIntegration",
+  "name": "Uptime Kuma",
+  "kind": "local",
+  "codeowners": ["@Nihvel"]
+}

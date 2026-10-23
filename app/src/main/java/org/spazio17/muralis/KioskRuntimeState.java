@@ -30,7 +30,7 @@ final class KioskRuntimeState {
      * hardware. Measured on the API 28 phone while testing the throttle: logd's chatty filter
      * pruned the lockout warning outright, reporting only
      * {@code uid=...(org.spazio17.muralis) pool-2-thread-5 expire 1 line}. A counter that rides
-     * out on telemetry reaches Home Assistant, where it can raise an automation, and survives
+     * out on telemetry reaches the smart home, where it can raise an automation, and survives
      * for as long as the process does.
      */
     private static final AtomicInteger authLockouts = new AtomicInteger();
@@ -357,6 +357,17 @@ final class KioskRuntimeState {
 
     static org.json.JSONObject sensors() {
         return sensors;
+    }
+
+    /** The integrations block, as IntegrationRunner.snapshot last built it. */
+    private static volatile org.json.JSONArray integrations = new org.json.JSONArray();
+
+    static void publishIntegrations(org.json.JSONArray block) {
+        integrations = block == null ? new org.json.JSONArray() : block;
+    }
+
+    static org.json.JSONArray integrations() {
+        return integrations;
     }
 
     /** The automations block of the last status document built; see Automations. */

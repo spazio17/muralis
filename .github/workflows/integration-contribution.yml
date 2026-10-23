@@ -1,0 +1,55 @@
+# A contributed integration changes only its own folder (Juri, 2026-10-22: anyone may contribute
+# an integration, and a contribution never modifies a file of the app). Runs for pull requests
+# from forks, where contributions come from; this repository's own branches change the app too.
+# It helps the review, it does not replace it: a pull request runs the workflow as that pull
+# request has it, and required checks and code-owner review need the repository public.
+name: Integration contribution
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  one-folder:
+    if: github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The pull request changes one integration's folder and nothing else
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # No rename detection: a file moved into a folder counts as changed where it was too.
+          changed=$(git diff --no-renames --name-only "$BASE"...HEAD)
+          links=$(git diff --no-renames --raw "$BASE"...HEAD | awk '$2 == "120000" {print $NF}')
+          if [ -n "$links" ]; then
+            echo "A contributed integration adds no links: $links" >&2
+            exit 1
+          fi
+          folders=$(printf '%s\n' "$changed" | sed -n 's#^app/src/main/integrations/\([^/]*\)/.*#\1#p' | sort -u)
+          # Inside one integration's folder only: a file directly under integrations/ is outside.
+          outside=$(printf '%s\n' "$changed" | grep -v '^app/src/main/integrations/[^/]*/' || true)
+          if [ -n "$outside" ]; then
+            echo "A contributed integration changes only its folder; these are outside it:" >&2
+            printf '  %s\n' $outside >&2
+            echo "Open an issue for a change to the app itself." >&2
+            exit 1
+          fi
+          if [ "$(printf '%s\n' "$folders" | grep -c .)" -ne 1 ]; then
+            echo "One integration per pull request; this one changes: $folders" >&2
+            exit 1
+          fi
+      - name: The folder is a valid integration
+        run: python3 scripts/integration-registry.py app/src/main/integrations "$RUNNER_TEMP/registry"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: It compiles, and its tests and the app's pass
+        run: |
+          scripts/test-host.sh
+          ./gradlew --no-daemon :app:compileDebugJavaWithJavac
