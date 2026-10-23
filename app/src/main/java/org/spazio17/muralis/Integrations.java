@@ -339,6 +339,9 @@ public final class Integrations {
         if (failed instanceof PlainFailure) {
             return " (" + failed.getMessage() + ")";
         }
+        if (failed instanceof java.net.MalformedURLException) {
+            return " (the address is not valid)";
+        }
         if (failed instanceof java.net.SocketTimeoutException) {
             return " (no answer in time)";
         }

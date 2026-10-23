@@ -7220,7 +7220,7 @@ final class HttpAdminServer {
                                 + ScreensaverPolicy.MAX_SECONDS + "\" step=\"1\"", null))
                 .append("<div id=\"ambient-url-field\"")
                 .append(ScreensaverPolicy.URL.equals(saver.mode) ? "" : " class=\"gone\"").append(">")
-                .append(fieldWithId("ambient-url", "text", null, "Web page", saver.url,
+                .append(fieldWithId("ambient-url", "text", null, "Web page address", saver.url,
                         " data-setting=\"ambient_url\" inputmode=\"url\"", null))
                 .append("</div>")
                 .append("<div id=\"ambient-dim-field\"")

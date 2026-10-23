@@ -23,6 +23,8 @@ public final class IntegrationsTest {
                         .equals(" (nothing answers at that address)"), "refused wording");
         require(Integrations.why(new java.net.UnknownHostException("kuma.lan"))
                 .equals(" (that name is not found on the network)"), "unknown name wording");
+        require(Integrations.why(new java.net.MalformedURLException("no protocol: kuma.lan"))
+                .equals(" (the address is not valid)"), "a malformed address read as a broken connection");
         require(Integrations.why(new Integrations.PlainFailure("more than 3 redirects"))
                 .equals(" (more than 3 redirects)"), "the app's own wording was lost");
 
