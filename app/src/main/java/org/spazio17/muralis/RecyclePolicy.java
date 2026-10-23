@@ -7,7 +7,7 @@ package org.spazio17.muralis;
 /**
  * Decides when the panel cleans itself up, and which of the two kinds of cleanup to do.
  *
- * <p>Measured on this tablet: with a real Home Assistant dashboard the renderer's memory climbs
+ * <p>Measured on this tablet: with a real smart-home dashboard the renderer's memory climbs
  * steadily until lmkd kills it, 1.62 GB to 1.71 GB of system memory over half an hour, then a kill
  * reclaiming ~900 MB. The kiosk already survives that (see
  * {@code KioskWebViewClient.onRenderProcessGone}), but the reload lands at the worst possible
@@ -82,7 +82,7 @@ final class RecyclePolicy {
 
     static final class Decision {
         final Action action;
-        /** Human-readable, published to Home Assistant as the reason. */
+        /** Human-readable, published over MQTT as the reason. */
         final String reason;
 
         private Decision(Action action, String reason) {

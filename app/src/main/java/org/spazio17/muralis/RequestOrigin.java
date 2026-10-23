@@ -18,7 +18,7 @@ package org.spazio17.muralis;
  * {@code Sec-Fetch-Site} is attached by the browser and cannot be set from script, so it is the
  * stronger signal and it covers form posts, {@code fetch} and subresource loads alike.
  * {@code Origin} is the older and more widely supported one, compared against the {@code Host} the
- * request was addressed to. A caller that sends neither, {@code curl} or a Home Assistant
+ * request was addressed to. A caller that sends neither, {@code curl} or a smart-home
  * automation, is not a browser, cannot be a confused deputy, and passes.
  *
  * <p>Deliberately not a CSRF token. A token has to live somewhere, and with Basic auth there is no

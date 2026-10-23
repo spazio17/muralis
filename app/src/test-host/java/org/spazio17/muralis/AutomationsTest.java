@@ -39,8 +39,8 @@ public final class AutomationsTest {
     private static Map<String, String> names() {
         Map<String, String> names = new java.util.LinkedHashMap<>();
         names.put("proximity", "Proximity");
-        names.put("light", "Light");
-        names.put("nfc", "NFC");
+        names.put("illuminance", "Illuminance");
+        names.put("nfc_tag", "NFC tag");
         names.put("battery", "Battery");
         names.put(Automations.TIME, Automations.TIME_NAME);
         names.put(Automations.CAMERAS, Automations.CAMERAS_NAME);
@@ -111,7 +111,7 @@ public final class AutomationsTest {
                 && Boolean.FALSE.equals(Automations.holds(above, Automations.Sample.of(80.0))),
                 "above means more than the level");
         String[][] cases = {
-                {"open_page", "https://ha.local/night", null}, {"open_page", "ha.local", "x"},
+                {"open_page", "https://home.local/night", null}, {"open_page", "home.local", "x"},
                 {"call_url", "ftp://x", "x"}, {"brightness", "0", null}, {"brightness", "100", null},
                 {"brightness", "101", "x"}, {"brightness", "half", "x"},
                 {"ambient_mode", "dim", null}, {"ambient_mode", "disco", "x"},
@@ -127,7 +127,7 @@ public final class AutomationsTest {
     private static void testStoreRoundTrip() {
         List<Automations.Rule> rules = Automations.defaults();
         require(rules.size() == 1 && rules.get(0).id.equals("wake"), "the shipped rule is Wake by hand");
-        Automations.Rule window = rule("light", "darker", "say");
+        Automations.Rule window = rule("illuminance", "darker", "say");
         window.level = 12.5;
         window.minutes = 3;
         window.argument = "It is dark";
@@ -153,7 +153,7 @@ public final class AutomationsTest {
     private static void testChangeTimesAndMarkers() {
         List<Automations.Rule> stored = Automations.defaults();
         stored.get(0).changedAt = 1_000;
-        Automations.Rule added = rule("light", "darker", "say");
+        Automations.Rule added = rule("illuminance", "darker", "say");
         added.level = 5;
         List<Automations.Rule> next = new java.util.ArrayList<>();
         next.add(stored.get(0).copy());
@@ -197,7 +197,7 @@ public final class AutomationsTest {
         unnamed.name = "  ";
         require(Automations.validate(unnamed, names()) == null && !unnamed.name.trim().isEmpty(),
                 "a blank name becomes the sentence");
-        Automations.Rule minutes = rule("light", "darker", "display_on");
+        Automations.Rule minutes = rule("illuminance", "darker", "display_on");
         minutes.level = 5;
         minutes.minutes = -1;
         require(Automations.validate(minutes, names()) != null, "negative minutes refused");
@@ -205,7 +205,7 @@ public final class AutomationsTest {
         require(Automations.validate(minutes, names()) != null, "minutes over a day refused");
         minutes.minutes = 0;
         require(Automations.validate(minutes, names()) == null, "zero minutes is at once");
-        Automations.Rule noLevel = rule("light", "darker", "display_on");
+        Automations.Rule noLevel = rule("illuminance", "darker", "display_on");
         require(Automations.validate(noLevel, names()) != null, "an event with a level needs one");
         Automations.Rule light = rule("proximity", "near", "light_on");
         require(Automations.validate(light, names()) == null && light.argument.isEmpty(),
@@ -263,49 +263,49 @@ public final class AutomationsTest {
         require(runs.ran.equals(Collections.singletonList("r1")), "false then true fires once");
         engine.sample("proximity", Automations.Sample.of(0, true), T0 + 3000, 600);
         require(runs.ran.size() == 1, "the same true again does not fire again");
-        engine.sample("light", Automations.Sample.of(3), T0 + 4000, 600);
+        engine.sample("illuminance", Automations.Sample.of(3), T0 + 4000, 600);
         require(runs.ran.size() == 1, "another sensor's sample is not this rule's");
     }
 
     private static void testEngineHoldsForMinutes() {
         Runs runs = new Runs();
         Automations.Engine engine = new Automations.Engine(runs);
-        Automations.Rule dark = rule("light", "darker", "display_off");
+        Automations.Rule dark = rule("illuminance", "darker", "display_off");
         dark.level = 10;
         dark.minutes = 2;
         engine.rules(Collections.singletonList(dark));
-        engine.sample("light", Automations.Sample.of(100), T0, 600);
-        engine.sample("light", Automations.Sample.of(2), T0 + 1000, 600);
-        engine.sample("light", Automations.Sample.of(2), T0 + 60_000, 600);
+        engine.sample("illuminance", Automations.Sample.of(100), T0, 600);
+        engine.sample("illuminance", Automations.Sample.of(2), T0 + 1000, 600);
+        engine.sample("illuminance", Automations.Sample.of(2), T0 + 60_000, 600);
         require(runs.ran.isEmpty(), "not before the minutes have passed");
-        engine.sample("light", Automations.Sample.of(2), T0 + 1000 + 2 * 60_000, 600);
+        engine.sample("illuminance", Automations.Sample.of(2), T0 + 1000 + 2 * 60_000, 600);
         require(runs.ran.equals(Collections.singletonList("r1")), "fires once the minutes have held");
-        engine.sample("light", Automations.Sample.of(50), T0 + 200_000, 600);
-        engine.sample("light", Automations.Sample.of(2), T0 + 201_000, 600);
-        engine.sample("light", Automations.Sample.of(2), T0 + 230_000, 600);
+        engine.sample("illuminance", Automations.Sample.of(50), T0 + 200_000, 600);
+        engine.sample("illuminance", Automations.Sample.of(2), T0 + 201_000, 600);
+        engine.sample("illuminance", Automations.Sample.of(2), T0 + 230_000, 600);
         require(runs.ran.size() == 1, "a new dark spell starts its own count");
     }
 
     private static void testEngineReseedsAnEditedRule() {
         Runs runs = new Runs();
         Automations.Engine engine = new Automations.Engine(runs);
-        Automations.Rule dark = rule("light", "darker", "display_off");
+        Automations.Rule dark = rule("illuminance", "darker", "display_off");
         dark.level = 5;
         engine.rules(Collections.singletonList(dark));
-        engine.sample("light", Automations.Sample.of(20), T0, 600);
-        engine.sample("light", Automations.Sample.of(20), T0 + 1000, 600);
+        engine.sample("illuminance", Automations.Sample.of(20), T0, 600);
+        engine.sample("illuminance", Automations.Sample.of(20), T0 + 1000, 600);
         Automations.Rule edited = dark.copy();
         edited.level = 50;
         engine.rules(Collections.singletonList(edited));
-        engine.sample("light", Automations.Sample.of(20), T0 + 2000, 600);
+        engine.sample("illuminance", Automations.Sample.of(20), T0 + 2000, 600);
         require(runs.ran.isEmpty(), "an edited rule whose condition now holds is seeded, not fired");
-        engine.sample("light", Automations.Sample.of(80), T0 + 3000, 600);
-        engine.sample("light", Automations.Sample.of(20), T0 + 4000, 600);
+        engine.sample("illuminance", Automations.Sample.of(80), T0 + 3000, 600);
+        engine.sample("illuminance", Automations.Sample.of(20), T0 + 4000, 600);
         require(runs.ran.equals(Collections.singletonList("r1")), "and fires on the next false-to-true");
         Automations.Rule renamed = edited.copy();
         renamed.name = "Another name";
         engine.rules(Collections.singletonList(renamed));
-        engine.sample("light", Automations.Sample.of(20), T0 + 5000, 600);
+        engine.sample("illuminance", Automations.Sample.of(20), T0 + 5000, 600);
         require(runs.ran.size() == 1, "a rename keeps the state: the same true does not fire again");
     }
 
@@ -325,12 +325,12 @@ public final class AutomationsTest {
     private static void testEngineTickAdvancesTheMinutes() {
         Runs runs = new Runs();
         Automations.Engine engine = new Automations.Engine(runs);
-        Automations.Rule dark = rule("light", "darker", "display_off");
+        Automations.Rule dark = rule("illuminance", "darker", "display_off");
         dark.level = 5;
         dark.minutes = 2;
         engine.rules(Collections.singletonList(dark));
-        engine.sample("light", Automations.Sample.of(100), T0, 600);
-        engine.sample("light", Automations.Sample.of(2), T0 + 1000, 600);
+        engine.sample("illuminance", Automations.Sample.of(100), T0, 600);
+        engine.sample("illuminance", Automations.Sample.of(2), T0 + 1000, 600);
         engine.tick(T0 + 60_000, 600);
         require(runs.ran.isEmpty(), "a tick before the minutes have passed fires nothing");
         engine.tick(T0 + 1000 + 2 * 60_000, 600);
@@ -382,23 +382,23 @@ public final class AutomationsTest {
     private static void testTagEvents() {
         Runs runs = new Runs();
         Automations.Engine engine = new Automations.Engine(runs);
-        Automations.Rule any = rule("nfc", "tag", "display_on");
-        Automations.Rule one = rule("nfc", "tag", "reload");
+        Automations.Rule any = rule("nfc_tag", "tag", "display_on");
+        Automations.Rule one = rule("nfc_tag", "tag", "reload");
         one.id = "r2";
-        one.tag = "04A32B9C";
+        one.match = "04A32B9C";
         any.cooldown = 0;
         one.cooldown = 0;
         engine.rules(java.util.Arrays.asList(any, one));
-        engine.event("nfc", "FFFF", 600);
+        engine.event("nfc_tag", "FFFF", 600);
         require(runs.ran.equals(Collections.singletonList("r1")), "any tag runs the open rule alone");
-        engine.event("nfc", "04a32b9c", 600);
+        engine.event("nfc_tag", "04a32b9c", 600);
         require(runs.ran.size() == 3 && runs.ran.get(2).equals("r2"), "the named tag runs both, id case-blind");
     }
 
     /** A camera's event: named, a group's rules too, the "not again within", the sentence. */
     private static void testCameraEvents() throws org.json.JSONException {
         Automations.Rule door = rule(Automations.CAMERAS, "triggered", "camera");
-        door.tag = "Door";
+        door.match = "Door";
         door.argument = "Front";
         door.show = Automations.SHOW_FULLSCREEN;
         door.seconds = 20;
@@ -411,14 +411,14 @@ public final class AutomationsTest {
         Automations.Rule none = rule(Automations.CAMERAS, "triggered", "display_on");
         require(Automations.validate(none, names()) != null, "a camera rule names its camera");
         Automations.Rule bad = rule(Automations.CAMERAS, "triggered", "camera");
-        bad.tag = "Door";
+        bad.match = "Door";
         bad.argument = "Front";
         bad.show = "sideways";
         require(Automations.validate(bad, names()) != null, "show is pop-up or full screen");
         bad.show = Automations.SHOW_POPUP;
         bad.seconds = 301;
         require(Automations.validate(bad, names()) != null, "the time is 0 to 300 s");
-        Automations.Rule light = rule("light", "darker", "display_on");
+        Automations.Rule light = rule("illuminance", "darker", "display_on");
         light.level = 5;
         light.cooldown = 30;
         light.chime = true;
@@ -426,7 +426,7 @@ public final class AutomationsTest {
                 && !light.chime, "not again within and chime only where they apply");
         Automations.Rule group = rule(Automations.CAMERAS, "triggered", "reload");
         group.id = "r2";
-        group.tag = "Outside";
+        group.match = "Outside";
         group.cooldown = 0;
         Runs runs = new Runs();
         Automations.Engine engine = new Automations.Engine(runs);

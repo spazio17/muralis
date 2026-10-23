@@ -1,0 +1,4 @@
+# Every change is reviewed by the publisher. An integration names its maintainers in its
+# integration.json ("codeowners"); they are asked to review changes to it by hand until the
+# repository is public and their folders can be listed here.
+* @Nihvel

@@ -38,15 +38,29 @@ final class Automations {
         final String levelUnit;
         /** Whether "for N minutes" applies: the condition must hold that long before it fires. */
         final boolean holds;
-        /** Whether the event names a tag (NFC): one-shot, matched by id. */
-        final boolean tag;
+        /** Whether the rule names what it waits for in its match: an NFC tag id, a text. */
+        final boolean matches;
+        /** Whether it is a one-shot event (a tag read), not a state a reading holds. */
+        final boolean oneShot;
 
+        /** {@code tag}: an NFC tag read, one-shot and matched by its id. */
         Event(String id, String label, String levelUnit, boolean holds, boolean tag) {
+            this(id, label, levelUnit, holds, tag, tag);
+        }
+
+        private Event(String id, String label, String levelUnit, boolean holds, boolean matches,
+                boolean oneShot) {
             this.id = id;
             this.label = label;
             this.levelUnit = levelUnit;
             this.holds = holds;
-            this.tag = tag;
+            this.matches = matches;
+            this.oneShot = oneShot;
+        }
+
+        /** A value that becomes the text the rule names: a state, compared on every reading. */
+        static Event text(String id, String label) {
+            return new Event(id, label, null, true, true, false);
         }
     }
 
@@ -70,30 +84,30 @@ final class Automations {
     private static Map<String, List<Event>> events() {
         Map<String, List<Event>> map = new LinkedHashMap<>();
         map.put("proximity", Arrays.asList(
-                // Android's own words for the sensor (SensorManager: "near/far"); Home
-                // Assistant has no binary class for it, its nearest, occupancy, is about a room.
+                // Android's own words for the sensor (SensorManager: "near/far"); MQTT discovery
+                // has no binary class for it, its nearest, occupancy, is about a room.
                 new Event("near", "Near", null, false, false),
                 new Event("far", "Far", null, false, false)));
-        map.put("light", Arrays.asList(
+        map.put("illuminance", Arrays.asList(
                 new Event("darker", "Darker than", "lx", true, false),
                 new Event("brighter", "Brighter than", "lx", false, false)));
         map.put("movement", Arrays.asList(
                 new Event("picked_up", "Picked up", null, false, false),
                 new Event("still", "Still again", null, false, false)));
-        map.put("bluetooth", Arrays.asList(
+        map.put("bluetooth_beacons", Arrays.asList(
                 new Event("in_reach", "The first beacon comes in reach", null, false, false),
                 new Event("out_of_reach", "The last beacon goes out of reach", null, false, false)));
-        map.put("nfc", Collections.singletonList(
+        map.put("nfc_tag", Collections.singletonList(
                 new Event("tag", "A tag is read", null, false, true)));
         map.put("audio", Arrays.asList(
                 new Event("playing", "Sound starts playing", null, false, false),
                 new Event("stopped", "Sound stops", null, false, false)));
-        map.put("camera", Arrays.asList(
+        map.put("motion", Arrays.asList(
                 new Event("motion", "Motion in front of the panel", null, false, false),
                 // "Nothing moving", not "Nothing moving for": the sentence adds "for 5 min"
                 // itself, and read "for for" (review, 2026-10-01).
                 new Event("no_motion", "Nothing moving", null, true, false)));
-        map.put("microphone", Collections.singletonList(
+        map.put("sound_level", Collections.singletonList(
                 new Event("louder", "Louder than", "%", false, false)));
         map.put("display", Arrays.asList(
                 new Event("on", "Display switched on", null, false, false),
@@ -126,11 +140,11 @@ final class Automations {
     static final List<Action> ACTIONS = Collections.unmodifiableList(Arrays.asList(
             new Action("display_on", "Display on", null),
             new Action("display_off", "Display off", null),
-            new Action("dashboard", "Show the dashboard", null),
+            new Action("dashboard", "Open dashboard", null),
             new Action("ambient", "Start Ambient", null),
             new Action("play_sound", "Play a sound", "Sound address"),
             new Action("say", "Say a sentence", "Sentence"),
-            new Action("reload", "Reload the page", null),
+            new Action("reload", "Reload dashboard", null),
             new Action("light_on", "Status light on", "Colour (r,g,b)"),
             new Action("light_off", "Status light off", null),
             new Action("open_page", "Open a page", "Address"),
@@ -162,7 +176,7 @@ final class Automations {
     static final String TIME_UNIT = "time";
 
     static Event event(String sensor, String id) {
-        List<Event> list = EVENTS.get(sensor);
+        List<Event> list = events(sensor);
         if (list == null) {
             return null;
         }
@@ -172,6 +186,19 @@ final class Automations {
             }
         }
         return null;
+    }
+
+    /**
+     * The events a sensor offers: the device's own from {@link #EVENTS}, an integration's value
+     * by its type ({@link Integrations#events}); null for neither.
+     */
+    static List<Event> events(String sensor) {
+        List<Event> own = EVENTS.get(sensor);
+        if (own != null || !Integrations.isSensorId(sensor)) {
+            return own;
+        }
+        Integrations.ValueSpec spec = Integrations.lookup.valueOf(sensor);
+        return spec == null ? null : Integrations.events(spec);
     }
 
     static Action action(String id) {
@@ -193,8 +220,12 @@ final class Automations {
         double level = Double.NaN;
         /** Minutes the condition must hold, 0 for at once. */
         int minutes;
-        /** The tag id an NFC rule waits for, empty for any tag; the camera or group a camera rule waits for. */
-        String tag = "";
+        /**
+         * What the rule waits for by name: the tag id an NFC rule waits for (empty for any tag),
+         * the camera or group a camera rule waits for, or the text an integration's value must
+         * become.
+         */
+        String match = "";
         /** Seconds a one-shot rule (a tag, a camera) is not run again after it ran; 0 for always. */
         int cooldown = DEFAULT_COOLDOWN;
         /** How long a pop-up or a camera shows, 0 until touched or closed. */
@@ -224,7 +255,7 @@ final class Automations {
             other.event = event;
             other.level = level;
             other.minutes = minutes;
-            other.tag = tag;
+            other.match = match;
             other.cooldown = cooldown;
             other.seconds = seconds;
             other.chime = chime;
@@ -250,7 +281,7 @@ final class Automations {
         boolean sameCondition(Rule other) {
             return sensor.equals(other.sensor) && event.equals(other.event)
                     && (Double.isNaN(level) ? Double.isNaN(other.level) : level == other.level)
-                    && minutes == other.minutes && tag.equals(other.tag)
+                    && minutes == other.minutes && match.equals(other.match)
                     && cooldown == other.cooldown;
         }
     }
@@ -300,28 +331,22 @@ final class Automations {
         return rules;
     }
 
-    private static String renamed(String id) {
-        return "screensaver".equals(id) ? "ambient" : id;
-    }
-
     /** One rule as stored or posted; an empty id is left for the caller to decide on. */
     static Rule parseRule(JSONObject one) {
         Rule rule = new Rule();
         rule.id = one.optString("id", "");
         rule.name = one.optString("name", "");
-        // Ambient was called screensaver before 0.7, as a sensor and as an action: a rule stored
-        // with the old name means the same thing.
-        rule.sensor = renamed(one.optString("sensor", ""));
+        rule.sensor = one.optString("sensor", "");
         rule.event = one.optString("event", "");
         rule.level = one.has("level") ? one.optDouble("level", Double.NaN) : Double.NaN;
         rule.minutes = one.optInt("minutes", 0);
-        rule.tag = one.optString("tag", "");
+        rule.match = one.optString("match", "");
         // A rule stored before the field keeps running every time, as it did.
         rule.cooldown = one.optInt("cooldown", 0);
         rule.seconds = one.optInt("seconds", Popup.DEFAULT_SECONDS);
         rule.chime = one.optBoolean("chime", false);
         rule.show = one.optString("show", SHOW_POPUP);
-        rule.action = renamed(one.optString("action", ""));
+        rule.action = one.optString("action", "");
         rule.argument = one.optString("argument", "");
         rule.enabled = one.optBoolean("enabled", true);
         rule.onlyFrom = one.optInt("only_from", -1);
@@ -348,7 +373,7 @@ final class Automations {
                     one.put("level", rule.level);
                 }
                 one.put("minutes", rule.minutes);
-                one.put("tag", rule.tag);
+                one.put("match", rule.match);
                 one.put("cooldown", rule.cooldown);
                 one.put("seconds", rule.seconds);
                 one.put("chime", rule.chime);
@@ -389,7 +414,10 @@ final class Automations {
                     || rule.level != Math.rint(rule.level)) {
                 return "the time must be a time of day, 00:00 to 23:59";
             }
-        } else if (event.levelUnit != null && (Double.isNaN(rule.level) || rule.level < 0
+        } else if (event.levelUnit != null && (Double.isNaN(rule.level)
+                // An integration's number may be below zero (a temperature, a price, a signal in
+                // dBm); the device's own levels never are.
+                || rule.level < (Integrations.isSensorId(rule.sensor) ? -1_000_000 : 0)
                 || rule.level > 1_000_000)) {
             return "the level must be a number";
         }
@@ -401,19 +429,21 @@ final class Automations {
         } else if (rule.minutes < 0 || rule.minutes > MAX_MINUTES) {
             return "the minutes must be between 0 and " + MAX_MINUTES;
         }
-        // A tag id as homeAssistantTagId and the chip ids are shaped, 64 characters at most;
-        // it is written into the sentence and the pages.
-        rule.tag = rule.tag.replaceAll("\\p{Cntrl}", "").trim();
-        if (rule.tag.length() > 64) {
-            return "the tag id is too long";
+        // A tag id as homeAssistantTagId and the chip ids are shaped, 64 characters at most, and
+        // a text as long; either is written into the sentence and the pages.
+        rule.match = rule.match.replaceAll("\\p{Cntrl}", "").trim();
+        if (rule.match.length() > 64) {
+            return event.oneShot ? "the tag id is too long" : "the text is too long";
         }
-        if (!event.tag) {
-            rule.tag = "";
+        if (!event.matches) {
+            rule.match = "";
+        }
+        if (!event.oneShot) {
             rule.cooldown = 0;
         } else if (rule.cooldown < 0 || rule.cooldown > MAX_COOLDOWN) {
             return "\"not again within\" must be 0 to " + MAX_COOLDOWN + " seconds";
         }
-        if (CAMERAS.equals(rule.sensor) && rule.tag.isEmpty()) {
+        if (CAMERAS.equals(rule.sensor) && rule.match.isEmpty()) {
             return "choose the camera or group";
         }
         Action action = action(rule.action);
@@ -534,13 +564,16 @@ final class Automations {
             if (TIME_UNIT.equals(event.levelUnit) && !Double.isNaN(rule.level)) {
                 text.append(' ').append(clock((int) rule.level));
             } else if (event.levelUnit != null && !Double.isNaN(rule.level)) {
-                text.append(' ').append(number(rule.level)).append(' ').append(event.levelUnit);
+                text.append(' ').append(number(rule.level));
+                if (!event.levelUnit.isEmpty()) {
+                    text.append(' ').append(event.levelUnit);
+                }
             }
             if (event.holds && rule.minutes > 0) {
                 text.append(" for ").append(rule.minutes).append(" min");
             }
-            if (event.tag && !rule.tag.isEmpty()) {
-                text.append(": ").append(rule.tag);
+            if (event.matches && !rule.match.isEmpty()) {
+                text.append(": ").append(rule.match);
             }
         }
         boolean shows = action != null && shows(action.id);
@@ -558,7 +591,7 @@ final class Automations {
                 text.append(" with a chime");
             }
         }
-        if (event != null && event.tag && rule.cooldown > 0) {
+        if (event != null && event.oneShot && rule.cooldown > 0) {
             text.append(", not again within ").append(rule.cooldown).append(" s");
         }
         return text.toString();
@@ -633,11 +666,22 @@ final class Automations {
         final Boolean flag;
         /** A second figure for sensors that carry two: the processor's temperature. */
         final double extra;
+        /** An integration's text value, or null. */
+        final String text;
 
         Sample(double number, Boolean flag, double extra) {
+            this(number, flag, extra, null);
+        }
+
+        private Sample(double number, Boolean flag, double extra, String text) {
             this.number = number;
             this.flag = flag;
             this.extra = extra;
+            this.text = text;
+        }
+
+        static Sample ofText(String text) {
+            return new Sample(Double.NaN, null, Double.NaN, text);
         }
 
         static Sample of(boolean flag) {
@@ -656,7 +700,7 @@ final class Automations {
     /** Whether the state the event names holds in this sample; null when the sample cannot say. */
     static Boolean holds(Rule rule, Sample sample) {
         Event event = event(rule.sensor, rule.event);
-        if (event == null || event.tag) {
+        if (event == null || event.oneShot) {
             return null;
         }
         boolean flag = Boolean.TRUE.equals(sample.flag);
@@ -679,6 +723,18 @@ final class Automations {
                 return hasNumber ? sample.number == 0 : null;
             case "hotter":
                 return Double.isNaN(sample.extra) ? null : sample.extra > rule.level;
+            // An integration's value (Integrations.events): unavailable is an empty sample, on
+            // which nothing decides, so the last available value stands and nothing fires.
+            case "int_above":
+                return hasNumber ? sample.number > rule.level : null;
+            case "int_below":
+                return hasNumber ? sample.number < rule.level : null;
+            case "int_on":
+                return hasFlag ? flag : null;
+            case "int_off":
+                return hasFlag ? !flag : null;
+            case "int_becomes":
+                return sample.text == null ? null : sample.text.equalsIgnoreCase(rule.match);
             default:
                 return null;
         }
@@ -937,12 +993,12 @@ final class Automations {
                     continue;
                 }
                 Event event = Automations.event(rule.sensor, rule.event);
-                if (event == null || !event.tag) {
+                if (event == null || !event.oneShot) {
                     continue;
                 }
-                boolean named = rule.tag.isEmpty();
+                boolean named = rule.match.isEmpty();
                 for (String id : ids) {
-                    named |= rule.tag.equalsIgnoreCase(id);
+                    named |= rule.match.equalsIgnoreCase(id);
                 }
                 if (!named || !inWindow(rule, minuteOfDay)) {
                     continue;

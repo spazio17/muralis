@@ -26,13 +26,15 @@ on purpose.
   and the app refreshes itself once at night.
 - **Display.** Display off, brightness, orientation, Ambient (what shows while nobody uses the
   panel), a status light drawn as a coloured frame, pop-ups over the screen, and network cameras.
-- **Remote control.** A web admin over HTTPS, an HTTP API and MQTT with Home Assistant discovery,
-  a screenshot and a diagnostics file on request, a settings file and a setup QR.
+- **Remote control.** A web admin over HTTPS, an HTTP API and MQTT with discovery for smart-home
+  systems, a screenshot and a diagnostics file on request, a settings file and a setup QR.
 - **Sensors and automations.** The device's sensors, its camera and microphone, Bluetooth beacons
   and NFC, and "when this, then that" rules that act on the panel itself.
 - **Fleet.** Panels on one network trust each other by their own keys and manage each other from
   any web admin: joining by a one-time code, shared settings, groups, alerts and an invitation QR
   for a new tablet. No server.
+- **Integrations.** Data from other services as sensors for the automations and MQTT,
+  one folder each under `app/src/main/integrations/`, compiled in and never downloaded.
 - **Free and Pro.** Everything one panel does is free, with no device limit. Muralis Pro, bought
   once through Google Play, is the fleet.
 
@@ -79,8 +81,8 @@ on purpose.
 - **No backlog.** A panel acts when something arrives or drops it once it is stale; it never
   replays in one go what it missed while asleep or stopped.
 - **Self-healing has no user switch** and no memory threshold.
-- **Home Assistant discovery.** An entity's key, id and name say the same thing, and a panel
-  removes from Home Assistant only what it announced itself.
+- **MQTT discovery.** An entity's key, id and name say the same thing, and a panel
+  removes from the smart home only what it announced itself.
 - **One design on both surfaces.** The panel and the web admin are one Material 3 design from the
   ultramarine seed, light and dark, with the same sections, words and behaviour. Plain words; a
   familiar glyph or control before an explanatory sentence.

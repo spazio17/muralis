@@ -66,6 +66,8 @@ final class FleetServer {
     private static final int MAX_BODY = 4_096;
     /** A fleet document: a few hundred bytes per member, and the shared settings. */
     private static final int MAX_DOCUMENT = 65_536;
+    /** One integration's values passed on by the panel that asks: room for a calendar's agenda. */
+    static final int MAX_VALUES = 65_536;
     /** One document change at a time: a delivery taken here and a panel added here. */
     private static final Object DOCUMENT_LOCK = new Object();
 
@@ -1025,7 +1027,8 @@ final class FleetServer {
                 respond(output, 403, error("this key is not a member of this panel's fleet"));
                 return;
             }
-            int limit = "/fleet/document".equals(parts[1]) ? MAX_DOCUMENT : MAX_BODY;
+            int limit = "/fleet/document".equals(parts[1]) ? MAX_DOCUMENT
+                    : "/fleet/values".equals(parts[1]) ? MAX_VALUES : MAX_BODY;
             if (contentLength > limit) {
                 respond(output, 413, error("the body must be at most " + limit + " bytes"));
                 return;
@@ -1098,6 +1101,12 @@ final class FleetServer {
             } else if ("/fleet/identify".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     identify(output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
+            } else if ("/fleet/values".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    takeValues(caller, body, output);
                 } else {
                     respond(output, 405, error("only POST"));
                 }
@@ -1723,7 +1732,8 @@ final class FleetServer {
             peers.put(spki, new Peer(address, portOf(member, spki),
                     reply.body.optLong("version", 0), android.os.SystemClock.elapsedRealtime(),
                     known == null ? new JSONObject() : known.health,
-                    known == null ? 0 : known.clockSkewMs));
+                    known == null ? 0 : known.clockSkewMs,
+                    known == null ? java.util.Collections.emptySet() : known.runnable));
             // The member held more than this panel and handed the merge back: taken here too.
             String handedBack = reply.body.optString("document", "");
             FleetIdentity identity = FleetIdentity.load(context);
@@ -1751,15 +1761,18 @@ final class FleetServer {
         final long seenAt;
         final JSONObject health;
         final long clockSkewMs;
+        /** The shared integrations it said it can run (FleetAsker), as of its last word. */
+        final java.util.Set<String> runnable;
 
         Peer(String address, int port, long version, long seenAt, JSONObject health,
-                long clockSkewMs) {
+                long clockSkewMs, java.util.Set<String> runnable) {
             this.address = address;
             this.port = port;
             this.version = version;
             this.seenAt = seenAt;
             this.health = health;
             this.clockSkewMs = clockSkewMs;
+            this.runnable = runnable;
         }
     }
 
@@ -1796,8 +1809,16 @@ final class FleetServer {
                 port < 1 || port > 65535 ? KioskConfig.DEFAULT_FLEET_PORT : port,
                 request.optLong("version", 0), android.os.SystemClock.elapsedRealtime(),
                 request.optJSONObject("health") == null ? new JSONObject()
-                        : request.optJSONObject("health"), clock - System.currentTimeMillis()));
-        respond(output, 200, fleetState());
+                        : request.optJSONObject("health"), clock - System.currentTimeMillis(),
+                runnableOf(request)));
+        JSONObject reply = fleetState();
+        try {
+            // Both ways, so the caller knows at once too who can take over asking.
+            reply.put(RUNNABLE, new org.json.JSONArray(ownRunnable));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        respond(output, 200, reply);
         long held = FleetDocument.version(KioskConfig.fleetDocumentOf(context));
         if (request.optLong("version", 0) > held) {
             new Thread(() -> fetchFrom(context, identity, peers.get(caller), caller),
@@ -2048,11 +2069,12 @@ final class FleetServer {
                     Log.i(TAG, "Found key " + FleetTls.shortForm(spki) + " on the network at "
                             + address + " port " + port + ", not " + addressOf(member, spki)
                             + " port " + portOf(member, spki));
-                    announced.put(spki, new Peer(address, port, 0, 0, new JSONObject(), 0));
+                    announced.put(spki, new Peer(address, port, 0, 0, new JSONObject(), 0,
+                            java.util.Collections.emptySet()));
                     // A contact heard lately at the old place would still win over the new one.
                     String foundAddress = address;
                     peers.computeIfPresent(spki, (key, old) -> new Peer(foundAddress, port,
-                            old.version, old.seenAt, old.health, old.clockSkewMs));
+                            old.version, old.seenAt, old.health, old.clockSkewMs, old.runnable));
                     moved++;
                 }
             }
@@ -2115,7 +2137,7 @@ final class FleetServer {
                 peers.put(spki, new Peer(address, port, reply.body.optLong("version", 0),
                         android.os.SystemClock.elapsedRealtime(),
                         known == null ? new JSONObject() : known.health,
-                        known == null ? 0 : known.clockSkewMs));
+                        known == null ? 0 : known.clockSkewMs, runnableOf(reply.body)));
                 if (reply.body.optLong("version", 0)
                         > FleetDocument.version(KioskConfig.fleetDocumentOf(context))) {
                     fetchFrom(context, identity, peers.get(spki), spki);
@@ -2134,6 +2156,236 @@ final class FleetServer {
             // A place found on the network is good for one try: the list's own is next.
             announced.remove(spki);
             return false;
+        }
+    }
+
+    /** The check-in's list of the shared integrations a panel can run, and its reply's. */
+    private static final String RUNNABLE = "integrations_runnable";
+    /** The shared integrations this panel can run, set by the IntegrationRunner. */
+    private static volatile java.util.Set<String> ownRunnable = java.util.Collections.emptySet();
+
+    /** The runner says which shared integrations this panel can run; told in each check-in. */
+    static void setOwnRunnable(java.util.Set<String> runnable) {
+        ownRunnable = java.util.Collections.unmodifiableSet(new java.util.TreeSet<>(runnable));
+    }
+
+    /** The instance ids a check-in or its reply lists as runnable; none from an older panel. */
+    private static java.util.Set<String> runnableOf(JSONObject message) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        org.json.JSONArray list = message.optJSONArray(RUNNABLE);
+        for (int i = 0; list != null && i < list.length() && i < Integrations.MAX_INSTANCES; i++) {
+            String id = list.optString(i, "");
+            if (!id.isEmpty()) {
+                ids.add(id);
+            }
+        }
+        return java.util.Collections.unmodifiableSet(ids);
+    }
+
+    /**
+     * The fleet as the integrations see it: this panel's key, the ids of the instances its
+     * group shares, and the members that take the integrations from that same group, in the
+     * signed list's order (this panel among them). Only these ask for each other and pass values
+     * on to each other.
+     */
+    static final class IntegrationsFleet {
+        final String self;
+        final java.util.Set<String> instances;
+        final java.util.List<java.util.Map<String, Object>> members;
+
+        IntegrationsFleet(String self, java.util.Set<String> instances,
+                java.util.List<java.util.Map<String, Object>> members) {
+            this.self = self;
+            this.instances = instances;
+            this.members = members;
+        }
+
+        /** The members as FleetAsker takes them: when each was heard, what each can run. */
+        java.util.List<FleetAsker.Member> candidates(java.util.Set<String> mine) {
+            java.util.List<FleetAsker.Member> list = new java.util.ArrayList<>();
+            for (java.util.Map<String, Object> member : members) {
+                String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+                if (spki.equals(self)) {
+                    list.add(new FleetAsker.Member(spki,
+                            android.os.SystemClock.elapsedRealtime(), mine));
+                    continue;
+                }
+                Peer known = peers.get(spki);
+                list.add(known == null ? new FleetAsker.Member(spki, FleetAsker.NEVER, null)
+                        : new FleetAsker.Member(spki, known.seenAt, known.runnable));
+            }
+            return list;
+        }
+
+        /** A member's name as the list has it, for "Asked by ...". */
+        String nameOf(String spki) {
+            for (java.util.Map<String, Object> member : members) {
+                if (spki.equals(TinyJson.string(member, FleetDocument.SPKI, ""))) {
+                    return TinyJson.string(member, FleetDocument.NAME, "");
+                }
+            }
+            return "";
+        }
+    }
+
+    /**
+     * See IntegrationsFleet; null when this panel is in no fleet, not in its list yet, or takes
+     * no integrations from it, so every instance it holds is its own.
+     */
+    static IntegrationsFleet integrationsFleet(Context context) {
+        String self = KioskConfig.fleetSelfKeyOf(context);
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (KioskConfig.fleetIdOf(context).isEmpty() || held == null || self.isEmpty()) {
+            return null;
+        }
+        java.util.Map<String, Object> me = FleetDocument.memberByKey(held, self);
+        String group = me == null ? null
+                : FleetDocument.sourceGroup(held, me, "integrations");
+        java.util.Map<String, Object> values = group == null ? null
+                : FleetDocument.sectionValues(held, group, "integrations");
+        if (values == null) {
+            return null;
+        }
+        java.util.Set<String> instances = new java.util.HashSet<>();
+        Object stored = values.get("instances");
+        for (Integrations.Instance instance
+                : Integrations.parseInstances(stored == null ? "" : String.valueOf(stored))) {
+            instances.add(instance.id);
+        }
+        java.util.List<java.util.Map<String, Object>> members = new java.util.ArrayList<>();
+        for (java.util.Map<String, Object> member : FleetDocument.members(held)) {
+            if (group.equals(FleetDocument.sourceGroup(held, member, "integrations"))) {
+                members.add(member);
+            }
+        }
+        return new IntegrationsFleet(self, instances, members);
+    }
+
+    /**
+     * The values waiting for each member, by member key then instance: only the latest of each
+     * instance, so a newer read replaces one not yet sent and nothing piles up. See pushValues.
+     */
+    private static final java.util.Map<String, java.util.LinkedHashMap<String, JSONObject>>
+            waiting = new java.util.HashMap<>();
+    /** Members with a sender under way; at most one each, see pushValues. */
+    private static final java.util.Set<String> sending = new java.util.HashSet<>();
+
+    /**
+     * Passes one shared integration's values, as this panel just read them, to every other member
+     * that takes the integrations from the same group ({@code POST /fleet/values}). One sender a
+     * member delivers the latest values of each instance one after another, so pushes never open
+     * more connections than a member admits from one host; a failed one is not retried, since the
+     * next read replaces it. A panel too old to know the route answers 404, which is only logged.
+     */
+    static void pushValues(Context context, String instanceId, JSONObject body) {
+        int size = body.toString().getBytes(StandardCharsets.UTF_8).length;
+        if (size > MAX_VALUES) {
+            Log.w(TAG, "The values of " + instanceId + " are " + size + " bytes, over the "
+                    + MAX_VALUES + " a member takes; not passed on");
+            return;
+        }
+        IntegrationsFleet fleet = integrationsFleet(context);
+        if (fleet == null) {
+            return;
+        }
+        for (java.util.Map<String, Object> member : fleet.members) {
+            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+            if (spki.equals(fleet.self)) {
+                continue;
+            }
+            synchronized (waiting) {
+                waiting.computeIfAbsent(spki, key -> new java.util.LinkedHashMap<>())
+                        .put(instanceId, body);
+                if (!sending.add(spki)) {
+                    continue;
+                }
+            }
+            new Thread(() -> sendWaiting(context, member, spki), "MuralisFleetValues").start();
+        }
+    }
+
+    /** One member's sender: the waiting values one after another until none is left. */
+    private static void sendWaiting(Context context, java.util.Map<String, Object> member,
+            String spki) {
+        while (true) {
+            String instanceId;
+            JSONObject body;
+            synchronized (waiting) {
+                java.util.LinkedHashMap<String, JSONObject> mine = waiting.get(spki);
+                if (mine == null || mine.isEmpty()) {
+                    waiting.remove(spki);
+                    sending.remove(spki);
+                    return;
+                }
+                java.util.Map.Entry<String, JSONObject> next = mine.entrySet().iterator().next();
+                instanceId = next.getKey();
+                body = next.getValue();
+                mine.remove(instanceId);
+            }
+            try {
+                String address = addressOf(member, spki);
+                if (address.isEmpty()) {
+                    continue;
+                }
+                Reply reply = call(context, address, portOf(member, spki), spki, "POST",
+                        "/fleet/values", body);
+                if (reply.status != 200) {
+                    Log.d(TAG, "Values of " + instanceId + " not taken by key "
+                            + FleetTls.shortForm(spki) + ": " + reply.reason());
+                }
+            } catch (IOException | RuntimeException failed) {
+                Log.d(TAG, "Values of " + instanceId + " did not reach key "
+                        + FleetTls.shortForm(spki) + ": " + failed.getMessage());
+            }
+        }
+    }
+
+    /**
+     * {@code POST /fleet/values} from a member: one shared integration's values as the panel that
+     * asks for the fleet read them, with {@code instance}, {@code read_at} (its clock, put on this
+     * panel's by the difference its check-ins measure), {@code state}, {@code problem},
+     * {@code asker} and {@code values}. Taken only from a member that takes the integrations from
+     * the same group as this panel; the runner decides whether it is newer than what it holds.
+     */
+    private void takeValues(String caller, byte[] body, OutputStream output) throws IOException {
+        JSONObject request;
+        try {
+            request = new JSONObject(new String(body, StandardCharsets.UTF_8));
+        } catch (JSONException notJson) {
+            respond(output, 400, error("the body must be a JSON object"));
+            return;
+        }
+        IntegrationsFleet fleet = integrationsFleet(context);
+        boolean together = false;
+        if (fleet != null) {
+            for (java.util.Map<String, Object> member : fleet.members) {
+                together |= caller.equals(TinyJson.string(member, FleetDocument.SPKI, ""));
+            }
+        }
+        if (!together || caller.equals(fleet.self)) {
+            respond(output, 409, error("this panel does not share its integrations with the caller"));
+            return;
+        }
+        IntegrationRunner runner = KioskService.integrationsOf();
+        if (runner == null) {
+            respond(output, 503, error("the integrations are not running on this panel"));
+            return;
+        }
+        Peer known = peers.get(caller);
+        long readAt = request.optLong("read_at", 0);
+        String refused = readAt <= 0 ? "the values carry no read time"
+                : runner.receive(request.optString("instance", ""),
+                        readAt - (known == null ? 0 : known.clockSkewMs),
+                        request.optString("state", ""), request.optString("problem", ""),
+                        request.optString("asker", ""), request.optJSONObject("values"));
+        if (refused != null) {
+            respond(output, 409, error(refused));
+            return;
+        }
+        try {
+            respond(output, 200, new JSONObject().put("taken", true));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
         }
     }
 
@@ -2158,6 +2410,7 @@ final class FleetServer {
                     .put("version", version)
                     .put("port", KioskConfig.fleetPortOf(context))
                     .put("clock", System.currentTimeMillis())
+                    .put(RUNNABLE, new org.json.JSONArray(ownRunnable))
                     .put("health", health);
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
@@ -2640,25 +2893,9 @@ final class FleetServer {
         }
         String self = KioskConfig.deviceIdOf(context);
         java.util.Map<String, Object> me = FleetDocument.memberByKey(held, identity.spki);
-        java.util.List<String> mine = FleetDocument.memberGroups(held, me);
-        boolean follows = FleetDocument.followsFleet(me);
         for (String section : FleetDocument.SECTIONS) {
-            // The latest of this panel's groups that shares the section; else the whole fleet,
-            // while the panel follows it.
-            java.util.Map<String, Long> by = FleetDocument.sharedBy(held, section);
-            String group = null;
-            long at = 0;
-            for (java.util.Map.Entry<String, Long> candidate : by.entrySet()) {
-                if (!FleetDocument.EVERYONE.equals(candidate.getKey())
-                        && mine.contains(candidate.getKey()) && candidate.getValue() > at) {
-                    group = candidate.getKey();
-                    at = candidate.getValue();
-                }
-            }
-            if (group == null && follows && by.containsKey(FleetDocument.EVERYONE)) {
-                group = FleetDocument.EVERYONE;
-                at = by.get(FleetDocument.EVERYONE);
-            }
+            String group = FleetDocument.sourceGroup(held, me, section);
+            long at = group == null ? 0 : FleetDocument.sharedBy(held, section).get(group);
             profileSource.put(section, group == null ? "" : group);
             String applied = profileApplied.get(section);
             if (group == null) {

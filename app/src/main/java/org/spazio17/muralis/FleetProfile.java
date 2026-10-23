@@ -65,7 +65,7 @@ final class FleetProfile {
             case "ambient": {
                 ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
                 values.put("mode", saver.mode);
-                values.put("idle_seconds", (long) saver.idleSeconds);
+                values.put("start_after_seconds", (long) saver.idleSeconds);
                 values.put("off_seconds", (long) saver.offSeconds);
                 values.put("url", saver.url);
                 values.put("dim_percent", (long) saver.dimPercent);
@@ -74,7 +74,7 @@ final class FleetProfile {
                 values.put("transition", saver.transition);
                 values.put("picture_fit", saver.pictureFit);
                 values.put("shuffle", saver.shuffle);
-                values.put("one_per_cycle", saver.onePerCycle);
+                values.put("one_per_start", saver.onePerCycle);
                 values.put("credit", saver.credit);
                 values.put("credit_corner", saver.creditCorner);
                 break;
@@ -82,6 +82,11 @@ final class FleetProfile {
             case "speaker":
                 values.put("network_speaker", config.networkSpeaker);
                 values.put("network_speaker_port", (long) config.networkSpeakerPort);
+                break;
+            case "integrations":
+                values.put("instances", Integrations.storeInstances(
+                        IntegrationSettings.sharedPart(KioskConfig.integrationsOf(context))));
+                values.put("integration_secrets", IntegrationSettings.sharedSecrets(context));
                 break;
             case "alerts":
                 values.put("alert_offline_minutes", config.alerts.offlineMinutes);
@@ -120,7 +125,7 @@ final class FleetProfile {
         switch (section) {
             case "dashboard":
                 // Stored but not shown at the welcome screen: KioskService.setDashboardUrl.
-                command(service, "kiosk.set_url", url(values, "dashboard_url"), null, null,
+                command(service, "dashboard.url", url(values, "dashboard_url"), null, null,
                         "dashboard_url", now, values, refused);
                 break;
             case "mqtt": {
@@ -186,7 +191,7 @@ final class FleetProfile {
                         refused);
                 break;
             case "ambient":
-                for (String key : new String[] {"mode", "idle_seconds", "off_seconds",
+                for (String key : new String[] {"mode", "start_after_seconds", "off_seconds",
                         "picture_seconds", "dim_percent", "url", "on_wake", "transition",
                         "picture_fit", "credit_corner"}) {
                     Object value = values.get(key);
@@ -194,7 +199,7 @@ final class FleetProfile {
                             value instanceof Number ? String.valueOf(((Number) value).longValue())
                                     : text(values, key), null, key, now, values, refused);
                 }
-                for (String key : new String[] {"shuffle", "one_per_cycle", "credit"}) {
+                for (String key : new String[] {"shuffle", "one_per_start", "credit"}) {
                     command(service, "ambient." + key, null, null, flag(values, key, false),
                             key, now, values, refused);
                 }
@@ -219,6 +224,10 @@ final class FleetProfile {
                 }
                 break;
             }
+            case "integrations":
+                refused.addAll(IntegrationSettings.applyShared(context,
+                        text(values, "instances"), text(values, "integration_secrets")));
+                break;
             case "alerts":
                 for (Field field : fields(section)) {
                     if (!values.containsKey(field.key)
@@ -479,6 +488,16 @@ final class FleetProfile {
         }
     }
 
+    /** A word table as a select's options: key, word, key, word, ... */
+    private static String[] flat(String[][] words) {
+        String[] options = new String[words.length * 2];
+        for (int index = 0; index < words.length; index++) {
+            options[index * 2] = words[index][0];
+            options[index * 2 + 1] = words[index][1];
+        }
+        return options;
+    }
+
     /** The values of each section, in the order the Fleet page shows them. */
     static List<Field> fields(String section) {
         List<Field> fields = new ArrayList<>();
@@ -502,12 +521,9 @@ final class FleetProfile {
                 break;
             case "display":
                 fields.add(new Field("orientation", "Orientation", "select",
-                        KioskConfig.ORIENTATION_AUTO, "Auto-rotate",
-                        KioskConfig.ORIENTATION_LANDSCAPE, "Landscape",
-                        KioskConfig.ORIENTATION_PORTRAIT, "Portrait"));
-                fields.add(new Field("display_off_method", "Display off", "select",
-                        DisplayOffPolicy.AUTO, "Automatic", DisplayOffPolicy.SLEEP, "Sleep",
-                        DisplayOffPolicy.FILM, "Black overlay"));
+                        flat(KioskCommandDispatcher.ORIENTATION_WORDS)));
+                fields.add(new Field("display_off_method", "Display off method", "select",
+                        flat(KioskCommandDispatcher.DISPLAY_OFF_WORDS)));
                 fields.add(new Field("auto_brightness", "Automatic brightness", "switch"));
                 break;
             case "speaker":
@@ -515,33 +531,27 @@ final class FleetProfile {
                 fields.add(new Field("network_speaker_port", "Port", "number"));
                 break;
             case "ambient":
-                fields.add(new Field("mode", "Mode", "select", ScreensaverPolicy.OFF, "Off",
-                        ScreensaverPolicy.DIM, "Dimmed page", ScreensaverPolicy.FILM, "Black",
-                        ScreensaverPolicy.URL, "Web page", ScreensaverPolicy.PICTURES, "Pictures"));
-                fields.add(new Field("idle_seconds", "After (seconds)", "number"));
-                fields.add(new Field("off_seconds", "Display off after (seconds, 0 never)",
+                fields.add(new Field("mode", "Ambient mode", "select",
+                        flat(KioskCommandDispatcher.AMBIENT_MODE_WORDS)));
+                fields.add(new Field("start_after_seconds",
+                        "Ambient start after (seconds, 0 = never)", "number"));
+                fields.add(new Field("off_seconds",
+                        "Ambient before display off (seconds, 0 = never)", "number"));
+                fields.add(new Field("url", "Ambient web page", "url"));
+                fields.add(new Field("dim_percent", "Ambient dim brightness (percent)", "number"));
+                fields.add(new Field("on_wake", "Ambient on wake", "select",
+                        flat(KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS)));
+                fields.add(new Field("picture_seconds", "Ambient picture duration (seconds)",
                         "number"));
-                fields.add(new Field("url", "Web page address", "url"));
-                fields.add(new Field("dim_percent", "Dim to (percent)", "number"));
-                fields.add(new Field("on_wake", "On a touch", "select",
-                        ScreensaverPolicy.WAKE_SCREENSAVER, "Show Ambient first",
-                        ScreensaverPolicy.WAKE_DASHBOARD, "Show the page at once"));
-                fields.add(new Field("picture_seconds", "Seconds per picture", "number"));
-                fields.add(new Field("transition", "Transition", "select",
-                        ScreensaverPolicy.TRANSITION_NONE, "None", ScreensaverPolicy.TRANSITION_FADE,
-                        "Fade", ScreensaverPolicy.TRANSITION_SLIDE, "Slide"));
-                fields.add(new Field("picture_fit", "Picture fit", "select",
-                        ScreensaverPolicy.FIT_WHOLE, "Whole picture", ScreensaverPolicy.FIT_FILL,
-                        "Fill the screen", ScreensaverPolicy.FIT_STRETCH, "Stretch",
-                        ScreensaverPolicy.FIT_ACTUAL, "Actual size"));
-                fields.add(new Field("shuffle", "Shuffle", "switch"));
-                fields.add(new Field("one_per_cycle", "One picture per cycle", "switch"));
-                fields.add(new Field("credit", "Show the credit", "switch"));
-                fields.add(new Field("credit_corner", "Credit corner", "select",
-                        ScreensaverPolicy.CORNER_BOTTOM_LEFT, "Bottom left",
-                        ScreensaverPolicy.CORNER_BOTTOM_RIGHT, "Bottom right",
-                        ScreensaverPolicy.CORNER_TOP_LEFT, "Top left",
-                        ScreensaverPolicy.CORNER_TOP_RIGHT, "Top right"));
+                fields.add(new Field("transition", "Ambient transition", "select",
+                        flat(KioskCommandDispatcher.AMBIENT_TRANSITION_WORDS)));
+                fields.add(new Field("picture_fit", "Ambient picture fit", "select",
+                        flat(KioskCommandDispatcher.AMBIENT_FIT_WORDS)));
+                fields.add(new Field("shuffle", "Ambient shuffle", "switch"));
+                fields.add(new Field("one_per_start", "Ambient one picture per start", "switch"));
+                fields.add(new Field("credit", "Ambient credit line", "switch"));
+                fields.add(new Field("credit_corner", "Ambient credit corner", "select",
+                        flat(KioskCommandDispatcher.AMBIENT_CORNER_WORDS)));
                 break;
             case "alerts":
                 fields.add(new Field("alert_offline_minutes",
