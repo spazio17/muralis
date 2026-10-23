@@ -2404,7 +2404,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
      * The first unlock after a boot, when credential-encrypted storage becomes readable, and on a
      * device whose Keystore waits for the unlock, the secrets too. This service starts on
      * {@code LOCKED_BOOT_COMPLETED}, and a web admin started then may have found no TLS key it
-     * could read (see {@code AdminCertificate.load}) and be serving plain HTTP, or not have started
+     * could read (see {@code AdminCertificate.load}) and be closed, or not have started
      * at all because the admin password could not be read either. Neither changes the web admin's own settings, so the fingerprint check in
      * {@link #restartControllers} would see nothing to do: the fingerprint is dropped here to force
      * the one restart that matters. A web admin serving its own certificate because the uploaded
