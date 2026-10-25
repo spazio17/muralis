@@ -45,6 +45,7 @@ public final class AutomationsTest {
         testWhenStateReseededOnlyForChangedWhen();
         testIfOnTheWhensOwnSensor();
         testWhensDueTogether();
+        testEditorOps();
         System.out.println("AutomationsTest passed");
     }
 
@@ -309,13 +310,13 @@ public final class AutomationsTest {
         w(window).level = 12.5;
         w(window).minutes = 3;
         s(window).argument = "It is dark";
-        Automations.setWindow(window, 22 * 60, 6 * 60);
+        window.conditions.add(window(22 * 60, 6 * 60, Automations.ALL_DAYS));
         window.enabled = false;
         rules.add(window);
         List<Automations.Rule> back = Automations.parse(Automations.store(rules));
         require(back.size() == 2, "two rules stored and read back");
         Automations.Rule read = back.get(1);
-        Automations.Condition time = Automations.firstTimeCondition(read);
+        Automations.Condition time = read.conditions.isEmpty() ? null : read.conditions.get(0);
         require(w(read).level == 12.5 && w(read).minutes == 3 && s(read).argument.equals("It is dark")
                 && time != null && time.from == 22 * 60 && time.to == 6 * 60
                 && time.days == Automations.ALL_DAYS && !read.enabled,
@@ -403,7 +404,7 @@ public final class AutomationsTest {
         s(sound).argument = "ftp://x/y.mp3";
         require(Automations.validate(sound, names()) != null, "a sound needs http or https");
         Automations.Rule equal = rule("proximity", "near", "display_on");
-        Automations.setWindow(equal, 7 * 60, 7 * 60);
+        equal.conditions.add(window(7 * 60, 7 * 60, Automations.ALL_DAYS));
         require("the time window ends when it starts".equals(Automations.validate(equal, names())),
                 "a window ending when it starts is refused");
         Automations.Rule absent = rule("pressure", "x", "display_on");
@@ -536,7 +537,7 @@ public final class AutomationsTest {
         Automations.Rule night = rule("proximity", "near", "say");
         night.id = "r2";
         s(night).argument = "x";
-        Automations.setWindow(night, 22 * 60, 6 * 60);
+        night.conditions.add(window(22 * 60, 6 * 60, Automations.ALL_DAYS));
         Automations.Rule off = rule("proximity", "near", "reload");
         off.id = "r3";
         off.enabled = false;
@@ -643,7 +644,7 @@ public final class AutomationsTest {
                 && w(night).then.size() == 1 && s(night).action.equals("say")
                 && s(night).argument.equals("Dark") && !night.enabled && night.changedAt == 77,
                 "the flat fields land in the When and its action");
-        Automations.Condition time = Automations.firstTimeCondition(night);
+        Automations.Condition time = night.conditions.isEmpty() ? null : night.conditions.get(0);
         require(night.conditions.size() == 1 && time != null && time.from == 22 * 60
                 && time.to == 6 * 60 && time.days == Automations.ALL_DAYS,
                 "the window becomes a time condition every day");
@@ -1196,6 +1197,116 @@ public final class AutomationsTest {
         require(later.steps.equals(java.util.Arrays.asList("r1:light_on", "r1:display_on",
                 "r1:light_off", "r1:light_on")), "a delete ends the run in its Wait: "
                 + later.steps);
+    }
+
+    /**
+     * The web editor's structure changes: each adds, removes or moves one part, keeps the
+     * objects (so a moved action carries what was typed in it), and changes nothing at a limit,
+     * at an end, or for an op it does not know. Then the Uptime Kuma rule built by them alone.
+     */
+    private static void testEditorOps() throws org.json.JSONException {
+        integrations();
+        Automations.Rule rule = rule("proximity", "near", "display_on");
+        Automations.Step first = rule.whens.get(0).then.get(0);
+        require(Automations.applyOp(rule, "add_action:0"), "an action is added");
+        Automations.Step second = rule.whens.get(0).then.get(1);
+        require(Automations.applyOp(rule, "up:0:1"), "the second moves up");
+        require(rule.whens.get(0).then.get(0) == second && rule.whens.get(0).then.get(1) == first,
+                "the same objects, swapped");
+        require(!Automations.applyOp(rule, "up:0:0"), "the first cannot move up");
+        require(!Automations.applyOp(rule, "down:0:1"), "the last cannot move down");
+        require(Automations.applyOp(rule, "down:0:0"), "the first moves down");
+        require(rule.whens.get(0).then.get(0) == first, "back in order");
+        require(Automations.applyOp(rule, "remove_action:0:1"), "an action is removed");
+        require(rule.whens.get(0).then.size() == 1 && rule.whens.get(0).then.get(0) == first,
+                "the other stays");
+        require(!Automations.applyOp(rule, "remove_action:0:0"), "a When keeps its last action");
+        require(!Automations.applyOp(rule, "remove_when:0"), "a rule keeps its last When");
+
+        require(Automations.applyOp(rule, "add_when"), "a When is added");
+        require(rule.whens.size() == 2 && rule.whens.get(1).then.size() == 1,
+                "with one action of its own");
+        require(Automations.applyOp(rule, "remove_when:0"), "the first When is removed");
+        require(rule.whens.size() == 1 && rule.whens.get(0).sensor.isEmpty(),
+                "the added one stays");
+
+        require(Automations.applyOp(rule, "add_condition"), "a condition is added");
+        Automations.Condition time = rule.conditions.get(0);
+        require(Automations.TIME.equals(time.sensor) && !time.timed()
+                        && time.days == Automations.ALL_DAYS,
+                "a time of day, all day, every day: " + time.sensor);
+        require(Automations.applyOp(rule, "remove_condition:0") && rule.conditions.isEmpty(),
+                "and removed");
+        require(!Automations.applyOp(rule, "remove_condition:0"), "none left to remove");
+
+        for (String nonsense : new String[] {"", "save", "up:x:1", "up:0", "up:5:0", "down:0:-1",
+                "add_action:3", "remove_when:1:2", "add_when:0", null}) {
+            require(!Automations.applyOp(rule, nonsense), "not an op that applies: " + nonsense);
+        }
+
+        // The limits: Whens, actions per When, actions together, conditions.
+        Automations.Rule full = rule("proximity", "near", "display_on");
+        while (Automations.applyOp(full, "add_action:0")) {
+            // up to the limit
+        }
+        require(w(full).then.size() == Automations.MAX_STEPS_PER_WHEN,
+                "actions per When: " + w(full).then.size());
+        while (Automations.applyOp(full, "add_when")) {
+            // up to the limit
+        }
+        require(full.whens.size() == Automations.MAX_WHENS, "Whens: " + full.whens.size());
+        while (Automations.applyOp(full, "add_action:1")) {
+            // up to the limit
+        }
+        require(Automations.stepCount(full) == Automations.MAX_STEPS,
+                "actions together: " + Automations.stepCount(full));
+        require(!Automations.applyOp(full, "add_action:2"), "no action past the total");
+        while (Automations.applyOp(full, "add_condition")) {
+            // up to the limit
+        }
+        require(full.conditions.size() == Automations.MAX_CONDITIONS,
+                "conditions: " + full.conditions.size());
+
+        // The Uptime Kuma rule as a person builds it: a When, two more actions, a second When
+        // with one more, a time condition.
+        Automations.Rule kuma = new Automations.Rule();
+        kuma.name = "A service is down";
+        kuma.whens.add(when(KUMA, "int_on", "light_on"));
+        require(Automations.applyOp(kuma, "add_action:0") && Automations.applyOp(kuma, "add_action:0")
+                && Automations.applyOp(kuma, "add_when") && Automations.applyOp(kuma, "add_action:1")
+                && Automations.applyOp(kuma, "add_condition"), "every op applies");
+        Automations.When down = kuma.whens.get(0);
+        down.cooldown = 0;
+        down.then.get(0).argument = "255,0,0";
+        down.then.get(1).action = "reload";
+        down.then.get(2).action = "popup";
+        down.then.get(2).argument = "A service is down. Check the status page.";
+        down.then.get(2).seconds = 30;
+        down.then.get(2).chime = true;
+        // The pop-up before the reload, as the plan's rule has it.
+        require(Automations.applyOp(kuma, "up:0:2"), "the pop-up moves up");
+        Automations.When up = kuma.whens.get(1);
+        up.sensor = KUMA;
+        up.event = "int_off";
+        up.cooldown = 0;
+        up.then.get(0).action = "light_off";
+        up.then.get(1).action = "reload";
+        Automations.Condition hours = kuma.conditions.get(0);
+        hours.from = 8 * 60;
+        hours.to = 18 * 60;
+        hours.days = 0x1F;
+        require(Automations.validate(kuma, names()) == null,
+                "valid: " + Automations.validate(kuma, names()));
+        org.json.JSONObject stored = Automations.toJson(Collections.singletonList(kuma))
+                .optJSONObject(0);
+        org.json.JSONArray steps = stored.optJSONArray("when").optJSONObject(0)
+                .optJSONArray("then");
+        require(steps.optJSONObject(0).optString("action", "").equals("light_on")
+                        && steps.optJSONObject(1).optString("action", "").equals("popup")
+                        && steps.optJSONObject(2).optString("action", "").equals("reload"),
+                "light, pop-up, reload: " + steps);
+        require(stored.optJSONArray("if").optJSONObject(0).optJSONArray("days").length() == 5,
+                "Monday to Friday: " + stored);
     }
 
     private static void require(boolean condition, String message) {

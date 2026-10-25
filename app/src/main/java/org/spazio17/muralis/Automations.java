@@ -414,10 +414,7 @@ final class Automations {
         }
     }
 
-    /**
-     * The rule's first When, added when it has none: the editors as they stand edit this one,
-     * its first action and the first time condition, and keep the rest as it is.
-     */
+    /** The rule's first When, added when it has none: the panel's editor draws a new rule so. */
     static When firstWhen(Rule rule) {
         if (rule.whens.isEmpty()) {
             rule.whens.add(new When());
@@ -433,39 +430,103 @@ final class Automations {
         return when.then.get(0);
     }
 
-    /** The rule's first time condition, or null; see {@link #firstWhen}. */
-    static Condition firstTimeCondition(Rule rule) {
-        for (Condition condition : rule.conditions) {
-            if (TIME.equals(condition.sensor)) {
-                return condition;
+    /**
+     * Applies one change of shape the web editor's buttons ask for to a draft, the parts kept
+     * as objects so a moved action carries what was typed in it: "add_when", "remove_when:1",
+     * "add_action:1", "remove_action:1:2", "up:1:2", "down:1:2", "add_condition",
+     * "remove_condition:0" (indexes from 0). Whether the rule changed: an op that names no part,
+     * goes past a limit or would leave a When with no action, or a rule with no When, changes
+     * nothing.
+     */
+    static boolean applyOp(Rule rule, String op) {
+        String[] parts = op == null ? new String[0] : op.split(":", -1);
+        int[] at = new int[parts.length == 0 ? 0 : parts.length - 1];
+        try {
+            for (int index = 0; index < at.length; index++) {
+                at[index] = Integer.parseInt(parts[index + 1]);
             }
+        } catch (NumberFormatException notAnIndex) {
+            return false;
         }
-        return null;
+        String name = parts.length == 0 ? "" : parts[0];
+        switch (name + "/" + at.length) {
+            case "add_when/0":
+                if (rule.whens.size() >= MAX_WHENS || stepCount(rule) >= MAX_STEPS) {
+                    return false;
+                }
+                // With one action, as a When cannot be stored without one.
+                When when = new When();
+                when.then.add(new Step());
+                rule.whens.add(when);
+                return true;
+            case "remove_when/1":
+                if (rule.whens.size() < 2 || !within(rule.whens, at[0])) {
+                    return false;
+                }
+                rule.whens.remove(at[0]);
+                return true;
+            case "add_action/1":
+                if (!within(rule.whens, at[0])
+                        || rule.whens.get(at[0]).then.size() >= MAX_STEPS_PER_WHEN
+                        || stepCount(rule) >= MAX_STEPS) {
+                    return false;
+                }
+                rule.whens.get(at[0]).then.add(new Step());
+                return true;
+            case "remove_action/2":
+            case "up/2":
+            case "down/2": {
+                if (!within(rule.whens, at[0]) || !within(rule.whens.get(at[0]).then, at[1])) {
+                    return false;
+                }
+                List<Step> then = rule.whens.get(at[0]).then;
+                int step = at[1];
+                if (name.equals("remove_action")) {
+                    if (then.size() < 2) {
+                        return false;
+                    }
+                    then.remove(step);
+                    return true;
+                }
+                int other = name.equals("up") ? step - 1 : step + 1;
+                if (!within(then, other)) {
+                    return false;
+                }
+                Collections.swap(then, step, other);
+                return true;
+            }
+            case "add_condition/0":
+                if (rule.conditions.size() >= MAX_CONDITIONS) {
+                    return false;
+                }
+                // A time of day, the first choice of the condition's menu: every day, all day,
+                // until times or days are chosen.
+                Condition condition = new Condition();
+                condition.sensor = TIME;
+                rule.conditions.add(condition);
+                return true;
+            case "remove_condition/1":
+                if (!within(rule.conditions, at[0])) {
+                    return false;
+                }
+                rule.conditions.remove(at[0]);
+                return true;
+            default:
+                return false;
+        }
     }
 
-    /**
-     * Sets the editors' "Between these times" on the first time condition: a window from
-     * {@code from} to {@code to}, or, with -1, none. A condition left with neither times nor
-     * chosen days says nothing and goes; one with days keeps them.
-     */
-    static void setWindow(Rule rule, int from, int to) {
-        Condition time = firstTimeCondition(rule);
-        if (from < 0 && to < 0) {
-            if (time != null && time.days == ALL_DAYS) {
-                rule.conditions.remove(time);
-            } else if (time != null) {
-                time.from = -1;
-                time.to = -1;
-            }
-            return;
+    private static boolean within(List<?> list, int index) {
+        return index >= 0 && index < list.size();
+    }
+
+    /** The actions of every When together, which {@link #MAX_STEPS} bounds. */
+    static int stepCount(Rule rule) {
+        int steps = 0;
+        for (When when : rule.whens) {
+            steps += when.then.size();
         }
-        if (time == null) {
-            time = new Condition();
-            time.sensor = TIME;
-            rule.conditions.add(time);
-        }
-        time.from = from;
-        time.to = to;
+        return steps;
     }
 
     /** The shape of a rule's id: newId's alphabet, the shipped "wake" and the old six-letter ids. */

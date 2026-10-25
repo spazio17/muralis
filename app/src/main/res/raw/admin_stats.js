@@ -283,7 +283,9 @@ window.muralisPollSoon=function(){if(stopped){return;}clearTimeout(pollTimer);po
 // A list another surface changed (a rule added or renamed on the panel, a sensor switched on
 // over MQTT) is fetched again and swapped in place when its key moves, the regions marked with
 // data-lists-kind; never while something in it is being edited, and a later poll tries again.
+// An automation draft the server drew again from its form counts as being edited as a whole.
 function editingIn(root){var a=document.activeElement;
+if(root.querySelector('form[data-draft]')){return true;}
 if(a&&root.contains(a)&&(a.tagName==='TEXTAREA'||a.tagName==='SELECT'||(a.tagName==='INPUT'&&a.type!=='checkbox'&&a.type!=='radio'))){return true;}
 return Array.prototype.some.call(root.querySelectorAll('input,select,textarea'),function(el){
 if(el.hasAttribute('data-setting')||el.type==='hidden'||el.offsetParent===null){return false;}
