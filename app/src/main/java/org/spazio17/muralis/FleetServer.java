@@ -1104,6 +1104,12 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only POST"));
                 }
+            } else if ("/fleet/panel".equals(parts[1])) {
+                if ("POST".equals(parts[0])) {
+                    panelAction(body, output);
+                } else {
+                    respond(output, 405, error("only POST"));
+                }
             } else if ("/fleet/values".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     takeValues(caller, body, output);
@@ -3186,6 +3192,78 @@ final class FleetServer {
             } catch (JSONException impossible) {
                 throw new IllegalStateException(impossible);
             }
+        }
+    }
+
+    /**
+     * {@code POST /fleet/panel} from a member, {"action": "dashboard", "settings" or
+     * "home_screen"}: this panel's dashboard or settings opened, or Muralis left for the home
+     * screen, as the Fleet page asks.
+     */
+    private void panelAction(byte[] body, OutputStream output) throws IOException {
+        String action;
+        try {
+            action = new JSONObject(new String(body, StandardCharsets.UTF_8)).optString("action");
+        } catch (JSONException notJson) {
+            respond(output, 400, error("the body must be a JSON object"));
+            return;
+        }
+        if (!SETTINGS.equals(action) && !HOME_SCREEN.equals(action) && !DASHBOARD.equals(action)) {
+            respond(output, 400, error("action must be dashboard, settings or home_screen"));
+            return;
+        }
+        String problem = ownPanelAction(action);
+        if (problem != null) {
+            respond(output, 409, error(problem));
+            return;
+        }
+        try {
+            respond(output, 200, new JSONObject().put("status", "accepted"));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** What the Fleet page asks a panel to do: open its settings, or leave Muralis. */
+    static final String SETTINGS = "settings";
+    static final String HOME_SCREEN = "home_screen";
+    static final String DASHBOARD = "dashboard";
+
+    private static String ownPanelAction(String action) {
+        KioskService service = KioskService.liveService();
+        if (service == null) {
+            return SERVICE_DOWN;
+        }
+        if (DASHBOARD.equals(action)) {
+            return service.openDashboard();
+        }
+        return SETTINGS.equals(action) ? service.openSettings() : service.leaveForHomeScreen();
+    }
+
+    /**
+     * Opens {@code member}'s settings or sends it to its home screen, here or over the member
+     * endpoint; null when done, else why not. Not on the main thread.
+     */
+    static String panelActionOn(Context context, java.util.Map<String, Object> member,
+            String action) {
+        if (isSelf(context, member)) {
+            return ownPanelAction(action);
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return "the panel did not answer";
+        }
+        try {
+            Reply reply = call(context, address, portOf(member, spki), spki, "POST",
+                    "/fleet/panel", new JSONObject().put("action", action));
+            // An older Muralis has no such route.
+            return reply.status == 200 ? null : reply.status == 404
+                    ? "its Muralis is too old for this" : reply.reason();
+        } catch (IOException | RuntimeException | JSONException failed) {
+            Log.d(TAG, "Panel action not answered by key " + FleetTls.shortForm(spki) + ": "
+                    + failed.getMessage());
+            return "the panel did not answer";
         }
     }
 

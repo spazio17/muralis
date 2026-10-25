@@ -478,6 +478,19 @@ public final class KioskCommandDispatcherTest {
         require(r.status.equals("rejected") && r.detail.equals(executor.identifyProblem),
                 "panel.identify did not carry the executor's refusal");
         executor.identifyProblem = null;
+        // The way in and out from afar, without the corner taps: the web admin and the Fleet page.
+        r = KioskCommandDispatcher.dispatch("panel.dashboard",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("dashboard"),
+                "panel.dashboard did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("panel.settings",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("settings"),
+                "panel.settings did not reach the executor");
+        r = KioskCommandDispatcher.dispatch("panel.home_screen",
+                KioskCommandDispatcher.CommandArgs.EMPTY, executor);
+        require(r.status.equals("accepted") && executor.calls.contains("home_screen"),
+                "panel.home_screen did not reach the executor");
         r = KioskCommandDispatcher.dispatch("proximity.calibrate",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "covered"), executor);
         require(r.status.equals("accepted") && executor.calls.contains("calibrateProximity:covered"),
@@ -1473,6 +1486,24 @@ public final class KioskCommandDispatcherTest {
         public String identify() {
             calls.add("identify");
             return identifyProblem;
+        }
+
+        @Override
+        public String openDashboard() {
+            calls.add("dashboard");
+            return null;
+        }
+
+        @Override
+        public String openSettings() {
+            calls.add("settings");
+            return null;
+        }
+
+        @Override
+        public String leaveForHomeScreen() {
+            calls.add("home_screen");
+            return null;
         }
 
         @Override

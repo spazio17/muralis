@@ -401,6 +401,28 @@ public final class KioskActivity extends Activity {
         pendingEscapeAt = android.os.SystemClock.elapsedRealtime();
         pendingEscape = which;
     }
+    /**
+     * What was asked from afar (panel.settings, dashboard.open) while Muralis was not in front,
+     * after "Go to home screen": done by the next onNewIntent or onResume. In
+     * memory, never an extra, for the same reason as pendingEscape.
+     */
+    private static volatile String remoteAsk;
+    private static volatile long remoteAskAt;
+
+    static void handRemote(String uiCommand) {
+        remoteAskAt = android.os.SystemClock.elapsedRealtime();
+        remoteAsk = uiCommand;
+    }
+
+    /** Does what was asked from afar in the last few seconds. */
+    private void takeRemoteAsk() {
+        String ask = remoteAsk;
+        long at = remoteAskAt;
+        remoteAsk = null;
+        if (ask != null && android.os.SystemClock.elapsedRealtime() - at < 10_000L) {
+            handleUiCommand(ask, -1, null);
+        }
+    }
     static final String ESCAPE_SETTINGS = "settings";
     static final String ESCAPE_LAUNCHER = "launcher";
     /** App lock: when the app was last opened, and how often in a row it came straight back. */
@@ -914,6 +936,7 @@ public final class KioskActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        takeRemoteAsk();
         // In front: the camera and microphone foreground types a background start could not
         // take are asked for again; see KioskService.refreshForegroundTypes.
         KioskService.foregroundTypesSoon(this);
@@ -1917,9 +1940,9 @@ public final class KioskActivity extends Activity {
                     toLauncher ? "to the home screen" : "to the settings");
         }
         if (toLauncher) {
-            gateBehindPin("To leave Muralis for the home screen", true, this::openSystemLauncher);
+            gateBehindPin("To go to the home screen", true, this::openSystemLauncher);
         } else {
-            gateBehindPin("To open Muralis settings", false, () -> {
+            gateBehindPin("To open settings", false, () -> {
                 openSection = "";
                 showConfiguration(KioskConfig.load(this));
                 Toast.makeText(this, R.string.configuration_escape_opened,
@@ -1934,6 +1957,7 @@ public final class KioskActivity extends Activity {
         String escape = pendingEscape;
         boolean fresh = android.os.SystemClock.elapsedRealtime() - pendingEscapeAt < 5_000L;
         pendingEscape = null;
+        takeRemoteAsk();
         if (escape != null && fresh && KioskConfig.load(this).escapeSequencesConfigured()) {
             escapeMatched(ESCAPE_LAUNCHER.equals(escape));
         }
@@ -4653,9 +4677,9 @@ public final class KioskActivity extends Activity {
         TextView escapeSummary = new FlushText(this);
         escapeSummary.setTextColor(theme.subtext);
         escapeSummary.setTextSize(14);
-        escapeSummary.setText("Settings: "
+        escapeSummary.setText("Open settings: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.settingsSequence))
-                + "\nHome screen: "
+                + "\nGo to home screen: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.launcherSequence))
                 + "\nPIN: " + (KioskConfig.escapePinSet(this) ? "set" : "not set"));
         escapeCard.addView(escapeSummary, matchWrap());
@@ -6130,6 +6154,20 @@ public final class KioskActivity extends Activity {
                         return refused;
                     })));
             box.addView(fittingButtonRow(identify, remove), matchWrapClose());
+            // That panel's settings, or Muralis left there, without its corner taps. Not for
+            // this panel: here they would be a way out past its own combinations and PIN.
+            Button settings = textButton(theme, "Open settings");
+            settings.setOnClickListener(view -> fleetWork(app,
+                    () -> FleetServer.panelActionOn(app, entry, FleetServer.SETTINGS)));
+            Button dashboard = textButton(theme, "Open dashboard");
+            dashboard.setOnClickListener(view -> fleetWork(app,
+                    () -> FleetServer.panelActionOn(app, entry, FleetServer.DASHBOARD)));
+            Button leave = textButton(theme, "Go to home screen");
+            leave.setOnClickListener(view -> confirmKeepingScreen(
+                    HttpAdminServer.leaveTitle(member.name), HttpAdminServer.LEAVE_CONSEQUENCE,
+                    "Go to home screen", false, () -> fleetWork(app,
+                            () -> FleetServer.panelActionOn(app, entry, FleetServer.HOME_SCREEN))));
+            box.addView(fittingButtonRow(dashboard, settings, leave), matchWrapClose());
         }
         return box;
     }
@@ -14474,8 +14512,8 @@ public final class KioskActivity extends Activity {
                 this::showSettings), matchWrap());
 
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
-                sequenceCard(theme, "Open Muralis settings", config.settingsSequence, false),
-                sequenceCard(theme, "Leave Muralis for the home screen", config.launcherSequence, true),
+                sequenceCard(theme, "Open settings", config.settingsSequence, false),
+                sequenceCard(theme, "Go to home screen", config.launcherSequence, true),
                 pinCard(theme))),
                 matchWrap());
 
@@ -14631,7 +14669,7 @@ public final class KioskActivity extends Activity {
         list.setTextColor(theme.text);
         list.setTextSize(15);
         list.setLineSpacing(dp(6), 1f);
-        list.setText("1.   opens Muralis settings\n2.   leaves Muralis for the home screen");
+        list.setText("1.   opens the settings\n2.   goes to the home screen");
         page.addView(list, matchWrapClose());
 
         TextView note = new FlushText(this);
@@ -14828,7 +14866,7 @@ public final class KioskActivity extends Activity {
         }
 
         TextView title = new FlushText(this);
-        title.setText(forLauncher ? "Leave Muralis for the home screen" : "Open Muralis settings");
+        title.setText(forLauncher ? "Go to home screen" : "Open settings");
         title.setTextColor(theme.text);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
@@ -18820,6 +18858,17 @@ public final class KioskActivity extends Activity {
                 break;
             case "panel.identify":
                 showIdentify();
+                break;
+            case "panel.settings":
+                // Asked from the web admin, which is already signed in: no PIN.
+                if (AppLock.appUp) {
+                    AppLock.bringMuralisForward(this);
+                }
+                openSection = "";
+                showConfiguration(KioskConfig.load(this));
+                break;
+            case "panel.home_screen":
+                openSystemLauncher();
                 break;
             case "applock.changed":
                 // Chosen, changed or switched off elsewhere (the web admin): over the app, Muralis

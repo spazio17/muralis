@@ -6,8 +6,8 @@
     <string name="device_admin_label">Muralis kiosk policy</string>
     <string name="device_admin_description">Allows Muralis to hold the screen in kiosk mode and hide the system bars.</string>
     <string name="device_admin_disable_warning">Disabling this returns the system status and navigation bars to the dashboard.</string>
-    <string name="admin_escape_opened">System launcher opened; use the Muralis icon or notification to return</string>
-    <string name="admin_escape_unavailable">System launcher is unavailable</string>
+    <string name="admin_escape_opened">Home screen opened</string>
+    <string name="admin_escape_unavailable">The home screen is not available</string>
     <string name="configuration_escape_opened">Muralis configuration opened</string>
     <!-- The parking page shows the Android robot, which Google shares under CC BY 3.0. This is the
          credit the licence asks for (author, licence, and that the work is modified), in the shape

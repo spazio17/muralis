@@ -274,6 +274,15 @@ final class KioskCommandDispatcher {
          */
         String identify();
 
+        /** The dashboard, Muralis brought back to the front after it left; see openSettings. */
+        String openDashboard();
+
+        /** The settings opened on the glass, the way the corner taps open them. */
+        String openSettings();
+
+        /** Muralis left for the device's home screen, as the corner taps leave it. */
+        String leaveForHomeScreen();
+
         /** One step of the proximity calibration, covered, clear or reset; see Sensors. */
         String calibrateProximity(String step);
 
@@ -659,6 +668,18 @@ final class KioskCommandDispatcher {
             }
             case "panel.identify": {
                 String problem = executor.identify();
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "panel.dashboard": {
+                String problem = executor.openDashboard();
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "panel.settings": {
+                String problem = executor.openSettings();
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "panel.home_screen": {
+                String problem = executor.leaveForHomeScreen();
                 return problem == null ? accepted() : rejected(problem);
             }
             case "proximity.calibrate": {
