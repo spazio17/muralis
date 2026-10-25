@@ -641,6 +641,72 @@ final class FleetProfile {
         return values;
     }
 
+    /**
+     * One short line saying what a scope shares of {@code section}, for the Fleet page's list of
+     * shared settings: never a secret, an address without its query (which may hold one).
+     */
+    static String summary(String section, Map<String, Object> values) {
+        if (values == null) {
+            return "Not shared";
+        }
+        switch (section) {
+            case "dashboard": {
+                String address = shown(values.get("dashboard_url"));
+                int query = address.indexOf('?');
+                return address.isEmpty() ? "No address" : query < 0 ? address
+                        : address.substring(0, query);
+            }
+            case "mqtt": {
+                String host = shown(values.get("mqtt_host"));
+                return host.isEmpty() ? "No broker" : host + ", port "
+                        + shown(values.get("mqtt_port"))
+                        + (Boolean.TRUE.equals(values.get("mqtt_tls")) ? ", encrypted" : "");
+            }
+            case "web_admin":
+                return Boolean.FALSE.equals(values.get("web_admin_enabled")) ? "Off"
+                        : "Port " + shown(values.get("http_port"));
+            case "display":
+                return word("display", "orientation", values);
+            case "ambient":
+                return word("ambient", "mode", values);
+            case "speaker":
+                return Boolean.TRUE.equals(values.get("network_speaker")) ? "On" : "Off";
+            case "integrations": {
+                int count;
+                try {
+                    List<Object> instances = TinyJson.array(TinyJson.parse(
+                            shown(values.get("instances"))));
+                    count = instances == null ? 0 : instances.size();
+                } catch (IllegalArgumentException unreadable) {
+                    count = 0;
+                }
+                return count == 1 ? "1 integration" : count + " integrations";
+            }
+            case "alerts": {
+                long minutes = values.get("alert_offline_minutes") instanceof Number
+                        ? ((Number) values.get("alert_offline_minutes")).longValue() : 0;
+                return minutes > 0 ? "Offline after " + minutes + " min" : "Offline alert off";
+            }
+            default:
+                return "Shared";
+        }
+    }
+
+    /** A menu's words for the value it holds, the value itself when the menu has no such one. */
+    private static String word(String section, String key, Map<String, Object> values) {
+        String value = shown(values.get(key));
+        for (Field field : fields(section)) {
+            if (field.key.equals(key) && field.options != null) {
+                for (int i = 0; i + 1 < field.options.length; i += 2) {
+                    if (field.options[i].equals(value)) {
+                        return field.options[i + 1];
+                    }
+                }
+            }
+        }
+        return value;
+    }
+
     /** A value as a box shows it: a number whole (the list reads them back as decimals). */
     static String shown(Object value) {
         if (value == null) {

@@ -125,7 +125,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             SystemBarOverlap DisplayOffPolicy MqttConnectRetry PowerSupply TlsPresentation EscapePin \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
-            FleetAsker FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer \
+            FleetAsker FleetHealth FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer \
             DlnaProtocol; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
@@ -221,6 +221,13 @@ javac -d "${test_dir}/fleetasker" \
     "${pure_java_dir}/FleetAsker.java" \
     "${host_test_dir}/FleetAskerTest.java"
 java -cp "${test_dir}/fleetasker" org.spazio17.muralis.FleetAskerTest
+
+# Whether each panel of the fleet is healthy, the Fleet page's order and its redraw key.
+mkdir -p "${test_dir}/fleethealth"
+javac -d "${test_dir}/fleethealth" \
+    "${pure_java_dir}/FleetHealth.java" \
+    "${host_test_dir}/FleetHealthTest.java"
+java -cp "${test_dir}/fleethealth" org.spazio17.muralis.FleetHealthTest
 
 # The beacon distance: the trimmed running average, the model and the two calibration steps.
 javac -d "${test_dir}/beacons" \

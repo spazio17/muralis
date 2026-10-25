@@ -303,7 +303,9 @@ if(html===null){return;}
 var doc=new DOMParser().parseFromString(html,'text/html');
 stale.forEach(function(el){var fresh=doc.getElementById(el.id);if(!fresh||editingIn(el)){return;}
 el.innerHTML=fresh.innerHTML;el.setAttribute('data-lists',fresh.getAttribute('data-lists')||'');});
-if(window.muralisBindEditors){window.muralisBindEditors(document);}})
+if(window.muralisBindEditors){window.muralisBindEditors(document);}
+// A page's own script redoes what it adds to a list (the Fleet page's filters and pictures).
+document.dispatchEvent(new Event('muralis-lists'));})
 .catch(function(){}).then(function(){swapping=false;});}
 function poll(){requestedAt=Date.now();pollSentAt=requestedAt;fetch('/api/stats',{credentials:'same-origin'})
 .then(function(r){

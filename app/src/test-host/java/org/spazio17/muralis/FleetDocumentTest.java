@@ -363,6 +363,19 @@ public final class FleetDocumentTest {
         require(FleetDocument.describeChange(h4, h5).equals(
                 java.util.Collections.singletonList("dashboard no longer shared with the group Lobby")),
                 "a section unshared is wrong: " + FleetDocument.describeChange(h4, h5));
+        // A panel put in a group (Add to group, one version for several) and taken out again.
+        Map<String, Object> g6 = FleetDocument.withMembersInGroup(h5, "kiosk-a",
+                java.util.Collections.singletonList(memberSpki), "group-1", "t");
+        require(FleetDocument.describeChange(h5, g6).equals(
+                java.util.Collections.singletonList("panel Kitchen put in the group Lobby")),
+                "a panel put in a group is wrong: " + FleetDocument.describeChange(h5, g6));
+        require(FleetDocument.version(g6) == FleetDocument.version(h5) + 1,
+                "Add to group is not one version");
+        Map<String, Object> g7 = FleetDocument.withMemberGroups(g6, "kiosk-a", memberSpki,
+                java.util.Collections.<String>emptyList(), "t");
+        require(FleetDocument.describeChange(g6, g7).equals(
+                java.util.Collections.singletonList("panel Kitchen taken out of the group Lobby")),
+                "a panel taken out of a group is wrong: " + FleetDocument.describeChange(g6, g7));
         Map<String, Object> h6 = FleetDocument.withoutGroup(h5, "kiosk-a", "group-1", "t");
         require(FleetDocument.describeChange(h5, h6).equals(
                 java.util.Collections.singletonList("group Lobby removed")),

@@ -580,3 +580,66 @@ label.slider.small input[type=range]::-moz-range-track{height:6px;border-radius:
 label.slider.small input[type=range]::-moz-range-progress{height:6px;border-radius:3px}
 li.speaker label.tick{display:flex;align-items:center}
 li.speaker label.tick[hidden]{display:none}
+/* The Fleet page (2026-10-25): the head with its counts and actions, three tabs, the health
+   chips, search and group menu, the selection bar, rows with a dot, the panel's health chips,
+   its network speaker, and the two dialogs; without scripting a dialog opens in place through
+   its address. */
+.fleethead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin:8px 0 4px}
+.fleethead .counts{margin:0;color:var(--subtext)}
+.fleetactions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+a.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn svg,.fleetactions svg,.ib svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ib svg{width:24px;height:24px}
+.tabs{display:flex;gap:0;margin:8px 0 16px;border-bottom:1px solid var(--outline-variant,var(--outline))}
+.tabs a{flex:0 0 auto;padding:14px 16px 12px;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;text-decoration:none;border-bottom:3px solid transparent}
+.tabs a[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent)}
+.tabs a:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+a.fchip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 16px;border:1px solid var(--outline);border-radius:8px;color:var(--subtext);font-size:14px;font-weight:500;text-decoration:none}
+a.fchip[aria-current=true]{border-color:transparent;background:var(--secondary-container);color:var(--on-secondary-container)}
+a.fchip:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
+.fleettools{display:flex;flex-direction:column;gap:12px;padding:8px 12px 12px}
+.fleettools[hidden],.selbar[hidden]{display:none}
+.fleetfind{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.fleetfind input[type=search],.fleetfind select{flex:1 1 160px;min-width:0;height:40px;padding:0 12px;border:1px solid var(--outline);border-radius:20px;background:transparent;color:var(--text);font:inherit}
+.fleetfind .segmented{margin:0;flex:1 1 160px;max-width:none}
+html:not(.js) .fleetfind{display:none}
+.selbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:8px 12px;background:var(--secondary-container);color:var(--on-secondary-container);border-radius:12px;margin:0 4px 8px}
+.selbar #fleet-selcount{font-weight:500;flex:1 1 auto}
+.selbar select{height:40px;border-radius:20px;border:1px solid var(--outline);background:transparent;color:inherit;font:inherit;padding:0 8px}
+.ld .nav p.label{margin:16px 12px 4px;font-size:12px;font-weight:500;color:var(--subtext)}
+li.fleetrow{flex-wrap:wrap}
+li.fleetrow label.tick{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:48px;cursor:pointer}
+li.fleetrow .groups{font-size:12px;color:var(--subtext);white-space:nowrap}
+li.fleetrow .trail{display:flex;align-items:center;gap:4px}
+.dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--subtext)}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.off{background:var(--outline)}
+#fleet-rows.pictures img.rowshot{display:block;flex-basis:100%;max-height:120px;max-width:100%;margin:4px 0 8px 48px;border-radius:8px}
+img.rowshot[hidden]{display:none}
+.firstrun{padding:8px 12px 12px}.firstrun h3{margin:8px 0 4px;font-size:16px}
+.fleetpanel .label{margin:20px 0 6px;font-size:12px;font-weight:500;color:var(--subtext)}
+.fleetpanel .shotbar{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+.health{display:flex;flex-wrap:wrap;gap:8px}
+.hchip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;background:var(--surface-alt);font-size:14px}
+.hchip svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hchip.bad{background:var(--error-container);color:var(--on-error-container)}
+.groupchips .chips label.fchip{margin:0}
+.pspeaker{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.pspeaker .s{flex:1 1 120px;color:var(--subtext)}
+.fleetpanel [data-identified][hidden]{display:none}
+li.group .chips{margin-top:6px}
+.rchip{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:6px;background:var(--surface-alt);font-size:12px}
+li.group .trail{display:flex;align-items:center;gap:0}
+li.group .trail form{margin:0}
+dl.values{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin:12px 0}
+dl.values dt{color:var(--subtext)}dl.values dd{margin:0;overflow-wrap:anywhere}
+dialog.sheet{width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);padding:0;border:0;border-radius:28px;background:var(--surface,var(--base));color:var(--text)}
+dialog.sheet::backdrop{background:rgba(0,0,0,.32)}
+dialog.sheet>.cardhead,dialog.sheet>.segmented,dialog.sheet>[data-way-pane]{margin-left:24px;margin-right:24px}
+dialog.sheet>.cardhead{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+dialog.sheet>[data-way-pane]{margin-bottom:24px}
+dialog.sheet>.card{margin:0;box-shadow:none}
+dialog.sheet .cardhead .ib{margin-right:-12px}
+dialog.sheet:target{display:block;position:static;margin:16px auto;width:auto;max-width:640px}
+@media (max-width:599px){.fleetactions .btn.tonal{padding:0 12px}}
+.ld .nav>.chips{margin:4px 4px 12px}

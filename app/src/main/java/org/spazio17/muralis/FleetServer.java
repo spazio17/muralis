@@ -2389,8 +2389,8 @@ final class FleetServer {
         }
     }
 
-    /** This panel's check-in: who it is, what it holds, its health and its clock. */
-    private static JSONObject checkinBody(Context context, long version) {
+    /** This panel's health, as its check-in carries it and the Fleet page shows it. */
+    static JSONObject ownHealth(Context context) {
         try {
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             JSONObject health = new JSONObject()
@@ -2405,6 +2405,16 @@ final class FleetServer {
                         .put("page_error", SystemStats.pageErrorIsCurrent(facts)
                                 ? facts.lastPageError : "");
             }
+            return health;
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** This panel's check-in: who it is, what it holds, its health and its clock. */
+    private static JSONObject checkinBody(Context context, long version) {
+        try {
+            JSONObject health = ownHealth(context);
             return new JSONObject()
                     .put("id", KioskConfig.deviceIdOf(context))
                     .put("version", version)
@@ -2512,6 +2522,67 @@ final class FleetServer {
     }
 
     /**
+     * Every member as {@link FleetHealth} sees it, in the list's order: this panel from its own
+     * health, the others as last heard from.
+     */
+    static java.util.List<FleetHealth.Member> healthMembers(Context context) {
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        org.json.JSONArray peers = peersJson(context);
+        java.util.List<FleetHealth.Member> members = new java.util.ArrayList<>();
+        for (java.util.Map<String, Object> entry : FleetDocument.members(list)) {
+            FleetHealth.Member member = new FleetHealth.Member();
+            member.id = TinyJson.string(entry, FleetDocument.ID, "");
+            member.name = TinyJson.string(entry, FleetDocument.NAME, member.id);
+            member.followsFleet = FleetDocument.followsFleet(entry);
+            member.self = isSelf(context, entry);
+            JSONObject health = null;
+            if (member.self) {
+                member.online = true;
+                member.seenAgoMs = 0;
+                health = ownHealth(context);
+            } else {
+                String spki = TinyJson.string(entry, FleetDocument.SPKI, "");
+                for (int i = 0; i < peers.length(); i++) {
+                    JSONObject peer = peers.optJSONObject(i);
+                    if (peer != null && spki.equals(peer.optString("spki"))) {
+                        member.online = peer.optBoolean("online");
+                        member.seenAgoMs = peer.optLong("seen_ago_ms", -1);
+                        health = peer.optJSONObject("health");
+                    }
+                }
+            }
+            if (health != null) {
+                member.appVersion = health.optString("app_version", "");
+                member.android = health.optString("android", "");
+                member.pageError = health.optString("page_error", "");
+                member.batteryPercent = health.optInt("battery_percent", -1);
+                member.charging = health.optBoolean("charging");
+                member.wifiRssiDbm = health.optInt("wifi_rssi_dbm", 0);
+            }
+            members.add(member);
+        }
+        return members;
+    }
+
+    /** Whether the whole fleet shares at least one section, so following it matters. */
+    static boolean fleetShares(java.util.Map<String, Object> list) {
+        for (String section : FleetDocument.SECTIONS) {
+            if (list != null && FleetDocument.sectionValues(list, FleetDocument.EVERYONE,
+                    section) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The Fleet page's redraw key ({@link FleetHealth#listKey}), empty outside a fleet. */
+    static String fleetListKey(Context context) {
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        return list == null ? "" : FleetHealth.listKey(FleetDocument.version(list),
+                healthMembers(context), fleetShares(list));
+    }
+
+    /**
      * Shares {@code section} in {@code group} with the values given (the Fleet page's form), or
      * stops sharing it there with null: a new version of the list, signed here and handed to
      * every member, from any panel into any scope, as every panel manages the fleet.
@@ -2601,6 +2672,33 @@ final class FleetServer {
         return writeList(context, null, null, (identity, list) -> FleetDocument.withMemberGroups(list,
                 KioskConfig.deviceIdOf(context), spki, groups,
                 java.time.Instant.now().toString()), "A panel's groups set");
+    }
+
+    /** The members of key hashes {@code spkis} added to {@code group}, as one version. */
+    static String addToGroup(Context context, String group, java.util.List<String> spkis) {
+        if (!proStatus(context).pro) {
+            return "a panel's groups are Muralis Pro. " + proLine(context).replaceAll("\\.$", "");
+        }
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        if (FleetDocument.EVERYONE.equals(group)
+                || !FleetDocument.groups(held).containsKey(group)) {
+            return "no such group";
+        }
+        if (spkis.isEmpty()) {
+            return "no panel chosen";
+        }
+        for (String spki : spkis) {
+            if (FleetDocument.memberByKey(held, spki) == null) {
+                return "no such panel";
+            }
+        }
+        return writeList(context, null, null, (identity, list) ->
+                FleetDocument.withMembersInGroup(list, KioskConfig.deviceIdOf(context), spkis,
+                        group, java.time.Instant.now().toString()),
+                "Panels added to the group " + FleetDocument.groupName(held, group));
     }
 
     /**

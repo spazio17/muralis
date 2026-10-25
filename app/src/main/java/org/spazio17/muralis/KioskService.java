@@ -1904,6 +1904,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                         KioskRuntimeState.integrations());
                 lists.put("integrations_home", integrationsKey);
                 lists.put("integrations_page", integrationsKey);
+                // The Fleet page: the panels' health, counts and groups (FleetHealth.listKey).
+                lists.put("fleet", FleetServer.fleetListKey(this));
                 stats.put("lists", lists);
                 stats.put("beacon_lines", new org.json.JSONObject(beaconLines));
             }
