@@ -12470,7 +12470,7 @@ public final class KioskActivity extends Activity {
         Button go = destructive ? dangerButton(theme, confirmLabel)
                 : primaryButton(theme, confirmLabel);
         go.setOnClickListener(view -> onConfirm.run());
-        column.addView(buttonRow(keep, go), matchWrap());
+        column.addView(fittingButtonRow(keep, go), matchWrap());
         setContentView(scrollPage(theme, page));
         currentScreen = () ->
                 showConfirm(title, message, confirmLabel, destructive, onConfirm, onCancel);
@@ -17027,9 +17027,11 @@ public final class KioskActivity extends Activity {
 
     /** The filled pill in a chosen colour: the accent for the main action, red inside a confirm. */
     private Button filledButton(KioskTheme theme, String label, int fill) {
+        // Red takes the error role's own ink: the accent's on red read blue on salmon in dark.
+        int ink = fill == theme.bad ? theme.onBad : theme.onAccent();
         Button button = pillShaped(new PillButton(this), label, 24);
-        button.setTextColor(theme.onAccent());
-        button.setBackground(theme.ripple(theme.pill(fill), null, theme.onAccent()));
+        button.setTextColor(ink);
+        button.setBackground(theme.ripple(theme.pill(fill), null, ink));
         return button;
     }
 

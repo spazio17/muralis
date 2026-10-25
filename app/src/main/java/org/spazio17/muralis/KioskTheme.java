@@ -63,6 +63,8 @@ final class KioskTheme {
     /** A refusal's banner. */
     final int errorContainer;
     final int onErrorContainer;
+    /** The words on a filled red button: Material's onError, white in light, deep red in dark. */
+    final int onBad;
 
     /** What sits on the accent, and the quietest plate: a scheme's own (Palettes). */
     private final int onAccent;
@@ -96,6 +98,8 @@ final class KioskTheme {
         this.onSecondaryContainer = inkAlt;
         this.errorContainer = mix(bad, base, light ? 0.18f : 0.35f);
         this.onErrorContainer = light ? mix(bad, Color.BLACK, 0.6f) : mix(bad, Color.WHITE, 0.65f);
+        // Material 3 baseline onError (tone 20 of the error hue in dark).
+        this.onBad = light ? Color.WHITE : Color.rgb(0x69, 0x00, 0x05);
     }
 
     /** A pill: Material's full corner, for every button with words in it. */
