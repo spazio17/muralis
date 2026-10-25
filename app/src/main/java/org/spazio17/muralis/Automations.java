@@ -414,10 +414,7 @@ final class Automations {
         }
     }
 
-    /**
-     * The rule's first When, added when it has none: the panel's editor as it stands edits this
-     * one, its first action and the first time condition, and keeps the rest as it is.
-     */
+    /** The rule's first When, added when it has none: the panel's editor draws a new rule so. */
     static When firstWhen(Rule rule) {
         if (rule.whens.isEmpty()) {
             rule.whens.add(new When());
@@ -431,41 +428,6 @@ final class Automations {
             when.then.add(new Step());
         }
         return when.then.get(0);
-    }
-
-    /** The rule's first time condition, or null; see {@link #firstWhen}. */
-    static Condition firstTimeCondition(Rule rule) {
-        for (Condition condition : rule.conditions) {
-            if (TIME.equals(condition.sensor)) {
-                return condition;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Sets the panel editor's "Between these times" on the first time condition: a window from
-     * {@code from} to {@code to}, or, with -1, none. A condition left with neither times nor
-     * chosen days says nothing and goes; one with days keeps them.
-     */
-    static void setWindow(Rule rule, int from, int to) {
-        Condition time = firstTimeCondition(rule);
-        if (from < 0 && to < 0) {
-            if (time != null && time.days == ALL_DAYS) {
-                rule.conditions.remove(time);
-            } else if (time != null) {
-                time.from = -1;
-                time.to = -1;
-            }
-            return;
-        }
-        if (time == null) {
-            time = new Condition();
-            time.sensor = TIME;
-            rule.conditions.add(time);
-        }
-        time.from = from;
-        time.to = to;
     }
 
     /**

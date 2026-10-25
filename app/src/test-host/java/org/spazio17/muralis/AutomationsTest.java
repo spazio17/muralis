@@ -310,13 +310,13 @@ public final class AutomationsTest {
         w(window).level = 12.5;
         w(window).minutes = 3;
         s(window).argument = "It is dark";
-        Automations.setWindow(window, 22 * 60, 6 * 60);
+        window.conditions.add(window(22 * 60, 6 * 60, Automations.ALL_DAYS));
         window.enabled = false;
         rules.add(window);
         List<Automations.Rule> back = Automations.parse(Automations.store(rules));
         require(back.size() == 2, "two rules stored and read back");
         Automations.Rule read = back.get(1);
-        Automations.Condition time = Automations.firstTimeCondition(read);
+        Automations.Condition time = read.conditions.isEmpty() ? null : read.conditions.get(0);
         require(w(read).level == 12.5 && w(read).minutes == 3 && s(read).argument.equals("It is dark")
                 && time != null && time.from == 22 * 60 && time.to == 6 * 60
                 && time.days == Automations.ALL_DAYS && !read.enabled,
@@ -404,7 +404,7 @@ public final class AutomationsTest {
         s(sound).argument = "ftp://x/y.mp3";
         require(Automations.validate(sound, names()) != null, "a sound needs http or https");
         Automations.Rule equal = rule("proximity", "near", "display_on");
-        Automations.setWindow(equal, 7 * 60, 7 * 60);
+        equal.conditions.add(window(7 * 60, 7 * 60, Automations.ALL_DAYS));
         require("the time window ends when it starts".equals(Automations.validate(equal, names())),
                 "a window ending when it starts is refused");
         Automations.Rule absent = rule("pressure", "x", "display_on");
@@ -537,7 +537,7 @@ public final class AutomationsTest {
         Automations.Rule night = rule("proximity", "near", "say");
         night.id = "r2";
         s(night).argument = "x";
-        Automations.setWindow(night, 22 * 60, 6 * 60);
+        night.conditions.add(window(22 * 60, 6 * 60, Automations.ALL_DAYS));
         Automations.Rule off = rule("proximity", "near", "reload");
         off.id = "r3";
         off.enabled = false;
@@ -644,7 +644,7 @@ public final class AutomationsTest {
                 && w(night).then.size() == 1 && s(night).action.equals("say")
                 && s(night).argument.equals("Dark") && !night.enabled && night.changedAt == 77,
                 "the flat fields land in the When and its action");
-        Automations.Condition time = Automations.firstTimeCondition(night);
+        Automations.Condition time = night.conditions.isEmpty() ? null : night.conditions.get(0);
         require(night.conditions.size() == 1 && time != null && time.from == 22 * 60
                 && time.to == 6 * 60 && time.days == Automations.ALL_DAYS,
                 "the window becomes a time condition every day");
