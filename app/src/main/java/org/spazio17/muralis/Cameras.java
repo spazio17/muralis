@@ -12,7 +12,7 @@ import java.util.Map;
 
 /**
  * The panel's cameras, the Cameras section in Screen: each a name and an address (a snapshot, an
- * MJPEG stream or a camera page), with an optional sign-in. A camera that takes its sign-in in
+ * MJPEG stream, a camera page or an RTSP stream), with an optional sign-in. A camera that takes its sign-in in
  * the address (Reolink's {@code ...&user=...&password=...}) has {@code {user}} and
  * {@code {password}} there instead, filled in only when the camera is fetched. The list is a plain setting; each
  * camera's user and password are one secret, kept apart in {@code SecretStore}, so neither an
@@ -83,6 +83,33 @@ final class Cameras {
         }
     }
 
+    /** The address field's line on both surfaces. */
+    static final String ADDRESS_HINT = "A snapshot, an MJPEG stream, a camera page or an RTSP"
+            + " stream (rtsp://).";
+
+    /**
+     * The RTSP addresses of the common brands, as each vendor documents them (checked
+     * 2026-10-25), for the help under the address on both surfaces: brand, address, note. IP is
+     * the camera's address; the sign-in goes in User and Password.
+     */
+    static final String[][] RTSP_BRANDS = {
+        {"Tapo", "rtsp://IP:554/stream1", "stream2 is the smaller one. The user is the camera"
+                + " account made in the Tapo app."},
+        {"Reolink", "rtsp://IP:554/h264Preview_01_main", "h264Preview_01_sub is the smaller"
+                + " one."},
+        {"Hikvision", "rtsp://IP:554/Streaming/Channels/101", "102 is the smaller one."},
+        {"Dahua, Amcrest", "rtsp://IP:554/cam/realmonitor?channel=1&subtype=0",
+                "subtype=1 is the smaller one."},
+        {"Axis", "rtsp://IP:554/axis-media/media.amp", ""},
+        {"Wyze", "The address its app shows", "Under Advanced Settings, RTSP, on firmware"
+                + " that has it."},
+        {"Eufy", "The address its app shows", "It streams only while someone watches it live,"
+                + " so it cannot stay on a wall."},
+    };
+    /** The line under the brands. */
+    static final String RTSP_BRANDS_NOTE = "The smaller stream suits a grid; give the main one as"
+            + " the full-screen address.";
+
     /** What the question before removing a camera or a group adds, on both surfaces. */
     static final String REMOVED = "It is taken out of every group it is in, and its sign-in is"
             + " deleted. An automation or the dashboard that shows it then has nothing to show.";
@@ -104,9 +131,9 @@ final class Cameras {
         if (named != null) {
             return named;
         }
-        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))
-                || url.chars().anyMatch(c -> c <= ' ')) {
-            return "the address must start with http:// or https:// and hold no spaces";
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://")
+                || isRtsp(url)) || url.chars().anyMatch(c -> c <= ' ')) {
+            return "the address must start with http://, https:// or rtsp:// and hold no spaces";
         }
         if (hostOf(url).isEmpty()) {
             return "the address must name the camera's host";
@@ -256,6 +283,33 @@ final class Cameras {
                         java.util.regex.Matcher.quoteReplacement(password));
     }
 
+    /** Whether {@code url} is an RTSP stream, which the panel plays itself (RtspFrames). */
+    static boolean isRtsp(String url) {
+        return url != null && url.regionMatches(true, 0, "rtsp://", 0, 7);
+    }
+
+    /**
+     * An RTSP address as it is played: the sign-in put in front of the host
+     * ({@code rtsp://user:password@host/...}), where RTSP takes it for Basic and Digest, unless
+     * the address already names one there or as {@code {user}} and {@code {password}}. Built in
+     * memory only, when the stream is opened; never stored or logged.
+     */
+    static String rtspAddress(String url, Login login) {
+        if (!isRtsp(url) || login == null || login.isEmpty()) {
+            return url;
+        }
+        if (url.indexOf('{') >= 0 || url.contains("%7B") || url.contains("%7b")) {
+            return fill(url, login);
+        }
+        int slash = url.indexOf('/', 7);
+        String authority = url.substring(7, slash < 0 ? url.length() : slash);
+        if (authority.contains("@")) {
+            return url;
+        }
+        return "rtsp://" + encode(login.user) + ":" + encode(login.password) + "@"
+                + url.substring(7);
+    }
+
     private static String encode(String part) {
         try {
             return java.net.URLEncoder.encode(part, "UTF-8").replace("+", "%20");
@@ -282,7 +336,8 @@ final class Cameras {
             }
             int port = uri.getPort();
             if (port < 0) {
-                port = "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+                port = "https".equalsIgnoreCase(uri.getScheme()) ? 443
+                        : "rtsp".equalsIgnoreCase(uri.getScheme()) ? 554 : 80;
             }
             return host.toLowerCase(Locale.ROOT) + ":" + port;
         } catch (java.net.URISyntaxException unreadable) {

@@ -933,8 +933,12 @@ public final class KioskCommandDispatcherTest {
     /** The cameras: the list, the checks, the sign-ins kept apart. */
     private static void testCameras() {
         require(Cameras.check("Door", "http://cam.local/snap.jpg") == null, "a camera");
+        require(Cameras.check("Door", "rtsp://192.0.2.5:554/stream1") == null
+                && Cameras.check("Door", "RTSP://cam/h264Preview_01_sub") == null,
+                "an RTSP camera");
         require(Cameras.check("", "http://x") != null
-                && Cameras.check("Door", "rtsp://x") != null
+                && Cameras.check("Door", "ftp://x") != null
+                && Cameras.check("Door", "rtsp://") != null
                 && Cameras.check("Door", "http://x y") != null
                 && Cameras.check("Door", "http://") != null,
                 "each check refuses");
@@ -982,7 +986,22 @@ public final class KioskCommandDispatcherTest {
         require(Cameras.check("Web page", "http://x") == null,
                 "Web page is a camera name like any other: the dashboard's page is its own choice");
         require(Cameras.checkFull("") == null && Cameras.checkFull("http://cam/main") == null
-                && Cameras.checkFull("rtsp://cam/main") != null, "the full-screen address");
+                && Cameras.checkFull("rtsp://cam/main") == null
+                && Cameras.checkFull("ftp://cam/main") != null, "the full-screen address");
+        // RTSP: the sign-in typed in the address is taken out like any other, and put back in
+        // front of the host only when the stream is opened, encoded.
+        Object[] rtsp = Cameras.splitLogin("rtsp://admin:p%40ss@192.0.2.5/Streaming/Channels/102");
+        require("rtsp://192.0.2.5/Streaming/Channels/102".equals(rtsp[0])
+                && ((Cameras.Login) rtsp[1]).password.equals("p@ss"), "an RTSP sign-in split out");
+        require(Cameras.rtspAddress("rtsp://192.0.2.5/x", new Cameras.Login("ad min", "p@ss:w"))
+                .equals("rtsp://ad%20min:p%40ss%3Aw@192.0.2.5/x"), "the sign-in put back, encoded");
+        require(Cameras.rtspAddress("rtsp://192.0.2.5/x", null).equals("rtsp://192.0.2.5/x")
+                && Cameras.rtspAddress("http://cam/x", new Cameras.Login("a", "b"))
+                        .equals("http://cam/x"), "nothing added without a sign-in or to HTTP");
+        require(Cameras.rtspAddress("rtsp://cam/x?u={user}&p={password}",
+                new Cameras.Login("a", "b")).equals("rtsp://cam/x?u=a&p=b"),
+                "a sign-in named in the address is filled there");
+        require(Cameras.hostOf("rtsp://Cam/x").equals("cam:554"), "RTSP's own port");
         java.util.List<Cameras.Camera> withFull = Cameras.parse(Cameras.format(
                 java.util.Collections.singletonList(new Cameras.Camera("D", "http://c/sub",
                         "http://c/main"))));

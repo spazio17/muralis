@@ -3485,6 +3485,48 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
+    /**
+     * The RTSP addresses of the common brands under the address, folded until asked, as the web
+     * admin's details: the brand, its address and its note.
+     */
+    private void addRtspBrands(LinearLayout card, KioskTheme theme) {
+        LinearLayout brands = new LinearLayout(this);
+        brands.setOrientation(LinearLayout.VERTICAL);
+        brands.setVisibility(View.GONE);
+        for (String[] brand : Cameras.RTSP_BRANDS) {
+            TextView name = new FlushText(this);
+            name.setTextSize(14);
+            name.setTextColor(theme.text);
+            name.setTypeface(MEDIUM);
+            name.setText(brand[0]);
+            LinearLayout.LayoutParams nameParams = matchWrapClose();
+            nameParams.topMargin = dp(10);
+            brands.addView(name, nameParams);
+            TextView line = new FlushText(this);
+            line.setTextSize(13);
+            line.setTextColor(theme.subtext);
+            line.setTextIsSelectable(true);
+            line.setText(brand[1] + (brand[2].isEmpty() ? "" : "\n" + brand[2]));
+            brands.addView(line, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        TextView note = new FlushText(this);
+        note.setTextSize(13);
+        note.setTextColor(theme.subtext);
+        note.setText(Cameras.RTSP_BRANDS_NOTE);
+        brands.addView(note, matchWrapClose());
+        Button toggle = textButton(theme, "RTSP addresses by brand");
+        android.graphics.drawable.Drawable more = getDrawable(R.drawable.ic_expand_more).mutate();
+        more.setTint(theme.accent);
+        more.setBounds(0, 0, dp(18), dp(18));
+        toggle.setCompoundDrawablesRelative(null, null, more, null);
+        toggle.setCompoundDrawablePadding(dp(4));
+        toggle.setOnClickListener(view -> brands.setVisibility(
+                brands.getVisibility() == View.GONE ? View.VISIBLE : View.GONE));
+        card.addView(fittingButtonRow(toggle), matchWrapClose());
+        card.addView(brands, matchWrapClose());
+    }
+
     /** The box for {@code item}: a camera's, or a group's; empty names add one. */
     private LinearLayout cameraItemBox(KioskTheme theme, String item, boolean wide) {
         java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
@@ -3518,7 +3560,8 @@ public final class KioskActivity extends Activity {
         EditText urlInput = themedInput(theme, fresh ? "" : camera.url, false);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        addField(card, theme, "Address", urlInput, "A snapshot, an MJPEG stream or a camera page.");
+        addField(card, theme, "Address", urlInput, Cameras.ADDRESS_HINT);
+        addRtspBrands(card, theme);
         EditText fullInput = themedInput(theme, fresh ? "" : camera.full, false);
         fullInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
