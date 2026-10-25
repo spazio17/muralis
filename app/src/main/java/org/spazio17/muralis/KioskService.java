@@ -3156,6 +3156,40 @@ public final class KioskService extends Service implements KioskCommandDispatche
         sendUiCommand("dashboard.open", -1, null);
     }
 
+    /**
+     * The dashboard asked by a person, from the web admin's Way out or the Fleet page
+     * (panel.dashboard): as dashboard.open, and after Muralis left for the home screen it comes
+     * back to the front. dashboard.open itself, which automations and the smart home send, never
+     * wakes the panel nor pulls Muralis over someone working in the launcher.
+     */
+    @Override
+    public String openDashboard() {
+        if (KioskRuntimeState.activityInFront() || AppLock.appUp || !isInteractive()) {
+            showMainDashboard();
+            return null;
+        }
+        return bringForward("dashboard.open") ? null : "Muralis could not come to the front";
+    }
+
+    private boolean isInteractive() {
+        PowerManager power = getSystemService(PowerManager.class);
+        return power == null || power.isInteractive();
+    }
+
+    /** Muralis back to the front, doing {@code uiCommand} there; false when Android refused. */
+    private boolean bringForward(String uiCommand) {
+        wakeDisplay();
+        KioskActivity.handRemote(uiCommand);
+        try {
+            startActivity(new Intent(this, KioskActivity.class).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            return true;
+        } catch (RuntimeException refused) {
+            Log.w(TAG, "Muralis could not come forward for " + uiCommand, refused);
+            return false;
+        }
+    }
+
     @Override
     public void setWebAdminEnabled(boolean enabled) {
         KioskConfig.edit(this).webAdminEnabled(enabled).apply();
@@ -3746,6 +3780,34 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return SCREEN_NOT_SHOWING;
         }
         sendUiCommand("panel.identify", -1, null);
+        return null;
+    }
+
+    /**
+     * The settings on the glass, asked from the web admin, the Fleet page, the API or MQTT,
+     * without the corner taps: Muralis comes back to the front for them after it left for the
+     * home screen.
+     */
+    @Override
+    public String openSettings() {
+        wakeDisplay();
+        if (KioskRuntimeState.activityInFront() || AppLock.appUp) {
+            sendUiCommand("panel.settings", -1, null);
+            return null;
+        }
+        // Left for the home screen, or in the background: Muralis comes back to the front with
+        // its settings.
+        return bringForward("panel.settings") ? null : "Muralis could not come to the front";
+    }
+
+    /** The device's home screen, as the second combination leads there; see openSettings. */
+    @Override
+    public String leaveForHomeScreen() {
+        if (!KioskRuntimeState.activityInFront() && !AppLock.appUp) {
+            return SCREEN_NOT_SHOWING;
+        }
+        wakeDisplay();
+        sendUiCommand("panel.home_screen", -1, null);
         return null;
     }
 

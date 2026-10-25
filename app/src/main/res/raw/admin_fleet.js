@@ -124,6 +124,15 @@ var pane=document.querySelector('.fleetpanel[data-panel="'+(window.CSS&&CSS.esca
 var line=id==='all'?document.getElementById('fleet-identify-all'):pane?pane.querySelector('[data-identified]'):null;
 b.disabled=true;identify(id,line).then(function(){b.disabled=false;});});
 
+// A panel's settings opened, or Muralis left there for its home screen, said under it.
+document.addEventListener('click',function(e){var b=e.target.closest('[data-panel-action]');if(!b){return;}
+var pane=b.closest('.fleetpanel'),line=pane?pane.querySelector('[data-identified]'):null;b.disabled=true;
+post('/api/fleet/panel',enc({panel:b.getAttribute('data-panel'),action:b.getAttribute('data-panel-action')}))
+.then(function(r){return r.text();}).then(function(text){var parsed={};try{parsed=JSON.parse(text);}catch(ignored){}
+tell(line,parsed.status==='accepted'?'':'Not done: '+(parsed.detail||'the panel refused it')+'.');})
+.catch(function(){tell(line,'The panel did not answer. It may be rebooting or off the network.');})
+.then(function(){b.disabled=false;});});
+
 // Group chips and the share switches apply the moment they change.
 document.addEventListener('change',function(e){
 if(e.target.matches('input[data-submit]')&&e.target.form){e.target.form.submit();return;}

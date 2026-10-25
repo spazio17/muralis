@@ -780,7 +780,8 @@ final class HttpAdminServer {
                             INTEGRATION_DEADLINE_MS, TimeUnit.MILLISECONDS);
                 }
                 if (requestPath.equals("/api/fleet/screenshot")
-                        || requestPath.equals("/api/fleet/identify")) {
+                        || requestPath.equals("/api/fleet/identify")
+                        || requestPath.equals("/api/fleet/panel")) {
                     input.extend(FLEET_PROXY_DEADLINE_MS);
                     deadline.cancel(false);
                     deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
@@ -1266,7 +1267,7 @@ final class HttpAdminServer {
                     bytes(FleetServer.joinState(context).toString()));
         } else if (path.startsWith("/api/fleet/") && !FleetServer.proStatus(context).pro
                 && (path.equals("/api/fleet/screenshot") || path.equals("/api/fleet/identify")
-                        || path.equals("/api/fleet/speaker"))) {
+                        || path.equals("/api/fleet/speaker") || path.equals("/api/fleet/panel"))) {
             // The Fleet page's own requests, refused like the page itself without Pro.
             writeResponse(output, 403, "application/json", bytes(rejectedJson(
                     "the Fleet page is Muralis Pro. " + FleetServer.proLine(context))));
@@ -1283,6 +1284,22 @@ final class HttpAdminServer {
                     form.getOrDefault("action", ""), form.get("value"));
             writeResponse(output, done.has("error") ? 400 : 200, "application/json",
                     bytes(done.toString()));
+        } else if (path.equals("/api/fleet/panel") && method.equals("POST")) {
+            // One panel's settings opened, or Muralis left for its home screen (action =
+            // settings or home_screen), from the Fleet page of any panel.
+            Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
+            form.putAll(parseFormBody(headers, body));
+            java.util.Map<String, Object> member = FleetServer.memberById(context,
+                    form.getOrDefault("panel", ""));
+            String action = form.getOrDefault("action", "");
+            String problem = member == null ? "no such panel is in this fleet"
+                    : !FleetServer.SETTINGS.equals(action) && !FleetServer.HOME_SCREEN.equals(action)
+                            && !FleetServer.DASHBOARD.equals(action)
+                    ? "action must be dashboard, settings or home_screen"
+                    : FleetServer.panelActionOn(context, member, action);
+            writeResponse(output, problem == null ? 200 : 409, "application/json",
+                    bytes(problem == null ? "{\"status\":\"accepted\",\"detail\":\"\"}"
+                            : rejectedJson(problem)));
         } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
             Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
             form.putAll(parseFormBody(headers, body));
@@ -2022,8 +2039,8 @@ final class HttpAdminServer {
                     + " corner taps, TL, TR, BL, BR separated by commas.";
         }
         if (settingsSequence.equals(launcherSequence)) {
-            return "Not saved: the settings and launcher sequences must be different, or the "
-                    + "settings gesture becomes unreachable.";
+            return "Not saved: Open settings and Go to home screen must be different"
+                    + " combinations, or Open settings cannot be reached.";
         }
         // The PIN rides on this box because it stands behind these two gestures. Judged before
         // anything is written, so a refused PIN saves nothing at all.
@@ -4833,6 +4850,21 @@ final class HttpAdminServer {
     }
 
     /**
+     * The question before Go to home screen, for the browser's confirm(): this
+     * panel when {@code name} is null, else the one named. The panel asks the same words.
+     */
+    static String leaveQuestion(String name) {
+        return leaveTitle(name) + "\n\n" + LEAVE_CONSEQUENCE;
+    }
+
+    static String leaveTitle(String name) {
+        return name == null ? "Go to the home screen?" : "Go to the home screen on " + name + "?";
+    }
+
+    static final String LEAVE_CONSEQUENCE = "Its screen shows the device's home screen, with its"
+            + " apps, until Muralis is opened again.";
+
+    /**
      * The panel's removal question (KioskActivity.confirmRemove) in one string for the
      * browser's confirm(): the title, a blank line, what changes.
      */
@@ -5836,8 +5868,8 @@ final class HttpAdminServer {
                 + "<p class=\"hint\">Corner taps in order: TL, TR, BL, BR, separated by commas. "
                 + "Between " + EscapeSequence.MIN_LENGTH + " and " + EscapeSequence.MAX_LENGTH
                 + " taps. Recording them on the tablet is easier than typing them here.</p>"
-                + field("text", "settings_sequence", "Open Muralis settings", config.settingsSequence)
-                + field("text", "launcher_sequence", "Leave Muralis for the home screen",
+                + field("text", "settings_sequence", "Open settings", config.settingsSequence)
+                + field("text", "launcher_sequence", "Go to home screen",
                         config.launcherSequence)
                 + "<p class=\"hint\">Optional PIN, asked after either combination: "
                 + EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH
@@ -5855,6 +5887,16 @@ final class HttpAdminServer {
                 + switchRow("volume-buttons-disabled", "Disable volume buttons",
                         " data-setting=\"volume_buttons_disabled\"",
                         KioskConfig.volumeButtonsDisabled(context))
+                + "</div>"
+                // The way in and out from here, without the corner taps.
+                + "<div class=\"actions\">"
+                + quickAction("panel.dashboard", "Open dashboard", "", null)
+                + quickAction("panel.settings", "Open settings", "", null)
+                // Asked first: whoever stands at the panel gets the device's apps.
+                + "<form class=\"cmd\" method=\"post\" action=\"/api/command\">"
+                + "<input type=\"hidden\" name=\"cmnd\" value=\"panel.home_screen\">"
+                + "<button type=\"submit\" data-confirm=\"" + escapeHtml(leaveQuestion(null))
+                + "\">Go to home screen</button></form>"
                 + "</div>";
     }
 
@@ -6353,10 +6395,11 @@ final class HttpAdminServer {
     /**
      * The commands a person at a browser has where one at the panel has Open dashboard and the
      * combinations: Material's overflow menu at the end of the settings page's app bar (the UI
-     * round, 2026-10-15; a section of their own, Quick actions, until then). There is no "Main
-     * dashboard" (dashboard.open) action, dropped 2026-09-07; the way back from a one-off URL is
-     * Restart app, and the smart home keeps its Open dashboard button. Without scripting the menu
-     * cannot open, so it is shown as its three buttons in a row.
+     * round, 2026-10-15; a section of their own, Quick actions, until then). The "Main
+     * dashboard" action left this menu on 2026-09-07; Open dashboard (panel.dashboard) is in the
+     * Way out section since 2026-10-25, beside Open settings and Go to home screen, where it brings
+     * Muralis back after it left. Without scripting the menu cannot open, so it is shown as its
+     * three buttons in a row.
      */
     private static String commandsMenu() {
         return "<div class=\"overflow\"><button type=\"button\" class=\"ib\" id=\"commands-button\""
@@ -7892,7 +7935,16 @@ final class HttpAdminServer {
                         + " class=\"sw\" data-switch disabled aria-label=\"Network speaker of ")
                 .append(name).append("\"></div>");
         html.append("<div class=\"actions\"><button type=\"button\" class=\"text\" data-identify=\"")
-                .append(id).append("\">Identify</button>");
+                .append(id).append("\">Identify</button>")
+                // That panel's settings, or Muralis left there, without its corner taps.
+                .append("<button type=\"button\" class=\"text\" data-panel-action=\"dashboard\""
+                        + " data-panel=\"").append(id).append("\">Open dashboard</button>")
+                .append("<button type=\"button\" class=\"text\" data-panel-action=\"settings\""
+                        + " data-panel=\"").append(id).append("\">Open settings</button>")
+                .append("<button type=\"button\" class=\"text\" data-panel-action=\"home_screen\""
+                        + " data-panel=\"").append(id).append("\" data-confirm=\"")
+                .append(escapeHtml(leaveQuestion(member.name)))
+                .append("\">Go to home screen</button>");
         if (!member.self) {
             // For a panel that cannot leave by itself; one that is reachable is told.
             html.append("<form method=\"post\" action=\"/fleet\">").append(hidden("what", "panel"))

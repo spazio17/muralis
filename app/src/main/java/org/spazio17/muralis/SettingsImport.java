@@ -290,7 +290,7 @@ final class SettingsImport {
                         ? ((String) other).trim()
                         : settings ? current.launcherSequence : current.settingsSequence;
                 return EscapeSequence.parse(text).equals(EscapeSequence.parse(otherText))
-                        ? "the settings and launcher combinations must be different" : null;
+                        ? "Open settings and Go to home screen must be different combinations" : null;
             }
             case "automations": {
                 List<Automations.Rule> rules = Automations.parse(text);
