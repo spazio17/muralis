@@ -91,6 +91,9 @@ final class CameraView {
         app = web.getContext().getApplicationContext();
         final Map<String, String> trusted = new LinkedHashMap<>(pins);
         final Streams streams = new Streams();
+        // Closed with the view (close): the browser engine closes a stream only when it gets to
+        // it, and an RTSP camera decodes until then.
+        web.setTag(R.id.camera_streams, streams);
         web.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view,
@@ -119,6 +122,9 @@ final class CameraView {
 
     /** Clears what the view may hold, then destroys it. */
     static void close(WebView web) {
+        if (web.getTag(R.id.camera_streams) instanceof Streams) {
+            ((Streams) web.getTag(R.id.camera_streams)).closeAll();
+        }
         web.stopLoading();
         web.clearCache(true);
         web.destroy();
@@ -132,25 +138,34 @@ final class CameraView {
      * one before is closed, and nothing piles up on a view that runs for weeks.
      */
     static final class Streams {
-        private final Map<Integer, HttpURLConnection> open = new java.util.HashMap<>();
+        /** Each tile's open stream, by how it is closed: a connection, or an RTSP reader. */
+        private final Map<Integer, java.io.Closeable> open = new java.util.HashMap<>();
 
-        void add(int tile, HttpURLConnection connection) {
-            HttpURLConnection before;
+        void add(int tile, java.io.Closeable stream) {
+            java.io.Closeable before;
             synchronized (this) {
-                before = open.put(tile, connection);
+                before = open.put(tile, stream);
             }
-            if (before != null && before != connection) {
-                before.disconnect();
+            if (before != null && before != stream) {
+                closeQuietly(before);
             }
         }
 
         void close(int tile) {
-            HttpURLConnection connection;
+            java.io.Closeable stream;
             synchronized (this) {
-                connection = open.remove(tile);
+                stream = open.remove(tile);
             }
-            if (connection != null) {
-                connection.disconnect();
+            if (stream != null) {
+                closeQuietly(stream);
+            }
+        }
+
+        private static void closeQuietly(java.io.Closeable stream) {
+            try {
+                stream.close();
+            } catch (IOException ignored) {
+                // Closing is all that is asked; a stream that fails to close is gone anyway.
             }
         }
 
@@ -179,12 +194,27 @@ final class CameraView {
             String address = "1".equals(request.getUrl().getQueryParameter("full"))
                     && !source.full.isEmpty() ? source.full : source.url;
             if (path.startsWith("/probe/")) {
-                return probe(source, address, pins);
+                return Cameras.isRtsp(address) ? probeRtsp(source, address, address == source.full)
+                        : probe(source, address, pins);
+            }
+            if (path.startsWith("/stream/") && Cameras.isRtsp(address)) {
+                // Played here and handed on as an MJPEG stream (RtspFrames), so the tile draws it
+                // as any MJPEG camera.
+                RtspFrames.Mjpeg stream = new RtspFrames.Mjpeg(RtspFrames.acquire(app,
+                        Cameras.rtspAddress(address, source.login), source.name,
+                        address == source.full));
+                streams.add(index, stream);
+                // The boundary travels in the Content-Type header, as a camera's own does.
+                Map<String, String> headers = new LinkedHashMap<>();
+                headers.put("Content-Type", RtspFrames.Mjpeg.TYPE);
+                headers.put("Cache-Control", "no-store");
+                return new WebResourceResponse("multipart/x-mixed-replace", null, 200, "OK",
+                        headers, stream);
             }
             if (path.startsWith("/stream/")) {
                 // The camera's own sign-in: an NVR's channels share a host, not always a user.
                 return fetch(Cameras.fill(address, source.login), source.login, null,
-                        source.name, pins, connection -> streams.add(index, connection));
+                        source.name, pins, connection -> streams.add(index, connection::disconnect));
             }
             if (path.startsWith("/stop/")) {
                 streams.close(index);
@@ -229,6 +259,21 @@ final class CameraView {
             }
         }
         return null;
+    }
+
+    /**
+     * An RTSP camera's kind: mjpeg once it gives a first picture, else denied or none. The
+     * stream stays open a few seconds after this, so the tile's stream reads the same session.
+     */
+    private static WebResourceResponse probeRtsp(Cameras.Tile source, String address,
+            boolean big) {
+        RtspFrames frames = RtspFrames.acquire(app, Cameras.rtspAddress(address, source.login),
+                source.name, big);
+        RtspFrames.Frame first = frames.next(0, 15_000);
+        String problem = frames.problem();
+        frames.release();
+        String kind = first != null ? "mjpeg" : "denied".equals(problem) ? "denied" : "none";
+        return text(200, "OK", "application/json", "{\"kind\":\"" + kind + "\"}");
     }
 
     /** What a camera sends, as the tile's script needs it: mjpeg, image, page or none. */

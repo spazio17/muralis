@@ -204,6 +204,7 @@ final class HttpAdminServer {
     private final String fleetScript;
     private final String speakersScript;
     private final String qrScript;
+    private final String cameraScript;
     private final String pageCss;
 
 
@@ -290,6 +291,7 @@ final class HttpAdminServer {
         fleetScript = script(R.raw.admin_fleet);
         speakersScript = script(R.raw.admin_speakers);
         qrScript = script(R.raw.admin_qr);
+        cameraScript = script(R.raw.admin_camera);
         // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
@@ -745,6 +747,12 @@ final class HttpAdminServer {
                     // closes a slow connection would cut it at eight seconds.
                     deadline.cancel(false);
                 }
+                if (method.equals("GET") && requestPath.equals("/api/camera/picture")) {
+                    // An RTSP camera takes a few seconds to answer and send its first picture.
+                    deadline.cancel(false);
+                    deadline = connectionDeadlines.schedule(() -> closeQuietly(socket),
+                            CAMERA_PICTURE_DEADLINE_MS, TimeUnit.MILLISECONDS);
+                }
                 boolean upload = method.equals("POST") && requestPath.equals("/api/pictures");
                 if (upload) {
                     uploadHeld = uploadSlot.tryAcquire();
@@ -967,6 +975,8 @@ final class HttpAdminServer {
             deleteAutomation(parseFormBody(headers, body), output);
         } else if (path.equals("/stats") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildStatsPage()));
+        } else if (path.equals("/api/camera/picture") && method.equals("GET")) {
+            serveCameraPicture(queryValue(query, "name"), output);
         } else if (path.equals("/camera/snapshot.jpg") && method.equals("GET")) {
             serveSnapshot(output);
         } else if (path.equals("/camera/stream") && method.equals("GET")) {
@@ -4738,7 +4748,7 @@ final class HttpAdminServer {
                 + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
                 + listDetail("cameras", detailPage, nav, detail.toString(),
                         " data-base=\"/cameras?id=\" data-list=\"/cameras\"")
-                + pageEnd();
+                + cameraScript + pageEnd();
     }
 
     private static String pane(String id, String chosen, String content) {
@@ -4782,7 +4792,8 @@ final class HttpAdminServer {
                 + fieldWithId("c-name" + sfx, "text", "name", "Name", fresh ? "" : camera.name,
                         "", null).replace(MACHINE_TEXT, "")
                 + fieldWithId("c-url" + sfx, "text", "url", "Address", fresh ? "" : camera.url,
-                        " inputmode=\"url\"", "A snapshot, an MJPEG stream or a camera page.")
+                        " inputmode=\"url\"", Cameras.ADDRESS_HINT)
+                + rtspBrands()
                 + fieldWithId("c-full" + sfx, "text", "full", "Full-screen address (optional)",
                         fresh ? "" : camera.full, " inputmode=\"url\"",
                         "A bigger stream of the same camera, for full screen and zoom.")
@@ -4790,6 +4801,13 @@ final class HttpAdminServer {
                         login == null ? "" : login.user, "", null)
                 + fieldWithId("c-password" + sfx, "password", "password", "Password", "", "",
                         login != null && !login.password.isEmpty() ? BLANK_KEEPS : null)
+                // A browser cannot play RTSP: the panel plays it and sends one picture on request.
+                + (fresh || !Cameras.isRtsp(camera.url) ? "" : "<div class=\"camera-picture\">"
+                        + "<img alt=\"A picture from " + escapeHtml(camera.name) + "\" hidden>"
+                        + "<p class=\"hint\">Plays on the panel. A picture shows here on"
+                        + " request.</p><div class=\"shotbar\"><span class=\"hint\" data-taken>"
+                        + "</span><button type=\"button\" class=\"tonal\" data-camera-picture=\""
+                        + escapeHtml(camera.name) + "\">Show a picture</button></div></div>")
                 + "<div class=\"actions\"><button type=\"submit\" class=\"primary\" name=\"what\""
                 + " value=\"save\">" + (fresh ? "Add" : "Save") + "</button>"
                 + (fresh ? "" : "<button type=\"submit\" name=\"what\" value=\"show\">Show"
@@ -4801,12 +4819,62 @@ final class HttpAdminServer {
                 + "</div></form>";
     }
 
+    /** The RTSP addresses of the common brands, folded under the address as on the panel. */
+    private static String rtspBrands() {
+        StringBuilder html = new StringBuilder("<details class=\"brands\"><summary>RTSP"
+                + " addresses by brand</summary><dl>");
+        for (String[] brand : Cameras.RTSP_BRANDS) {
+            html.append("<dt>").append(escapeHtml(brand[0])).append("</dt><dd><code>")
+                    .append(escapeHtml(brand[1])).append("</code>")
+                    .append(brand[2].isEmpty() ? "" : " " + escapeHtml(brand[2])).append("</dd>");
+        }
+        return html.append("</dl><p class=\"hint\">").append(escapeHtml(Cameras.RTSP_BRANDS_NOTE))
+                .append("</p></details>").toString();
+    }
+
     /**
      * The panel's removal question (KioskActivity.confirmRemove) in one string for the
      * browser's confirm(): the title, a blank line, what changes.
      */
     private static String removeQuestion(String title, String consequence) {
         return title + "\n\n" + consequence;
+    }
+
+    /** How long the web admin waits for an RTSP camera's picture, inside the deadline below. */
+    private static final long CAMERA_PICTURE_WAIT_MS = 15_000;
+    private static final long CAMERA_PICTURE_DEADLINE_MS = 20_000;
+
+    /**
+     * One picture of an RTSP camera, for its form: played on this panel (RtspFrames), the same
+     * stream a tile on the panel reads when it shows that camera, and sent from memory.
+     */
+    private void serveCameraPicture(String name, OutputStream output) throws IOException {
+        Cameras.Camera camera = Cameras.find(KioskConfig.camerasOf(context),
+                name == null ? "" : name);
+        if (camera == null || !Cameras.isRtsp(camera.url)) {
+            writeResponse(output, 404, "text/plain; charset=utf-8",
+                    bytes("No RTSP camera of that name"));
+            return;
+        }
+        RtspFrames frames = RtspFrames.acquire(context, Cameras.rtspAddress(camera.url,
+                KioskConfig.cameraLoginsOf(context).get(camera.name.toLowerCase(Locale.ROOT))),
+                camera.name, false);
+        RtspFrames.Frame frame;
+        String problem;
+        try {
+            frame = frames.next(0, CAMERA_PICTURE_WAIT_MS);
+            problem = frames.problem();
+        } finally {
+            frames.release();
+        }
+        if (frame == null) {
+            writeResponse(output, 502, "text/plain; charset=utf-8", bytes("denied".equals(problem)
+                    ? "No picture: the camera refused the sign-in"
+                    : "No picture: the camera did not answer"));
+            return;
+        }
+        writeResponse(output, 200, "image/jpeg", frame.jpeg,
+                Collections.singletonMap("Cache-Control", "no-store"));
     }
 
     /** The file read for Import, waiting for Apply, with its token; one at a time. */

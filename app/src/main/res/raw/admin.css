@@ -643,3 +643,5 @@ dialog.sheet .cardhead .ib{margin-right:-12px}
 dialog.sheet:target{display:block;position:static;margin:16px auto;width:auto;max-width:640px}
 @media (max-width:599px){.fleetactions .btn.tonal{padding:0 12px}}
 .ld .nav>.chips{margin:4px 4px 12px}
+.camera-picture{margin-top:12px}.camera-picture img{display:block;max-width:100%;max-height:240px;width:auto;border-radius:8px;background:var(--surface-alt)}.camera-picture img[hidden],.camera-picture p[hidden]{display:none}.camera-picture .shotbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
+details.brands{margin:4px 0 12px}details.brands summary{cursor:pointer;color:var(--accent);min-height:48px;display:flex;align-items:center}details.brands dt{font-weight:500;margin-top:8px}details.brands dd{margin:0;color:var(--subtext);font-size:13px;overflow-wrap:anywhere}
