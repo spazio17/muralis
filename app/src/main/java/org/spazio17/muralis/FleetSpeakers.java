@@ -39,8 +39,18 @@ final class FleetSpeakers {
 
     /** Every panel of the fleet as a speaker: id, name, whether it answered, on, playing, volume. */
     static JSONObject states(Context context) {
-        List<Map<String, Object>> members =
-                FleetDocument.members(KioskConfig.fleetDocumentOf(context));
+        return states(context, null);
+    }
+
+    /** The same for the panel {@code onlyId} alone (the Fleet page's panel detail), or all. */
+    static JSONObject states(Context context, String onlyId) {
+        List<Map<String, Object>> members = new ArrayList<>();
+        for (Map<String, Object> member
+                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
+            if (onlyId == null || onlyId.equals(TinyJson.string(member, FleetDocument.ID, ""))) {
+                members.add(member);
+            }
+        }
         JSONObject[] answers = new JSONObject[members.size()];
         runAll(members, (member, at) -> answers[at] = FleetServer.speakerStateOf(context, member));
         // Copied once: an answer arriving after the wait does not change what was reported.

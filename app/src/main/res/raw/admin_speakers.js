@@ -1,4 +1,4 @@
-// The Fleet page's Speakers card. Asks every panel how it plays through GET /api/fleet/speaker
+// The Fleet page's Say or play card. Asks every panel how it plays through GET /api/fleet/speaker
 // when the page opens and after each action, never on a timer: each answer is a call to that
 // panel. Say, Play, Stop all and the volume of all go to the panels the segmented button names
 // (all, a group, the ticked ones); a row's own slider and switch go to that panel alone. Every
@@ -51,5 +51,8 @@ all.addEventListener('change',function(){post(target(),'volume',all.value);});
 rows().forEach(function(li){var id=li.getAttribute('data-id');
 li.querySelector('[data-volume]').addEventListener('change',function(e){post('panels:'+id,'volume',e.target.value);});
 li.querySelector('[data-switch]').addEventListener('change',function(e){post('panels:'+id,'switch',e.target.checked?'on':'off');});});
-load();
+// Inside the Fleet page's Say or play dialog the panels are asked when it opens, not with the
+// page: each answer is a call to that panel.
+window.muralisSpeakersLoad=load;
+if(!card.closest('dialog')){load();}
 })();
