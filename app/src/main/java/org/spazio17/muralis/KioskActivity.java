@@ -4833,20 +4833,16 @@ public final class KioskActivity extends Activity {
         fleetStateParams.topMargin = dp(10);
         LinearLayout.LayoutParams fleetMemberParams = wideRow();
         fleetCard.addView(fleetMember, fleetMemberParams);
-        // Add by its code: for a panel without a camera, or a QR out of its reach.
+        // Add by its code: for a panel without a camera, or a QR out of its reach. In a fleet
+        // adding is on the Fleet page; here it founds one.
         Button fleetCodeButton = textButton(theme, "Add by code");
+        fleetCodeButton.setVisibility(KioskConfig.fleetIdOf(this).isEmpty() ? View.VISIBLE
+                : View.GONE);
         fleetCodeButton.setOnClickListener(view -> showAddByCode());
         fleetCodeButton.setEnabled(KioskRuntimeState.fleetListening()
                 && FleetServer.proStatus(this).pro);
-        // A new tablet, set up and joined in one scan: Pro, in a fleet that exists.
-        Button fleetInviteButton = textButton(theme, "Invite a new tablet");
-        fleetInviteButton.setOnClickListener(view -> showInvitePage(true));
-        fleetInviteButton.setEnabled(KioskRuntimeState.fleetListening()
-                && FleetServer.proStatus(this).pro);
-        fleetInviteButton.setVisibility(KioskConfig.fleetIdOf(this).isEmpty() ? View.GONE
-                : View.VISIBLE);
-        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton,
-                fleetInviteButton), matchWrapClose());
+        fleetCard.addView(fittingButtonRow(fleetJoinButton, fleetAddButton, fleetCodeButton),
+                matchWrapClose());
         // An invitation open while its page is closed, so it is not forgotten; kept current by
         // the live sync, gone once the invitation ends.
         fleetInviteLine = new FlushText(this);
@@ -4864,6 +4860,12 @@ public final class KioskActivity extends Activity {
                     FleetDocument.memberByKey(fleetList, KioskRuntimeState.fleetKey()));
             // The groups: which ones this panel is in, a new one with
             // a name the person types (generic suggestions offered), and Remove for each.
+            // The panels, adding one, the groups, what each scope shares, the alerts and the
+            // history: the Fleet page (the redesign of 2026-10-25).
+            LinearLayout fleetPageRow = glyphRow(theme, R.drawable.ic_fleet, "Fleet page",
+                    "Panels, groups, shared settings", null, null, false);
+            fleetPageRow.setOnClickListener(view -> openFleetPage());
+            addListRow(fleetCard, theme, fleetPageRow, true);
             // Whether this panel takes what the whole fleet shares; its groups it always follows.
             CompoundButton follows = themedSwitch(theme, "Follow the fleet's shared settings",
                     FleetDocument.followsFleet(FleetDocument.memberByKey(fleetList,
@@ -4914,15 +4916,6 @@ public final class KioskActivity extends Activity {
                 });
                 fleetCard.addView(in, matchWrapClose());
             }
-            // The groups themselves and what each scope shares: the Fleet page.
-            Button fleetPage = textButtonOnward(theme, "Open the Fleet page");
-            fleetPage.setOnClickListener(view -> showFleetPage(FleetDocument.EVERYONE));
-            fleetCard.addView(fittingButtonRow(fleetPage), matchWrapClose());
-            // The fleet's alerts, a page of their own (the UI round, 2026-10-15): the one shared
-            // section with no section of its own to live in.
-            Button alertsPage = textButtonOnward(theme, "Alerts");
-            alertsPage.setOnClickListener(view -> showAlertsPage());
-            fleetCard.addView(fittingButtonRow(alertsPage), matchWrapClose());
         }
         // The fleet's own port on this panel, and whether the member endpoint listens on it;
         // then Leave, apart, as an action that ends something.
@@ -5150,153 +5143,141 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Where the Fleet page stands, so a rotation and a redraw land on the same place. */
+    private String fleetTab = "panels";
+    private String fleetPanel = "";
+    private String fleetScope = FleetDocument.EVERYONE;
+    private String fleetSection = "";
+    /** The Panels tab's filter ("all", "healthy", "unhealthy"), group menu and search. */
+    private String fleetShow = "all";
+    private String fleetGroupFilter = "";
+    private String fleetSearch = "";
+    private boolean fleetPictures;
     /**
-     * The Fleet page, the web admin's /fleet on the panel:
-     * the panels with their groups and last contact, the groups, and the shared settings of a
-     * scope (the whole fleet or a group) shown and edited here, from any panel.
+     * The narrow page open, "panel" or "section", or empty for the list: a rotation to wide
+     * shows it beside the list, and back to narrow opens it again.
      */
-    private void showFleetPage(String scope) {
-        currentScreen = () -> showFleetPage(scope);
-        Context app = getApplicationContext();
+    private String fleetOpenPage = "";
+    /** The panel whose picture was taken for this opening; another opening takes a new one. */
+    private String fleetFreshShot = "";
+    /** The ticked panels, by key. */
+    private final java.util.Set<String> fleetTicked = new java.util.LinkedHashSet<>();
+    /** The pictures taken while the page was open, by panel id, and when each came. */
+    private final java.util.Map<String, android.graphics.Bitmap> fleetShots =
+            new java.util.HashMap<>();
+    private final java.util.Map<String, Long> fleetShotTimes = new java.util.HashMap<>();
+
+    /** The Fleet page from the settings: the tab kept, the selection not. */
+    private void openFleetPage() {
+        fleetTicked.clear();
+        fleetOpenPage = "";
+        fleetFreshShot = "";
+        showFleetPage();
+    }
+
+    /**
+     * The Fleet page, the web admin's /fleet on the panel (the redesign of 2026-10-25): the
+     * counts and the actions every tab offers, then the tabs Panels, Groups and Shared settings.
+     * From 840 dp a tab's list stands at the left and the chosen one at the right; below that a
+     * row opens its own page. The page follows the fleet while it is up.
+     */
+    private void showFleetPage() {
+        if (widthClass() != 2 && fleetOpenPage.equals("panel")) {
+            showFleetPanelPage(fleetPanel);
+            return;
+        }
+        if (widthClass() != 2 && fleetOpenPage.equals("section")) {
+            showFleetSectionPage(fleetSection);
+            return;
+        }
+        currentScreen = this::showFleetPage;
         LinearLayout page = subPage("Fleet", this::showSettings);
         KioskTheme theme = currentTheme();
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        if (list == null) {
+        if (list == null || !FleetServer.proStatus(this).pro) {
+            // The Fleet page is Muralis Pro; the panels stay members meanwhile.
+            LinearLayout column = card(theme, null);
             TextView none = new FlushText(this);
             none.setTextColor(theme.text);
-            none.setText("This panel is not in a fleet, or its list of panels has not arrived yet.");
+            none.setText(list == null
+                    ? "This panel is not in a fleet, or its list of panels has not arrived yet."
+                    : "The Fleet page is Muralis Pro. " + FleetServer.proLine(this));
             column.addView(none, matchWrap());
             page.addView(column, singlePanelParams());
             setContentView(scrollPage(theme, page));
             return;
         }
-        if (!FleetServer.proStatus(this).pro) {
-            // The Fleet page is Muralis Pro; the panels stay members meanwhile.
-            TextView free = new FlushText(this);
-            free.setTextColor(theme.text);
-            free.setText("The Fleet page is Muralis Pro. " + FleetServer.proLine(this));
-            column.addView(free, matchWrap());
-            page.addView(column, singlePanelParams());
-            setContentView(scrollPage(theme, page));
-            return;
-        }
+        boolean wide = widthClass() == 2;
+        java.util.List<FleetHealth.Member> health = FleetServer.healthMembers(this);
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.VERTICAL);
+        head.addView(fleetHead(theme, list, health), matchWrap());
         if (FleetServer.proStatus(this).warn) {
             TextView lapsing = new FlushText(this);
             lapsing.setTextColor(theme.warn);
             lapsing.setText(FleetServer.proLine(this));
-            column.addView(lapsing, matchWrap());
+            head.addView(lapsing, matchWrapClose());
         }
-        java.util.Map<String, String> groups = FleetDocument.groups(list);
-        // Panels: each with its picture on request, its groups to tick, its last contact and
-        // Identify. Screenshots fetches every panel's picture at once, off the main
-        // thread, each drawn into its row as it arrives; a panel that does not answer says so.
-        LinearLayout panels = card(theme, "Panels");
-        org.json.JSONArray peers = FleetServer.peersJson(this);
-        java.util.List<Runnable> fetches = new java.util.ArrayList<>();
-        Button shots = tonalButton(theme, "Screenshots");
-        Button identifyAll = textButton(theme, "Identify all");
-        panels.addView(fittingButtonRow(shots, identifyAll), matchWrapClose());
-        for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
-            String id = TinyJson.string(member, FleetDocument.ID, "");
-            String spki = TinyJson.string(member, FleetDocument.SPKI, "");
-            String contact = FleetServer.contactLine(this, member, peers);
-            TextView line = new FlushText(this);
-            line.setTextSize(15);
-            line.setTextColor(theme.text);
-            line.setText(TinyJson.string(member, FleetDocument.NAME, id));
-            LinearLayout.LayoutParams lineParams = matchWrap();
-            lineParams.topMargin = dp(10);
-            panels.addView(line, lineParams);
-            TextView seen = new FlushText(this);
-            seen.setTextSize(13);
-            seen.setTextColor(theme.subtext);
-            seen.setText(contact);
-            panels.addView(seen, matchWrapClose());
-            // The picture area: the thumbnail at most 160 dp high, or the line that says why
-            // there is none; both hidden until Screenshots is tapped.
-            android.widget.ImageView thumb = new android.widget.ImageView(this);
-            thumb.setAdjustViewBounds(true);
-            thumb.setMaxHeight(dp(160));
-            thumb.setContentDescription("The screen of "
-                    + TinyJson.string(member, FleetDocument.NAME, id));
-            thumb.setVisibility(View.GONE);
-            LinearLayout.LayoutParams thumbParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            thumbParams.topMargin = dp(8);
-            panels.addView(thumb, thumbParams);
-            TextView shotHint = new FlushText(this);
-            shotHint.setTextSize(13);
-            shotHint.setTextColor(theme.subtext);
-            shotHint.setVisibility(View.GONE);
-            panels.addView(shotHint, matchWrapClose());
-            fetches.add(() -> {
-                thumb.setVisibility(View.GONE);
-                shotHint.setText("Asking the panel...");
-                shotHint.setVisibility(View.VISIBLE);
-                new Thread(() -> {
-                    FleetServer.Picture picture = FleetServer.screenshotOf(app, member);
-                    android.graphics.Bitmap bitmap = picture.jpeg == null ? null
-                            : thumbnailOf(picture.jpeg, dp(160));
-                    mainHandler.post(() -> {
-                        if (!page.isAttachedToWindow()) {
-                            return;
-                        }
-                        if (bitmap != null) {
-                            thumb.setImageBitmap(bitmap);
-                            thumb.setVisibility(View.VISIBLE);
-                            shotHint.setVisibility(View.GONE);
-                        } else {
-                            thumb.setImageDrawable(null);
-                            shotHint.setText(picture.problem == null
-                                    ? FleetServer.NO_PICTURE : picture.problem);
-                        }
-                    });
-                }, "MuralisFleetShot").start();
+        LinearLayout.LayoutParams tabsParams = matchWrap();
+        tabsParams.topMargin = dp(12);
+        head.addView(fleetTabs(theme), tabsParams);
+        page.addView(paneOf(head), matchWrap());
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        switch (fleetTab) {
+            case "groups":
+                page.addView(paneOf(fleetGroupsCard(theme, list)), params);
+                break;
+            case "shared":
+                fleetSharedTab(page, theme, list, wide, params);
+                break;
+            default:
+                fleetPanelsTab(page, theme, list, health, wide, params);
+        }
+        setContentView(scrollPage(theme, page));
+        watchLists("fleet", page, () -> redrawInPlace(this::showFleetPage));
+    }
+
+    /** The fleet's name, "3 panels, 3 online", and Say or play, Add a panel, Identify all. */
+    private LinearLayout fleetHead(KioskTheme theme, java.util.Map<String, Object> list,
+            java.util.List<FleetHealth.Member> health) {
+        Context app = getApplicationContext();
+        int online = 0;
+        for (FleetHealth.Member member : health) {
+            online += member.online ? 1 : 0;
+        }
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new FlushText(this);
+        name.setTextSize(16);
+        name.setTextColor(theme.text);
+        name.setText(KioskConfig.fleetNameOf(this));
+        head.addView(name, matchWrap());
+        TextView counts = new FlushText(this);
+        counts.setTextSize(14);
+        counts.setTextColor(theme.subtext);
+        counts.setText((health.size() == 1 ? "1 panel" : health.size() + " panels") + ", "
+                + online + " online");
+        head.addView(counts, matchWrapClose());
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        if (health.size() > 1) {
+            Button say = tonalButton(theme, "Say or play");
+            say.setOnClickListener(view -> {
+                speakersMode = 0;
+                showFleetSayPage();
             });
-            java.util.List<String> in = FleetDocument.memberGroups(list, member);
-            for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
-                String groupId = group.getKey();
-                CompoundButton box = themedSwitch(theme, group.getValue(), in.contains(groupId));
-                box.setOnCheckedChangeListener((button, checked) -> fleetWork(app, () -> {
-                    java.util.Map<String, Object> now = KioskConfig.fleetDocumentOf(app);
-                    java.util.List<String> mine = new java.util.ArrayList<>(
-                            FleetDocument.memberGroups(now, FleetDocument.memberByKey(now, spki)));
-                    mine.remove(groupId);
-                    if (checked) {
-                        mine.add(groupId);
-                    }
-                    return FleetServer.setMemberGroups(app, spki, mine);
-                }));
-                panels.addView(box, matchWrapClose());
-            }
-            Button identify = textButton(theme, "Identify");
-            identify.setOnClickListener(view -> fleetWork(app,
-                    () -> FleetServer.identifyOn(app, member)));
-            if (FleetServer.isSelf(this, member)) {
-                panels.addView(fittingButtonRow(identify), matchWrapClose());
-            } else {
-                // For a panel that cannot leave by itself (broken, wiped, gone); one that is
-                // reachable is told and leaves.
-                String name = TinyJson.string(member, FleetDocument.NAME, id);
-                Button remove = textButton(theme, "Remove");
-                remove.setOnClickListener(view -> confirmRemove("Remove " + name + "?",
-                        "It is taken off the fleet's list on every panel and its key is no"
-                                + " longer trusted. It can join again with a new code.",
-                        () -> fleetWork(app, () -> {
-                            String refused = FleetServer.removeMember(app, spki, true);
-                            mainHandler.post(() -> showFleetPage(scope));
-                            return refused;
-                        })));
-                panels.addView(fittingButtonRow(identify, remove), matchWrapClose());
-            }
+            LinearLayout.LayoutParams sayParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            sayParams.rightMargin = dp(8);
+            actions.addView(say, sayParams);
         }
-        shots.setOnClickListener(view -> {
-            for (Runnable fetch : fetches) {
-                fetch.run();
-            }
-        });
+        Button add = withPlus(primaryButton(theme, "Add a panel"));
+        add.setOnClickListener(view -> showFleetAddPage());
+        actions.addView(add, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageButton identifyAll = iconButton(theme, R.drawable.ic_sensor_panel, "Identify all");
         identifyAll.setOnClickListener(view -> {
             for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
                 fleetWork(app, () -> {
@@ -5306,56 +5287,916 @@ public final class KioskActivity extends Activity {
                 });
             }
         });
-        TextView addHint = new FlushText(this);
-        addHint.setTextSize(13);
-        addHint.setTextColor(theme.subtext);
-        addHint.setText("A panel is added with Add a panel in the Fleet section: by the camera,"
-                + " or by typing the code under its Join QR.");
-        LinearLayout.LayoutParams hintParams = matchWrap();
-        hintParams.topMargin = dp(10);
-        panels.addView(addHint, hintParams);
-        column.addView(panels, matchWrap());
-        LinearLayout speakers = new LinearLayout(this);
-        speakers.setOrientation(LinearLayout.VERTICAL);
-        fillSpeakersCard(speakers, theme, list, groups);
-        column.addView(speakers, matchWrap());
-        // Groups: make one, remove one.
-        LinearLayout groupsCard = card(theme, "Groups");
+        actions.addView(identifyAll);
+        LinearLayout.LayoutParams actionsParams = matchWrap();
+        actionsParams.topMargin = dp(8);
+        head.addView(actions, actionsParams);
+        return head;
+    }
+
+    /** Material's primary tabs: the words, the chosen one in the accent over its indicator. */
+    private LinearLayout fleetTabs(KioskTheme theme) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        String[][] all = {{"panels", "Panels"}, {"groups", "Groups"},
+            {"shared", "Shared settings"}};
+        for (String[] tab : all) {
+            boolean on = tab[0].equals(fleetTab);
+            LinearLayout one = new LinearLayout(this);
+            one.setOrientation(LinearLayout.VERTICAL);
+            one.setGravity(Gravity.CENTER_HORIZONTAL);
+            TextView words = new FlushText(this);
+            words.setText(tab[1]);
+            words.setTextSize(14);
+            words.setTypeface(MEDIUM);
+            words.setSingleLine(true);
+            words.setGravity(Gravity.CENTER);
+            words.setTextColor(on ? theme.accent : theme.subtext);
+            one.addView(words, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    dp(45)));
+            View indicator = new View(this);
+            android.graphics.drawable.GradientDrawable bar =
+                    new android.graphics.drawable.GradientDrawable();
+            bar.setColor(on ? theme.accent : Color.TRANSPARENT);
+            bar.setCornerRadii(new float[] {dp(3), dp(3), dp(3), dp(3), 0, 0, 0, 0});
+            indicator.setBackground(bar);
+            one.addView(indicator, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
+            // The indicator as wide as the words, as Material's primary tabs draw it; the
+            // whole cell is the touch target.
+            LinearLayout holder = new LinearLayout(this);
+            holder.setGravity(Gravity.CENTER_HORIZONTAL);
+            holder.addView(one, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+            holder.setSelected(on);
+            holder.setContentDescription(tab[1]);
+            holder.setBackground(theme.ripple(new android.graphics.drawable.ColorDrawable(
+                    Color.TRANSPARENT), new android.graphics.drawable.ColorDrawable(Color.WHITE),
+                    theme.text));
+            holder.setOnClickListener(view -> {
+                if (!on) {
+                    fleetOpenPage = "";
+                    fleetTab = tab[0];
+                    showFleetPage();
+                }
+            });
+            tabs.addView(holder, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        }
+        column.addView(tabs, matchWrap());
+        View divider = new View(this);
+        divider.setBackgroundColor(theme.outlineVariant);
+        column.addView(divider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+        return column;
+    }
+
+    /** A panel's status under its name, the web's words: they do not move by the minute. */
+    private static String fleetStatusLine(FleetHealth.Member member) {
+        if (member.self) {
+            return "This panel";
+        }
+        if (member.online) {
+            return "Online";
+        }
+        return fleetReasonWords(member, FleetHealth.OFFLINE)
+                + ": is it on, on this network, with Muralis open?";
+    }
+
+    private static String fleetReasonWords(FleetHealth.Member member, String reason) {
+        switch (reason) {
+            case FleetHealth.OFFLINE:
+                return member.seenAgoMs < 0 ? "Not heard from yet" : "Offline since "
+                        + FleetServer.readableTime(java.time.Instant.now()
+                                .minusMillis(member.seenAgoMs).toString());
+            case FleetHealth.PAGE_ERROR:
+                return "Page error";
+            case FleetHealth.UPDATE:
+                return "Update available";
+            default:
+                return "Not following the fleet";
+        }
+    }
+
+    /**
+     * The Panels tab: the health chips, search, group menu and view, or what can be done to the
+     * ticked panels; the panels, the not healthy first; and the chosen one beside them when wide.
+     */
+    private void fleetPanelsTab(LinearLayout page, KioskTheme theme,
+            java.util.Map<String, Object> list, java.util.List<FleetHealth.Member> health,
+            boolean wide, LinearLayout.LayoutParams params) {
+        Context app = getApplicationContext();
+        java.util.Map<String, String> groups = FleetDocument.groups(list);
+        boolean shares = FleetServer.fleetShares(list);
+        String newest = FleetHealth.newest(health);
+        java.util.List<FleetHealth.Member> sorted = FleetHealth.sorted(health, newest, shares);
+        java.util.Map<String, java.util.Map<String, Object>> entries = new java.util.HashMap<>();
+        for (java.util.Map<String, Object> entry : FleetDocument.members(list)) {
+            entries.put(TinyJson.string(entry, FleetDocument.ID, ""), entry);
+        }
+        // Opened on this panel unless one is chosen: the first in the list is often one that
+        // does not answer, and each opening asks for a picture.
+        String self = "";
+        for (FleetHealth.Member member : sorted) {
+            self = member.self ? member.id : self;
+        }
+        if (!entries.containsKey(fleetPanel)) {
+            fleetPanel = !self.isEmpty() ? self : sorted.isEmpty() ? "" : sorted.get(0).id;
+        }
+        // A ticked panel that left is ticked no more.
+        java.util.Map<String, String> keys = new java.util.HashMap<>();
+        for (java.util.Map<String, Object> entry : FleetDocument.members(list)) {
+            keys.put(TinyJson.string(entry, FleetDocument.SPKI, ""),
+                    TinyJson.string(entry, FleetDocument.ID, ""));
+        }
+        fleetTicked.retainAll(keys.keySet());
+        int unhealthy = 0;
+        for (FleetHealth.Member member : sorted) {
+            unhealthy += FleetHealth.reasons(member, newest, shares).isEmpty() ? 0 : 1;
+        }
+        LinearLayout nav = wide ? navPanel(theme) : card(theme, null);
+        // The tools: the chips are the counts and the filter at once.
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.VERTICAL);
+        if (wide) {
+            tools.setPadding(dp(8), 0, dp(8), 0);
+        }
+        java.util.List<Runnable> filters = new java.util.ArrayList<>();
+        Runnable applyFilter = () -> {
+            for (Runnable filter : filters) {
+                filter.run();
+            }
+        };
+        WrapRow chips = new WrapRow();
+        String[][] shows = {{"all", "All", Integer.toString(sorted.size())},
+            {"healthy", "Healthy", Integer.toString(sorted.size() - unhealthy)},
+            {"unhealthy", "Not healthy", Integer.toString(unhealthy)}};
+        java.util.List<CheckBox> showChips = new java.util.ArrayList<>();
+        for (String[] show : shows) {
+            CheckBox chip = dayChip(theme, show[1] + " " + show[2], show[1] + ", " + show[2],
+                    show[0].equals(fleetShow));
+            chip.setTag(show[0]);
+            chip.setOnClickListener(view -> {
+                fleetShow = show[0];
+                for (CheckBox each : showChips) {
+                    each.setChecked(fleetShow.equals(each.getTag()));
+                }
+                applyFilter.run();
+            });
+            showChips.add(chip);
+            chips.addView(chip);
+        }
+        tools.addView(chips, navRowParams());
+        EditText search = themedInput(theme, fleetSearch, false);
+        search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        search.setTypeface(Typeface.DEFAULT);
+        search.addTextChangedListener(new SimpleWatcher(text -> {
+            fleetSearch = text;
+            applyFilter.run();
+        }));
+        addField(tools, theme, "Search panels", search);
+        if (!groups.isEmpty()) {
+            MenuField groupMenu = new MenuField(tools, theme, "Group");
+            groupMenu.add("All", "");
+            for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+                groupMenu.add(group.getValue(), group.getKey());
+            }
+            groupMenu.select(fleetGroupFilter);
+            fleetGroupFilter = groupMenu.value();
+            groupMenu.onChange = () -> {
+                fleetGroupFilter = groupMenu.value();
+                applyFilter.run();
+            };
+        }
+        // As wide as the list: two equal segments sized to their content cut "Pictures" short.
+        LinearLayout.LayoutParams viewParams = navRowParams();
+        viewParams.topMargin = dp(8);
+        tools.addView(segmentedChoice(theme, new String[] {"List", "Pictures"},
+                fleetPictures ? 1 : 0, index -> {
+                    if ((index == 1) != fleetPictures) {
+                        fleetPictures = index == 1;
+                        // Pictures takes every panel's picture anew when chosen.
+                        if (fleetPictures) {
+                            fleetShots.clear();
+                            fleetShotTimes.clear();
+                        }
+                        redrawInPlace(this::showFleetPage);
+                    }
+                }), viewParams);
+        nav.addView(tools, navRowParams());
+        // Ticking rows swaps the tools for what can be done to all of them.
+        LinearLayout selection = new LinearLayout(this);
+        selection.setOrientation(LinearLayout.VERTICAL);
+        if (wide) {
+            selection.setPadding(dp(8), 0, dp(8), 0);
+        }
+        TextView selected = new FlushText(this);
+        selected.setTextSize(16);
+        selected.setTextColor(theme.text);
+        LinearLayout selectedLine = new LinearLayout(this);
+        selectedLine.setOrientation(LinearLayout.HORIZONTAL);
+        selectedLine.setGravity(Gravity.CENTER_VERTICAL);
+        selectedLine.addView(selected, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        java.util.List<CheckBox> ticks = new java.util.ArrayList<>();
+        Runnable[] paintSelection = new Runnable[1];
+        ImageButton closeSelection = iconButton(theme, R.drawable.ic_close, "Close");
+        closeSelection.setOnClickListener(view -> {
+            fleetTicked.clear();
+            for (CheckBox tick : ticks) {
+                tick.setChecked(false);
+            }
+            paintSelection[0].run();
+        });
+        selectedLine.addView(closeSelection);
+        selection.addView(selectedLine, navRowParams());
+        WrapRow selectionActions = new WrapRow();
+        if (sorted.size() > 1) {
+            Button say = textButton(theme, "Say or play");
+            say.setOnClickListener(view -> {
+                speakersMode = 2;
+                speakersTicked.clear();
+                for (String spki : fleetTicked) {
+                    speakersTicked.add(keys.get(spki));
+                }
+                showFleetSayPage();
+            });
+            selectionActions.addView(say);
+        }
+        Button identify = textButton(theme, "Identify");
+        identify.setOnClickListener(view -> {
+            for (String spki : new java.util.ArrayList<>(fleetTicked)) {
+                java.util.Map<String, Object> member = entries.get(keys.get(spki));
+                if (member != null) {
+                    fleetWork(app, () -> FleetServer.identifyOn(app, member));
+                }
+            }
+        });
+        selectionActions.addView(identify);
+        Button remove = textButton(theme, "Remove");
+        remove.setTextColor(theme.bad);
+        remove.setOnClickListener(view -> {
+            java.util.List<String> others = new java.util.ArrayList<>();
+            for (String spki : fleetTicked) {
+                if (!FleetServer.isSelf(this, entries.get(keys.get(spki)))) {
+                    others.add(spki);
+                }
+            }
+            boolean skipped = others.size() < fleetTicked.size();
+            if (others.isEmpty()) {
+                Toast.makeText(this, "This panel is not removed here: Leave in its Fleet section"
+                        + " takes it out.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            confirmRemove(others.size() == 1 ? "Remove 1 panel?"
+                    : "Remove " + others.size() + " panels?", (others.size() == 1
+                            ? "It is taken off the fleet's list on every panel and its key is no"
+                            + " longer trusted. It can join again with a new code."
+                            : "They are taken off the fleet's list on every panel and their keys"
+                            + " are no longer trusted. They can join again with a new code.")
+                            + (skipped ? " This panel stays: Leave in its Fleet section takes it"
+                            + " out." : ""), () -> fleetWork(app, () -> {
+                                java.util.List<String> refusals = new java.util.ArrayList<>();
+                                for (String spki : others) {
+                                    String refused = FleetServer.removeMember(app, spki, true);
+                                    if (refused != null) {
+                                        refusals.add(refused);
+                                    }
+                                }
+                                mainHandler.post(() -> {
+                                    fleetTicked.clear();
+                                    redrawInPlace(this::showFleetPage);
+                                });
+                                return refusals.isEmpty() ? null : String.join("; ", refusals);
+                            }));
+        });
+        selectionActions.addView(remove);
+        selection.addView(selectionActions, matchWrap());
+        if (!groups.isEmpty()) {
+            // The group to put them in, then Add to group, as the web's menu and button.
+            MenuField toGroup = new MenuField(selection, theme, "Group to add them to");
+            for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+                toGroup.add(group.getValue(), group.getKey());
+            }
+            toGroup.select("");
+            Button addToGroup = textButton(theme, "Add to group");
+            addToGroup.setOnClickListener(view -> {
+                String group = toGroup.value();
+                java.util.List<String> spkis = new java.util.ArrayList<>(fleetTicked);
+                fleetWork(app, () -> {
+                    String refused = FleetServer.addToGroup(app, group, spkis);
+                    if (refused == null) {
+                        mainHandler.post(() -> {
+                            fleetTicked.clear();
+                            redrawInPlace(this::showFleetPage);
+                        });
+                    }
+                    return refused;
+                });
+            });
+            selection.addView(fittingButtonRow(addToGroup), matchWrapClose());
+        }
+        nav.addView(selection, navRowParams());
+        paintSelection[0] = () -> {
+            boolean any = !fleetTicked.isEmpty();
+            selected.setText(fleetTicked.size() + " selected");
+            selection.setVisibility(any ? View.VISIBLE : View.GONE);
+            tools.setVisibility(any ? View.GONE : View.VISIBLE);
+        };
+        paintSelection[0].run();
+        // The rows, the not healthy under their own head when both kinds are there.
+        boolean both = unhealthy > 0 && unhealthy < sorted.size();
+        boolean firstGood = true;
+        boolean firstBad = true;
+        // Each kind's head and rows, for the filter to hide a head over no rows and to round
+        // the ends of what is left.
+        java.util.Map<Boolean, TextView> heads = new java.util.HashMap<>();
+        java.util.Map<Boolean, java.util.List<View>> kinds = new java.util.HashMap<>();
+        kinds.put(true, new java.util.ArrayList<>());
+        kinds.put(false, new java.util.ArrayList<>());
+        for (FleetHealth.Member member : sorted) {
+            java.util.List<String> reasons = FleetHealth.reasons(member, newest, shares);
+            boolean healthy = reasons.isEmpty();
+            if (both && (healthy ? firstGood : firstBad)) {
+                TextView label = fieldCaption(theme, healthy ? "Healthy" : "Not healthy");
+                LinearLayout.LayoutParams labelParams = matchWrap();
+                labelParams.topMargin = dp(16);
+                labelParams.leftMargin = dp(wide ? 16 : 0);
+                nav.addView(label, labelParams);
+                nav.setTag(null);
+                heads.put(healthy, label);
+            }
+            boolean first = healthy ? firstGood : firstBad;
+            if (healthy) {
+                firstGood = false;
+            } else {
+                firstBad = false;
+            }
+            java.util.Map<String, Object> entry = entries.get(member.id);
+            String spki = TinyJson.string(entry, FleetDocument.SPKI, "");
+            java.util.List<String> in = new java.util.ArrayList<>(
+                    FleetDocument.memberGroups(list, entry));
+            in.remove(FleetDocument.EVERYONE);
+            LinearLayout row = fleetPanelRow(theme, member, reasons, in, groups, entry, ticks,
+                    paintSelection[0]);
+            String id = member.id;
+            row.setOnClickListener(view -> {
+                fleetPanel = id;
+                if (wide) {
+                    redrawInPlace(this::showFleetPage);
+                } else {
+                    showFleetPanelPage(id);
+                }
+            });
+            if (wide && id.equals(fleetPanel)) {
+                row.setTag(R.id.segment_state, new Object[] {first, theme.secondaryContainer});
+            }
+            addListRow(nav, theme, row, first);
+            kinds.get(healthy).add(row);
+            filters.add(() -> row.setVisibility((fleetShow.equals("all")
+                    || fleetShow.equals("healthy") == healthy)
+                    && (fleetGroupFilter.isEmpty() || in.contains(fleetGroupFilter))
+                    && member.name.toLowerCase(java.util.Locale.ROOT).contains(
+                            fleetSearch.trim().toLowerCase(java.util.Locale.ROOT))
+                    ? View.VISIBLE : View.GONE));
+            if (fleetPictures) {
+                fleetPicture(theme, row, entry, id, dp(120), false);
+            }
+        }
+        filters.add(() -> {
+            for (boolean healthy : new boolean[] {false, true}) {
+                java.util.List<View> shown = new java.util.ArrayList<>();
+                for (View row : kinds.get(healthy)) {
+                    if (row.getVisibility() == View.VISIBLE) {
+                        shown.add(row);
+                    }
+                }
+                if (heads.containsKey(healthy)) {
+                    heads.get(healthy).setVisibility(shown.isEmpty() ? View.GONE : View.VISIBLE);
+                }
+                for (int index = 0; index < shown.size(); index++) {
+                    ((Object[]) shown.get(index).getTag(R.id.segment_state))[0] = index == 0;
+                    paintSegment(theme, shown.get(index), index == shown.size() - 1);
+                }
+            }
+        });
+        applyFilter.run();
+        if (sorted.size() == 1) {
+            LinearLayout next = new LinearLayout(this);
+            next.setOrientation(LinearLayout.VERTICAL);
+            next.setPadding(dp(wide ? 16 : 0), dp(16), dp(wide ? 16 : 0), dp(8));
+            next.addView(cardTitle(theme, "Add your next panel"), matchWrap());
+            TextView how = new FlushText(this);
+            how.setTextSize(14);
+            how.setTextColor(theme.subtext);
+            how.setText("By the code under its Join QR, or with an invitation QR for a new"
+                    + " tablet.");
+            next.addView(how, matchWrapClose());
+            Button add = withPlus(tonalButton(theme, "Add a panel"));
+            add.setOnClickListener(view -> showFleetAddPage());
+            next.addView(fittingButtonRow(add), matchWrapClose());
+            nav.addView(next, matchWrap());
+        }
+        if (wide) {
+            FleetHealth.Member chosen = null;
+            for (FleetHealth.Member member : sorted) {
+                chosen = member.id.equals(fleetPanel) ? member : chosen;
+            }
+            View detail = chosen == null ? new View(this) : fleetPanelBox(theme, list, groups,
+                    chosen, entries.get(chosen.id), newest, shares, true);
+            page.addView(listDetailPair(nav, detail), params);
+        } else {
+            page.addView(paneOf(nav), params);
+        }
+    }
+
+    /**
+     * A panel's row: its tick, its status dot, its name with its reason or status, its first
+     * group, and Identify. Below 840 dp and beside the detail alike; the row itself opens it.
+     */
+    private LinearLayout fleetPanelRow(KioskTheme theme, FleetHealth.Member member,
+            java.util.List<String> reasons, java.util.List<String> in,
+            java.util.Map<String, String> groups, java.util.Map<String, Object> entry,
+            java.util.List<CheckBox> ticks, Runnable paintSelection) {
+        Context app = getApplicationContext();
+        String spki = TinyJson.string(entry, FleetDocument.SPKI, "");
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setPadding(dp(4), dp(4), dp(8), dp(4));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(64));
+        CheckBox tick = new CheckBox(this);
+        tick.setButtonTintList(ColorStateList.valueOf(theme.accent));
+        tick.setContentDescription(member.name);
+        tick.setChecked(fleetTicked.contains(spki));
+        tick.setOnCheckedChangeListener((button, checked) -> {
+            if (checked) {
+                fleetTicked.add(spki);
+            } else {
+                fleetTicked.remove(spki);
+            }
+            paintSelection.run();
+        });
+        ticks.add(tick);
+        row.addView(tick);
+        // Green online, grey offline, amber for any other reason; never the colour alone, the
+        // second line says it.
+        View dot = new View(this);
+        android.graphics.drawable.GradientDrawable round =
+                new android.graphics.drawable.GradientDrawable();
+        round.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        round.setColor(reasons.isEmpty() ? theme.ok
+                : reasons.get(0).equals(FleetHealth.OFFLINE) ? theme.subtext : theme.warn);
+        dot.setBackground(round);
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(10), dp(10));
+        dotParams.leftMargin = dp(4);
+        dotParams.rightMargin = dp(12);
+        row.addView(dot, dotParams);
+        LinearLayout words = new LinearLayout(this);
+        words.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new FlushText(this);
+        name.setText(member.name);
+        name.setTextColor(theme.text);
+        name.setTextSize(16);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        words.addView(name, navRowParams());
+        TextView line = new FlushText(this);
+        line.setText(reasons.isEmpty() ? (member.self ? "This panel" : "Online")
+                : fleetReasonWords(member, reasons.get(0)));
+        line.setTextColor(theme.subtext);
+        line.setTextSize(14);
+        line.setSingleLine(true);
+        line.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        words.addView(line, navRowParams());
+        row.addView(words, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f));
+        if (!in.isEmpty()) {
+            TextView groupWords = new FlushText(this);
+            groupWords.setTextSize(14);
+            groupWords.setTextColor(theme.subtext);
+            groupWords.setSingleLine(true);
+            groupWords.setText(groups.get(in.get(0)) + (in.size() > 1 ? " +" + (in.size() - 1)
+                    : ""));
+            LinearLayout.LayoutParams groupParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            groupParams.leftMargin = dp(8);
+            row.addView(groupWords, groupParams);
+        }
+        ImageButton identify = iconButton(theme, R.drawable.ic_sensor_panel,
+                "Identify " + member.name);
+        identify.setOnClickListener(view -> fleetWork(app,
+                () -> FleetServer.identifyOn(app, entry)));
+        row.addView(identify);
+        outer.addView(row, navRowParams());
+        return outer;
+    }
+
+    /**
+     * A panel's picture under {@code into}: the one taken while the page was open, else asked of
+     * the panel now, off the main thread; "Taken 09:12" and, in the detail, Take a new picture.
+     */
+    private void fleetPicture(KioskTheme theme, LinearLayout into,
+            java.util.Map<String, Object> entry, String id, int heightPx, boolean refresh) {
+        Context app = getApplicationContext();
+        ImageView image = new ImageView(this);
+        image.setAdjustViewBounds(true);
+        image.setMaxHeight(heightPx);
+        image.setContentDescription("The screen of " + TinyJson.string(entry, FleetDocument.NAME,
+                id));
+        image.setVisibility(View.GONE);
+        LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        imageParams.topMargin = dp(8);
+        into.addView(image, imageParams);
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        TextView words = new FlushText(this);
+        words.setTextSize(13);
+        words.setTextColor(theme.subtext);
+        bar.addView(words, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f));
+        Runnable[] fetch = new Runnable[1];
+        if (refresh) {
+            ImageButton again = iconButton(theme, R.drawable.ic_reload, "Take a new picture");
+            again.setOnClickListener(view -> fetch[0].run());
+            bar.addView(again);
+        }
+        into.addView(bar, navRowParams());
+        java.util.function.Consumer<String> show = problem -> {
+            android.graphics.Bitmap bitmap = fleetShots.get(id);
+            if (problem != null || bitmap == null) {
+                image.setImageDrawable(null);
+                image.setVisibility(View.GONE);
+                words.setText(problem != null ? problem : FleetServer.NO_PICTURE);
+                return;
+            }
+            image.setImageBitmap(bitmap);
+            image.setVisibility(View.VISIBLE);
+            words.setText("Taken " + new java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT)
+                    .format(new java.util.Date(fleetShotTimes.get(id))));
+        };
+        fetch[0] = () -> {
+            words.setText("Asking the panel...");
+            new Thread(() -> {
+                FleetServer.Picture picture = FleetServer.screenshotOf(app, entry);
+                android.graphics.Bitmap bitmap = picture.jpeg == null ? null
+                        : thumbnailOf(picture.jpeg, dp(200));
+                mainHandler.post(() -> {
+                    if (bitmap != null) {
+                        fleetShots.put(id, bitmap);
+                        fleetShotTimes.put(id, System.currentTimeMillis());
+                    }
+                    if (into.isAttachedToWindow()) {
+                        show.accept(bitmap != null ? null : picture.problem == null
+                                ? FleetServer.NO_PICTURE : picture.problem);
+                    }
+                });
+            }, "MuralisFleetShot").start();
+        };
+        // The detail asks again each time a panel is opened, as the web does; a redraw of the
+        // same opening, and the Pictures view, show what was taken.
+        boolean opening = refresh && !id.equals(fleetFreshShot);
+        if (refresh) {
+            fleetFreshShot = id;
+        }
+        if (fleetShots.containsKey(id) && !opening) {
+            show.accept(null);
+        } else {
+            fetch[0].run();
+        }
+    }
+
+    /** From a panel's or a section's own page back to the list. */
+    private void leaveFleetPage() {
+        fleetOpenPage = "";
+        fleetFreshShot = "";
+        showFleetPage();
+    }
+
+    /** Below 840 dp, one panel as a page of its own, back to the list. */
+    private void showFleetPanelPage(String id) {
+        if (widthClass() == 2) {
+            fleetPanel = id;
+            showFleetPage();
+            return;
+        }
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
+        java.util.Map<String, Object> entry = null;
+        for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
+            entry = id.equals(TinyJson.string(member, FleetDocument.ID, "")) ? member : entry;
+        }
+        if (entry == null || !FleetServer.proStatus(this).pro) {
+            // Removed meanwhile, or the fleet is gone: the list says what there is.
+            fleetOpenPage = "";
+            showFleetPage();
+            return;
+        }
+        fleetPanel = id;
+        fleetOpenPage = "panel";
+        currentScreen = () -> showFleetPanelPage(id);
+        java.util.List<FleetHealth.Member> health = FleetServer.healthMembers(this);
+        FleetHealth.Member member = null;
+        for (FleetHealth.Member each : health) {
+            member = each.id.equals(id) ? each : member;
+        }
+        LinearLayout page = subPage(member.name, this::leaveFleetPage);
+        KioskTheme theme = currentTheme();
+        page.addView(paneOf(fleetPanelBox(theme, list, FleetDocument.groups(list), member, entry,
+                FleetHealth.newest(health), FleetServer.fleetShares(list), false)), matchWrap());
+        setContentView(scrollPage(theme, page));
+        watchLists("fleet", page, () -> redrawInPlace(() -> showFleetPanelPage(id)));
+    }
+
+    /**
+     * One panel: its status, picture, health, groups, network speaker, Identify and Remove;
+     * {@code titled} beside the list, where the page's title does not name it.
+     */
+    private LinearLayout fleetPanelBox(KioskTheme theme, java.util.Map<String, Object> list,
+            java.util.Map<String, String> groups, FleetHealth.Member member,
+            java.util.Map<String, Object> entry, String newest, boolean shares, boolean titled) {
+        Context app = getApplicationContext();
+        String id = member.id;
+        String spki = TinyJson.string(entry, FleetDocument.SPKI, "");
+        LinearLayout box = card(theme, titled ? member.name : null);
+        TextView status = new FlushText(this);
+        status.setTextSize(14);
+        status.setTextColor(theme.subtext);
+        status.setText(fleetStatusLine(member));
+        box.addView(status, matchWrapClose());
+        // The picture is taken when the panel is opened, never with the page: each is a capture
+        // on that wall.
+        fleetPicture(theme, box, entry, id, dp(200), true);
+        box.addView(fieldCaption(theme, "Health"), fleetLabelParams());
+        WrapRow chips = new WrapRow();
+        for (String reason : FleetHealth.reasons(member, newest, shares)) {
+            chips.addView(healthChip(theme, R.drawable.ic_info, reason.equals(
+                    FleetHealth.PAGE_ERROR) ? "Page error: " + member.pageError
+                    : fleetReasonWords(member, reason), true));
+        }
+        if (member.batteryPercent >= 0) {
+            chips.addView(healthChip(theme, member.charging ? R.drawable.ic_sensor_bolt
+                    : R.drawable.ic_sensor_battery, member.batteryPercent + "%"
+                    + (member.charging ? ", charging" : ""), false));
+        }
+        String wifi = FleetHealth.wifiWord(member.wifiRssiDbm);
+        if (!wifi.isEmpty()) {
+            chips.addView(healthChip(theme, R.drawable.ic_sensor_network, "Wi-Fi " + wifi, false));
+        }
+        if (!member.appVersion.isEmpty()) {
+            chips.addView(healthChip(theme, R.drawable.ic_info, "Muralis " + member.appVersion,
+                    false));
+        }
+        if (!member.android.isEmpty()) {
+            chips.addView(healthChip(theme, R.drawable.ic_sensor_panel, "Android "
+                    + member.android, false));
+        }
+        if (chips.getChildCount() == 0) {
+            TextView none = new FlushText(this);
+            none.setTextSize(14);
+            none.setTextColor(theme.subtext);
+            none.setText("Not heard from yet");
+            box.addView(none, matchWrapClose());
+        } else {
+            box.addView(chips, navRowParams());
+        }
+        if (!groups.isEmpty()) {
+            // A tap applies at once, the whole set of this panel's groups.
+            box.addView(fieldCaption(theme, "Groups"), fleetLabelParams());
+            java.util.List<String> in = FleetDocument.memberGroups(list, entry);
+            WrapRow groupChips = new WrapRow();
+            java.util.Map<String, CheckBox> picked = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+                CheckBox chip = dayChip(theme, group.getValue(), group.getValue(),
+                        in.contains(group.getKey()));
+                picked.put(group.getKey(), chip);
+                chip.setOnClickListener(view -> {
+                    java.util.Map<String, Boolean> want = new java.util.HashMap<>();
+                    for (java.util.Map.Entry<String, CheckBox> each : picked.entrySet()) {
+                        want.put(each.getKey(), each.getValue().isChecked());
+                    }
+                    fleetWork(app, () -> {
+                        java.util.Map<String, Object> now = KioskConfig.fleetDocumentOf(app);
+                        java.util.List<String> mine = new java.util.ArrayList<>(
+                                FleetDocument.memberGroups(now,
+                                        FleetDocument.memberByKey(now, spki)));
+                        for (java.util.Map.Entry<String, Boolean> each : want.entrySet()) {
+                            mine.remove(each.getKey());
+                            if (each.getValue()) {
+                                mine.add(each.getKey());
+                            }
+                        }
+                        String refused = FleetServer.setMemberGroups(app, spki, mine);
+                        if (refused != null) {
+                            // The chips go back to what the fleet holds.
+                            mainHandler.post(() -> redrawInPlace(currentScreen));
+                        }
+                        return refused;
+                    });
+                });
+                groupChips.addView(chip);
+            }
+            box.addView(groupChips, navRowParams());
+        }
+        box.addView(fieldCaption(theme, "Network speaker"), fleetLabelParams());
+        LinearLayout speaker = new LinearLayout(this);
+        speaker.setOrientation(LinearLayout.HORIZONTAL);
+        speaker.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout speakerWords = new LinearLayout(this);
+        speakerWords.setOrientation(LinearLayout.VERTICAL);
+        TextView speakerState = new FlushText(this);
+        speakerState.setText("Asking the panel...");
+        speakerState.setTextColor(theme.subtext);
+        speakerState.setTextSize(14);
+        speakerWords.addView(speakerState);
+        Runnable[] loadSpeaker = new Runnable[1];
+        java.util.function.BiConsumer<String, String> act = (what, value) -> new Thread(() -> {
+            org.json.JSONObject done = FleetSpeakers.act(app, "panels:" + id, what, value);
+            String error = done.optString("error", "");
+            mainHandler.post(() -> {
+                if (!error.isEmpty() && !isFinishing()) {
+                    Toast.makeText(app, error, Toast.LENGTH_LONG).show();
+                }
+                loadSpeaker[0].run();
+            });
+        }, "MuralisFleetSpeakers").start();
+        SeekBar volume = speakerSlider(theme, 0, percent ->
+                act.accept("volume", Integer.toString(percent)));
+        volume.setEnabled(false);
+        volume.setAlpha(0.38f);
+        volume.setContentDescription("Volume of " + member.name);
+        speakerWords.addView(volume, matchWrapClose());
+        speaker.addView(speakerWords, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        CompoundButton speakerOn = themedSwitch(theme, "", false);
+        speakerOn.setEnabled(false);
+        speakerOn.setContentDescription("Network speaker of " + member.name);
+        speakerOn.setOnCheckedChangeListener((button, checked) -> {
+            if (button.isPressed()) {
+                act.accept("switch", checked ? "on" : "off");
+            }
+        });
+        speaker.addView(speakerOn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        box.addView(speaker, navRowParams());
+        loadSpeaker[0] = () -> new Thread(() -> {
+            org.json.JSONArray panels = FleetSpeakers.states(app, id).optJSONArray("panels");
+            org.json.JSONObject one = panels == null ? null : panels.optJSONObject(0);
+            mainHandler.post(() -> {
+                if (!box.isAttachedToWindow() || one == null) {
+                    return;
+                }
+                boolean reached = one.optBoolean("reached");
+                boolean on = one.optBoolean("on");
+                speakerState.setText(speakerWords(one));
+                speakerOn.setEnabled(reached);
+                speakerOn.setChecked(reached && on);
+                volume.setEnabled(reached && on);
+                volume.setAlpha(reached && on ? 1f : 0.38f);
+                if (one.optInt("volume", -1) >= 0 && !volume.isPressed()) {
+                    volume.setProgress(one.optInt("volume"));
+                }
+            });
+        }, "MuralisFleetSpeakers").start();
+        loadSpeaker[0].run();
+        Button identify = textButton(theme, "Identify");
+        identify.setOnClickListener(view -> fleetWork(app,
+                () -> FleetServer.identifyOn(app, entry)));
+        if (member.self) {
+            box.addView(fittingButtonRow(identify), matchWrapClose());
+        } else {
+            // For a panel that cannot leave by itself (broken, wiped, gone); one that is
+            // reachable is told and leaves.
+            Button remove = textButton(theme, "Remove");
+            remove.setTextColor(theme.bad);
+            remove.setOnClickListener(view -> confirmRemove("Remove " + member.name + "?",
+                    "It is taken off the fleet's list on every panel and its key is no"
+                            + " longer trusted. It can join again with a new code.",
+                    () -> fleetWork(app, () -> {
+                        String refused = FleetServer.removeMember(app, spki, true);
+                        mainHandler.post(() -> {
+                            fleetPanel = "";
+                            fleetOpenPage = "";
+                            fleetTicked.remove(spki);
+                            showFleetPage();
+                        });
+                        return refused;
+                    })));
+            box.addView(fittingButtonRow(identify, remove), matchWrapClose());
+        }
+        return box;
+    }
+
+    /** A network speaker's state in the Speakers card's words. */
+    private static String speakerWords(org.json.JSONObject one) {
+        return one.optBoolean("too_old") ? "Its Muralis is too old for this"
+                : !one.optBoolean("reached") ? "Not reached" : !one.optBoolean("on")
+                ? "Speaker off" : one.optBoolean("playing") ? "Playing" : "Idle";
+    }
+
+    /** A label's place over a part of a Fleet box, the web's p.label. */
+    private LinearLayout.LayoutParams fleetLabelParams() {
+        LinearLayout.LayoutParams params = matchWrap();
+        params.topMargin = dp(16);
+        params.bottomMargin = dp(4);
+        return params;
+    }
+
+    /** One fact of a panel's health: its glyph and words, outlined; red for a reason. */
+    private LinearLayout healthChip(KioskTheme theme, int glyph, String words, boolean bad) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.HORIZONTAL);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        // 32 dp drawn in a 40 dp cell, so two lines of chips keep 8 dp between them.
+        chip.setMinimumHeight(dp(40));
+        android.graphics.drawable.GradientDrawable shape = theme.panel(Color.TRANSPARENT, dp(8));
+        shape.setStroke(dp(1), bad ? theme.bad : theme.border);
+        chip.setBackground(new android.graphics.drawable.InsetDrawable(shape, 0, dp(4), 0,
+                dp(4)));
+        // After the background, which sets the padding to its insets.
+        chip.setPadding(dp(8), dp(8), dp(12), dp(8));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(glyph);
+        icon.setImageTintList(ColorStateList.valueOf(bad ? theme.bad : theme.subtext));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+        iconParams.rightMargin = dp(8);
+        chip.addView(icon, iconParams);
+        TextView text = new FlushText(this);
+        text.setText(words);
+        text.setTextSize(14);
+        text.setTextColor(bad ? theme.bad : theme.text);
+        chip.addView(text);
+        return chip;
+    }
+
+    /** The Groups tab: each group with its panels, its shared settings and Remove; New group. */
+    private LinearLayout fleetGroupsCard(KioskTheme theme, java.util.Map<String, Object> list) {
+        Context app = getApplicationContext();
+        java.util.Map<String, String> groups = FleetDocument.groups(list);
+        LinearLayout card = card(theme, null);
+        TextView count = new FlushText(this);
+        count.setText(groups.size() == 1 ? "1 group" : groups.size() + " groups");
+        card.addView(listHead(theme, "Groups", count), matchWrap());
         if (groups.isEmpty()) {
             TextView none = new FlushText(this);
-            none.setTextSize(13);
+            none.setTextSize(14);
             none.setTextColor(theme.subtext);
             none.setText("No groups yet. Panels with the same job, such as the meeting rooms or"
                     + " the lobby screens, can share more than the whole fleet does.");
-            groupsCard.addView(none, matchWrap());
+            card.addView(none, matchWrapClose());
         }
+        boolean first = true;
         for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
             String id = group.getKey();
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            TextView name = new FlushText(this);
-            name.setTextSize(15);
-            name.setTextColor(theme.text);
-            name.setText(group.getValue());
-            row.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    1));
-            Button remove = textButton(theme, "Remove");
-            remove.setOnClickListener(view -> confirmRemove("Remove the group " + group.getValue()
-                    + "?", "What it shares is shared no more; the panels in it keep their"
-                    + " settings.", () -> fleetWork(app, () -> {
+            String name = group.getValue();
+            WrapRow names = new WrapRow();
+            int members = 0;
+            for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
+                if (FleetDocument.memberGroups(list, member).contains(id)) {
+                    members++;
+                    names.addView(readOnlyChip(theme, TinyJson.string(member,
+                            FleetDocument.NAME, "")));
+                }
+            }
+            LinearLayout trailing = new LinearLayout(this);
+            trailing.setOrientation(LinearLayout.HORIZONTAL);
+            ImageButton shared = iconButton(theme, R.drawable.ic_sensor_tune,
+                    "Shared settings of " + name);
+            shared.setOnClickListener(view -> {
+                fleetTab = "shared";
+                fleetScope = id;
+                showFleetPage();
+            });
+            trailing.addView(shared);
+            ImageButton remove = iconButton(theme, R.drawable.ic_trash, "Remove " + name);
+            remove.setOnClickListener(view -> confirmRemove("Remove the group " + name + "?",
+                    "What it shares is shared no more; the panels in it keep their settings.",
+                    () -> fleetWork(app, () -> {
                         String refused = FleetServer.removeGroup(app, id);
-                        mainHandler.post(() -> showFleetPage(scope));
+                        mainHandler.post(() -> redrawInPlace(this::showFleetPage));
                         return refused;
                     })));
-            row.addView(remove, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT));
-            groupsCard.addView(row, matchWrapClose());
+            trailing.addView(remove);
+            LinearLayout row = glyphRow(theme, R.drawable.ic_fleet, name,
+                    members == 1 ? "1 panel" : members + " panels", trailing, null, false, false);
+            if (names.getChildCount() > 0) {
+                ((LinearLayout) row.getChildAt(1)).addView(names, matchWrap());
+                row.setPadding(row.getPaddingLeft(), dp(8), row.getPaddingRight(), dp(8));
+            }
+            addListRow(card, theme, row, first);
+            first = false;
         }
         EditText newGroup = themedInput(theme, "", false);
         newGroup.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        newGroup.setTypeface(android.graphics.Typeface.DEFAULT);
-        addField(groupsCard, theme, "New group", newGroup);
+        newGroup.setTypeface(Typeface.DEFAULT);
+        // A fixed gap above the field: a bare View asked to wrap takes all the room it is given.
+        card.addView(new View(this), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(16)));
+        addField(card, theme, "New group", newGroup);
         // Hue asks a room's name with suggestions and takes any name typed: the same here.
         LinearLayout suggestions = new LinearLayout(this);
         suggestions.setOrientation(LinearLayout.HORIZONTAL);
@@ -5371,191 +6212,262 @@ public final class KioskActivity extends Activity {
             }
         }
         suggestionsScroll.addView(suggestions);
-        groupsCard.addView(suggestionsScroll, matchWrapClose());
+        card.addView(suggestionsScroll, matchWrapClose());
         Button addGroup = tonalButton(theme, "Add group");
         addGroup.setOnClickListener(view -> {
             String name = newGroup.getText().toString();
             fleetWork(app, () -> {
                 String refused = FleetServer.createGroup(app, name, new String[1]);
                 if (refused == null) {
-                    mainHandler.post(() -> showFleetPage(scope));
+                    mainHandler.post(() -> redrawInPlace(this::showFleetPage));
                 }
                 return refused;
             });
         });
-        groupsCard.addView(fittingButtonRow(addGroup), matchWrapClose());
-        column.addView(groupsCard, matchWrap());
-        // Shared settings of one scope: the whole fleet or a group, then which sections it shares.
-        LinearLayout sharedCard = card(theme, "Shared settings");
-        sharedCard.addView(sectionTitle(theme, "Shared in", 4), matchWrap());
-        RadioGroup scopeInput = new RadioGroup(this);
-        radioChoice(theme, scopeInput, FleetDocument.EVERYONE_NAME, FleetDocument.EVERYONE);
-        for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
-            radioChoice(theme, scopeInput, group.getValue(), group.getKey());
-        }
-        String shown = FleetDocument.EVERYONE.equals(scope) || groups.containsKey(scope) ? scope
-                : FleetDocument.EVERYONE;
-        checkRadioIfChanged(scopeInput, shown);
-        scopeInput.setOnCheckedChangeListener((group, checkedId) -> {
-            View checked = group.findViewById(checkedId);
-            if (checked != null && !shown.equals(checked.getTag())) {
-                showFleetPage((String) checked.getTag());
-            }
-        });
-        sharedCard.addView(scopeInput, matchWrapClose());
-        // Which sections the scope shares, one switch each (the UI round, 2026-10-15): the
-        // values are the sections' own, edited where they live on any panel of the scope, and
-        // never copied here. Switched on, the section as this panel has it now is shared.
-        String shownScope = shown;
-        for (String section : FleetDocument.SECTIONS) {
-            boolean isShared = FleetDocument.sectionValues(list, shown, section) != null;
-            CompoundButton sharedSwitch = themedSwitch(theme,
-                    FleetDocument.sectionLabel(section), isShared);
-            sharedSwitch.setOnCheckedChangeListener((button, on) -> fleetWork(app, () -> {
-                String refused = FleetServer.shareSection(app, shownScope, section,
-                        on ? FleetProfile.read(app, section) : null);
-                if (refused != null) {
-                    // The switch goes back to what the fleet holds.
-                    mainHandler.post(() -> showFleetPage(shownScope));
-                } else if (on && "alerts".equals(section)) {
-                    // An alert kind on: the notification needs its grant on Android 13 and
-                    // newer, asked at the panel; without it the alert still goes to the topic
-                    // and the web address.
-                    mainHandler.post(this::requestNotificationPermissionIfNeeded);
-                }
-                return refused;
-            }));
-            sharedCard.addView(sharedSwitch, matchWrapClose());
-        }
-        TextView rule = new FlushText(this);
-        rule.setTextSize(13);
-        rule.setTextColor(theme.subtext);
-        rule.setText("On, the section as it is here applies to every panel of the scope. A group"
-                + " wins over the whole fleet.");
-        LinearLayout.LayoutParams ruleParams = matchWrap();
-        ruleParams.topMargin = dp(12);
-        sharedCard.addView(rule, ruleParams);
-        LinearLayout.LayoutParams cardParams = matchWrap();
-        cardParams.topMargin = dp(12);
-        column.addView(sharedCard, cardParams);
-        // History: the versions this panel held, newest first, each with what it
-        // changed, and Restore as new for every one but the version held.
-        LinearLayout historyCard = card(theme, "History");
-        java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(this);
-        if (history.isEmpty()) {
-            TextView none = new FlushText(this);
-            none.setTextSize(13);
-            none.setTextColor(theme.subtext);
-            none.setText("No versions kept yet.");
-            historyCard.addView(none, matchWrap());
-        }
-        // The newest few, the rest behind Older versions, so the page does not end in a wall
-        // of versions (the UI round, 2026-10-15).
-        LinearLayout older = new LinearLayout(this);
-        older.setOrientation(LinearLayout.VERTICAL);
-        older.setVisibility(View.GONE);
-        int shownCount = 0;
-        for (FleetServer.HistoryEntry entry : history) {
-            LinearLayout into = shownCount++ < FleetServer.HISTORY_SHOWN ? historyCard : older;
-            TextView line = new FlushText(this);
-            line.setTextSize(15);
-            line.setTextColor(theme.text);
-            line.setText("Version " + entry.version + (entry.held ? ", held now" : ""));
-            LinearLayout.LayoutParams lineParams = matchWrap();
-            lineParams.topMargin = dp(10);
-            into.addView(line, lineParams);
-            TextView detail = new FlushText(this);
-            detail.setTextSize(13);
-            detail.setTextColor(theme.subtext);
-            detail.setText(entry.author + ", " + FleetServer.readableTime(entry.updated) + ". "
-                    + (entry.changes.isEmpty()
-                            ? "No change to the fleet's name, panels, groups or shared settings."
-                            : String.join("; ", entry.changes) + "."));
-            into.addView(detail, matchWrapClose());
-            if (!entry.held) {
-                Button restore = textButton(theme, "Restore as new");
-                long version = entry.version;
-                restore.setOnClickListener(view -> confirmKeepingScreen("Restore version "
-                        + version + " as new?", "Its fleet name, groups and shared settings are"
-                        + " written as a new version for every panel; the panels of the fleet"
-                        + " stay as they are now.", "Restore", false, () -> fleetWork(app, () -> {
-                            String refused = FleetServer.restoreVersion(app, version);
-                            mainHandler.post(() -> showFleetPage(scope));
-                            return refused;
-                        })));
-                into.addView(fittingButtonRow(restore), matchWrapClose());
-            }
-        }
-        if (older.getChildCount() > 0) {
-            Button showOlder = textButton(theme, "Older versions");
-            showOlder.setOnClickListener(view -> {
-                older.setVisibility(View.VISIBLE);
-                showOlder.setVisibility(View.GONE);
-            });
-            historyCard.addView(fittingButtonRow(showOlder), matchWrapClose());
-            historyCard.addView(older, wideRow());
-        }
-        TextView historyRule = new FlushText(this);
-        historyRule.setTextSize(13);
-        historyRule.setTextColor(theme.subtext);
-        historyRule.setText("The last " + KioskConfig.FLEET_HISTORY_SIZE + " versions. Restore as"
-                + " new brings back a version's name, groups and shared settings; the panels"
-                + " stay.");
-        LinearLayout.LayoutParams historyRuleParams = matchWrap();
-        historyRuleParams.topMargin = dp(12);
-        historyCard.addView(historyRule, historyRuleParams);
-        LinearLayout.LayoutParams historyParams = matchWrap();
-        historyParams.topMargin = dp(12);
-        column.addView(historyCard, historyParams);
-        page.addView(column, singlePanelParams());
-        setContentView(scrollPage(theme, page));
-        // The page follows the fleet while it is up: a list changed elsewhere (a group made or
-        // removed, a panel moved, a section shared, a refused change here) redraws it, with
-        // the scope kept while it exists, as the web admin's page is loaded again.
-        String built = KioskConfig.fleetDocumentText(this);
-        Runnable follow = new Runnable() {
-            @Override
-            public void run() {
-                if (!page.isAttachedToWindow()) {
-                    return;
-                }
-                if (!KioskConfig.fleetDocumentText(KioskActivity.this).equals(built)
-                        && getCurrentFocus() == null) {
-                    redrawInPlace(() -> showFleetPage(scope));
-                    return;
-                }
-                mainHandler.postDelayed(this, 1_000);
-            }
-        };
-        mainHandler.postDelayed(follow, 1_000);
+        card.addView(fittingButtonRow(addGroup), matchWrapClose());
+        TextView hint = new FlushText(this);
+        hint.setTextSize(13);
+        hint.setTextColor(theme.subtext);
+        hint.setText("A panel is put in a group on its page, under Panels, or several at once by"
+                + " ticking them.");
+        card.addView(hint, matchWrapClose());
+        return card;
+    }
+
+    /** A name in a group's row, a chip that is only read. */
+    private TextView readOnlyChip(KioskTheme theme, String words) {
+        TextView chip = new FlushText(this);
+        chip.setText(words);
+        chip.setTextSize(13);
+        chip.setTextColor(theme.subtext);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setMinHeight(dp(28));
+        chip.setPadding(dp(10), 0, dp(10), 0);
+        android.graphics.drawable.GradientDrawable shape = theme.panel(Color.TRANSPARENT, dp(8));
+        shape.setStroke(dp(1), theme.border);
+        chip.setBackground(shape);
+        return chip;
     }
 
     /**
-     * Alerts (the UI round, 2026-10-15; on the Fleet page's shared settings until then): the
-     * fleet's alerts, edited here and shared with the scope that shares them now, or with the
-     * whole fleet when none does yet. Alerts are raised only while they are shared.
+     * The Shared settings tab: the scope as chips, then one row per section with what it
+     * shares, Alerts among them and History last; the chosen one beside them when wide.
      */
-    private void showAlertsPage() {
-        currentScreen = this::showAlertsPage;
-        LinearLayout page = subPage("Alerts", this::showSettings);
+    private void fleetSharedTab(LinearLayout page, KioskTheme theme,
+            java.util.Map<String, Object> list, boolean wide, LinearLayout.LayoutParams params) {
+        java.util.Map<String, String> groups = FleetDocument.groups(list);
+        if (!FleetDocument.EVERYONE.equals(fleetScope) && !groups.containsKey(fleetScope)) {
+            fleetScope = FleetDocument.EVERYONE;
+        }
+        java.util.List<String> ids = new java.util.ArrayList<>(
+                java.util.Arrays.asList(FleetDocument.SECTIONS));
+        ids.add("history");
+        if (!ids.contains(fleetSection)) {
+            fleetSection = ids.get(0);
+        }
+        LinearLayout nav = wide ? navPanel(theme) : card(theme, null);
+        WrapRow scopes = new WrapRow();
+        if (wide) {
+            scopes.setPadding(dp(8), 0, dp(8), 0);
+        }
+        java.util.Map<String, String> scopeNames = new java.util.LinkedHashMap<>();
+        scopeNames.put(FleetDocument.EVERYONE, FleetDocument.EVERYONE_NAME);
+        scopeNames.putAll(groups);
+        for (java.util.Map.Entry<String, String> scope : scopeNames.entrySet()) {
+            CheckBox chip = dayChip(theme, scope.getValue(), scope.getValue(),
+                    scope.getKey().equals(fleetScope));
+            chip.setOnClickListener(view -> {
+                fleetScope = scope.getKey();
+                redrawInPlace(this::showFleetPage);
+            });
+            scopes.addView(chip);
+        }
+        nav.addView(scopes, navRowParams());
+        boolean first = true;
+        for (String section : FleetDocument.SECTIONS) {
+            java.util.Map<String, Object> values = FleetDocument.sectionValues(list, fleetScope,
+                    section);
+            String summary = FleetProfile.summary(section, values);
+            if (FleetDocument.EVERYONE.equals(fleetScope)) {
+                // Where a group shares the section too, its own values win for its panels.
+                java.util.List<String> winners = new java.util.ArrayList<>();
+                for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+                    if (FleetDocument.sectionValues(list, group.getKey(), section) != null) {
+                        winners.add(group.getValue());
+                    }
+                }
+                if (!winners.isEmpty()) {
+                    summary += winners.size() == 1 ? " · " + winners.get(0) + " wins"
+                            : " · " + winners.size() + " groups win";
+                }
+            }
+            addFleetSectionRow(nav, theme, wide, section, values == null
+                    ? R.drawable.ic_remove_circle : R.drawable.ic_check,
+                    FleetDocument.sectionLabel(section), summary, first);
+            first = false;
+        }
+        java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(this);
+        addFleetSectionRow(nav, theme, wide, "history", R.drawable.ic_view_list, "History",
+                history.isEmpty() ? "No versions kept yet" : "Version " + history.get(0).version
+                        + (history.get(0).held ? ", held now" : ""), false);
+        if (wide) {
+            page.addView(listDetailPair(nav, fleetSectionBox(theme, list, fleetScope,
+                    fleetSection, true)), params);
+        } else {
+            page.addView(paneOf(nav), params);
+        }
+    }
+
+    private void addFleetSectionRow(LinearLayout nav, KioskTheme theme, boolean wide,
+            String section, int glyph, String label, String summary, boolean first) {
+        Runnable open = () -> {
+            fleetSection = section;
+            if (wide) {
+                redrawInPlace(this::showFleetPage);
+            } else {
+                showFleetSectionPage(section);
+            }
+        };
+        LinearLayout row = glyphRow(theme, glyph, label, summary, null, open, false, !wide);
+        if (wide) {
+            addMenuRow(nav, theme, row, first, section.equals(fleetSection), open);
+        } else {
+            addListRow(nav, theme, row, first);
+        }
+    }
+
+    /** Below 840 dp, a shared section, Alerts or History as a page of its own. */
+    private void showFleetSectionPage(String section) {
+        if (widthClass() == 2) {
+            fleetSection = section;
+            showFleetPage();
+            return;
+        }
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
+        if (list == null || !FleetServer.proStatus(this).pro) {
+            fleetOpenPage = "";
+            showFleetPage();
+            return;
+        }
+        fleetSection = section;
+        fleetOpenPage = "section";
+        currentScreen = () -> showFleetSectionPage(section);
+        LinearLayout page = subPage(section.equals("history") ? "History"
+                : FleetDocument.sectionLabel(section), this::leaveFleetPage);
         KioskTheme theme = currentTheme();
+        page.addView(paneOf(fleetSectionBox(theme, list, fleetScope, section, false)),
+                matchWrap());
+        setContentView(scrollPage(theme, page));
+        watchLists("fleet", page, () -> redrawInPlace(() -> showFleetSectionPage(section)));
+    }
+
+    /**
+     * One shared section of a scope: its switch, applied at once, and the values the scope
+     * shares; for Alerts the form, saved for that scope; for History the versions.
+     */
+    private LinearLayout fleetSectionBox(KioskTheme theme, java.util.Map<String, Object> list,
+            String scope, String section, boolean titled) {
+        if (section.equals("history")) {
+            return fleetHistoryBox(theme, titled);
+        }
+        Context app = getApplicationContext();
+        java.util.Map<String, Object> values = FleetDocument.sectionValues(list, scope, section);
+        String in = FleetDocument.EVERYONE.equals(scope) ? "the whole fleet"
+                : "the group " + FleetDocument.groupName(list, scope);
+        LinearLayout card = card(theme, titled ? FleetDocument.sectionLabel(section) : null);
+        // Switched on, the section as this panel has it now is shared.
+        CompoundButton shared = themedSwitch(theme, "Shared in " + in, values != null);
+        shared.setOnCheckedChangeListener((button, on) -> fleetWork(app, () -> {
+            String refused = FleetServer.shareSection(app, scope, section,
+                    on ? FleetProfile.read(app, section) : null);
+            if (refused != null) {
+                // The switch goes back to what the fleet holds.
+                mainHandler.post(() -> redrawInPlace(currentScreen));
+            } else if (on && "alerts".equals(section)) {
+                // An alert kind on: the notification needs its grant on Android 13 and
+                // newer, asked at the panel; without it the alert still goes to the topic
+                // and the web address.
+                mainHandler.post(this::requestNotificationPermissionIfNeeded);
+            }
+            return refused;
+        }));
+        card.addView(shared, matchWrapClose());
+        TextView rule = new FlushText(this);
+        rule.setTextSize(13);
+        rule.setTextColor(theme.subtext);
+        rule.setText(values == null ? (section.equals("alerts")
+                ? "Not shared: no alerts are raised for " + in + ". Switched on, this panel's"
+                        + " alerts are shared."
+                : "Not shared: each panel keeps its own.")
+                : "Shared: these values apply to every panel of " + in + ". Switched on, this"
+                        + " panel's values at that moment were shared.");
+        card.addView(rule, matchWrapClose());
+        if (section.equals("alerts")) {
+            // Alerts are edited here, where they are shared; the other sections are changed
+            // in their own settings section on a panel.
+            if (values != null) {
+                addAlertsForm(card, theme, scope, values);
+            }
+            return card;
+        }
+        if (values != null) {
+            for (FleetProfile.Field field : FleetProfile.fields(section)) {
+                if (field.type.equals("password") || !values.containsKey(field.key)) {
+                    continue;
+                }
+                Object value = values.get(field.key);
+                String text = field.type.equals("switch")
+                        ? (Boolean.TRUE.equals(value) ? "On" : "Off") : FleetProfile.shown(value);
+                if (field.options != null) {
+                    for (int i = 0; i + 1 < field.options.length; i += 2) {
+                        if (field.options[i].equals(text)) {
+                            text = field.options[i + 1];
+                        }
+                    }
+                }
+                addFleetValue(card, theme, field.label, text.isEmpty() ? "None" : text);
+            }
+            if (section.equals("integrations")) {
+                addFleetValue(card, theme, "Integrations", FleetProfile.summary(section, values));
+            }
+        }
+        Button change = textButtonOnward(theme, "Change on this panel");
+        change.setOnClickListener(view -> {
+            openSection = FleetDocument.sectionLabel(section);
+            showSettings();
+        });
+        card.addView(fittingButtonRow(change), matchWrapClose());
+        return card;
+    }
+
+    /** A shared value read only: its name over it, the web's dl. */
+    private void addFleetValue(LinearLayout card, KioskTheme theme, String label, String value) {
+        TextView name = fieldCaption(theme, label);
+        LinearLayout.LayoutParams nameParams = matchWrap();
+        nameParams.topMargin = dp(12);
+        card.addView(name, nameParams);
+        TextView shown = new FlushText(this);
+        shown.setTextSize(15);
+        shown.setTextColor(theme.text);
+        shown.setText(value);
+        card.addView(shown, matchWrap());
+    }
+
+    /**
+     * The fleet's alerts as {@code scope} shares them, edited and saved here for that scope.
+     * Alerts are raised only while they are shared.
+     */
+    private void addAlertsForm(LinearLayout card, KioskTheme theme, String scope,
+            java.util.Map<String, Object> values) {
         Context app = getApplicationContext();
         String section = "alerts";
-        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
-        String scope = FleetProfile.alertsScope(list);
-        java.util.Map<String, Object> shared = list == null ? null
-                : FleetDocument.sectionValues(list, scope, section);
-        java.util.Map<String, Object> values = shared != null ? shared
-                : FleetProfile.read(this, section);
-        LinearLayout card = card(theme, "Alerts");
         TextView about = new FlushText(this);
         about.setTextSize(13);
         about.setTextColor(theme.subtext);
-        about.setText((shared == null ? "Not shared yet: Save shares them with the whole fleet."
-                : "Shared with " + (FleetDocument.EVERYONE.equals(scope) ? "the whole fleet"
-                        : "the group " + FleetDocument.groupName(list, scope)) + ".")
-                + " Each alert comes once when it starts and once when it ends.");
-        card.addView(about, matchWrapClose());
+        about.setText("Each alert comes once when it starts and once when it ends.");
+        LinearLayout.LayoutParams aboutParams = matchWrap();
+        aboutParams.topMargin = dp(12);
+        card.addView(about, aboutParams);
         java.util.Map<String, java.util.function.Supplier<String>> readers =
                 new java.util.LinkedHashMap<>();
         for (FleetProfile.Field field : FleetProfile.fields(section)) {
@@ -5637,11 +6549,148 @@ public final class KioskActivity extends Activity {
             });
         });
         card.addView(buttonRow(save), matchWrap());
-        page.addView(card, matchWrap());
+    }
+
+    /**
+     * History: the versions this panel held, newest first, each with what it changed, and
+     * Restore as new for every one but the version held and those that changed panels only.
+     */
+    private LinearLayout fleetHistoryBox(KioskTheme theme, boolean titled) {
+        Context app = getApplicationContext();
+        LinearLayout historyCard = card(theme, titled ? "History" : null);
+        java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(this);
+        if (history.isEmpty()) {
+            TextView none = new FlushText(this);
+            none.setTextSize(13);
+            none.setTextColor(theme.subtext);
+            none.setText("No versions kept yet.");
+            historyCard.addView(none, matchWrap());
+        }
+        // The newest few, the rest behind Older versions, so the page does not end in a wall
+        // of versions (the UI round, 2026-10-15).
+        LinearLayout older = new LinearLayout(this);
+        older.setOrientation(LinearLayout.VERTICAL);
+        older.setVisibility(View.GONE);
+        int shownCount = 0;
+        for (FleetServer.HistoryEntry entry : history) {
+            LinearLayout into = shownCount++ < FleetServer.HISTORY_SHOWN ? historyCard : older;
+            TextView line = new FlushText(this);
+            line.setTextSize(15);
+            line.setTextColor(theme.text);
+            line.setText("Version " + entry.version + (entry.held ? ", held now" : ""));
+            LinearLayout.LayoutParams lineParams = matchWrap();
+            lineParams.topMargin = dp(10);
+            into.addView(line, lineParams);
+            TextView detail = new FlushText(this);
+            detail.setTextSize(13);
+            detail.setTextColor(theme.subtext);
+            String changes = String.join("; ", entry.changes);
+            detail.setText(entry.author + ", " + FleetServer.readableTime(entry.updated) + ". "
+                    + (entry.changes.isEmpty()
+                            ? "No change to the fleet's name, panels, groups or shared settings."
+                            : Character.toUpperCase(changes.charAt(0)) + changes.substring(1)
+                                    + "."));
+            into.addView(detail, matchWrapClose());
+            // Restore brings back a version's name, groups and shared settings, never its
+            // panels: a version that only changed panels has nothing to restore.
+            boolean panelsOnly = !entry.changes.isEmpty();
+            for (String change : entry.changes) {
+                panelsOnly &= change.startsWith("panel ");
+            }
+            if (!entry.held && !panelsOnly) {
+                Button restore = textButton(theme, "Restore as new");
+                long version = entry.version;
+                restore.setOnClickListener(view -> confirmKeepingScreen("Restore version "
+                        + version + " as new?", "Its fleet name, groups and shared settings are"
+                        + " written as a new version for every panel; the panels of the fleet"
+                        + " stay as they are now.", "Restore", false, () -> fleetWork(app, () -> {
+                            String refused = FleetServer.restoreVersion(app, version);
+                            mainHandler.post(() -> redrawInPlace(currentScreen));
+                            return refused;
+                        })));
+                into.addView(fittingButtonRow(restore), matchWrapClose());
+            }
+        }
+        if (older.getChildCount() > 0) {
+            Button showOlder = textButton(theme, "Older versions");
+            showOlder.setOnClickListener(view -> {
+                older.setVisibility(View.VISIBLE);
+                showOlder.setVisibility(View.GONE);
+            });
+            historyCard.addView(fittingButtonRow(showOlder), matchWrapClose());
+            historyCard.addView(older, wideRow());
+        }
+        TextView historyRule = new FlushText(this);
+        historyRule.setTextSize(13);
+        historyRule.setTextColor(theme.subtext);
+        historyRule.setText("The last " + KioskConfig.FLEET_HISTORY_SIZE + " versions. Restore as"
+                + " new brings back a version's name, groups and shared settings; the panels"
+                + " stay.");
+        LinearLayout.LayoutParams historyRuleParams = matchWrap();
+        historyRuleParams.topMargin = dp(12);
+        historyCard.addView(historyRule, historyRuleParams);
+        return historyCard;
+    }
+
+    /**
+     * Add a panel from the Fleet page: by this panel's camera reading its Join QR, by the code
+     * under it, or with an invitation QR for a new tablet. Each comes back to the Fleet page.
+     */
+    private void showFleetAddPage() {
+        currentScreen = this::showFleetAddPage;
+        LinearLayout page = subPage("Add a panel", this::showFleetPage);
+        KioskTheme theme = currentTheme();
+        boolean ready = KioskRuntimeState.fleetListening() && FleetServer.proStatus(this).pro;
+        LinearLayout card = card(theme, null);
+        boolean camera = !JoinScanner.lenses(this).isEmpty();
+        Object[][] ways = {
+            {R.drawable.ic_sensor_camera, "Scan its Join QR", camera
+                    ? "With this panel's camera" : "This panel has no camera",
+                    (Runnable) this::showAddPanelScanner, camera},
+            {R.drawable.ic_pencil, "By its code", "The code under its Join QR",
+                    (Runnable) this::showAddByCode, true},
+            {R.drawable.ic_add, "Invitation QR", "Sets up a new tablet and joins it",
+                    (Runnable) () -> showInvitePage(true), true}};
+        boolean first = true;
+        for (Object[] way : ways) {
+            boolean usable = ready && (Boolean) way[4];
+            LinearLayout row = glyphRow(theme, (Integer) way[0], (String) way[1],
+                    (String) way[2], null, null, !usable);
+            if (usable) {
+                Runnable open = (Runnable) way[3];
+                row.setOnClickListener(view -> open.run());
+            }
+            addListRow(card, theme, row, first);
+            first = false;
+        }
+        if (!FleetServer.proStatus(this).pro) {
+            TextView pro = new FlushText(this);
+            pro.setTextSize(13);
+            pro.setTextColor(theme.subtext);
+            pro.setText(FleetServer.proLine(this));
+            card.addView(pro, matchWrapClose());
+        }
+        page.addView(paneOf(card), matchWrap());
         setContentView(scrollPage(theme, page));
     }
 
-    /** A fleet change off the main thread; its refusal, if any, as a toast. */
+    /** Say or play, a page of its own: the Speakers card, back to the Fleet page. */
+    private void showFleetSayPage() {
+        currentScreen = this::showFleetSayPage;
+        LinearLayout page = subPage("Say or play", this::showFleetPage);
+        KioskTheme theme = currentTheme();
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
+        if (list == null) {
+            showFleetPage();
+            return;
+        }
+        LinearLayout speakers = new LinearLayout(this);
+        speakers.setOrientation(LinearLayout.VERTICAL);
+        fillSpeakersCard(speakers, theme, list, FleetDocument.groups(list));
+        page.addView(paneOf(speakers), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
     /** Where the Speakers card sends: 0 all panels, 1 a group, 2 the ticked panels. */
     private int speakersMode;
     private String speakersGroup = "";
@@ -5686,7 +6735,8 @@ public final class KioskActivity extends Activity {
             java.util.Map<String, Object> list, java.util.Map<String, String> groups) {
         into.removeAllViews();
         Context app = getApplicationContext();
-        LinearLayout card = card(theme, "Speakers");
+        // On its own page, Say or play, which names it.
+        LinearLayout card = card(theme, null);
         into.addView(card, matchWrap());
         java.util.List<String> labels = new java.util.ArrayList<>(
                 java.util.Arrays.asList("All panels", "A group", "Choose"));
@@ -5795,6 +6845,7 @@ public final class KioskActivity extends Activity {
             SeekBar volume = speakerSlider(theme, 0, percent -> send.accept(
                     new String[] {"volume", Integer.toString(percent)}, "panels:" + id));
             volume.setEnabled(false);
+            volume.setAlpha(0.38f);
             volume.setContentDescription("Volume of " + name);
             text.addView(volume, matchWrapClose());
             row.addView(text, new LinearLayout.LayoutParams(0,
@@ -5839,14 +6890,13 @@ public final class KioskActivity extends Activity {
                     }
                     boolean reached = one.optBoolean("reached");
                     boolean speakerOn = one.optBoolean("on");
-                    state.setText(one.optBoolean("too_old") ? "Its Muralis is too old for this"
-                            : !reached ? "Not reached" : !speakerOn ? "Speaker off"
-                            : one.optBoolean("playing") ? "Playing" : "Idle");
+                    state.setText(speakerWords(one));
                     CompoundButton on = switches.get(id);
                     on.setEnabled(reached);
                     on.setChecked(reached && speakerOn);
                     SeekBar volume = volumes.get(id);
                     volume.setEnabled(reached && speakerOn);
+                    volume.setAlpha(reached && speakerOn ? 1f : 0.38f);
                     if (one.optInt("volume", -1) >= 0 && !volume.isPressed()) {
                         volume.setProgress(one.optInt("volume"));
                     }
@@ -5883,6 +6933,7 @@ public final class KioskActivity extends Activity {
         return slider;
     }
 
+    /** A fleet change off the main thread; its refusal, if any, as a toast. */
     private void fleetWork(Context app, java.util.function.Supplier<String> work) {
         new Thread(() -> {
             String refused = work.get();
@@ -6672,6 +7723,9 @@ public final class KioskActivity extends Activity {
         }
         if ("integrations".equals(kind)) {
             return IntegrationRunner.panelListKey(KioskRuntimeState.integrations());
+        }
+        if ("fleet".equals(kind)) {
+            return FleetServer.fleetListKey(this);
         }
         org.json.JSONObject keys = Sensors.listKeys(KioskRuntimeState.sensors(),
                 Automations.statusJson(KioskConfig.automationsOf(this)));
@@ -9600,6 +10654,8 @@ public final class KioskActivity extends Activity {
         line.setTextColor(member ? theme.text : theme.subtext);
         join.setVisibility(member ? View.GONE : View.VISIBLE);
         join.setEnabled(KioskRuntimeState.fleetListening());
+        // In a fleet a panel is added on the Fleet page; here Create founds one.
+        add.setVisibility(member ? View.GONE : View.VISIBLE);
         leave.setVisibility(member ? View.VISIBLE : View.GONE);
         String addLabel = addPanelLabel();
         if (!addLabel.contentEquals(add.getText())) {
@@ -9615,6 +10671,18 @@ public final class KioskActivity extends Activity {
     /** Add a panel in a fleet; Create a fleet outside one, since the first panel added founds it. */
     private String addPanelTitle() {
         return KioskConfig.fleetIdOf(this).isEmpty() ? "Create a fleet" : "Add a panel";
+    }
+
+    /**
+     * Out of adding a panel: to the Fleet page once there is a fleet, where adding starts; to
+     * the settings before, where Create a fleet starts.
+     */
+    private void leaveAddFlow() {
+        if (KioskConfig.fleetIdOf(this).isEmpty()) {
+            showSettings();
+        } else {
+            showFleetPage();
+        }
     }
 
     /** The same on the Fleet section's button, where the section already says fleet. */
@@ -10038,7 +11106,7 @@ public final class KioskActivity extends Activity {
         stopScanner();
         LinearLayout page = subPage(addPanelTitle(), () -> {
             stopScanner();
-            showSettings();
+            leaveAddFlow();
         });
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
@@ -10068,7 +11136,7 @@ public final class KioskActivity extends Activity {
         Button cancel = textButton(theme, "Cancel");
         cancel.setOnClickListener(view -> {
             stopScanner();
-            showSettings();
+            leaveAddFlow();
         });
         List<String> lenses = JoinScanner.lenses(this);
         Button switchLens = tonalButton(theme, "Switch camera");
@@ -10149,7 +11217,7 @@ public final class KioskActivity extends Activity {
      */
     private void showAddPanelForm(FleetJoin.Invitation invitation) {
         currentScreen = () -> showAddPanelForm(invitation);
-        LinearLayout page = subPage(addPanelTitle(), this::showSettings);
+        LinearLayout page = subPage(addPanelTitle(), this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         boolean founding = KioskConfig.fleetIdOf(this).isEmpty();
@@ -10180,7 +11248,7 @@ public final class KioskActivity extends Activity {
         problemParams.topMargin = dp(12);
         box.addView(problem, problemParams);
         Button cancel = textButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> showSettings());
+        cancel.setOnClickListener(view -> leaveAddFlow());
         Button add = primaryButton(theme, "Add");
         add.setOnClickListener(view -> {
             // Read at the tap: the panel may have joined or left a fleet since the form was drawn.
@@ -10285,7 +11353,7 @@ public final class KioskActivity extends Activity {
      */
     private void showAddByCode() {
         currentScreen = this::showAddByCode;
-        LinearLayout page = subPage(addPanelTitle(), this::showSettings);
+        LinearLayout page = subPage(addPanelTitle(), this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         boolean founding = KioskConfig.fleetIdOf(this).isEmpty();
@@ -10304,7 +11372,7 @@ public final class KioskActivity extends Activity {
         state.setTextColor(theme.subtext);
         box.addView(state, matchWrap());
         Button cancel = textButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> showSettings());
+        cancel.setOnClickListener(view -> leaveAddFlow());
         Button add = primaryButton(theme, "Add");
         add.setOnClickListener(view -> {
             String joined = KioskConfig.fleetIdOf(this);
@@ -10365,7 +11433,7 @@ public final class KioskActivity extends Activity {
         currentScreen = () -> showInvitePage(false);
         String refusal = mayOpen && FleetServer.inviteQrContent(this) == null
                 ? FleetServer.openInvite(this) : null;
-        LinearLayout page = subPage("Invite a new tablet", this::showSettings);
+        LinearLayout page = subPage("Invite a new tablet", this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         box.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -10399,7 +11467,7 @@ public final class KioskActivity extends Activity {
         Button cancel = textButton(theme, "Cancel invitation");
         cancel.setOnClickListener(view -> {
             FleetInvite.shared.cancel();
-            showSettings();
+            leaveAddFlow();
         });
         Button again = tonalButton(theme, "Invite again");
         again.setOnClickListener(view -> {
@@ -10452,7 +11520,7 @@ public final class KioskActivity extends Activity {
     /** What Add a panel came to, with Add another and Done. */
     private void showAddPanelResult(String message) {
         currentScreen = () -> showAddPanelResult(message);
-        LinearLayout page = subPage(addPanelTitle(), this::showSettings);
+        LinearLayout page = subPage(addPanelTitle(), this::leaveAddFlow);
         KioskTheme theme = currentTheme();
         LinearLayout box = card(theme, null);
         TextView text = new FlushText(this);
@@ -10463,7 +11531,7 @@ public final class KioskActivity extends Activity {
         Button another = textButton(theme, "Add another");
         another.setOnClickListener(view -> showAddPanelScanner());
         Button done = primaryButton(theme, "Done");
-        done.setOnClickListener(view -> showSettings());
+        done.setOnClickListener(view -> leaveAddFlow());
         box.addView(buttonRow(another, done), matchWrapClose());
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
