@@ -161,7 +161,12 @@ final class SettingsImport {
                 return CertificatePins.format(CertificatePins.parse((String) value));
             case "integrations":
                 return Integrations.storeInstances(Integrations.parseInstances((String) value));
+
             default:
+                if (key.startsWith("clock_options_")) {
+                    // Read and written again, so a damaged value stores as the defaults.
+                    return BitcoinClock.parse((String) value).toJson();
+                }
                 // Trimmed, as the boxes store what a person types: the checks read it trimmed.
                 return value instanceof String ? ((String) value).trim() : value;
         }
@@ -371,7 +376,7 @@ final class SettingsImport {
     private static String dashboardShowsProblem(Context context, String value,
             Map<String, Object> imported) {
         if (!KioskConfig.isDashboardShows(value)) {
-            return "must be page, app or cameras";
+            return "must be page, app, cameras or integration";
         }
         String app = imported.get("app_lock") instanceof String
                 ? ((String) imported.get("app_lock")).trim() : KioskConfig.chosenAppOf(context);
@@ -385,8 +390,16 @@ final class SettingsImport {
                 : KioskConfig.dashboardCamerasOf(context);
         boolean exists = !chosen.isEmpty() && (Cameras.find(cameras, chosen) != null
                 || Cameras.findGroup(groups, chosen) != null);
+        List<Integrations.Instance> integrations = imported.get("integrations") instanceof String
+                ? Integrations.parseInstances((String) imported.get("integrations"))
+                : KioskConfig.integrationsOf(context);
+        String integration = imported.get("dashboard_integration") instanceof String
+                ? ((String) imported.get("dashboard_integration")).trim()
+                : KioskConfig.dashboardIntegrationOf(context);
         return KioskCommandDispatcher.dashboardShowProblem(value, app,
-                !cameras.isEmpty() || !groups.isEmpty(), exists);
+                !cameras.isEmpty() || !groups.isEmpty(), exists,
+                Integrations.anyPage(integrations),
+                Integrations.pageInstance(integrations, integration) != null);
     }
 
     /** Whether a When or a condition of the rule reads an integration this panel lacks. */

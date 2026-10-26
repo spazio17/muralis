@@ -1308,14 +1308,18 @@ final class MqttController implements MqttCallbackExtended {
                 shown.add(group.name);
             }
             // What the dashboard shows, the same choice and words as the panel's Dashboard.
-            // "App" only once an app was chosen and "Cameras" only once a camera or group
-            // exists: MQTT can switch to the app chosen, never choose one.
+            // "App" only once an app was chosen, "Cameras" only once a camera or group exists
+            // and "Integration" only once one with a page is added: MQTT can switch to the app
+            // chosen, never choose one.
+            java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(appContext);
             java.util.List<String[]> dashboardWords = new java.util.ArrayList<>();
             for (String[] choice : KioskCommandDispatcher.DASHBOARD_WORDS) {
                 if ((!KioskCommandDispatcher.DASHBOARD_APP.equals(choice[0])
                                 || !KioskConfig.chosenAppOf(appContext).isEmpty())
                         && (!KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(choice[0])
-                                || !shown.isEmpty())) {
+                                || !shown.isEmpty())
+                        && (!KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(choice[0])
+                                || !pages.isEmpty())) {
                     dashboardWords.add(choice);
                 }
             }
@@ -1330,6 +1334,15 @@ final class MqttController implements MqttCallbackExtended {
                 }
                 add(components, select("Dashboard cameras", "dashboard.cameras", cameraNames,
                         "{{ value_json.config.dashboard_cameras }}"));
+            }
+            // Which integration's page the dashboard shows when it shows an integration.
+            if (!pages.isEmpty()) {
+                org.json.JSONArray pageNames = new org.json.JSONArray();
+                for (Integrations.Instance page : pages) {
+                    pageNames.put(page.name);
+                }
+                add(components, select("Dashboard integration", "dashboard.integration",
+                        pageNames, "{{ value_json.config.dashboard_integration }}"));
             }
             // One button per camera and per group, "Show <name>", which pops it up; a doorbell's
             // automation in the smart home sends camera.trigger itself, for the panel's automations.

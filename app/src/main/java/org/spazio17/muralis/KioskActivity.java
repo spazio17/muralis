@@ -3393,6 +3393,13 @@ public final class KioskActivity extends Activity {
             buttons.add(remove);
         }
         card.addView(fittingButtonRow(buttons.toArray(new Button[0])), matchWrap());
+        if (!fresh && Integrations.hasPage(instance.definition)) {
+            // Its own page, the dashboard's fourth answer: how it looks is set there.
+            String pageOf = instance.id;
+            Button options = textButtonOnward(theme, "Clock options");
+            options.setOnClickListener(view -> showClockOptionsPage(pageOf));
+            card.addView(buttonRow(options), matchWrap());
+        }
         LinearLayout.LayoutParams answerParams = matchWrap();
         answerParams.topMargin = dp(8);
         card.addView(answer, answerParams);
@@ -4030,22 +4037,41 @@ public final class KioskActivity extends Activity {
         boolean showsApp = !lockedApp.isEmpty();
         String shownCameras = KioskConfig.shownCamerasOf(this);
         boolean showsCameras = !shownCameras.isEmpty();
-        // Cameras, the third answer, once there is a camera or a group to show.
+        String shownIntegration = KioskConfig.shownIntegrationOf(this);
+        boolean showsIntegration = !shownIntegration.isEmpty();
+        // Cameras, the third answer, once there is a camera or a group to show; Integration, the
+        // fourth, once an integration with a page of its own is added (the Bitcoin clock).
         boolean offerCameras = showsCameras || !KioskConfig.camerasOf(this).isEmpty()
                 || !KioskConfig.cameraGroupsOf(this).isEmpty();
+        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(this);
+        boolean offerIntegration = showsIntegration || !pages.isEmpty();
+        boolean showsPage = !showsApp && !showsCameras && !showsIntegration;
         // The fleet shares the address, not the choice, so its line shows with a web page only;
         // first, as in every section. The section's heading names the choice.
-        if (!showsApp && !showsCameras) {
+        if (showsPage) {
             addSharedLine(dashboardCard, theme, "dashboard");
         }
         LinearLayout.LayoutParams showsParams = matchWrapClose();
         showsParams.topMargin = dp(8);
-        String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
-        dashboardCard.addView(segmentedChoice(theme, offerCameras
-                        ? new String[] {words[0][1], words[1][1], words[2][1]}
-                        : new String[] {words[0][1], words[1][1]},
-                showsApp ? 1 : showsCameras ? 2 : 0, index -> {
-                    String value = words[index][0];
+        java.util.List<String[]> offered = new java.util.ArrayList<>();
+        for (String[] choice : KioskCommandDispatcher.DASHBOARD_WORDS) {
+            if ((!KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(choice[0]) || offerCameras)
+                    && (!KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(choice[0])
+                            || offerIntegration)) {
+                offered.add(choice);
+            }
+        }
+        String[] offeredWords = new String[offered.size()];
+        int shownIndex = 0;
+        String shownKey = KioskConfig.dashboardShowsOf(this);
+        for (int index = 0; index < offered.size(); index++) {
+            offeredWords[index] = offered.get(index)[1];
+            if (offered.get(index)[0].equals(shownKey)) {
+                shownIndex = index;
+            }
+        }
+        dashboardCard.addView(segmentedChoice(theme, offeredWords, shownIndex, index -> {
+                    String value = offered.get(index)[0];
                     if (value.equals(KioskConfig.dashboardShowsOf(this))) {
                         return;
                     }
@@ -4070,6 +4096,31 @@ public final class KioskActivity extends Activity {
                     "Shown as the dashboard", null, this::showCameraViewPage, false, false),
                     matchWrapClose());
         }
+        if (showsIntegration) {
+            // Which integration's page, one radio each, and its options.
+            RadioGroup integrationChoice = new RadioGroup(this);
+            for (Integrations.Instance pageItem : pages) {
+                radioChoice(theme, integrationChoice, pageItem.name, pageItem.id);
+            }
+            checkRadioIfChanged(integrationChoice, shownIntegration);
+            integrationChoice.setOnCheckedChangeListener((group, checkedId) -> {
+                View checked = group.findViewById(checkedId);
+                KioskService service = KioskService.liveService();
+                if (checked == null || service == null || syncingLiveControls
+                        || checked.getTag().equals(KioskConfig.shownIntegrationOf(this))) {
+                    return;
+                }
+                String refused = service.setDashboardIntegration((String) checked.getTag());
+                if (refused != null) {
+                    Toast.makeText(this, "Not changed: " + refused + ".", Toast.LENGTH_LONG)
+                            .show();
+                }
+            });
+            dashboardCard.addView(integrationChoice, matchWrapClose());
+            Button clockMore = textButtonOnward(theme, "Clock options");
+            clockMore.setOnClickListener(view -> showClockOptionsPage(shownIntegration));
+            dashboardCard.addView(buttonRow(clockMore), matchWrap());
+        }
         // The box holds what is stored and nothing else; the example is a hint. It used to be
         // prefilled with a smart-home address as real text, so a fresh panel saved and loaded
         // it at the first press of Open dashboard and showed an error page for a host that does
@@ -4078,7 +4129,7 @@ public final class KioskActivity extends Activity {
         urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        if (!showsApp && !showsCameras) {
+        if (showsPage) {
             addField(dashboardCard, theme, "Dashboard URL", urlInput);
         }
         // The panel's name (the device id) is in This panel since 2026-09-27; its box is built
@@ -4131,7 +4182,7 @@ public final class KioskActivity extends Activity {
             Button appLockMore = textButtonOnward(theme, "Choose the app");
             appLockMore.setOnClickListener(view -> showAppLockPage());
             dashboardCard.addView(buttonRow(appLockMore), matchWrap());
-        } else if (!showsCameras) {
+        } else if (showsPage) {
             dashboardCard.addView(buttonRow(openOnce), matchWrap());
             Button browserMore = textButtonOnward(theme, "Page options");
             browserMore.setOnClickListener(view -> showBrowserOptionsPage());
@@ -7832,6 +7883,9 @@ public final class KioskActivity extends Activity {
         if (!KioskConfig.shownCamerasOf(this).isEmpty()) {
             return "Cameras: " + KioskConfig.shownCamerasOf(this);
         }
+        if (!KioskConfig.shownIntegrationOf(this).isEmpty()) {
+            return BitcoinClockPage.nameOf(this, KioskConfig.shownIntegrationOf(this));
+        }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
     }
@@ -8412,6 +8466,340 @@ public final class KioskActivity extends Activity {
     /** Back to the settings from a page below them, drawn from what is stored. */
     private void showSettings() {
         showConfiguration(KioskConfig.load(this));
+    }
+
+    /** The Clock options page's preview, destroyed with the page. */
+    private WebView clockPreview;
+
+    /** The swatches each colour offers on Clock options, as r,g,b, before its own box. */
+    private static final String[][] CLOCK_SWATCHES = {
+            {"17,18,20", "245,245,240", "22,34,60", "40,28,20"},
+            {"242,242,242", "20,20,20", "247,147,26"},
+            {"247,147,26", "224,67,0", "0,90,255", "0,200,0"}};
+
+    /**
+     * Clock options: how the Bitcoin clock's page looks, with a live preview of the page itself
+     * on top (Emmet's sketch, decided 2026-10-26). A look to start from, the background, the
+     * text and accent colours, the digit font, the size and place of the row, the date strip,
+     * the screens with their order, the time each stays and the flash; Save stores them all.
+     */
+    private void showClockOptionsPage(String instanceId) {
+        showClockOptionsPage(instanceId, KioskConfig.clockOptionsOf(this, instanceId));
+    }
+
+    private void showClockOptionsPage(String instanceId, BitcoinClock.Options draft) {
+        currentScreen = () -> showClockOptionsPage(instanceId);
+        LinearLayout page = subPage("Clock options", this::showSettings);
+        KioskTheme theme = currentTheme();
+        String baseline = KioskConfig.clockOptionsOf(this, instanceId).toJson();
+        Runnable preview = () -> {
+            if (clockPreview != null) {
+                clockPreview.evaluateJavascript("window.clockPreview&&window.clockPreview("
+                        + "{options:" + draft.toJson() + "})", null);
+            }
+        };
+        // Drawn again from the draft, for a change that moves other controls (a look sets the
+        // colours, a screen moves).
+        Runnable redraw = () -> redrawInPlace(() -> showClockOptionsPage(instanceId, draft));
+
+        // The preview: the page itself, the panel's own shape, stepping through the screens.
+        LinearLayout previewCard = card(theme, "Preview");
+        android.util.DisplayMetrics screen = getResources().getDisplayMetrics();
+        float shape = (float) screen.heightPixels / Math.max(1, screen.widthPixels);
+        FrameLayout box = new FrameLayout(this) {
+            @Override
+            protected void onMeasure(int widthSpec, int heightSpec) {
+                int width = MeasureSpec.getSize(widthSpec);
+                super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(
+                        Math.min(Math.round(width * shape), dp(280)), MeasureSpec.EXACTLY));
+            }
+        };
+        if (clockPreview != null) {
+            clockPreview.destroy();
+        }
+        clockPreview = clockView(instanceId, true);
+        clockPreview.setOnTouchListener((view, event) -> true);
+        box.addView(clockPreview, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // The draft once the page is up, so unsaved changes survive a redraw.
+        clockPreview.postDelayed(preview, 600);
+        previewCard.addView(box, matchWrapClose());
+        ImageButton back = iconButton(theme, R.drawable.ic_chevron_left, "Previous screen");
+        back.setOnClickListener(view -> clockPreview.evaluateJavascript(
+                "window.clockPreview({step:-1})", null));
+        ImageButton forward = iconButton(theme, R.drawable.ic_chevron_right, "Next screen");
+        forward.setOnClickListener(view -> clockPreview.evaluateJavascript(
+                "window.clockPreview({step:1})", null));
+        Button flash = secondaryButton(theme, "Show a new block");
+        flash.setOnClickListener(view -> clockPreview.evaluateJavascript(
+                "window.clockPreview({flash:true})", null));
+        LinearLayout steps = new LinearLayout(this);
+        steps.setGravity(Gravity.CENTER_VERTICAL);
+        steps.addView(back);
+        steps.addView(forward);
+        LinearLayout.LayoutParams flashParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        flashParams.leftMargin = dp(8);
+        steps.addView(flash, flashParams);
+        previewCard.addView(steps, matchWrapClose());
+
+        // The look: a start for the colours, which stay changeable one by one.
+        LinearLayout lookCard = card(theme, "Look");
+        String[] lookWords = new String[BitcoinClock.LOOK_WORDS.length];
+        int lookIndex = 0;
+        for (int index = 0; index < lookWords.length; index++) {
+            lookWords[index] = BitcoinClock.LOOK_WORDS[index][1];
+            if (BitcoinClock.LOOK_WORDS[index][0].equals(draft.look)) {
+                lookIndex = index;
+            }
+        }
+        lookCard.addView(segmentedChoice(theme, lookWords, lookIndex, index -> {
+            BitcoinClock.Options next = BitcoinClock.withLook(draft,
+                    BitcoinClock.LOOK_WORDS[index][0]);
+            redrawInPlace(() -> showClockOptionsPage(instanceId, next));
+        }), matchWrapClose());
+        addClockColour(lookCard, theme, "Background", CLOCK_SWATCHES[0], draft.background,
+                rgb -> {
+                    draft.background = rgb;
+                    preview.run();
+                });
+        addClockColour(lookCard, theme, "Text", CLOCK_SWATCHES[1], draft.text, rgb -> {
+            draft.text = rgb;
+            preview.run();
+        });
+        addClockColour(lookCard, theme, "Accent", CLOCK_SWATCHES[2], draft.accent, rgb -> {
+            draft.accent = rgb;
+            preview.run();
+        });
+        lookCard.addView(fieldCaption(theme, "Digits"), matchWrapClose());
+        lookCard.addView(clockSegments(theme, BitcoinClock.FONT_WORDS, draft.font, key -> {
+            draft.font = key;
+            preview.run();
+        }), matchWrapClose());
+
+        // A picture behind the clock: one of the uploads, darkened.
+        LinearLayout pictureCard = card(theme, "Background picture");
+        RadioGroup pictures = new RadioGroup(this);
+        radioChoice(theme, pictures, "None", "");
+        checkRadioIfChanged(pictures, draft.picture);
+        pictureCard.addView(pictures, matchWrapClose());
+        PictureLibrary library = PictureLibrary.get(this);
+        library.run(() -> {
+            PictureBrowser.Page uploads = library.uploads(0, 200);
+            library.onMain(() -> {
+                if (!pictures.isAttachedToWindow()) {
+                    return;
+                }
+                for (PictureBrowser.Entry entry : uploads.entries) {
+                    radioChoice(theme, pictures, entry.name, entry.uri);
+                }
+                checkRadioIfChanged(pictures, draft.picture);
+                if (uploads.entries.isEmpty()) {
+                    TextView none = new FlushText(this);
+                    none.setTextColor(theme.subtext);
+                    none.setTextSize(13);
+                    none.setText("Upload pictures in the web admin, under Ambient.");
+                    pictureCard.addView(none, 1, matchWrapClose());
+                }
+            });
+        });
+        pictures.setOnCheckedChangeListener((group, checkedId) -> {
+            View checked = group.findViewById(checkedId);
+            if (checked != null) {
+                draft.picture = (String) checked.getTag();
+                preview.run();
+            }
+        });
+        pictureCard.addView(fieldCaption(theme, "Dimming"), matchWrapClose());
+        SeekBar dim = new SeekBar(this);
+        dim.setMax(BitcoinClock.MAX_DIM);
+        dim.setProgress(draft.dim);
+        dim.getProgressDrawable().setColorFilter(theme.accent,
+                android.graphics.PorterDuff.Mode.SRC_IN);
+        dim.getThumb().setColorFilter(theme.accent, android.graphics.PorterDuff.Mode.SRC_IN);
+        dim.setMinimumHeight(dp(48));
+        dim.setContentDescription("Dimming");
+        dim.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                draft.dim = progress;
+                preview.run();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+            }
+        });
+        pictureCard.addView(dim, matchWrapClose());
+
+        // Where the row sits and how big, and the date strip: steps, the same on every screen.
+        LinearLayout layoutCard = card(theme, "Layout");
+        layoutCard.addView(fieldCaption(theme, "Size"), matchWrapClose());
+        layoutCard.addView(clockSegments(theme, BitcoinClock.SIZE_WORDS, draft.size, key -> {
+            draft.size = key;
+            preview.run();
+        }), matchWrapClose());
+        layoutCard.addView(fieldCaption(theme, "Position"), matchWrapClose());
+        layoutCard.addView(clockSegments(theme, BitcoinClock.POSITION_WORDS, draft.position,
+                key -> {
+                    draft.position = key;
+                    preview.run();
+                }), matchWrapClose());
+        layoutCard.addView(fieldCaption(theme, "Date and time"), matchWrapClose());
+        layoutCard.addView(clockSegments(theme, BitcoinClock.STRIP_WORDS, draft.strip, key -> {
+            draft.strip = key;
+            preview.run();
+        }), matchWrapClose());
+
+        // The screens in their order, each on or off, moved with the arrows.
+        LinearLayout screensCard = card(theme, "Screens");
+        for (int index = 0; index < draft.screens.size(); index++) {
+            BitcoinClock.Screen one = draft.screens.get(index);
+            int at = index;
+            CompoundButton on = themedSwitch(theme, "", one.on);
+            on.setContentDescription(BitcoinClock.screenName(one.key));
+            on.setOnCheckedChangeListener((button, checked) -> {
+                draft.screens.set(at, new BitcoinClock.Screen(one.key, checked));
+                preview.run();
+            });
+            ImageButton up = iconButton(theme, R.drawable.ic_arrow_up,
+                    "Move " + BitcoinClock.screenName(one.key) + " up");
+            up.setEnabled(index > 0);
+            up.setAlpha(index > 0 ? 1f : 0.38f);
+            up.setOnClickListener(view -> {
+                java.util.Collections.swap(draft.screens, at, at - 1);
+                redraw.run();
+            });
+            ImageButton down = iconButton(theme, R.drawable.ic_arrow_down,
+                    "Move " + BitcoinClock.screenName(one.key) + " down");
+            down.setEnabled(index < draft.screens.size() - 1);
+            down.setAlpha(index < draft.screens.size() - 1 ? 1f : 0.38f);
+            down.setOnClickListener(view -> {
+                java.util.Collections.swap(draft.screens, at, at + 1);
+                redraw.run();
+            });
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setMinimumHeight(dp(56));
+            TextView name = new FlushText(this);
+            name.setText(BitcoinClock.screenName(one.key));
+            name.setTextColor(theme.text);
+            name.setTextSize(16);
+            row.addView(up);
+            row.addView(down);
+            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            nameParams.leftMargin = dp(8);
+            row.addView(name, nameParams);
+            row.addView(on);
+            screensCard.addView(row, matchWrapClose());
+        }
+        EditText seconds = themedInput(theme, String.valueOf(draft.seconds), false);
+        seconds.setInputType(InputType.TYPE_CLASS_NUMBER);
+        addField(screensCard, theme, "Time per screen (seconds)", seconds);
+        CompoundButton flashOn = themedSwitch(theme, "Flash on a new block", draft.flash);
+        flashOn.setOnCheckedChangeListener((button, checked) -> {
+            draft.flash = checked;
+            preview.run();
+        });
+        screensCard.addView(flashOn, matchWrapClose());
+
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            if (!KioskConfig.clockOptionsOf(this, instanceId).toJson().equals(baseline)) {
+                Toast.makeText(this, "Not saved: these options were changed from another surface"
+                        + " while this page was open. Showing the current ones.",
+                        Toast.LENGTH_LONG).show();
+                redrawInPlace(() -> showClockOptionsPage(instanceId));
+                return;
+            }
+            java.util.Map<String, String> form = new java.util.HashMap<>();
+            form.put("seconds", seconds.getText().toString());
+            form.put("screens", BitcoinClock.orderOf(draft.screens));
+            String problem = BitcoinClock.problem(form);
+            if (problem != null) {
+                Toast.makeText(this, "Not saved: " + problem + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            hideKeyboard(seconds);
+            KioskConfig.storeClockOptions(this, instanceId, BitcoinClock.apply(draft, form));
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+            redrawInPlace(() -> showClockOptionsPage(instanceId));
+        });
+
+        page.addView(previewCard, matchWrap());
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(lookCard, layoutCard,
+                pictureCard, screensCard)), matchWrap());
+        page.addView(buttonRow(save), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** One of the clock's colours: its swatches, then a box for any r,g,b. */
+    private void addClockColour(LinearLayout card, KioskTheme theme, String label,
+            String[] swatches, String value, java.util.function.Consumer<String> onPick) {
+        card.addView(fieldCaption(theme, label), matchWrapClose());
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        EditText box = themedInput(theme, value, false);
+        box.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        box.setContentDescription(label + " colour, r,g,b");
+        box.setHint("r,g,b");
+        for (String swatch : swatches) {
+            View dot = new View(this);
+            android.graphics.drawable.GradientDrawable fill =
+                    new android.graphics.drawable.GradientDrawable();
+            fill.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+            Integer rgb = StatusLight.parseColor(swatch);
+            fill.setColor(0xFF000000 | (rgb == null ? 0 : rgb));
+            fill.setStroke(dp(swatch.equals(value) ? 3 : 1),
+                    swatch.equals(value) ? theme.accent : theme.border);
+            dot.setBackground(fill);
+            dot.setContentDescription(label + " " + swatch);
+            dot.setOnClickListener(view -> box.setText(swatch));
+            LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+            dotParams.rightMargin = dp(12);
+            row.addView(dot, dotParams);
+        }
+        box.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable text) {
+                Integer rgb = StatusLight.parseColor(text.toString());
+                box.setError(rgb == null ? "Three numbers from 0 to 255, like 255,0,0" : null);
+                if (rgb != null) {
+                    onPick.accept(StatusLight.formatColor(rgb));
+                }
+            }
+        });
+        row.addView(box, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f));
+        card.addView(row, matchWrapClose());
+    }
+
+    /** A segmented choice over one of BitcoinClock's tables, telling the key picked. */
+    private LinearLayout clockSegments(KioskTheme theme, String[][] table, String chosen,
+            java.util.function.Consumer<String> onPick) {
+        String[] words = new String[table.length];
+        int at = 0;
+        for (int index = 0; index < table.length; index++) {
+            words[index] = table[index][1];
+            if (table[index][0].equals(chosen)) {
+                at = index;
+            }
+        }
+        return segmentedChoice(theme, words, at, index -> onPick.accept(table[index][0]));
     }
 
     /** The sensor the wide Sensors page shows at the right; see showSensorsPage. */
@@ -16157,7 +16545,9 @@ public final class KioskActivity extends Activity {
                         {"Eclipse Paho", "MQTT client (EPL/EDL)"},
                         {"ZXing", "QR codes (Apache 2.0)"},
                         {"Android robot", context.getString(R.string.android_robot_attribution)},
-                        {"Icons", "After Material Symbols by Google (Apache 2.0)"}},
+                        {"Icons", "After Material Symbols by Google (Apache 2.0)"},
+                        {"Bitcoin clock fonts", "Antonio, Oswald and Azeret Mono (SIL Open Font"
+                                + " License 1.1)"}},
         };
     }
 
@@ -17621,7 +18011,20 @@ public final class KioskActivity extends Activity {
             return;
         }
         boolean cameraPlate = cameraTiles != null;
-        if (!appLockPlate && !cameraPlate && (url == null || url.trim().isEmpty())) {
+        // An integration's own page as the main view, the Bitcoin clock: as the cameras, the
+        // stored dashboard only.
+        String clock = appLockPlate || cameraPlate ? "" : KioskConfig.shownIntegrationOf(this);
+        boolean clockPlate = !clock.isEmpty() && (url == null || url.trim().isEmpty()
+                || url.equals(KioskConfig.load(this).dashboardUrl));
+        if (clockPlate && Integrations.pageInstance(KioskConfig.integrationsOf(this), clock)
+                == null) {
+            showParkingPage("No integration to show",
+                    "The integration chosen in Dashboard is gone. Choose another in the Muralis"
+                            + " settings.");
+            return;
+        }
+        if (!appLockPlate && !cameraPlate && !clockPlate
+                && (url == null || url.trim().isEmpty())) {
             showParkingPage();
             return;
         }
@@ -17693,6 +18096,11 @@ public final class KioskActivity extends Activity {
             dashboard.addView(cameraDashboard, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
+        if (clockPlate) {
+            clockDashboard = clockView(clock, false);
+            dashboard.addView(clockDashboard, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
         // Give the keyboard its space back by shrinking the WebView, not by scrolling anything here.
         // Padding the FrameLayout reduces the WebView's measured height, which reduces the page's
         // viewport height, and Chromium then reflows and scrolls the focused input into view by itself.
@@ -17752,12 +18160,16 @@ public final class KioskActivity extends Activity {
         mainHandler.removeCallbacks(frozenPageCheckTask);
         mainHandler.removeCallbacks(serverProbeTask);
         cancelDashboardGate();
-        if (appLockPlate || cameraPlate) {
+        if (appLockPlate || cameraPlate || clockPlate) {
             // No page, so nothing to watch over, and no page for the status to name.
             KioskRuntimeState.clearPage();
             KioskService.publishTelemetrySoon(this);
             if (cameraPlate) {
                 mainHandler.postDelayed(cameraDashboardWatch, CAMERA_WATCH_MS);
+            }
+            if (clockPlate) {
+                clockDashboardPaused = false;
+                mainHandler.postDelayed(clockDashboardWatch, CAMERA_WATCH_MS);
             }
             return;
         }
@@ -18172,6 +18584,25 @@ public final class KioskActivity extends Activity {
         statsOverlay = null;
         networkWaitLabel = null;
         mainHandler.removeCallbacks(cameraDashboardWatch);
+        mainHandler.removeCallbacks(clockDashboardWatch);
+        if (clockPreview != null) {
+            ViewGroup holder = clockPreview.getParent() instanceof ViewGroup
+                    ? (ViewGroup) clockPreview.getParent() : null;
+            if (holder != null) {
+                holder.removeView(clockPreview);
+            }
+            clockPreview.destroy();
+            clockPreview = null;
+        }
+        if (clockDashboard != null) {
+            ViewGroup holder = clockDashboard.getParent() instanceof ViewGroup
+                    ? (ViewGroup) clockDashboard.getParent() : null;
+            if (holder != null) {
+                holder.removeView(clockDashboard);
+            }
+            clockDashboard.destroy();
+            clockDashboard = null;
+        }
         if (cameraDashboard != null) {
             ViewGroup holder = cameraDashboard.getParent() instanceof ViewGroup
                     ? (ViewGroup) cameraDashboard.getParent() : null;
@@ -18832,6 +19263,131 @@ public final class KioskActivity extends Activity {
 
     /** The cameras as the main view, over the empty page; null when the panel shows a page. */
     private WebView cameraDashboard;
+    /** An integration's page as the main view, the Bitcoin clock; null otherwise. */
+    private WebView clockDashboard;
+
+    private boolean clockDashboardPaused;
+
+    /**
+     * The clock asks and draws only while it is seen, as the cameras stream only then: paused
+     * while the display is off, Ambient is up, the settings or another app are in front.
+     */
+    private final Runnable clockDashboardWatch = new Runnable() {
+        @Override
+        public void run() {
+            WebView web = clockDashboard;
+            if (web == null) {
+                return;
+            }
+            android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+            boolean hidden = (power != null && !power.isInteractive())
+                    || (blackout != null && blackout.getVisibility() == View.VISIBLE)
+                    || screensaverStage != ScreensaverPolicy.Stage.DASHBOARD
+                    || !inFront || configurationVisible;
+            if (hidden != clockDashboardPaused) {
+                clockDashboardPaused = hidden;
+                web.evaluateJavascript("window.clockPreview&&window.clockPreview({paused:"
+                        + hidden + "})", null);
+            }
+            mainHandler.postDelayed(this, CAMERA_WATCH_MS);
+        }
+    };
+
+    /** Whether the main view is the cameras or an integration's page, not the web page. */
+    private boolean plateShown() {
+        return cameraDashboard != null || clockDashboard != null;
+    }
+
+    /**
+     * The Bitcoin clock's page of one integration in a WebView of its own, which reaches nothing
+     * but its own state and background picture, answered in place: no network, no files, and no
+     * bridge into the app. {@code preview} for the Clock options page.
+     */
+    private WebView clockView(String instanceId, boolean preview) {
+        WebView web = new WebView(this);
+        web.setBackgroundColor(Color.BLACK);
+        WebSettings settings = web.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        Context app = getApplicationContext();
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view,
+                    WebResourceRequest request) {
+                String asked = request.getUrl().toString();
+                // The page itself arrives as data, which the engine asks for too.
+                if (asked.startsWith("data:")) {
+                    return null;
+                }
+                if (asked.startsWith(BitcoinClockPage.BASE + "state.json")) {
+                    return clockResponse("application/json", BitcoinClockPage.state(app,
+                            instanceId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                if (asked.startsWith(BitcoinClockPage.BASE + "picture")) {
+                    byte[] jpeg = BitcoinClockPage.picture(app,
+                            request.getUrl().getQueryParameter("p"));
+                    return jpeg == null ? clockResponse("text/plain", new byte[0])
+                            : clockResponse("image/jpeg", jpeg);
+                }
+                // Nothing else: the page ships whole, so any other ask is refused.
+                return clockResponse("text/plain", new byte[0]);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // The page itself loads; it never leaves for anywhere else.
+                return !request.getUrl().toString().startsWith(BitcoinClockPage.BASE);
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // The page's engine died: built again with the dashboard, as the cameras are.
+                if (view == clockDashboard) {
+                    clockDashboard = null;
+                    if (!configurationVisible) {
+                        mainHandler.post(() -> showDashboard(KioskConfig.load(
+                                KioskActivity.this).dashboardUrl));
+                    }
+                }
+                ViewGroup holder = view.getParent() instanceof ViewGroup
+                        ? (ViewGroup) view.getParent() : null;
+                if (holder != null) {
+                    holder.removeView(view);
+                }
+                view.destroy();
+                return true;
+            }
+        });
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                // The page's own errors, for a clock that stays blank.
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    Log.w(TAG, "Bitcoin clock page: " + message.message() + " (line "
+                            + message.lineNumber() + ")");
+                }
+                return true;
+            }
+        });
+        web.loadDataWithBaseURL(BitcoinClockPage.BASE, BitcoinClockPage.html(this,
+                BitcoinClockPage.BASE + "state.json", BitcoinClockPage.BASE + "picture", preview),
+                "text/html", "utf-8", null);
+        return web;
+    }
+
+    private static WebResourceResponse clockResponse(String type, byte[] body) {
+        WebResourceResponse response = new WebResourceResponse(type, "utf-8",
+                new java.io.ByteArrayInputStream(body));
+        java.util.Map<String, String> headers = new java.util.HashMap<>();
+        headers.put("Cache-Control", "no-store");
+        response.setResponseHeaders(headers);
+        if (body.length == 0) {
+            response.setStatusCodeAndReasonPhrase(404, "Not Found");
+        }
+        return response;
+    }
     private boolean cameraDashboardPaused;
 
     /**
@@ -19061,7 +19617,9 @@ public final class KioskActivity extends Activity {
                     applyKioskPolicy();
                     // The view is drawn again when it changed: the app, the cameras or the page.
                     if (appLockPlate != appLockOn() || (cameraDashboard != null)
-                            == KioskConfig.shownCamerasOf(this).isEmpty()) {
+                            == KioskConfig.shownCamerasOf(this).isEmpty()
+                            || (clockDashboard != null)
+                            == KioskConfig.shownIntegrationOf(this).isEmpty()) {
                         showDashboard(KioskConfig.load(this).dashboardUrl);
                     }
                     scheduleLockedApp();
@@ -19100,7 +19658,7 @@ public final class KioskActivity extends Activity {
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
-                if (webView != null && cameraDashboard == null) {
+                if (webView != null && !plateShown()) {
                     beginLoad();
                     homeLoad();
                     loadPage(pageUrl(KioskConfig.load(this).dashboardUrl));
@@ -19116,8 +19674,9 @@ public final class KioskActivity extends Activity {
                 }
                 if (webView == null) {
                     showDashboard(url);
-                } else if (cameraDashboard == null) {
-                    // Cameras stay the main view; the address is kept for the web page.
+                } else if (!plateShown()) {
+                    // Cameras or an integration stay the main view; the address is kept for
+                    // the web page.
                     beginLoad();
                     homeLoad();
                     loadPage(pageUrl(url));
@@ -19149,9 +19708,11 @@ public final class KioskActivity extends Activity {
                 if (blackout != null) {
                     blackout.setVisibility(View.GONE);
                 }
-                if (webView == null || cameraDashboard != null
-                        || !KioskConfig.shownCamerasOf(this).isEmpty()) {
-                    // Built again: from the cameras a page shown once, or back to the cameras.
+                if (webView == null || plateShown()
+                        || !KioskConfig.shownCamerasOf(this).isEmpty()
+                        || !KioskConfig.shownIntegrationOf(this).isEmpty()) {
+                    // Built again: from the cameras or an integration a page shown once, or back
+                    // to them.
                     showDashboard(target);
                 } else {
                     beginLoad();

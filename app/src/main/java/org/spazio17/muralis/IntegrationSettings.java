@@ -202,6 +202,7 @@ final class IntegrationSettings {
             KioskConfig.storeIntegrations(context, list);
             clearSecrets(new SecretStore(KioskConfig.storageContext(context)), gone.id,
                     gone.definition);
+            KioskConfig.forgetClockOptions(context, gone.id);
         }
         KioskService.refreshIntegrationsSoon(context, null);
         KioskService.publishTelemetrySoon(context);

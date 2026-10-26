@@ -205,6 +205,7 @@ final class HttpAdminServer {
     private final String speakersScript;
     private final String qrScript;
     private final String cameraScript;
+    private final String clockScript;
     private final String pageCss;
 
 
@@ -292,6 +293,7 @@ final class HttpAdminServer {
         speakersScript = script(R.raw.admin_speakers);
         qrScript = script(R.raw.admin_qr);
         cameraScript = script(R.raw.admin_camera);
+        clockScript = script(R.raw.admin_clock);
         // The scheme's colours ride along, light and dark (Palettes).
         pageCss = readRawText(R.raw.admin) + "\n" + readRawText(R.raw.admin_palettes);
     }
@@ -1056,6 +1058,53 @@ final class HttpAdminServer {
             writeResponse(output, notice == null || !notice.startsWith("Not ") ? 200 : 400,
                     "text/html; charset=utf-8", bytes(buildCamerasPage(notice,
                             savedItem("g:", form, notice), false)));
+        } else if (path.equals("/clock/page") && method.equals("GET")) {
+            String id = clockInstance(queryValue(query, "id"));
+            if (id == null) {
+                writeResponse(output, 404, "text/plain", bytes("No Bitcoin clock is added"));
+            } else {
+                java.util.Map<String, String> framed = new java.util.HashMap<>();
+                framed.put(FRAMED_BY_SELF, "1");
+                framed.put("Cache-Control", "no-store");
+                writeResponse(output, 200, "text/html; charset=utf-8", bytes(BitcoinClockPage.html(
+                        context, "/clock/state?id=" + urlEncode(id),
+                        "/clock/picture?id=" + urlEncode(id), true)), framed);
+            }
+        } else if (path.equals("/clock/state") && method.equals("GET")) {
+            String id = clockInstance(queryValue(query, "id"));
+            if (id == null) {
+                writeResponse(output, 404, "text/plain", bytes("No Bitcoin clock is added"));
+            } else {
+                writeResponse(output, 200, "application/json",
+                        bytes(BitcoinClockPage.state(context, id)),
+                        java.util.Collections.singletonMap("Cache-Control", "no-store"));
+            }
+        } else if (path.equals("/clock/picture") && method.equals("GET")) {
+            byte[] jpeg = clockInstance(queryValue(query, "id")) == null ? null
+                    : BitcoinClockPage.picture(context, queryValue(query, "p"));
+            if (jpeg == null) {
+                writeResponse(output, 404, "text/plain", bytes("No such picture"));
+            } else {
+                writeResponse(output, 200, "image/jpeg", jpeg,
+                        java.util.Collections.singletonMap("Cache-Control", "no-store"));
+            }
+        } else if (path.equals("/clock-options") && method.equals("GET")) {
+            String id = clockInstance(queryValue(query, "id"));
+            writeResponse(output, id == null ? 404 : 200, "text/html; charset=utf-8",
+                    bytes(buildClockOptionsPage(id,
+                            "1".equals(queryValue(query, "saved")) ? "Saved." : null)));
+        } else if (path.equals("/clock-options") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String id = clockInstance(form.get("id"));
+            String refused = id == null ? "no Bitcoin clock is added" : saveClockOptions(id, form);
+            if (refused == null) {
+                writeResponse(output, 303, "text/plain", bytes("saved"),
+                        Collections.singletonMap("Location", "/clock-options?id=" + urlEncode(id)
+                                + "&saved=1"));
+            } else {
+                writeResponse(output, 400, "text/html; charset=utf-8",
+                        bytes(buildClockOptionsPage(id, "Not saved: " + refused + ".")));
+            }
         } else if (path.equals("/camera-view") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
         } else if (path.equals("/camera-view") && method.equals("POST")) {
@@ -1341,6 +1390,10 @@ final class HttpAdminServer {
         } else if (path.equals("/privacy") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.privacy_policy_title), R.raw.privacy)));
+        } else if (path.equals("/about/fonts") && method.equals("GET")) {
+            // The licence the Bitcoin clock's fonts ship under, as the licence asks.
+            writeResponse(output, 200, "text/plain; charset=utf-8",
+                    bytes(readRawText(R.raw.clock_fonts_ofl)));
         } else if (path.equals("/about") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderAboutPage()));
         } else if (path.equals("/terms") && method.equals("GET")) {
@@ -1792,6 +1845,11 @@ final class HttpAdminServer {
                                 entry.getValue());
                         if (problem != null) {
                             return problem;
+                        }
+                    } else if (entry.getKey().equals("dashboard_integration")) {
+                        String problem = kioskService.setDashboardIntegration(entry.getValue());
+                        if (problem != null) {
+                            return "Not changed: " + problem + ".";
                         }
                     } else if (entry.getKey().startsWith("integration_")) {
                         String problem = IntegrationSettings.setEnabled(context,
@@ -2462,6 +2520,9 @@ final class HttpAdminServer {
         if (!KioskConfig.shownCamerasOf(context).isEmpty()) {
             return "Cameras: " + KioskConfig.shownCamerasOf(context);
         }
+        if (!KioskConfig.shownIntegrationOf(context).isEmpty()) {
+            return BitcoinClockPage.nameOf(context, KioskConfig.shownIntegrationOf(context));
+        }
         String host = config.dashboardUrl.replaceFirst("^[a-z]+://", "").replaceFirst("/.*$", "");
         return host.isEmpty() ? "No dashboard yet" : host;
     }
@@ -2707,6 +2768,7 @@ final class HttpAdminServer {
             }
             html.append("</dl></section>");
         }
+        html.append("<p class=\"hint\"><a href=\"/about/fonts\">The fonts' licence</a></p>");
         html.append("</div>").append(themeScript).append("</main></body></html>");
         return html.toString();
     }
@@ -4580,10 +4642,15 @@ final class HttpAdminServer {
         boolean showsApp = !app.isEmpty();
         String cameras = KioskConfig.shownCamerasOf(context);
         boolean showsCameras = !cameras.isEmpty();
-        // Cameras, the third answer, once there is a camera or a group to show.
+        String integration = KioskConfig.shownIntegrationOf(context);
+        boolean showsIntegration = !integration.isEmpty();
+        // Cameras, the third answer, once there is a camera or a group to show; Integration, the
+        // fourth, once an integration with a page of its own is added (the Bitcoin clock).
         boolean offerCameras = showsCameras || !KioskConfig.camerasOf(context).isEmpty()
                 || !KioskConfig.cameraGroupsOf(context).isEmpty();
-        boolean showsPage = !showsApp && !showsCameras;
+        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(context);
+        boolean offerIntegration = showsIntegration || !pages.isEmpty();
+        boolean showsPage = !showsApp && !showsCameras && !showsIntegration;
         String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
         // The fleet shares the address, not the choice, so its line shows with a web page only;
         // first, as in every section. The section's heading names the choice.
@@ -4595,7 +4662,19 @@ final class HttpAdminServer {
                 + (offerCameras ? dashboardSegment(words[2], showsCameras,
                         KioskConfig.dashboardCamerasOf(context).isEmpty() ? "/camera-view" : null)
                         : "")
+                + (offerIntegration ? dashboardSegment(words[3], showsIntegration, null) : "")
                 + "</div>";
+        if (showsIntegration) {
+            // Which integration's page, one radio each, stored as it is picked, and its options.
+            StringBuilder radios = new StringBuilder();
+            for (Integrations.Instance page : pages) {
+                radios.append(radioOf("dashboard_integration", "dashboard_integration", page.id,
+                        integration, escapeHtml(page.name)));
+            }
+            return shows + choice("dashboard_integration", "Integration", radios.toString())
+                    + "<div class=\"actions\"><a class=\"btn text\" href=\"/clock-options?id="
+                    + urlEncode(integration) + "\">Clock options" + glyph("next") + "</a></div>";
+        }
         if (showsCameras) {
             return shows + "<ul class=\"list\">" + linkRow("/camera-view", "cameras", cameras,
                     "Shown as the dashboard", null, "") + "</ul>";
@@ -4629,6 +4708,201 @@ final class HttpAdminServer {
                                 + "formmethod=\"post\">Open once</button>")
                 + "<div class=\"actions\"><a class=\"btn text\" href=\"/page-options\">Page options"
                 + glyph("next") + "</a></div>";
+    }
+
+    /** The added Bitcoin clock for {@code id}, its instance id; the first when none is named. */
+    private String clockInstance(String id) {
+        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(context);
+        if (id == null || id.isEmpty()) {
+            return pages.isEmpty() ? null : pages.get(0).id;
+        }
+        return Integrations.pageInstance(pages, id);
+    }
+
+    /** The swatches each colour offers, the panel's: background, text, accent. */
+    private static final String[][] CLOCK_SWATCHES = {
+            {"17,18,20", "245,245,240", "22,34,60", "40,28,20"},
+            {"242,242,242", "20,20,20", "247,147,26"},
+            {"247,147,26", "224,67,0", "0,90,255", "0,200,0"}};
+
+    /**
+     * Clock options, as on the panel: the page itself as a live preview, then the look, the
+     * colours, the digits, the picture, the layout and the screens, one Save. admin_clock.js
+     * shows each change in the preview at once and keeps the screens' order; without it the
+     * form still saves, the order as it was.
+     */
+    private String buildClockOptionsPage(String id, String notice) {
+        StringBuilder html = new StringBuilder(pageStart("Clock options", null,
+                settingsAt("dashboard")));
+        if (id == null) {
+            return html.append("<p class=\"hint\">Add the Bitcoin clock in Integrations first.</p>")
+                    .append(pageEnd()).toString();
+        }
+        BitcoinClock.Options options = KioskConfig.clockOptionsOf(context, id);
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        // The preview in the panel's own shape, read from its screen.
+        android.util.DisplayMetrics screen = context.getResources().getDisplayMetrics();
+        html.append("<section class=\"card\"><h2>Preview</h2><div class=\"clock-preview\""
+                + " style=\"aspect-ratio:").append(screen.widthPixels).append('/')
+                .append(screen.heightPixels).append("\"><iframe id=\"clock-frame\" src=\"/clock/page?id=")
+                .append(urlEncode(id)).append("\" title=\"Preview\"></iframe></div>"
+                        + "<div class=\"actions\">"
+                        + "<button type=\"button\" class=\"ib\" data-clock-step=\"-1\" title=\"Previous"
+                        + " screen\" aria-label=\"Previous screen\">" + glyph("prev") + "</button>"
+                        + "<button type=\"button\" class=\"ib\" data-clock-step=\"1\" title=\"Next"
+                        + " screen\" aria-label=\"Next screen\">" + glyph("next") + "</button>"
+                        + "<button type=\"button\" class=\"tonal\" id=\"clock-flash\">Show a new"
+                        + " block</button></div></section>");
+        html.append("<form method=\"post\" action=\"/clock-options\" id=\"clock-form\">")
+                .append(hidden("id", id)).append(hidden("baseline", options.toJson()))
+                .append("<div class=\"cards\">");
+        // Look and colours.
+        StringBuilder looks = new StringBuilder();
+        for (String[] look : BitcoinClock.LOOK_WORDS) {
+            BitcoinClock.Options colours = BitcoinClock.withLook(options, look[0]);
+            looks.append("<label><input type=\"radio\" name=\"look\" value=\"")
+                    .append(look[0]).append("\" data-colours=\"").append(colours.background)
+                    .append('|').append(colours.cells).append('|').append(colours.text)
+                    .append('|').append(colours.accent)
+                    .append("\"").append(look[0].equals(options.look) ? " checked" : "")
+                    .append('>').append(escapeHtml(look[1])).append("</label>");
+        }
+        html.append("<section class=\"card\"><h2>Look</h2><div class=\"segradios\" role=\"radiogroup\""
+                + " aria-label=\"Look\">").append(looks).append("</div>")
+                .append(clockColour("background", "Background", CLOCK_SWATCHES[0], options.background))
+                .append(clockColour("text", "Text", CLOCK_SWATCHES[1], options.text))
+                .append(clockColour("accent", "Accent", CLOCK_SWATCHES[2], options.accent))
+                .append("<p class=\"label\">Digits</p>")
+                .append(clockRadios("font", "Digits", BitcoinClock.FONT_WORDS, options.font))
+                .append("</section>");
+        // Layout.
+        html.append("<section class=\"card\"><h2>Layout</h2><p class=\"label\">Size</p>")
+                .append(clockRadios("size", "Size", BitcoinClock.SIZE_WORDS, options.size))
+                .append("<p class=\"label\">Position</p>")
+                .append(clockRadios("position", "Position", BitcoinClock.POSITION_WORDS,
+                        options.position))
+                .append("<p class=\"label\">Date and time</p>")
+                .append(clockRadios("strip", "Date and time", BitcoinClock.STRIP_WORDS,
+                        options.strip))
+                .append("</section>");
+        // A picture behind the clock: one of the uploads, darkened.
+        StringBuilder pictures = new StringBuilder(selectOption("", "None", options.picture));
+        PictureBrowser.Page uploads = PictureLibrary.get(context).uploads(0, 200);
+        for (PictureBrowser.Entry entry : uploads.entries) {
+            pictures.append(selectOption(entry.uri, entry.name, options.picture));
+        }
+        html.append("<section class=\"card\"><h2>Background picture</h2>")
+                .append(selectField("clock-picture", "picture", "Picture", null,
+                        pictures.toString(), uploads.entries.isEmpty()
+                                ? "Upload pictures under Ambient first." : null))
+                .append("<label class=\"range\">Dimming <input type=\"range\" name=\"dim\" min=\"0\""
+                        + " max=\"").append(BitcoinClock.MAX_DIM).append("\" value=\"")
+                .append(options.dim).append("\"></label></section>");
+        // The screens, in order, each on or off; the arrows move them (admin_clock.js).
+        StringBuilder rows = new StringBuilder();
+        StringBuilder order = new StringBuilder();
+        for (BitcoinClock.Screen one : options.screens) {
+            String name = BitcoinClock.screenName(one.key);
+            order.append(order.length() == 0 ? "" : ",").append(one.key);
+            rows.append("<li data-key=\"").append(one.key).append("\">")
+                    .append("<button type=\"button\" class=\"ib\" data-move=\"-1\" title=\"Move ")
+                    .append(escapeHtml(name)).append(" up\" aria-label=\"Move ").append(escapeHtml(name))
+                    .append(" up\">").append(glyph("arrow_up")).append("</button>")
+                    .append("<button type=\"button\" class=\"ib\" data-move=\"1\" title=\"Move ")
+                    .append(escapeHtml(name)).append(" down\" aria-label=\"Move ")
+                    .append(escapeHtml(name)).append(" down\">").append(glyph("arrow_down"))
+                    .append("</button><span class=\"text\"><span class=\"h\">").append(escapeHtml(name))
+                    .append("</span></span><input type=\"checkbox\" class=\"sw\" name=\"on_")
+                    .append(one.key).append("\" value=\"1\" aria-label=\"").append(escapeHtml(name))
+                    .append('"').append(one.on ? " checked" : "").append("></li>");
+        }
+        html.append("<section class=\"card\"><h2>Screens</h2><ul class=\"list clock-screens\">")
+                .append(rows).append("</ul>").append(hidden("screens", order.toString()))
+                .append(field("number", "seconds", "Time per screen (seconds)",
+                        String.valueOf(options.seconds)))
+                .append("<div class=\"switches\">")
+                .append(switchRow("clock-flash-on", "Flash on a new block",
+                        " name=\"flash\" value=\"1\"", options.flash))
+                .append("</div></section></div>")
+                .append("<input type=\"hidden\" name=\"flash_sent\" value=\"1\">")
+                .append("<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
+                        + "</button></div></form>");
+        return html.append(clockScript).append(pageEnd()).toString();
+    }
+
+    /** One colour of the clock: its swatches, which fill the box, and the r,g,b box. */
+    private static String clockColour(String name, String label, String[] swatches,
+            String value) {
+        StringBuilder html = new StringBuilder("<p class=\"label\">" + escapeHtml(label)
+                + "</p><div class=\"swatches\">");
+        for (String swatch : swatches) {
+            html.append("<button type=\"button\" class=\"swatch").append(swatch.equals(value)
+                    ? " on" : "").append("\" data-swatch=\"").append(name).append("\" data-rgb=\"")
+                    .append(swatch).append("\" style=\"background:rgb(").append(swatch)
+                    .append(")\" title=\"").append(swatch).append("\" aria-label=\"")
+                    .append(escapeHtml(label)).append(' ').append(swatch).append("\"></button>");
+        }
+        return html.append("</div>").append(field("text", name, label + " (r,g,b)", value))
+                .toString();
+    }
+
+    /** A plain group of radios over one of BitcoinClock's tables, saved with the form. */
+    private static String clockRadios(String name, String label, String[][] table,
+            String chosen) {
+        // Drawn as a segmented button, as on the panel, and still plain radios underneath.
+        StringBuilder radios = new StringBuilder("<div class=\"segradios\" role=\"radiogroup\""
+                + " aria-label=\"" + escapeHtml(label) + "\">");
+        for (String[] row : table) {
+            radios.append("<label><input type=\"radio\" name=\"").append(name)
+                    .append("\" value=\"").append(row[0]).append('"')
+                    .append(row[0].equals(chosen) ? " checked" : "").append('>')
+                    .append(escapeHtml(row[1])).append("</label>");
+        }
+        return radios.append("</div>").toString();
+    }
+
+    /**
+     * The Clock options form stored, or why not: refused whole when another surface changed the
+     * options since the page was drawn, or when a value breaks a rule.
+     */
+    private String saveClockOptions(String id, Map<String, String> form) {
+        BitcoinClock.Options stored = KioskConfig.clockOptionsOf(context, id);
+        if (!stored.toJson().equals(form.get("baseline"))) {
+            return "the options were changed elsewhere after this page loaded. The page now shows"
+                    + " the current ones";
+        }
+        Map<String, String> fields = new java.util.HashMap<>();
+        for (String key : new String[] {"look", "background", "text", "accent", "font",
+                "picture", "dim", "size", "position", "strip", "seconds"}) {
+            if (form.containsKey(key)) {
+                fields.put(key, form.get(key));
+            }
+        }
+        // A checkbox sends nothing when off: the hidden companions say the form was whole.
+        if (form.containsKey("flash_sent")) {
+            fields.put("flash", form.containsKey("flash") ? "1" : "0");
+        }
+        if (form.containsKey("screens")) {
+            StringBuilder order = new StringBuilder();
+            for (String key : form.get("screens").split(",")) {
+                order.append(order.length() == 0 ? "" : ",")
+                        .append(form.containsKey("on_" + key.trim()) ? "" : "-").append(key.trim());
+            }
+            fields.put("screens", order.toString());
+        }
+        String problem = BitcoinClock.problem(fields);
+        String picture = fields.getOrDefault("picture", "");
+        if (problem == null && !picture.isEmpty()
+                && !BitcoinClockPage.pictureExists(context, picture)) {
+            problem = "the picture must be one of the uploads";
+        }
+        if (problem != null) {
+            return problem;
+        }
+        KioskConfig.storeClockOptions(context, id, BitcoinClock.apply(stored, fields));
+        return null;
     }
 
     /**
@@ -6252,7 +6526,14 @@ final class HttpAdminServer {
                             IntegrationSettings.REMOVED)))
                     .append("\">Remove</button>");
         }
-        return form.append("</div></form>").toString();
+        form.append("</div>");
+        if (!fresh && Integrations.hasPage(instance.definition)) {
+            // Its own page, the dashboard's fourth answer: how it looks is set there.
+            form.append("<div class=\"actions\"><a class=\"btn text\" href=\"/clock-options?id=")
+                    .append(urlEncode(instance.id)).append("\">Clock options").append(glyph("next"))
+                    .append("</a></div>");
+        }
+        return form.append("</form>").toString();
     }
 
     private static boolean jsonArrayHas(org.json.JSONArray array, String value) {
@@ -9288,6 +9569,9 @@ final class HttpAdminServer {
                 && headersWhole && requests + 1 < KEEP_ALIVE_MAX_REQUESTS;
     }
 
+    /** A marker in a reply's extra headers, never sent: this page may be framed by our own. */
+    private static final String FRAMED_BY_SELF = "x-muralis-framed-by-self";
+
     private static void writeResponse(
             OutputStream output, int status, String contentType, byte[] body,
             Map<String, String> extraHeaders) throws IOException {
@@ -9297,16 +9581,23 @@ final class HttpAdminServer {
         header.append("Content-Type: ").append(contentType).append("\r\n");
         header.append("Content-Length: ").append(body.length).append("\r\n");
         // Never inside another site's frame, where a signed-in browser's clicks would pass the
-        // same-origin check, and never a type guessed from the bytes.
-        header.append("X-Frame-Options: DENY\r\nContent-Security-Policy: frame-ancestors 'none'\r\n"
-                + "X-Content-Type-Options: nosniff\r\n");
+        // same-origin check, and never a type guessed from the bytes. The one page shown inside
+        // this server's own pages, the Bitcoin clock's preview, may be framed by them alone.
+        boolean ownFrame = extraHeaders.containsKey(FRAMED_BY_SELF);
+        header.append(ownFrame ? "X-Frame-Options: SAMEORIGIN\r\nContent-Security-Policy:"
+                + " frame-ancestors 'self'\r\n" : "X-Frame-Options: DENY\r\n"
+                + "Content-Security-Policy: frame-ancestors 'none'\r\n");
+        header.append("X-Content-Type-Options: nosniff\r\n");
         boolean open = keepOpen.get();
         answered.set(true);
         header.append(open ? "Connection: keep-alive\r\nKeep-Alive: timeout="
                 + (KEEP_ALIVE_IDLE_MS / 1000) + "\r\n" : "Connection: close\r\n");
         answeredOpen.set(open);
         for (Map.Entry<String, String> entry : extraHeaders.entrySet()) {
-            header.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
+            if (!entry.getKey().equals(FRAMED_BY_SELF)) {
+                header.append(entry.getKey()).append(": ").append(entry.getValue())
+                        .append("\r\n");
+            }
         }
         header.append("\r\n");
         // Header and body in one write, so a reply that fits leaves in a single segment. Two

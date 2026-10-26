@@ -126,7 +126,7 @@ for name in KioskCommandDispatcher SystemStats RecyclePolicy RecoveryPolicy \
             ScreensaverPolicy PictureSources TinyJson MultipartForm PlaylistDocument \
             SelfSignedCertificate CertificateUpload DiscoveryWithdrawals FleetTls FleetJoin FleetDocument \
             FleetAsker FleetHealth FleetAlerts StatusLight BrowserOptions CertificatePins Popup Cameras DigestAuth SettingsTransfer \
-            DlnaProtocol; do
+            DlnaProtocol BitcoinClock; do
     source_file=${pure_java_dir}/${name}.java
     [[ -f ${source_file} ]] || continue
     if grep -q '^import android\.' "${source_file}"; then
@@ -155,6 +155,15 @@ javac -d "${test_dir}/dispatcher" \
     "${pure_java_dir}/TinyJson.java" \
     "${host_test_dir}/KioskCommandDispatcherTest.java"
 java -cp "${test_dir}/dispatcher" org.spazio17.muralis.KioskCommandDispatcherTest
+
+# The Bitcoin clock's options: defaults, reading, a form's checks, looks and the screens.
+mkdir -p "${test_dir}/clock"
+javac -d "${test_dir}/clock" \
+    "${pure_java_dir}/BitcoinClock.java" \
+    "${pure_java_dir}/StatusLight.java" \
+    "${pure_java_dir}/TinyJson.java" \
+    "${host_test_dir}/BitcoinClockTest.java"
+java -cp "${test_dir}/clock" org.spazio17.muralis.BitcoinClockTest
 
 # The network speaker's protocol: the descriptions, every SOAP action and fault, the refusal of
 # DOCTYPEs and oversize requests, the event bodies, the SSDP texts and the H:MM:SS times.

@@ -310,6 +310,42 @@ public final class Integrations {
         }
     }
 
+    /**
+     * The kinds that have a page of their own, the dashboard's fourth choice (2026-10-26): the
+     * Bitcoin clock, drawn by BitcoinClockPage.
+     */
+    static final java.util.Set<String> PAGE_DEFINITIONS =
+            Collections.singleton("bitcoin");
+
+    /** Whether an integration of this kind has a page of its own the dashboard can show. */
+    static boolean hasPage(String definitionId) {
+        return PAGE_DEFINITIONS.contains(definitionId);
+    }
+
+    /**
+     * The added integration the dashboard may show for {@code nameOrId}, its instance id, matched
+     * by id or by name; null when none of those with a page matches.
+     */
+    static String pageInstance(List<Instance> instances, String nameOrId) {
+        for (Instance instance : instances) {
+            if (hasPage(instance.definition) && (instance.id.equals(nameOrId)
+                    || instance.name.equalsIgnoreCase(nameOrId))) {
+                return instance.id;
+            }
+        }
+        return null;
+    }
+
+    /** Whether any added integration has a page of its own. */
+    static boolean anyPage(List<Instance> instances) {
+        for (Instance instance : instances) {
+            if (hasPage(instance.definition)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static final String VALUES = "values";
     public static final String WEATHER = "weather";
     public static final String AGENDA = "agenda";

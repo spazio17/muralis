@@ -156,6 +156,12 @@ final class KioskCommandDispatcher {
         String setDashboardCameras(String name);
 
         /**
+         * Chooses the integration, by its name or instance id, whose own page the dashboard
+         * shows when it shows an integration; null when done, else why not.
+         */
+        String setDashboardIntegration(String nameOrId);
+
+        /**
          * {@code dashboard.show}: what the dashboard shows, {@code page}, {@code app} or
          * {@code cameras}, already checked against the vocabulary. Returns why not, or null:
          * the app or the cameras it would show have not been chosen.
@@ -341,8 +347,9 @@ final class KioskCommandDispatcher {
             }
             case "dashboard.show": {
                 if (!DASHBOARD_PAGE.equals(args.value) && !DASHBOARD_APP.equals(args.value)
-                        && !DASHBOARD_CAMERAS.equals(args.value)) {
-                    return rejected("value must be page, app or cameras");
+                        && !DASHBOARD_CAMERAS.equals(args.value)
+                        && !DASHBOARD_INTEGRATION.equals(args.value)) {
+                    return rejected("value must be page, app, cameras or integration");
                 }
                 String problem = executor.setDashboardShows(args.value);
                 return problem == null ? accepted() : rejected(problem);
@@ -352,6 +359,13 @@ final class KioskCommandDispatcher {
                     return rejected("value must name the camera or group");
                 }
                 String problem = executor.setDashboardCameras(args.value.trim());
+                return problem == null ? accepted() : rejected(problem);
+            }
+            case "dashboard.integration": {
+                if (args.value == null || args.value.trim().isEmpty()) {
+                    return rejected("value must name the integration");
+                }
+                String problem = executor.setDashboardIntegration(args.value.trim());
                 return problem == null ? accepted() : rejected(problem);
             }
             case "dashboard.open":
@@ -777,10 +791,14 @@ final class KioskCommandDispatcher {
     static final String DASHBOARD_PAGE = "page";
     static final String DASHBOARD_APP = "app";
     static final String DASHBOARD_CAMERAS = "cameras";
+    /** An integration's own page, such as the Bitcoin clock (2026-10-26). */
+    static final String DASHBOARD_INTEGRATION = "integration";
 
     static final String NO_APP_CHOSEN = "choose an app on the panel or in the web admin first";
     static final String NO_CAMERA = "add a camera first";
     static final String NO_CAMERA_CHOSEN = "choose the dashboard cameras first";
+    static final String NO_PAGE_INTEGRATION = "add the Bitcoin clock in Integrations first";
+    static final String NO_INTEGRATION_CHOSEN = "choose the dashboard integration first";
 
     /**
      * Why the dashboard cannot show {@code value} now, or null when it can: the app needs one
@@ -789,9 +807,12 @@ final class KioskCommandDispatcher {
      * @param chosenApp          App lock's chosen package, empty when none was ever chosen
      * @param anyCamera          whether at least one camera or group exists
      * @param chosenCameraExists whether the chosen camera or group exists
+     * @param anyPageIntegration whether an integration with a page of its own is added
+     * @param chosenIntegrationExists whether the chosen integration is still added
      */
     static String dashboardShowProblem(String value, String chosenApp, boolean anyCamera,
-            boolean chosenCameraExists) {
+            boolean chosenCameraExists, boolean anyPageIntegration,
+            boolean chosenIntegrationExists) {
         if (DASHBOARD_APP.equals(value) && (chosenApp == null || chosenApp.isEmpty())) {
             return NO_APP_CHOSEN;
         }
@@ -801,6 +822,12 @@ final class KioskCommandDispatcher {
         if (DASHBOARD_CAMERAS.equals(value) && !chosenCameraExists) {
             return NO_CAMERA_CHOSEN;
         }
+        if (DASHBOARD_INTEGRATION.equals(value) && !anyPageIntegration) {
+            return NO_PAGE_INTEGRATION;
+        }
+        if (DASHBOARD_INTEGRATION.equals(value) && !chosenIntegrationExists) {
+            return NO_INTEGRATION_CHOSEN;
+        }
         return null;
     }
 
@@ -809,7 +836,8 @@ final class KioskCommandDispatcher {
     // state document and the settings file carry the keys; people read the words.
 
     static final String[][] DASHBOARD_WORDS = {
-            {DASHBOARD_PAGE, "Web page"}, {DASHBOARD_APP, "App"}, {DASHBOARD_CAMERAS, "Cameras"}};
+            {DASHBOARD_PAGE, "Web page"}, {DASHBOARD_APP, "App"}, {DASHBOARD_CAMERAS, "Cameras"},
+            {DASHBOARD_INTEGRATION, "Integration"}};
     /** The keys mirror KioskConfig's ORIENTATION_* constants, which need Android to compile. */
     static final String[][] ORIENTATION_WORDS = {
             {"auto", "Auto-rotate"}, {"landscape", "Landscape"}, {"portrait", "Portrait"}};

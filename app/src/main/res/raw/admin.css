@@ -68,10 +68,10 @@ html:not(.js) .themetoggle{display:none}
 html[data-theme=light] .themetoggle .m-light,html[data-theme=dark] .themetoggle .m-dark,html[data-theme=system] .themetoggle .m-system{display:inline-flex}
 /* Material's segmented button with text segments, the Dashboard choice: outlined, round
    ends, the chosen segment filled with a check before its words; 40 px drawn. */
-.segmented{display:flex;max-width:360px;height:40px;margin:8px 0 16px;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
-.segmented>form{display:flex;flex:1 1 0;min-width:0;margin:0}
-.segmented button,.segmented>a{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;height:100%;padding:0 8px;margin:0;border:0;border-radius:0;background:none;color:var(--text);font:inherit;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer}
-.segmented>a{border-left:1px solid var(--outline)}
+.segmented{display:flex;max-width:480px;height:40px;margin:8px 0 16px;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
+.segmented>form{display:flex;flex:1 1 auto;min-width:48px;margin:0}
+.segmented button,.segmented>a{flex:1 1 auto;min-width:48px;display:flex;align-items:center;justify-content:center;gap:6px;height:100%;padding:0 8px;margin:0;border:0;border-radius:0;background:none;color:var(--text);font:inherit;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer}
+.segmented>:not(:first-child){border-left:1px solid var(--outline)}
 .segmented [aria-pressed=true]{background:var(--secondary-container);color:var(--on-secondary-container)}
 .segmented svg{width:18px;height:18px;margin:0;fill:none;stroke:currentColor;stroke-width:2}
 .segmented button:hover,.segmented>a:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
@@ -643,3 +643,21 @@ dialog.sheet:target{display:block;position:static;margin:16px auto;width:auto;ma
 .ld .nav>.chips{margin:4px 4px 12px}
 .camera-picture{margin-top:12px}.camera-picture img{display:block;max-width:100%;max-height:240px;width:auto;border-radius:8px;background:var(--surface-alt)}.camera-picture img[hidden],.camera-picture p[hidden]{display:none}.camera-picture .shotbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
 details.brands{margin:4px 0 12px}details.brands summary{cursor:pointer;color:var(--accent);min-height:48px;display:flex;align-items:center}details.brands dt{font-weight:500;margin-top:8px}details.brands dd{margin:0;color:var(--subtext);font-size:13px;overflow-wrap:anywhere}
+/* Clock options: the preview in the panel's shape, the swatches, the screens' rows. */
+.clock-preview{width:100%;max-height:70vh;border-radius:12px;overflow:hidden;background:#000}
+.clock-preview iframe{width:100%;height:100%;border:0;display:block}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:16px;margin-top:16px;align-items:start}
+.cards>.card{margin:0}
+.swatches{display:flex;gap:12px;margin:8px 0 0}
+.swatch{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);padding:0;cursor:pointer}
+.swatch.on{outline:3px solid var(--accent);outline-offset:2px}
+label.range{display:flex;align-items:center;gap:12px;margin-top:16px}
+label.range input{flex:1}
+ul.clock-screens li{display:flex;align-items:center;gap:4px;min-height:56px}
+ul.clock-screens li .text{flex:1;margin-left:8px}
+.segradios{display:flex;border:1px solid var(--border);border-radius:20px;overflow:hidden;margin:8px 0 4px}
+.segradios label{flex:1;position:relative;min-height:40px;display:flex;align-items:center;justify-content:center;padding:0 8px;cursor:pointer;font-size:14px;font-weight:500}
+.segradios label+label{border-left:1px solid var(--border)}
+.segradios input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.segradios label:has(input:checked){background:var(--secondary-container);color:var(--on-secondary-container)}
+.segradios label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:-2px}

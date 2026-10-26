@@ -1155,21 +1155,33 @@ public final class KioskCommandDispatcherTest {
                     && executor.dashboardShows == null,
                     "dashboard.show refuses " + value + " with a reason, as a key and not a word");
         }
-        require(KioskCommandDispatcher.dashboardShowProblem("page", "", false, false) == null,
+        require(KioskCommandDispatcher.dashboardShowProblem("page", "", false, false, false,
+                false) == null,
                 "the page always can");
         require(KioskCommandDispatcher.NO_APP_CHOSEN.equals(
-                KioskCommandDispatcher.dashboardShowProblem("app", "", true, true)),
+                KioskCommandDispatcher.dashboardShowProblem("app", "", true, true, false, false)),
                 "the app needs one chosen");
-        require(KioskCommandDispatcher.dashboardShowProblem("app", "com.example", false, false)
+        require(KioskCommandDispatcher.dashboardShowProblem("app", "com.example", false, false,
+                false, false)
                 == null, "an app chosen can be shown");
         require(KioskCommandDispatcher.NO_CAMERA.equals(
-                KioskCommandDispatcher.dashboardShowProblem("cameras", "x", false, false)),
+                KioskCommandDispatcher.dashboardShowProblem("cameras", "x", false, false, false,
+                        false)),
                 "the cameras need a camera first");
         require(KioskCommandDispatcher.NO_CAMERA_CHOSEN.equals(
-                KioskCommandDispatcher.dashboardShowProblem("cameras", "", true, false)),
+                KioskCommandDispatcher.dashboardShowProblem("cameras", "", true, false, false,
+                        false)),
                 "the cameras need one chosen that still exists");
-        require(KioskCommandDispatcher.dashboardShowProblem("cameras", "", true, true) == null,
-                "a chosen camera can be shown, with no app chosen");
+        require(KioskCommandDispatcher.dashboardShowProblem("cameras", "", true, true, false,
+                false) == null, "a chosen camera can be shown, with no app chosen");
+        require(KioskCommandDispatcher.NO_PAGE_INTEGRATION.equals(
+                KioskCommandDispatcher.dashboardShowProblem("integration", "", false, false,
+                        false, false)), "an integration page needs the Bitcoin clock added");
+        require(KioskCommandDispatcher.NO_INTEGRATION_CHOSEN.equals(
+                KioskCommandDispatcher.dashboardShowProblem("integration", "", false, false,
+                        true, false)), "an integration page needs one chosen");
+        require(KioskCommandDispatcher.dashboardShowProblem("integration", "", false, false,
+                true, true) == null, "a chosen integration can be shown");
         for (String gone : new String[] {"kiosk.home", "kiosk.set_url", "kiosk.open_url",
                 "kiosk.reload", "kiosk.restart", "kiosk.identify", "kiosk.screenshot",
                 "ambient.idle_seconds", "ambient.one_per_cycle"}) {
@@ -1407,6 +1419,11 @@ public final class KioskCommandDispatcherTest {
             cameraName = name;
             cameraTrigger = false;
             cameraAs = show;
+            return null;
+        }
+
+        @Override
+        public String setDashboardIntegration(String nameOrId) {
             return null;
         }
 
