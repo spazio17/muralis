@@ -63,7 +63,9 @@ if(window.console){console.log('Muralis: '+el.dataset.setting+': '+text);}})
 // On the document, not on each control: admin_stats.js swaps a list in place when another
 // surface changed it, and the switches it brings must apply like the ones it replaced.
 document.addEventListener('change',function(e){var el=e.target;
-if(el&&el.dataset&&el.dataset.setting){apply(el);}});
+if(el&&el.dataset&&el.dataset.setting){apply(el);}
+// A switch that changes what a page lists, not a setting: it opens the page that lists it.
+if(el&&el.dataset&&el.dataset.go){window.location.href=el.dataset.go;}});
 // A box that stores on change sits in a form whose Save is for a browser without scripting:
 // Enter there would post the form with the old baseline right after the change stored, and
 // answer "changed elsewhere" for a name that was saved. Enter leaves the box instead.
@@ -77,8 +79,8 @@ form.addEventListener('submit',function(e){e.preventDefault();var a=document.act
 // The mode is the settings card's menu, the one place it is chosen since 2026-09-28; the
 // screensaver page has no chooser and carries the mode on its shell, which admin_stats.js keeps
 // current, with the options panel's title for every mode rendered beside it.
-function modeValue(){var el=document.getElementById('ambient-mode');
-if(el){return el.value;}
+function modeValue(){var radios=document.querySelector('input[name="opt-ambient_mode"]');
+if(radios){var el=document.querySelector('input[name="opt-ambient_mode"]:checked');return el?el.value:'off';}
 var page=document.getElementById('ambient-page');
 return page?page.dataset.mode:null;}
 function optionsTitle(mode){var page=document.getElementById('ambient-page');
@@ -110,8 +112,8 @@ if(library){library.classList.toggle('gone',mode!=='pictures');
 // Without the playlists the options are the page's only panel, centred like the legal pages.
 var page=document.getElementById('ambient-page');if(page){page.classList.toggle('one',library.classList.contains('gone'));}}}
 window.muralisScreensaverFields=screensaverFields;
-var saverMode=document.getElementById('ambient-mode');
-if(saverMode){saverMode.addEventListener('change',screensaverFields);}
+Array.prototype.forEach.call(document.querySelectorAll('input[name="opt-ambient_mode"]'),function(radio){
+radio.addEventListener('change',screensaverFields);});
 screensaverFields();
 })();
 // A file input is off screen with Browse as its label, so the name chosen is said beside it: the

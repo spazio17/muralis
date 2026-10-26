@@ -51,8 +51,7 @@ final class MqttTls {
 
     /** The client certificate line both surfaces show. */
     static String clientLine(String names, long untilMs) {
-        return names.isEmpty() ? "No client certificate; a broker that asks for one gets it"
-                + " from an upload in the web admin."
+        return names.isEmpty() ? "None yet"
                 : "Client certificate for " + names + ", valid until "
                         + new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT)
                                 .format(new java.util.Date(untilMs)) + ".";

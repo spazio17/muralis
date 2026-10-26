@@ -248,17 +248,9 @@ final class AdminCertificate {
 
     // ---- the words both surfaces use for it, worded once
 
-    /**
-     * The sentence above the fingerprint; {@code page} is how the surface names the web admin's
-     * page, "this page" on it and "that page" on the panel.
-     */
-    static String servedSentence(boolean uploaded, String page) {
-        return (uploaded ? "Served over HTTPS with the uploaded certificate."
-                : "Served over HTTPS with a certificate this panel made itself, so your browser "
-                        + "warned once.")
-                + " Its SHA-256 fingerprint, to compare with the one the browser shows for "
-                + page + ":";
-    }
+    /** The line above the fingerprint, on both surfaces. */
+    static final String FINGERPRINT_SENTENCE = "SHA-256 fingerprint, to compare with your"
+            + " browser's:";
 
     static final String CLOSED_WITHOUT_TLS_SENTENCE = "Closed: this panel cannot use its "
             + "certificate right now, and the web admin never takes the password unencrypted. "

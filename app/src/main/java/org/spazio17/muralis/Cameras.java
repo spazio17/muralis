@@ -84,8 +84,7 @@ final class Cameras {
     }
 
     /** The address field's line on both surfaces. */
-    static final String ADDRESS_HINT = "A snapshot, an MJPEG stream, a camera page or an RTSP"
-            + " stream (rtsp://).";
+    static final String ADDRESS_HINT = "A snapshot, an MJPEG stream, a camera page or rtsp://.";
 
     /**
      * The RTSP addresses of the common brands, as each vendor documents them (checked
@@ -106,10 +105,6 @@ final class Cameras {
         {"Eufy", "The address its app shows", "It streams only while someone watches it live,"
                 + " so it cannot stay on a wall."},
     };
-    /** The line under the brands. */
-    static final String RTSP_BRANDS_NOTE = "The smaller stream suits a grid; give the main one as"
-            + " the full-screen address.";
-
     /** What the question before removing a camera or a group adds, on both surfaces. */
     static final String REMOVED = "It is taken out of every group it is in, and its sign-in is"
             + " deleted. An automation or the dashboard that shows it then has nothing to show.";
@@ -324,6 +319,12 @@ final class Cameras {
         } catch (java.io.UnsupportedEncodingException | IllegalArgumentException kept) {
             return part;
         }
+    }
+
+    /** A camera's row line on both surfaces: its host alone; the address is on its page. */
+    static String rowLine(String url) {
+        String host = hostOf(url);
+        return host.isEmpty() ? "" : host.substring(0, host.lastIndexOf(':'));
     }
 
     /** The host and port an address names, lower case, as "host:port"; empty when none. */

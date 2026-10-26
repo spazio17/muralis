@@ -1341,6 +1341,8 @@ final class HttpAdminServer {
         } else if (path.equals("/privacy") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.privacy_policy_title), R.raw.privacy)));
+        } else if (path.equals("/about") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderAboutPage()));
         } else if (path.equals("/terms") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(renderLegalPage(
                     context.getString(R.string.terms_title), R.raw.terms)));
@@ -1791,6 +1793,13 @@ final class HttpAdminServer {
                         if (problem != null) {
                             return problem;
                         }
+                    } else if (entry.getKey().startsWith("integration_")) {
+                        String problem = IntegrationSettings.setEnabled(context,
+                                entry.getKey().substring("integration_".length()),
+                                isTrue(entry.getValue()));
+                        if (problem != null) {
+                            return "Not changed: " + problem + ".";
+                        }
                     } else if (entry.getKey().startsWith("automation_")) {
                         String problem = kioskService.setAutomationEnabled(
                                 entry.getKey().substring("automation_".length()),
@@ -1988,7 +1997,8 @@ final class HttpAdminServer {
      */
     private static boolean isSwitchKey(String key) {
         return (key.startsWith("sensor_") && !key.startsWith("sensor_option_"))
-                || key.startsWith("automation_") || key.startsWith("fleet_group_")
+                || key.startsWith("automation_") || key.startsWith("integration_")
+                || key.startsWith("fleet_group_")
                 || key.equals("fleet_follows") || key.equals("volume_buttons_disabled")
                 || key.equals("status_light") || key.equals("stats_overlay")
                 || key.equals("ambient_shuffle") || key.equals("ambient_one_per_start")
@@ -2353,13 +2363,15 @@ final class HttpAdminServer {
         java.util.List<String[]> sections = new java.util.ArrayList<>();
         sections.add(new String[] {"dashboard", "dash", "Dashboard",
                 dashboardSummary(config), dashboardBody(config, notice, noticeSection),
-                "What the panel shows"});
-        sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody(),
-                "Screen"});
+                "Panel"});
         sections.add(new String[] {"ambient", "saver", "Ambient", screensaverSummary(),
-                screensaverBody(), "Screen"});
+                screensaverBody(), "Panel"});
         sections.add(new String[] {"cameras", "cameras", "Cameras",
-                Cameras.summary(KioskConfig.camerasOf(context)), camerasBody(), "Screen"});
+                Cameras.summary(KioskConfig.camerasOf(context)), camerasBody(), "Panel"});
+        sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody(),
+                "Screen and sound"});
+        sections.add(new String[] {"speaker", "audio", "Sound", speakerSummary(config),
+                speakerBody(config, notice, noticeSection), "Screen and sound"});
         sections.add(new String[] {"sensors", "sensors", "Sensors", sensorsSummary(),
                 sensorsSectionBody(), "Automation"});
         sections.add(new String[] {"automations", "automations", "Automations", automationsSummary(),
@@ -2373,15 +2385,16 @@ final class HttpAdminServer {
                 "Port " + config.httpPort + (!secure() ? " · HTTP" : " · HTTPS")
                         + (config.webAdminEnabled ? "" : " · off"),
                 webAdminBody(config, notice, noticeSection), "Connections"});
-        sections.add(new String[] {"speaker", "audio", "Network speaker", speakerSummary(config),
-                speakerBody(config, notice, noticeSection), "Connections"});
-        sections.add(new String[] {"fleet", "fleet", "Fleet", FleetServer.summaryOf(config.fleetPort),
+        sections.add(new String[] {"fleet", "fleet", "Fleet", FleetServer.summaryOf(context),
                 fleetBody(config, notice, noticeSection), "Connections"});
         sections.add(new String[] {"sequences", "esc", "Way out",
                 sequencesSummary(config), sequencesBody(config, notice, noticeSection),
                 "Security"});
+        sections.add(new String[] {"backup", "storage", "Backup and diagnostics",
+                config.statsOverlay ? "Stats overlay on" : "Stats overlay off",
+                backupBody(config), "System"});
         sections.add(new String[] {"panel", "panel", "About this panel", config.deviceId,
-                panelBody(config, notice, noticeSection), ""});
+                panelBody(config, notice, noticeSection), "System"});
 
         StringBuilder nav = new StringBuilder("<nav class=\"sections\" aria-label=\"Sections\">");
         StringBuilder boxes = new StringBuilder("<div class=\"boxes\">");
@@ -2456,26 +2469,20 @@ final class HttpAdminServer {
     private String sequencesSummary(KioskConfig config) {
         // A TV has no corners to tap: the remote's Back held, or Menu, is its way in.
         if (!config.touchscreen) {
-            return "Back held or Menu" + (KioskConfig.escapePinSet(context) ? " · PIN" : "");
+            return "Back held or Menu" + (KioskConfig.escapePinSet(context) ? " · PIN" : " · no PIN");
         }
         if (config.settingsSequence.isEmpty() || config.launcherSequence.isEmpty()) {
             return "Not recorded yet";
         }
-        return config.settingsSequence + " · " + config.launcherSequence
-                + (KioskConfig.escapePinSet(context) ? " · PIN" : "");
+        return "2 combinations" + (KioskConfig.escapePinSet(context) ? " · PIN" : " · no PIN");
     }
 
     private String displaySummary() {
         String orientation = KioskConfig.orientationOf(context);
-        // An ordinary install has one way to darken, the film, whatever is stored: it offers
-        // Black film alone, greyed (2026-09-24), and the summary must not say "automatic" beside it.
-        String method = KioskService.isDeviceOwner(context) ? KioskConfig.displayOffMethodOf(context)
-                : DisplayOffPolicy.FILM;
         return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
                 : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
-                + " · "
-                + (DisplayOffPolicy.SLEEP.equals(method) ? "screen off"
-                        : DisplayOffPolicy.FILM.equals(method) ? "black film" : "automatic");
+                + (KioskService.isAutoBrightnessOn(context) ? " · auto brightness"
+                        : " · manual brightness");
     }
 
     private String screensaverSummary() {
@@ -2527,11 +2534,13 @@ final class HttpAdminServer {
 
     private static String linkRow(String href, String glyphName, String head, String sub,
             String subId, String trail, String mark) {
-        return "<li class=\"two\"><a class=\"rowlink plain\" href=\"" + href + "\">"
-                + "<span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(head) + "</span><span class=\"s\""
+        // A row with nothing to say under its name is one line high.
+        boolean two = !sub.isEmpty() || subId != null || !mark.isEmpty();
+        return "<li" + (two ? " class=\"two\"" : "") + "><a class=\"rowlink plain\" href=\""
+                + href + "\"><span class=\"lead\">" + glyph(glyphName) + "</span><span class=\"text\">"
+                + "<span class=\"h\">" + escapeHtml(head) + "</span>" + (two ? "<span class=\"s\""
                 + (subId == null ? "" : " id=\"" + subId + "\"") + ">" + mark + escapeHtml(sub)
-                + "</span></span></a>"
+                + "</span>" : "") + "</span></a>"
                 + (trail.isEmpty() ? "" : "<span class=\"trail\">" + trail + "</span>") + "</li>";
     }
 
@@ -2669,37 +2678,57 @@ final class HttpAdminServer {
                         " data-setting=\"device_id\"", null)
                 + "<div class=\"actions nojs\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>"
+                // Pro read only, as Buy is on the panel; the version opens the details page; the
+                // legal texts are pages here, so a chevron each (the UI round, 2026-10-26).
                 + "<ul class=\"list gap\">"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/stats\"><span class=\"lead\">"
-                + glyph("stats") + "</span><span class=\"text\"><span class=\"h\">System stats and log"
-                + "</span><span class=\"s\">" + (config.statsOverlay ? "Overlay on" : "Overlay off")
-                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
-                // The screen as the wall shows it, and the diagnostics file, beside the log, as
-                // the camera's page links its snapshot: the address wraps so it can be copied.
-                + linkRow("/api/screenshot", "open", "Screenshot",
-                        KioskRuntimeState.httpAdminAddress() + "/api/screenshot", null, "")
-                        .replace("<span class=\"s\"", "<span class=\"s wrap\"")
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/settings-file\"><span class=\"lead\">"
-                + glyph("download") + "</span><span class=\"text\"><span class=\"h\">Settings file"
-                + "</span><span class=\"s\">Export, import, a setup QR for a new tablet</span></span>"
-                + "</a><span class=\"trail\">" + glyph("next") + "</span></li>"
-                + linkRow("/api/diagnostics", "download", "Download diagnostics",
-                        KioskRuntimeState.httpAdminAddress() + "/api/diagnostics", null, "")
-                        .replace("<span class=\"s\"", "<span class=\"s wrap\"")
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"" + REPOSITORY_URL
-                + "\" target=\"_blank\" rel=\"noopener\"><span class=\"lead\">" + glyph("info")
-                + "</span><span class=\"text\"><span class=\"h\">"
-                + "Muralis " + escapeHtml(appVersionName()) + "</span><span class=\"s\">"
-                + REPOSITORY_URL.replaceFirst("^https://", "") + "</span></span></a>"
-                + "<span class=\"trail\">" + glyph("open") + "</span></li>"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/privacy\"><span class=\"lead\">"
-                + glyph("open") + "</span><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.privacy_policy_title))
-                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
-                + "<li class=\"link\"><a class=\"rowlink\" href=\"/terms\"><span class=\"lead\">"
-                + glyph("open") + "</span><span class=\"text\">"
-                + "<span class=\"h\">" + escapeHtml(context.getString(R.string.terms_title))
-                + "</span></span></a><span class=\"trail\">" + glyph("next") + "</span></li>"
+                + "<li class=\"two\"><span class=\"lead\">" + glyph("check") + "</span>"
+                + "<span class=\"text\"><span class=\"h\">Muralis Pro</span><span class=\"s wrap\">"
+                + escapeHtml(FleetServer.proLine(context)) + "</span></span></li>"
+                + linkRow("/about", "info", "Version and device details", appVersionName(), null,
+                        glyph("next"))
+                + linkRow("/privacy", "details", context.getString(R.string.privacy_policy_title),
+                        "", null, glyph("next"))
+                + linkRow("/terms", "details", context.getString(R.string.terms_title), "", null,
+                        glyph("next"))
+                + "</ul>";
+    }
+
+    /** The panel's About page: the same cards, {@link KioskActivity#aboutCards}. */
+    private String renderAboutPage() {
+        // No subtitle: it would turn on the stats chip, which this page has no script to fill.
+        StringBuilder html = new StringBuilder(pageStart("About", null, settingsAt("panel")));
+        html.append("<div class=\"doc one\">");
+        for (String[][] card : KioskActivity.aboutCards(context)) {
+            html.append("<section class=\"card\"><h2>").append(escapeHtml(card[0][0]))
+                    .append("</h2><dl class=\"values\">");
+            for (int row = 1; row < card.length; row++) {
+                html.append("<dt>").append(escapeHtml(card[row][0])).append("</dt><dd>")
+                        .append(escapeHtml(card[row][1])).append("</dd>");
+            }
+            html.append("</dl></section>");
+        }
+        html.append("</div>").append(themeScript).append("</main></body></html>");
+        return html.toString();
+    }
+
+    /**
+     * Backup and diagnostics (the settings round, 2026-10-26): the settings file, the stats and
+     * the log, the screen as the wall shows it and the diagnostics file, out of About, as
+     * Android keeps its tools apart; the addresses wrap so they can be copied.
+     */
+    private String backupBody(KioskConfig config) {
+        // Black titles, a short line, one trailing icon: a chevron for a page here, open-outside
+        // for the screenshot the browser shows, download for the file (the UI round, 2026-10-26).
+        return "<ul class=\"list\">"
+                + linkRow("/settings-file", "folder", "Settings file",
+                        "Export, import, a setup QR", null, glyph("next"))
+                + linkRow("/stats", "stats", "System stats and log",
+                        config.statsOverlay ? "Stats overlay on" : "Stats overlay off", null,
+                        glyph("next"))
+                + linkRow("/api/screenshot", "display", "Screenshot", "The screen now", null,
+                        glyph("open"))
+                + linkRow("/api/diagnostics", "info", "Download diagnostics",
+                        "A file for a bug report", null, glyph("download"))
                 + "</ul>";
     }
 
@@ -3113,7 +3142,7 @@ final class HttpAdminServer {
                 + (rows.length() == 0 ? "<p class=\"hint\">No automations yet.</p>"
                         : "<ul class=\"list seg\">" + rows + "</ul>")
                 + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/automation\">" + glyph("plus")
-                + "Add</a></div></section>";
+                + "Add an automation</a></div></section>";
         boolean fresh = rule.id.isEmpty();
         // The open rule's editor alone, or a new rule's: a rule's editor is tens of kilobytes,
         // and every rule's at once made the page megabytes long at the limit. Another row of
@@ -3145,6 +3174,12 @@ final class HttpAdminServer {
     private static String deleteQuestion(String name) {
         String quoted = "\"" + name + "\"";
         return "Delete " + quoted + "?\n\n" + quoted + " will be deleted.";
+    }
+
+    /** The same for something taken off a list, an automation, which is removed, not deleted. */
+    private static String removeQuestion(String name) {
+        String quoted = "\"" + name + "\"";
+        return "Remove " + quoted + "?\n\n" + quoted + " will be removed.";
     }
 
     /**
@@ -3266,15 +3301,14 @@ final class HttpAdminServer {
                     .append("</div>");
         }
         html.append(ifCard(rule, data))
-                // One row, as the panel lays it out (2026-09-28): Delete at the start, Cancel then
-                // Save at the end, ordered by the stylesheet. Delete asks first.
-                .append("<div class=\"actions editor\">")
+                // One row, as the panel lays it out (2026-10-26): Save, then Remove, which asks
+                // first. No Cancel: the back arrow leaves.
+                .append("<div class=\"actions\">")
                 .append("<button type=\"submit\" class=\"primary\">Save</button>")
-                .append("<a class=\"btn text\" href=\"/automations\">Cancel</a>")
                 .append(fresh ? "" : "<button type=\"submit\" class=\"danger\""
                         + " formaction=\"/api/automations/delete\""
-                        + " data-confirm=\"" + escapeHtml(deleteQuestion(
-                                stored == null ? rule.name : stored.name)) + "\">Delete</button>")
+                        + " data-confirm=\"" + escapeHtml(removeQuestion(
+                                stored == null ? rule.name : stored.name)) + "\">Remove</button>")
                 .append("</div></form>");
         return html.toString();
     }
@@ -4335,7 +4369,7 @@ final class HttpAdminServer {
         KioskConfig config = KioskConfig.load(context);
         // Two panels, as the panel's page has them (2026-09-28): side by side from 840 px,
         // one under the other below, the way every page of several panels without a menu is.
-        return pageStart("System stats and log", null, settingsAt("panel"))
+        return pageStart("System stats and log", null, settingsAt("backup"))
                 + "<div class=\"two\"><section class=\"card\"><h2>System stats</h2>"
                 + statsBody(config) + "</section>"
                 + "<section class=\"card\"><h2>Log</h2>" + logBody() + "</section></div>"
@@ -4551,8 +4585,10 @@ final class HttpAdminServer {
                 || !KioskConfig.cameraGroupsOf(context).isEmpty();
         boolean showsPage = !showsApp && !showsCameras;
         String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
-        String shows = "<p class=\"label\" id=\"opt-shows-label\">Dashboard</p>"
-                + "<div class=\"segmented\" role=\"group\" aria-labelledby=\"opt-shows-label\">"
+        // The fleet shares the address, not the choice, so its line shows with a web page only;
+        // first, as in every section. The section's heading names the choice.
+        String shows = (showsPage ? sharedLine("dashboard") : "")
+                + "<div class=\"segmented\" role=\"group\" aria-label=\"Dashboard\">"
                 + dashboardSegment(words[0], showsPage, null)
                 + dashboardSegment(words[1], showsApp,
                         KioskConfig.chosenAppOf(context).isEmpty() ? "/app-lock" : null)
@@ -4572,11 +4608,10 @@ final class HttpAdminServer {
                     + (problem == null ? "" : "<p class=\"hint bad\">"
                             + escapeHtml(Character.toUpperCase(problem.charAt(0))
                                     + problem.substring(1)) + ".</p>")
-                    + "<div class=\"actions\"><a class=\"onward\" href=\"/app-lock\">Choose the"
-                    + " app</a></div>";
+                    + "<div class=\"actions\"><a class=\"btn text\" href=\"/app-lock\">Choose the"
+                    + " app" + glyph("next") + "</a></div>";
         }
-        // The fleet shares the address, not the choice above it, so its line stands here.
-        return shows + sharedLine("dashboard") + sectionFormStart("dashboard", notice, noticeSection)
+        return shows + sectionFormStart("dashboard", notice, noticeSection)
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
@@ -4592,8 +4627,8 @@ final class HttpAdminServer {
                         "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
                                 + "value=\"dashboard.open_once\" formaction=\"/api/command\" "
                                 + "formmethod=\"post\">Open once</button>")
-                + "<div class=\"actions\"><a class=\"onward\" href=\"/page-options\">Page options"
-                + "</a></div>";
+                + "<div class=\"actions\"><a class=\"btn text\" href=\"/page-options\">Page options"
+                + glyph("next") + "</a></div>";
     }
 
     /**
@@ -4628,24 +4663,24 @@ final class HttpAdminServer {
      * whether Muralis may display over other apps, which only the panel itself can allow.
      */
     private String buildAppLockPage(String notice, boolean withSystem) {
-        StringBuilder html = new StringBuilder(pageStart("Dashboard app", null,
+        StringBuilder html = new StringBuilder(pageStart("App", null,
                 settingsAt("dashboard")));
         if (notice != null) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
         String chosen = KioskConfig.chosenAppOf(context);
         html.append("<form method=\"post\" action=\"/app-lock\" class=\"card\">"
-                + "<h2>The app this panel shows</h2><p class=\"hint\">One app instead of the web"
-                + " page, opened again whenever it closes. Your corner combinations work over it."
-                + "</p>");
+                + "<h2>The app this panel shows</h2><p class=\"hint\">Opened again whenever it"
+                + " closes.</p>");
         if (!AppLock.canDrawOver(context)) {
-            html.append("<p class=\"hint bad\">Muralis needs to display over other apps, or"
-                    + " your corner taps cannot reach it over the app. Allow it on the panel:"
-                    + " Dashboard, App, Allow.</p>");
+            html.append("<p class=\"hint bad\">Needs \"Display over other apps\": allow it on the"
+                    + " panel.</p>");
         }
-        html.append("<p><a href=\"/app-lock").append(withSystem ? "" : "?system=1")
-                .append("\">").append(withSystem ? "Hide the apps that came with the device"
-                        : "Show the apps that came with the device").append("</a></p>");
+        // A switch, as on the panel; it reloads the list (admin_setting.js, data-go).
+        html.append("<div class=\"switches\">").append(switchRow("app-lock-system",
+                "Show the apps that came with the device",
+                " data-go=\"/app-lock" + (withSystem ? "" : "?system=1") + "\"", withSystem))
+                .append("</div>");
         // No "Off" here: the web page is another answer of the Dashboard choice.
         StringBuilder radios = new StringBuilder();
         boolean listed = chosen.isEmpty();
@@ -4719,7 +4754,7 @@ final class HttpAdminServer {
         for (Cameras.Camera camera : cameras) {
             String id = "c:" + camera.name;
             rows.append(navRow(linkRow("/camera?id=" + urlEncode(id), "cameras", camera.name,
-                    camera.url, null, ""), id, id.equals(chosen)));
+                    Cameras.rowLine(camera.url), null, ""), id, id.equals(chosen)));
         }
         StringBuilder groupRows = new StringBuilder();
         for (Cameras.Group group : groups) {
@@ -4816,8 +4851,7 @@ final class HttpAdminServer {
                         " inputmode=\"url\"", Cameras.ADDRESS_HINT)
                 + rtspBrands()
                 + fieldWithId("c-full" + sfx, "text", "full", "Full-screen address (optional)",
-                        fresh ? "" : camera.full, " inputmode=\"url\"",
-                        "A bigger stream of the same camera, for full screen and zoom.")
+                        fresh ? "" : camera.full, " inputmode=\"url\"", null)
                 + fieldWithId("c-user" + sfx, "text", "user", "User",
                         login == null ? "" : login.user, "", null)
                 + fieldWithId("c-password" + sfx, "password", "password", "Password", "", "",
@@ -4849,18 +4883,12 @@ final class HttpAdminServer {
                     .append(escapeHtml(brand[1])).append("</code>")
                     .append(brand[2].isEmpty() ? "" : " " + escapeHtml(brand[2])).append("</dd>");
         }
-        return html.append("</dl><p class=\"hint\">").append(escapeHtml(Cameras.RTSP_BRANDS_NOTE))
-                .append("</p></details>").toString();
+        return html.append("</dl></details>").toString();
     }
 
     /** The Way out section's words on a screen without touch, a TV, on both surfaces. */
-    static final String NO_TOUCH_WAY_OUT = "This screen has no touch: on the remote, hold Back for"
-            + " three seconds, or press Menu, to open the settings, behind the PIN when one is"
-            + " set. The buttons below work from here.";
-    /** The same on the panel, whose Way out section holds Go to home screen. */
-    static final String NO_TOUCH_WAY_IN = "This screen has no touch: on the remote, hold Back for"
-            + " three seconds, or press Menu, to open the settings, behind the PIN when one is"
-            + " set.";
+    static final String NO_TOUCH_WAY_IN = "No touch here: hold Back for three seconds, or press"
+            + " Menu, to open the settings.";
 
     /**
      * The question before Go to home screen, for the browser's confirm(): this
@@ -4953,7 +4981,7 @@ final class HttpAdminServer {
      */
     private String buildSettingsFilePage(String notice, String preview) {
         StringBuilder html = new StringBuilder(pageStart("Settings file", null,
-                settingsAt("panel")));
+                settingsAt("backup")));
         if (notice != null) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
@@ -4962,8 +4990,8 @@ final class HttpAdminServer {
         }
         html.append("<form method=\"post\" action=\"/settings-file\" class=\"card\">"
                 + "<h2>Export</h2><input type=\"hidden\" name=\"what\" value=\"export\">"
-                + "<p class=\"hint\">Every setting you set, the corner combinations included,"
-                + " never this panel's name, keys, fleet, certificates or pictures.</p>"
+                + "<p class=\"hint\">All settings, without the name, keys, fleet, certificates or"
+                + " pictures.</p>"
                 + "<div class=\"switches\">" + switchRow("include-passwords", "Include passwords",
                         " name=\"include_passwords\" value=\"1\"", false) + "</div>"
                 + field("password", "passphrase", "Passphrase for the passwords", "", "",
@@ -4974,20 +5002,18 @@ final class HttpAdminServer {
         html.append("<form method=\"post\" action=\"/settings-file\" enctype=\"multipart/form-data\""
                 + " class=\"card\"><h2>Import</h2>"
                 + "<input type=\"hidden\" name=\"what\" value=\"read\">"
-                + "<p class=\"hint\">The file is read first; nothing changes until Apply.</p>"
-                + "<div class=\"field\"><input type=\"file\" name=\"file\" accept=\".json,application/json\""
-                + " id=\"settings-file-input\" aria-label=\"The settings file\"></div>"
+                + "<p class=\"hint\">Nothing changes until Apply.</p>"
+                + fileRow("settings-file-input", "file", "Settings file", ".json,application/json")
                 + field("password", "passphrase", "Passphrase, when the file carries passwords",
                         "", "", null)
-                + "<div class=\"actions\"><button type=\"submit\" class=\"tonal\">Read the file"
+                + "<div class=\"actions\"><button type=\"submit\" class=\"primary\">Read the file"
                 + "</button></div></form>");
         boolean fits = setupQrContent() != null;
         // A debug build names a download address only when it was built with one.
         boolean downloadable = KioskDeviceAdminReceiver.provisioningQr(context, new JSONObject())
                 != null;
         html.append("<div class=\"card\"><h2>Setup QR for a new tablet</h2>"
-                + "<p class=\"hint\">Scanned during a new tablet's first setup, it installs Muralis"
-                + " as the device owner and starts it with these settings, never the passwords.</p>"
+                + "<p class=\"hint\">Scan it during a new tablet's setup. Passwords stay out.</p>"
                 + (fits ? "<img id=\"setup-qr\" src=\"/api/setup-qr.svg\""
                         + " alt=\"Setup QR\" width=\"320\" height=\"320\">"
                         + fullScreenButton("setup-qr", null)
@@ -5132,7 +5158,7 @@ final class HttpAdminServer {
         java.util.List<Cameras.Camera> shownNow = Cameras.resolve(KioskConfig.camerasOf(context),
                 KioskConfig.cameraGroupsOf(context), chosen);
         if (count == 0) {
-            html.append("<p class=\"hint\">No cameras yet. Add one in Cameras, under Screen.</p>");
+            html.append("<p class=\"hint\">No cameras yet. Add one in Cameras, under Panel.</p>");
         } else if (shownNow.size() > 1) {
             // The layout is for a group of more than one camera, as on the panel.
             // The layout, as on the panel: Auto or a fixed one, the big tile's camera for a
@@ -5274,8 +5300,7 @@ final class HttpAdminServer {
         }
         java.util.Map<String, String> pins = KioskConfig.certificatePinsOf(context);
         if (pins.isEmpty() && waiting == null) {
-            html.append("<p class=\"hint\">None. A page whose certificate Android does not trust"
-                    + " asks first.</p>");
+            html.append("<p class=\"hint\">None yet</p>");
         }
         for (java.util.Map.Entry<String, String> pin : pins.entrySet()) {
             html.append("<p class=\"hint\">").append(escapeHtml(pin.getKey()))
@@ -5336,7 +5361,7 @@ final class HttpAdminServer {
                 + "</div>"
                 + (BrowserOptions.darkLookPossible(android.os.Build.VERSION.SDK_INT) ? ""
                         : "<p class=\"hint\">The dark look needs Android 10 or newer.</p>")
-                + "<p class=\"hint\">The page may use</p><div class=\"switches\">"
+                + "<p class=\"label\">Permissions</p><div class=\"switches\">"
                 + switchRow("browser-page-camera", "The camera",
                         " name=\"browser_page_camera\" value=\"1\"", browser.pageCamera)
                 + switchRow("browser-page-microphone", "The microphone",
@@ -5456,9 +5481,9 @@ final class HttpAdminServer {
      * port, and whether the member endpoint listens on it.
      */
     private String fleetBody(KioskConfig config, String notice, String noticeSection) {
-        // In the order a person needs it, as on the panel (the UI round, 2026-10-15): the fleet
-        // and its panels, adding one, what this panel follows and the Fleet page, then the port
-        // and Leave.
+        // In the order of the UI round of 2026-10-26, as on the panel: the fleet and a count, the
+        // ways in outside one, what this panel follows, the port with Save and Leave on one row,
+        // the Fleet page last.
         boolean member = !KioskConfig.fleetIdOf(context).isEmpty();
         // In a fleet, adding a panel and the invitation live on the Fleet page with its panels;
         // before one, Add by code here is how a fleet is created.
@@ -5471,9 +5496,10 @@ final class HttpAdminServer {
                 + field("number", "fleet_port", "Member port", Integer.toString(config.fleetPort))
                 + "<p class=\"hint" + (KioskRuntimeState.fleetListening() ? "" : " bad")
                 + "\" id=\"fleet-state\">" + escapeHtml(FleetServer.stateLine()) + "</p>"
-                + sectionFormEnd("Save")
-                + "<div class=\"actions\"><button type=\"button\" class=\"danger\" id=\"fleet-leave\""
-                + (member ? "" : " hidden") + ">Leave</button></div>";
+                + sectionFormEnd("Save", "<button type=\"button\" class=\"danger\""
+                        + " id=\"fleet-leave\"" + (member ? "" : " hidden") + ">Leave</button>")
+                + (member ? "<div class=\"actions\"><a class=\"btn text\" href=\"/fleet\">Fleet page"
+                        + glyph("next") + "</a></div>" : "");
     }
 
     /**
@@ -5491,7 +5517,7 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder("<div class=\"switches\">"
                 + switchRow("fleet-follows", "Follow the fleet's shared settings",
                         " data-setting=\"fleet_follows\"", FleetDocument.followsFleet(me))
-                + "</div><p class=\"hint\">This panel's groups</p><div class=\"switches\">");
+                + "</div><p class=\"label\">Groups</p><div class=\"switches\">");
         for (java.util.Map.Entry<String, String> group : FleetDocument.groups(list).entrySet()) {
             String id = escapeHtml(group.getKey());
             html.append(switchRow("fleet-group-" + id, group.getValue(),
@@ -5501,10 +5527,7 @@ final class HttpAdminServer {
         if (FleetDocument.groups(list).isEmpty()) {
             html.append("<p class=\"hint\">No groups yet.</p>");
         }
-        // The panels, the groups, what each scope shares and the alerts: the Fleet page, one row.
-        return html.append("<ul class=\"list seg\">").append(linkRow("/fleet", "fleet",
-                "Fleet page", "Panels, groups, shared settings", null, "")).append("</ul>")
-                .toString();
+        return html.toString();
     }
 
     /** "From the whole fleet …" at the top of a section the fleet shares, or nothing. */
@@ -5651,8 +5674,9 @@ final class HttpAdminServer {
     /** The Network speaker section's line: off, on with its port, or why it is not on. */
     private static String speakerSummary(KioskConfig config) {
         String state = KioskRuntimeState.speakerState();
-        return !config.networkSpeaker ? "Off" : "on".equals(state)
-                ? "On · port " + config.networkSpeakerPort : "Not on: " + state;
+        return (!config.networkSpeaker ? "Speaker off" : "on".equals(state) ? "Speaker on"
+                : "Speaker not on") + (config.volumeButtonsDisabled ? " · buttons off"
+                        : " · buttons on");
     }
 
     /**
@@ -5665,24 +5689,29 @@ final class HttpAdminServer {
                 + switchRow("network-speaker", "Network speaker",
                         " data-setting=\"network_speaker\"", config.networkSpeaker)
                 + "</div>"
-                + "<p class=\"hint\">Smart-home systems and apps that play to a speaker on the"
-                + " network find the panel by themselves and can play on it. While it is on,"
-                + " anyone on your network can play sound on this panel.</p>"
+                + "<p class=\"hint\">While it is on, anyone on your network can play sound"
+                + " here.</p>"
                 + (config.networkSpeaker && !"on".equals(state)
                         ? "<p class=\"hint bad\">Not on: " + escapeHtml(state) + ".</p>" : "")
                 + sectionFormStart("speaker", notice, noticeSection)
                 + field("number", "network_speaker_port", "Port",
                         Integer.toString(config.networkSpeakerPort))
-                + sectionFormEnd("Save");
+                + sectionFormEnd("Save")
+                // The device's volume keys, sound like the speaker (the settings round,
+                // 2026-10-26: in Way out until then), stored the moment the switch is touched.
+                + "<div class=\"switches\">"
+                + switchRow("volume-buttons-disabled", "Disable volume buttons",
+                        " data-setting=\"volume_buttons_disabled\"",
+                        KioskConfig.volumeButtonsDisabled(context))
+                + "</div>";
     }
 
     private String webAdminBody(KioskConfig config, String notice, String noticeSection) {
         return sharedLine("web_admin") + sectionFormStart("webadmin", notice, noticeSection)
                 + baselineField(Integer.toString(config.httpPort))
                 + field("number", "http_port", "Port", Integer.toString(config.httpPort))
-                + field("password", "http_admin_password", "Admin password", "", "", BLANK_KEEPS)
-                + "<p class=\"hint\">At least " + MIN_ADMIN_PASSWORD_LENGTH
-                + " characters. No username.</p>"
+                + field("password", "http_admin_password", "Admin password", "", "",
+                        "At least " + MIN_ADMIN_PASSWORD_LENGTH + " characters. " + BLANK_KEEPS)
                 + sectionFormEnd("Save")
                 + certificateControls(notice, noticeSection);
     }
@@ -5729,7 +5758,7 @@ final class HttpAdminServer {
                 + "enctype=\"multipart/form-data\" id=\"certificate-upload\">"
                 + fileRow("certificate-file", "certificate", "Certificate")
                 + fileRow("certificate-key", "key", "Private key")
-                + "<div class=\"actions\"><button class=\"primary\" type=\"submit\">"
+                + "<div class=\"actions\"><button class=\"tonal\" type=\"submit\">"
                 + "Upload</button></div></form>"
                 + (kept ? "<form method=\"post\" action=\"" + settingsAt("webadmin") + "\" "
                         + "class=\"actions\" data-native=\"1\">"
@@ -5749,9 +5778,14 @@ final class HttpAdminServer {
      * them.
      */
     private static String fileRow(String id, String name, String label) {
+        return fileRow(id, name, label, ".pem,.crt,.cer,.key,.txt");
+    }
+
+    /** The same for other files, {@code accept} naming the kinds the picker offers. */
+    private static String fileRow(String id, String name, String label, String accept) {
         return "<div class=\"uploadrow\">"
                 + "<input type=\"file\" id=\"" + id + "\" name=\"" + name + "\" "
-                + "accept=\".pem,.crt,.cer,.key,.txt\" class=\"offscreen\" "
+                + "accept=\"" + accept + "\" class=\"offscreen\" "
                 + "data-chosen=\"" + id + "-chosen\">"
                 + "<label class=\"filebutton\" for=\"" + id + "\">" + glyph("upload")
                 + label + "</label>"
@@ -5880,42 +5914,24 @@ final class HttpAdminServer {
                 + escapeHtml(config.settingsSequence + "|" + config.launcherSequence) + "\">"
                 // A TV has no corners to tap: Back held, or Menu, opens the settings.
                 + (config.touchscreen
-                        ? "<p class=\"hint\">Corner taps in order: TL, TR, BL, BR, separated by"
-                                + " commas. Between " + EscapeSequence.MIN_LENGTH + " and "
-                                + EscapeSequence.MAX_LENGTH + " taps. Recording them on the tablet"
-                                + " is easier than typing them here.</p>"
+                        ? "<p class=\"hint\">Corner taps: TL, TR, BL, BR, separated by commas, "
+                                + EscapeSequence.MIN_LENGTH + " to " + EscapeSequence.MAX_LENGTH
+                                + ".</p>"
                                 + field("text", "settings_sequence", "Open settings",
                                         config.settingsSequence)
                                 + field("text", "launcher_sequence", "Go to home screen",
                                         config.launcherSequence)
-                        : "<p class=\"hint\">" + escapeHtml(NO_TOUCH_WAY_OUT) + "</p>")
+                        : "<p class=\"hint\">" + escapeHtml(NO_TOUCH_WAY_IN) + "</p>")
                 + "<p class=\"hint\">Optional PIN, asked after either combination: "
                 + EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH
-                + " digits. A combination can be watched and repeated; a PIN has to be known. "
-                + (KioskConfig.escapePinSet(context) ? "One is set." : "None is set.") + "</p>"
+                + " digits. " + (KioskConfig.escapePinSet(context) ? "One is set." : "None is set.")
+                + "</p>"
                 + field("password", "escape_pin", "PIN", "", "", BLANK_KEEPS)
+                // A second submit on the Save row: it posts escape_pin_clear only when pressed.
                 + (KioskConfig.escapePinSet(context)
-                        ? "<label class=\"check\"><input type=\"checkbox\" name=\"escape_pin_clear\" "
-                                + "value=\"1\">Remove the PIN</label>"
-                        : "")
-                + sectionFormEnd("Save")
-                // The volume buttons, a lock-down choice, so under Way out (the UI round,
-                // 2026-10-15), stored the moment the switch is touched, as on the panel.
-                + "<div class=\"switches\">"
-                + switchRow("volume-buttons-disabled", "Disable volume buttons",
-                        " data-setting=\"volume_buttons_disabled\"",
-                        KioskConfig.volumeButtonsDisabled(context))
-                + "</div>"
-                // The way in and out from here, without the corner taps.
-                + "<div class=\"actions\">"
-                + quickAction("panel.dashboard", "Open dashboard", "", null)
-                + quickAction("panel.settings", "Open settings", "", null)
-                // Asked first: whoever stands at the panel gets the device's apps.
-                + "<form class=\"cmd\" method=\"post\" action=\"/api/command\">"
-                + "<input type=\"hidden\" name=\"cmnd\" value=\"panel.home_screen\">"
-                + "<button type=\"submit\" data-confirm=\"" + escapeHtml(leaveQuestion(null))
-                + "\">Go to home screen</button></form>"
-                + "</div>";
+                        ? sectionFormEnd("Save", "<button type=\"submit\" class=\"danger\""
+                                + " name=\"escape_pin_clear\" value=\"1\">Remove the PIN</button>")
+                        : sectionFormEnd("Save"));
     }
 
     /**
@@ -5926,7 +5942,7 @@ final class HttpAdminServer {
         StringBuilder rows = new StringBuilder();
         for (Cameras.Camera camera : KioskConfig.camerasOf(context)) {
             rows.append(linkRow("/cameras?id=" + urlEncode("c:" + camera.name), "cameras",
-                    camera.name, camera.url, null, ""));
+                    camera.name, Cameras.rowLine(camera.url), null, ""));
         }
         return (rows.length() == 0 ? "" : "<ul class=\"list seg\">" + rows + "</ul>")
                 + "<div class=\"actions" + (rows.length() == 0 ? " top0" : "") + "\">"
@@ -5950,6 +5966,15 @@ final class HttpAdminServer {
         return running + " of " + block.length() + " on";
     }
 
+    /** An integration's row switch, on or off at once (/api/setting, integration_<id>). */
+    private static String integrationSwitch(String id, String name, boolean on, String suffix) {
+        // Ids pass the store's shape on the way in; escaped here all the same.
+        String key = escapeHtml(id);
+        return "<input type=\"checkbox\" class=\"sw\" id=\"integration-" + key + suffix
+                + "\" data-setting=\"integration_" + key + "\" aria-label=\"" + escapeHtml(name)
+                + "\"" + (on ? " checked" : "") + ">";
+    }
+
     /**
      * Integrations: one row an added integration, with its status line, then More integration
      * settings, as Cameras lists its cameras; a row opens the Integrations page on it.
@@ -5963,41 +5988,39 @@ final class HttpAdminServer {
                 continue;
             }
             rows.append(linkRow("/integrations?id=" + urlEncode("i:" + entry.optString("id")),
-                    "integrations", entry.optString("name"), integrationLine(entry), null, ""));
+                    "integrations", entry.optString("name"), integrationLine(entry), null,
+                    integrationSwitch(entry.optString("id"), entry.optString("name"),
+                            entry.optBoolean("enabled"), "-home")));
         }
         return "<div id=\"integrations-body\"" + listsAttributes("integrations_home") + ">"
                 + (rows.length() == 0 ? "<div class=\"empty\"><p class=\"h\">No integrations"
-                        + " yet</p><p class=\"s\">An integration brings data from another service"
-                        + " to the panel, for the automations and MQTT.</p></div>"
+                        + " yet</p></div>"
                         : "<ul class=\"list seg\">" + rows + "</ul>")
                 + "<div class=\"actions\"><a class=\"btn text\" href=\"/integrations\">"
                 + (rows.length() == 0 ? "Add an integration" : "More integration settings")
                 + glyph("next") + "</a></div></div>";
     }
 
-    /** A row's line: the values in words while it answers, else its status line. */
+    /** A row's line: Off, the problem, or the first value in words. */
     private static String integrationLine(org.json.JSONObject entry) {
+        // One short state, the same on both surfaces: Off, the problem, or the first value.
+        if (!entry.optBoolean("enabled")) {
+            return "Off";
+        }
         if (!"ok".equals(entry.optString("state"))) {
             return entry.optString("status");
         }
         org.json.JSONObject values = entry.optJSONObject("values");
-        StringBuilder line = new StringBuilder();
         java.util.Iterator<String> ids = values == null
                 ? java.util.Collections.emptyIterator() : values.keys();
         while (ids.hasNext()) {
             org.json.JSONObject value = values.optJSONObject(ids.next());
-            if (value == null) {
-                continue;
+            if (value != null) {
+                return (values.length() > 1 ? value.optString("name") + " " : "")
+                        + valueWords(value);
             }
-            if (line.length() > 0) {
-                line.append(", ");
-            }
-            if (values.length() > 1) {
-                line.append(value.optString("name")).append(' ');
-            }
-            line.append(valueWords(value));
         }
-        return line.length() == 0 ? entry.optString("status") : line.toString();
+        return entry.optString("status");
     }
 
     /** One value of the status block in words, as IntegrationSettings.describe says it. */
@@ -6046,7 +6069,8 @@ final class HttpAdminServer {
             String id = "i:" + instance.id;
             org.json.JSONObject entry = status.get(instance.id);
             rows.append(navRow(linkRow("/integration?id=" + urlEncode(id), "integrations",
-                    instance.name, entry == null ? "" : integrationLine(entry), null, ""),
+                    instance.name, entry == null ? "" : integrationLine(entry), null,
+                    integrationSwitch(instance.id, instance.name, instance.enabled, "")),
                     id, id.equals(chosen)));
         }
         StringBuilder offered = new StringBuilder();
@@ -6056,18 +6080,22 @@ final class HttpAdminServer {
                 continue;
             }
             String id = "d:" + definition.id;
-            offered.append(navRow(linkRow("/integration?id=" + urlEncode(id), "integrations",
-                    definition.name, definition.summary, null, ""), id, id.equals(chosen)));
+            // A kind opens its box in place from 840 px (data-pane), its page below.
+            offered.append(linkRow("/integration?id=" + urlEncode(id), "integrations",
+                    definition.name, definition.summary, null, glyph("next"))
+                    .replace("<a class=\"rowlink plain\"", "<a data-pane=\"" + id
+                            + "\" class=\"rowlink plain\""));
         }
         String nav = "<section class=\"card nav\" id=\"integrations-nav\""
                 + listsAttributes("integrations_page") + "><div class=\"cardhead\">"
                 + "<h2>Integrations</h2><span class=\"count\">"
                 + escapeHtml(integrationsSummary()) + "</span></div>"
-                + (rows.length() == 0 ? "<p class=\"hint\">None added yet.</p>"
+                + (rows.length() == 0 ? "<p class=\"hint\">No integrations yet.</p>"
                         : "<ul class=\"list seg\">" + rows + "</ul>")
+                // Under the list, as every Add; the kinds are its pane at the right.
                 + (instances.size() >= Integrations.MAX_INSTANCES ? ""
-                        : "<div class=\"cardhead groups\"><h2>Add</h2></div>"
-                                + "<ul class=\"list seg\">" + offered + "</ul>")
+                        : "<div class=\"actions\"><a class=\"btn tonal\" href=\"/integration?id=add\""
+                                + " data-pane=\"add\">" + glyph("plus") + "Add an integration</a></div>")
                 + "</section>";
         StringBuilder detail = new StringBuilder();
         for (Integrations.Instance instance : instances) {
@@ -6077,6 +6105,8 @@ final class HttpAdminServer {
                     id.equals(chosen) ? typed : null)));
         }
         if (instances.size() < Integrations.MAX_INSTANCES) {
+            detail.append(pane("add", chosen, "<section class=\"card\"><h2>Add an integration"
+                    + "</h2><ul class=\"list\">" + offered + "</ul></section>"));
             for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
                 if ("business".equals(definition.edition)) {
                     continue;
@@ -6087,8 +6117,8 @@ final class HttpAdminServer {
             }
         }
         boolean fresh = chosen.startsWith("d:");
-        return pageStart(!detailPage ? "Integrations" : fresh ? "New integration"
-                        : "Edit integration",
+        return pageStart(!detailPage ? "Integrations" : chosen.equals("add")
+                        ? "Add an integration" : fresh ? "New integration" : "Edit integration",
                 null, detailPage ? "/integrations" : settingsAt("integrations"))
                 + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
                 + listDetail("integrations", detailPage, nav, detail.toString(),
@@ -6099,9 +6129,10 @@ final class HttpAdminServer {
     /** The item to show: the one asked for when it exists, else the first added, else the first offered. */
     private static String integrationItemOrFirst(String item,
             java.util.List<Integrations.Instance> instances) {
+        boolean room = instances.size() < Integrations.MAX_INSTANCES;
         if (item != null) {
-            if (item.startsWith("d:") && Integrations.DEFINITIONS.containsKey(item.substring(2))
-                    && instances.size() < Integrations.MAX_INSTANCES) {
+            if (room && (item.equals("add") || item.startsWith("d:")
+                    && Integrations.DEFINITIONS.containsKey(item.substring(2)))) {
                 return item;
             }
             for (Integrations.Instance instance : instances) {
@@ -6110,15 +6141,12 @@ final class HttpAdminServer {
                 }
             }
         }
-        if (!instances.isEmpty()) {
-            return "i:" + instances.get(0).id;
-        }
-        return "d:" + Integrations.DEFINITIONS.keySet().iterator().next();
+        return instances.isEmpty() ? "add" : "i:" + instances.get(0).id;
     }
 
     /**
      * One integration's box: its name, its settings drawn from the definition's fields, its
-     * status and values while added, and Try, Save or Add, Switch off or on, Remove. A secret
+     * status and values while added, and Save or Add, Try, Remove. A secret
      * box renders empty, as every password box: empty keeps the stored one.
      */
     private static String integrationForm(Integrations.Instance instance,
@@ -6145,7 +6173,9 @@ final class HttpAdminServer {
             form.append("<p class=\"hint\">").append(escapeHtml(definition.summary))
                     .append("</p>");
         } else if (entry != null) {
-            form.append("<p class=\"hint\">").append(escapeHtml(definition.name)).append(". ")
+            // The kind only where the name does not already say it.
+            form.append("<p class=\"hint\">").append(instance.name.equals(definition.name) ? ""
+                    : escapeHtml(definition.name) + " · ")
                     .append(escapeHtml(entry.optString("status"))).append("</p>");
             org.json.JSONObject values = entry.optJSONObject("values");
             if (values != null && values.length() > 0 && "ok".equals(entry.optString("state"))) {
@@ -6183,9 +6213,7 @@ final class HttpAdminServer {
             boolean stored = !fresh && entry != null && jsonArrayHas(
                     entry.optJSONArray("secrets_set"), field.id);
             String support = field.secret && stored ? BLANK_KEEPS
-                    : !field.hint.isEmpty() ? field.hint
-                    : field.kind == Integrations.Kind.NUMBER && !field.fallback.isEmpty()
-                            ? "Empty means " + field.fallback + "." : null;
+                    : !field.hint.isEmpty() ? field.hint : null;
             if (field.kind == Integrations.Kind.CHOICE) {
                 String current = value.isEmpty() ? field.fallback : value;
                 StringBuilder options = new StringBuilder();
@@ -6202,7 +6230,11 @@ final class HttpAdminServer {
                 String extra = field.kind == Integrations.Kind.URL ? " inputmode=\"url\""
                         : field.kind == Integrations.Kind.NUMBER
                                 ? " min=\"" + field.min + "\" max=\"" + field.max + "\"" : "";
-                // "(optional)" only where empty means nothing; a fallback is said below.
+                // What empty means, greyed inside the box.
+                if (!field.secret && !field.fallback.isEmpty()) {
+                    extra += " placeholder=\"" + escapeHtml(field.fallback) + "\"";
+                }
+                // "(optional)" only where empty means nothing.
                 boolean optional = !field.required && field.fallback.isEmpty();
                 form.append(fieldWithId(id, type, key, field.label
                         + (optional ? " (optional)" : ""), value, extra, support));
@@ -6213,9 +6245,8 @@ final class HttpAdminServer {
                 .append("</button><button type=\"submit\" name=\"what\" value=\"test\">Try"
                         + "</button>");
         if (!fresh) {
-            form.append("<button type=\"submit\" name=\"what\" value=\"")
-                    .append(instance.enabled ? "off\">Switch off" : "on\">Switch on")
-                    .append("</button><button type=\"submit\" class=\"danger\" name=\"what\""
+            // On and off is the row's switch in the list.
+            form.append("<button type=\"submit\" class=\"danger\" name=\"what\""
                             + " value=\"remove\" data-confirm=\"")
                     .append(escapeHtml(removeQuestion("Remove \"" + instance.name + "\"?",
                             IntegrationSettings.REMOVED)))
@@ -6234,7 +6265,7 @@ final class HttpAdminServer {
     }
 
     /**
-     * A post from an integration's box: Add or Save, Try, Switch on or off, Remove. Answers the
+     * A post from an integration's box: Add or Save, Try, Remove. Answers the
      * page again with what happened, on the integration it concerned; a try or a refusal keeps
      * what was typed.
      */
@@ -6272,14 +6303,6 @@ final class HttpAdminServer {
                 refused = notice.startsWith("Not ");
                 keep = form;
                 break;
-            case "on":
-            case "off": {
-                String problem = IntegrationSettings.setEnabled(context, id, what.equals("on"));
-                refused = problem != null;
-                notice = refused ? "Not changed: " + problem + "."
-                        : what.equals("on") ? "Switched on." : "Switched off.";
-                break;
-            }
             case "remove": {
                 String problem = IntegrationSettings.remove(context, id);
                 refused = problem != null;
@@ -6312,10 +6335,7 @@ final class HttpAdminServer {
     private String displayBody() {
         // The theme switch stands beside the section's name (see the menu builder); the app
         // bar's Auto/Light/Dark went (2026-09-27).
-        return sharedLine("display") + "<div class=\"actions tight\">"
-                + quickAction("display.wake", "Display on", "tonal", null)
-                + quickAction("display.visual_off", "Display off", "tonal", null)
-                + "</div>"
+        return sharedLine("display")
                 + brightnessControl()
                 + autoBrightnessControl()
                 + writeSettingsHint()
@@ -6340,7 +6360,7 @@ final class HttpAdminServer {
             colours.append(selectOption(named[1], named[0], current));
         }
         return "<div class=\"switches\">"
-                + switchRow("status-light", "Status light, a coloured frame around the screen",
+                + switchRow("status-light", "Status light",
                         " data-setting=\"status_light\"", light.on)
                 + "</div>"
                 + selectField("status-light-color", null, "Status light colour",
@@ -6351,21 +6371,15 @@ final class HttpAdminServer {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean problem = saver.enabled()
                 && ScreensaverPolicy.modeProblem(saver.mode, saver.url) != null;
-        // A menu here and radios on the Ambient page, deliberately: this is one section among
-        // nine, while the page's chooser decides what the rest of that page says.
+        // Radios, as on the panel; the Ambient page carries no chooser.
         return sharedLine("ambient")
-                + selectField("ambient-mode", null, "Mode", "ambient_mode",
-                screensaverModeOptions(saver), null)
+                + choice("ambient_mode", "Mode", screensaverModeOptions(saver))
                 + "<p class=\"hint" + (problem ? " bad" : "") + "\" id=\"ambient-note\">"
                 + escapeHtml(ScreensaverPolicy.describe(saver, KioskRuntimeState.screensaverActive()))
                 + "</p>"
-                // No "Back to the page" beside these: it ends a showing Ambient, which is what
-                // Display on already does to a lit panel (2026-09-11, C16).
                 // Off has no page to lead to: the page holds a mode's options and Off has none
-                // (2026-09-11), and since the page stopped carrying the chooser
-                // (2026-09-28) there would be nothing on it; admin_setting.js follows the menu.
+                // (2026-09-11); admin_setting.js follows the radios. Preview is on the page.
                 + "<div class=\"actions\">"
-                + quickAction("ambient.start", "Preview", "tonal", null)
                 + "<a class=\"btn text" + (ScreensaverPolicy.OFF.equals(saver.mode) ? " gone" : "")
                 + "\" id=\"ambient-more\" href=\"/ambient\">More Ambient settings"
                 + glyph("next") + "</a></div>";
@@ -6375,7 +6389,7 @@ final class HttpAdminServer {
         // The switch sits under the readout it governs. No form and no Save button: it stands
         // alone and applies itself, the way the brightness controls do; see settingScript.
         return "<pre id=\"stats\">loading...</pre>"
-                + switchRow("stats-overlay", "Show system stats on the dashboard",
+                + switchRow("stats-overlay", "Stats overlay",
                         " data-setting=\"stats_overlay\"", config.statsOverlay);
     }
 
@@ -6422,16 +6436,26 @@ final class HttpAdminServer {
     private static String commandsMenu() {
         return "<div class=\"overflow\"><button type=\"button\" class=\"ib\" id=\"commands-button\""
                 + " aria-haspopup=\"menu\" aria-expanded=\"false\" aria-controls=\"commands-menu\""
-                + " title=\"Reload, restart, reboot\" aria-label=\"Reload, restart, reboot\">"
+                + " title=\"Commands\" aria-label=\"Commands\">"
                 + glyph("more") + "</button>"
                 + "<div class=\"m3menu\" id=\"commands-menu\" role=\"menu\">"
+                // The way in and out from here, without the corner taps, and the display at
+                // once: commands, not settings (the settings round, 2026-10-26).
+                + quickAction("panel.dashboard", "Open dashboard", "", "dash")
+                + quickAction("panel.settings", "Open settings", "", "esc")
+                // Asked first: whoever stands at the panel gets the device's apps.
+                + "<form class=\"cmd\" method=\"post\" action=\"/api/command\">"
+                + "<input type=\"hidden\" name=\"cmnd\" value=\"panel.home_screen\">"
+                + "<button type=\"submit\" data-confirm=\"" + escapeHtml(leaveQuestion(null))
+                + "\">" + glyph("open") + "Go to home screen</button></form>"
+                + quickAction("display.wake", "Display on", "", "sun")
+                + quickAction("display.visual_off", "Display off", "", "moon")
                 + quickAction("dashboard.reload", "Reload dashboard", "", "reload")
                 + quickAction("app.restart", "Restart app", "", "power")
                 + quickAction("system.reboot", "Reboot", "", "reboot")
                 + "</div></div>";
     }
 
-    private static final String REPOSITORY_URL = "https://github.com/spazio17/muralis";
 
 
     /**
@@ -6693,9 +6717,7 @@ final class HttpAdminServer {
                 + selectField("ambient-transition", null, "Transition",
                         "ambient_transition", transitions.toString(), null)
                 + selectField("ambient-fit", null, "Picture fit",
-                        "ambient_picture_fit", fits.toString(),
-                        "Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
-                        + "it out of shape, Actual size does not scale it.")
+                        "ambient_picture_fit", fits.toString(), null)
                 + "<div class=\"switches\">"
                 + switchRow("ambient-shuffle", "Shuffle",
                         " data-setting=\"ambient_shuffle\"", saver.shuffle)
@@ -6783,14 +6805,14 @@ final class HttpAdminServer {
                 // Delete, outlined red as in every editor (the delete rules, 2026-10-01), asked
                 // first in the panel's words; it left the Ambient page's row on 2026-10-04.
                 // The answer is the Ambient page, since this one is gone.
-                .append("<form method=\"post\" action=\"/api/playlists/delete\" class=\"actions editor\" data-native=\"1\">")
+                .append("<form method=\"post\" action=\"/api/playlists/delete\" class=\"actions\" data-native=\"1\">")
                 .append(hidden("id", playlist.id))
                 // A refusal other than gone, a failed save, is answered on this page.
                 .append(hidden("playlist", playlist.id))
                 .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
                 .append(escapeHtml(deleteQuestion(playlist.name) + (playlist.active
-                        ? " It is the playlist in use, so Ambient will have none until you "
-                                + "choose another." : "") + " The pictures themselves are not deleted."))
+                        ? " It is in use: Ambient will have no playlist." : "")
+                        + " The pictures stay."))
                 .append("\">Delete</button></form>");
         return html.append(pageEnd()).toString();
     }
@@ -7387,8 +7409,7 @@ final class HttpAdminServer {
     private String playlistTable(PlaylistDocument document) {
         StringBuilder html = new StringBuilder();
         if (document.size() == 0) {
-            html.append("<p class=\"hint\">No playlists yet. Create one, then open it and "
-                    + "pick its pictures.</p>");
+            html.append("<p class=\"hint\">No playlists yet.</p>");
         } else {
             html.append("<ul class=\"list seg\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
@@ -7505,7 +7526,8 @@ final class HttpAdminServer {
     private String screensaverModeOptions(ScreensaverPolicy.Settings saver) {
         StringBuilder options = new StringBuilder();
         for (String[] choice : KioskCommandDispatcher.AMBIENT_MODE_WORDS) {
-            options.append(selectOption(choice[0], choice[1], saver.mode));
+            options.append(radioOf("ambient_mode", "ambient_mode", choice[0], saver.mode,
+                    escapeHtml(choice[1])));
         }
         return options.toString();
     }
@@ -7880,8 +7902,8 @@ final class HttpAdminServer {
         }
         nav.append("</div>");
         if (sorted.size() == 1) {
-            nav.append("<div class=\"firstrun\"><h3>Add your next panel</h3><p class=\"hint\">By the"
-                    + " code under its Join QR, or with an invitation QR for a new tablet.</p>"
+            nav.append("<div class=\"firstrun\"><h3>Add your next panel</h3><p class=\"hint\">By its"
+                    + " Join code, or an invitation QR.</p>"
                     + "<div class=\"actions\"><a class=\"btn tonal\" href=\"#add-panel\""
                     + " data-dialog=\"add-panel\">").append(glyph("plus"))
                     .append("Add a panel</a></div></div>");
@@ -8033,9 +8055,7 @@ final class HttpAdminServer {
                         : groups.size() + " groups") + "</span></div><div id=\"fleet-groups\""
                 + fleetLists(key) + ">");
         if (groups.isEmpty()) {
-            html.append("<p class=\"hint\">No groups yet. Panels with the same job, such as the"
-                    + " meeting rooms or the lobby screens, can share more than the whole fleet"
-                    + " does.</p>");
+            html.append("<p class=\"hint\">No groups yet.</p>");
         } else {
             html.append("<ul class=\"list seg\">");
             for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
@@ -8084,9 +8104,7 @@ final class HttpAdminServer {
                         " list=\"fleet-page-suggestions\" autocomplete=\"off\"", null))
                 .append("<datalist id=\"fleet-page-suggestions\">").append(suggestions)
                 .append("</datalist><div class=\"actions tight\"><button class=\"tonal\""
-                        + " type=\"submit\">Add group</button></div></form>")
-                .append("<p class=\"hint\">A panel is put in a group on its page, under Panels, or"
-                        + " several at once by ticking them.</p></section>");
+                        + " type=\"submit\">Add group</button></div></form></section>");
         return html.toString();
     }
 
@@ -8194,8 +8212,8 @@ final class HttpAdminServer {
         html.append("<p class=\"hint\">").append(values == null ? (section.equals("alerts")
                 ? "Not shared: no alerts are raised for " + escapeHtml(in) + ". Switched on, this"
                         + " panel's alerts are shared."
-                : "Not shared: each panel keeps its own.") : "Shared: these values apply to every panel of " + escapeHtml(in)
-                + ". Switched on, this panel's values at that moment were shared.").append("</p>");
+                : "Not shared: each panel keeps its own.") : "Shared with every panel of "
+                + escapeHtml(in) + ".").append("</p>");
         if (section.equals("alerts")) {
             // Alerts are edited here, where they are shared; the other sections are changed in
             // their own settings section on a panel.
@@ -8229,8 +8247,8 @@ final class HttpAdminServer {
         }
         String box = settingsBoxOf(section);
         if (box != null) {
-            html.append("<div class=\"actions\"><a class=\"onward\" href=\"").append(settingsAt(box))
-                    .append("\">Change on this panel</a></div>");
+            html.append("<div class=\"actions\"><a class=\"btn text\" href=\"").append(settingsAt(box))
+                    .append("\">Change on this panel").append(glyph("next")).append("</a></div>");
         }
         return html.append("</section>").toString();
     }
@@ -8242,8 +8260,7 @@ final class HttpAdminServer {
     private String fleetAlertsForm(String scope, java.util.Map<String, Object> values) {
         String section = "alerts";
         StringBuilder html = new StringBuilder("<form method=\"post\" action=\"/alerts\">")
-                .append(hidden("scope", scope)).append("<p class=\"hint\">Each alert comes once"
-                        + " when it starts and once when it ends.</p><div class=\"switches\">");
+                .append(hidden("scope", scope)).append("<div class=\"switches\">");
         for (FleetProfile.Field field : FleetProfile.fields(section)) {
             Object value = values.get(field.key);
             String text = FleetProfile.shown(value);
@@ -8764,10 +8781,8 @@ final class HttpAdminServer {
         if (KioskService.canWriteSystemSettings(context)) {
             return "";
         }
-        return "<p class=\"hint\">Brightness needs the \"Modify system settings\" permission: "
-                + "grant it in the Display card on the tablet, or with "
-                + "<code>adb shell appops set " + context.getPackageName()
-                + " WRITE_SETTINGS allow</code>.</p>";
+        return "<p class=\"hint\">Brightness needs the \"Modify system settings\" permission:"
+                + " grant it on the panel, in Display.</p>";
     }
 
     /**
@@ -8904,7 +8919,10 @@ final class HttpAdminServer {
             String value, String extraAttributes, String support, String supportAttributes) {
         return "<div class=\"field\"><input type=\"" + type + "\" id=\"" + id + "\""
                 + (name == null ? "" : " name=\"" + name + "\"")
-                + " value=\"" + escapeHtml(value) + "\" placeholder=\" \""
+                // A caller's own placeholder (a fallback shown greyed) replaces the blank one;
+                // a browser keeps only the first of two.
+                + " value=\"" + escapeHtml(value) + "\""
+                + (extraAttributes.contains(" placeholder=") ? "" : " placeholder=\" \"")
                 + (type.equals("text") ? MACHINE_TEXT : "") + extraAttributes + ">"
                 + "<label for=\"" + id + "\">" + escapeHtml(label) + "</label>"
                 + (support == null ? "" : "<p class=\"support\"" + supportAttributes + ">"
@@ -9127,7 +9145,7 @@ final class HttpAdminServer {
         // The sentence, then the fingerprint in a block of its own: 95 characters with no space
         // to break at, so inline in the sentence it wrapped mid-value (2026-09-23).
         return "<p class=\"hint\">"
-                + escapeHtml(AdminCertificate.servedSentence(certificate.uploaded, "this page"))
+                + escapeHtml(AdminCertificate.FINGERPRINT_SENTENCE)
                 + "</p><p class=\"mono wrap\">" + escapeHtml(certificate.fingerprint) + "</p>";
     }
 

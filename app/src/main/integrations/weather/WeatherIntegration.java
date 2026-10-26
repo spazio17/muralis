@@ -31,7 +31,7 @@ public final class WeatherIntegration implements Integrations.Source {
 
     public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID, "Weather",
             "free",
-            "The current weather of a city from OpenWeatherMap, with your own free key.",
+            "The weather of a city.",
             Arrays.asList(
                     new Integrations.Field("city", "City", Integrations.Scope.SHARED, false, true,
                             Integrations.Kind.TEXT, Collections.emptyList(), "", 0, 0,

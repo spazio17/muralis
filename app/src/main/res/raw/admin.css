@@ -465,8 +465,6 @@ html:root ul.list.seg li:has(+ li.refusal:last-child){border-radius:4px 4px 16px
 html:root ul.list.seg li:first-child:has(+ li.refusal:last-child){border-radius:16px}
 /* A text button keeps its own width: the class it shares with a row's words (.text, which fills its row) once spread a row's buttons across the card (the UI round, 2026-10-15). */
 .actions .btn.text,.actions button.text,button.text{flex:0 0 auto}
-/* The editor's row: Delete at the start, Cancel then Save at the end; Save is first in the DOM so Enter saves */
-.actions.editor{justify-content:flex-end}.actions.editor .danger{order:0;margin-right:auto}.actions.editor .text{order:1}.actions.editor .primary{order:2}
 .card.gap{margin-top:16px}
 /* The chosen sensor's events alone where the script runs; every group without it, so a rule
    can still be made (review, 2026-10-01). A sensor with one event shows it as a line, the radio
@@ -550,7 +548,7 @@ html:root .ld .nav ul.list li.on:hover{background:var(--secondary-container)}
 .ld .nav .actions{padding:8px 12px 4px}
 .ld .detail .pageswitch{display:none}
 .ld .detail .pagename{display:inline}.ld .detail .switchname{display:none}
-.ld .detail>.pane>section.card:first-child,.ld .detail>.pane>form>.field:first-of-type{margin-top:0}
+.ld .detail>.pane>section.card:first-child,.ld .detail>.pane>form:not(.card)>.field:first-of-type{margin-top:0}
 .pane[hidden]{display:none}
 }
 ul.list li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:12px}

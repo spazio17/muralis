@@ -170,7 +170,7 @@ public final class ScreensaverPolicyTest {
         require(ScreensaverPolicy.describe(settings("off", 120, 900), false)
                 .equals("Ambient off."), "off reads as off");
         String dim = ScreensaverPolicy.describe(settings("dim", 120, 900), false);
-        require(dim.equals("Dimmed page after 2 min without a touch, display off 15 min later."),
+        require(dim.equals("Dimmed page after 2 min, display off 15 min later."),
                 "the whole rule in one sentence: " + dim);
         String showing = ScreensaverPolicy.describe(settings("url", 0, 0), true);
         require(showing.equals("Web page, only when asked for, the display stays on. Showing now."),
@@ -178,7 +178,7 @@ public final class ScreensaverPolicyTest {
         Settings pictures = new Settings("pictures", 120, 0, "", 20, "ambient", 20,
                 "fade", false, false, false, "bottom_left", "fit");
         require(ScreensaverPolicy.describe(pictures, false).equals(
-                "Pictures after 2 min without a touch, the display stays on."),
+                "Pictures after 2 min, the display stays on."),
                 "the pictures in one sentence: " + ScreensaverPolicy.describe(pictures, false));
         String broken = ScreensaverPolicy.describe(new Settings("url", 120, 900, "", 20,
                 "ambient"), false);

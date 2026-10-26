@@ -32,7 +32,7 @@ public final class WebValueIntegration implements Integrations.Source {
 
     public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
             "Value from a web address", "free",
-            "Reads one number, text or on/off from a web address, for the automations and MQTT.",
+            "One value from a web address.",
             Arrays.asList(
                     new Integrations.Field("url", "Address", Integrations.Scope.SHARED, false,
                             true, Integrations.Kind.URL, Collections.emptyList(), "", 0, 0,

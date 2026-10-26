@@ -30,8 +30,8 @@ if(!wide.matches){return;}
 if(e.target.closest('input,button,label,select')){return;}
 var add=e.target.closest('.nav a[href="/automation"]');
 if(add){if(hasPane('')){e.preventDefault();select('');}return;}
-// An add link naming its pane (Cameras: a camera or a group).
-var pane=e.target.closest('.nav a[data-pane]');
+// An add link naming its pane (Cameras: a camera or a group; Integrations: a kind, from its pane).
+var pane=e.target.closest('a[data-pane]');
 if(pane){e.preventDefault();select(pane.dataset.pane);return;}
 var li=e.target.closest('.nav li[data-id]');
 if(li){e.preventDefault();open(li.dataset.id);}
