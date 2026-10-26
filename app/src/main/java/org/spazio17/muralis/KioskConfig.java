@@ -242,10 +242,12 @@ final class KioskConfig {
 
     static KioskConfig load(Context context) {
         Context storageContext = storageContext(context);
+        boolean touchscreen = hasTouchscreen(context);
         SharedPreferences preferences = storageContext.getSharedPreferences(
                 PREFS, Context.MODE_PRIVATE);
         SecretStore secrets = new SecretStore(storageContext);
         KioskConfig config = new KioskConfig();
+        config.touchscreen = touchscreen;
         config.dashboardUrl = preferences.getString(DASHBOARD_URL, "").trim();
         config.deviceId = preferences.getString(DEVICE_ID, "").trim();
         if (config.deviceId.isEmpty()) {
@@ -332,9 +334,23 @@ final class KioskConfig {
         }
     }
 
-    boolean escapeSequencesConfigured() {
-        return EscapeSequence.isValid(EscapeSequence.parse(settingsSequence))
-                && EscapeSequence.isValid(EscapeSequence.parse(launcherSequence));
+    /**
+     * Whether the panel has its way out, so lock task, HOME and the dashboard may engage: both
+     * corner combinations recorded, or a screen without touch (a TV box), where the remote's Menu
+     * button opens the settings and corner taps cannot exist.
+     */
+    boolean wayOutReady() {
+        return !touchscreen || (EscapeSequence.isValid(EscapeSequence.parse(settingsSequence))
+                && EscapeSequence.isValid(EscapeSequence.parse(launcherSequence)));
+    }
+
+    /** Whether this device has a touchscreen; false on a TV box (read at load). */
+    boolean touchscreen = true;
+
+    /** Whether this device has a touchscreen: a TV box has none, and is driven by its remote. */
+    static boolean hasTouchscreen(Context context) {
+        return context.getPackageManager().hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_TOUCHSCREEN);
     }
 
     /** The only way to write settings; see the comment on the fields above. */

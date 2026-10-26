@@ -589,7 +589,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // With both combinations already here (from the setup QR or the fleet that added this
             // panel), HOME is claimed before the setup's own last HOME, which otherwise asks the
             // person to pick a launcher while Muralis is already open (Mi 9T, 2026-10-19).
-            if (KioskConfig.load(this).escapeSequencesConfigured()) {
+            if (KioskConfig.load(this).wayOutReady()) {
                 KioskDeviceAdminReceiver.pinAsHomeActivity(this);
             }
             try {
@@ -2538,7 +2538,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // wizard is up): nothing may cover the wizard before the way out exists, whichever
         // surface sent the page, a fleet's shared settings, MQTT or the web admin. The wizard
         // shows the stored page when it is done.
-        if (KioskConfig.load(this).escapeSequencesConfigured()
+        if (KioskConfig.load(this).wayOutReady()
                 && !KioskRuntimeState.wizardOnScreen()) {
             sendUiCommand("dashboard.url", -1, url);
         }
@@ -2566,7 +2566,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // time it does. As dashboard.url: not over the first-start screens either, which show
         // the dashboard when they are done.
         if (KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(KioskConfig.dashboardShowsOf(this))
-                && KioskConfig.load(this).escapeSequencesConfigured()
+                && KioskConfig.load(this).wayOutReady()
                 && !KioskRuntimeState.wizardOnScreen()) {
             sendUiCommand("dashboard.changed", -1, null);
         }
@@ -2590,7 +2590,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
         // The panel follows as it does any App lock change: over the app it comes forward, in
         // front it shows the new view and hands the lock-task allowlist the app or takes it away.
         // Not over the first-start screens, which show the dashboard when they are done.
-        if (KioskConfig.load(this).escapeSequencesConfigured()
+        if (KioskConfig.load(this).wayOutReady()
                 && !KioskRuntimeState.wizardOnScreen()) {
             sendUiCommand("applock.changed", -1, null);
         }
@@ -4699,7 +4699,7 @@ public final class KioskService extends Service implements KioskCommandDispatche
             return;
         }
         KioskConfig config = KioskConfig.load(service);
-        if (config.escapeSequencesConfigured() && !KioskRuntimeState.wizardOnScreen()) {
+        if (config.wayOutReady() && !KioskRuntimeState.wizardOnScreen()) {
             service.sendUiCommand("dashboard.url", -1, config.dashboardUrl);
         }
         service.sendUiCommand("applock.changed", -1, null);
