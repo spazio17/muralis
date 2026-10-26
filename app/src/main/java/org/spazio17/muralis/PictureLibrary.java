@@ -280,6 +280,18 @@ final class PictureLibrary {
         }
     }
 
+    /**
+     * One of the uploads scaled to fit, or null when {@code url} is not an upload or cannot be
+     * read: the Bitcoin clock's background, which names its picture itself and so must never
+     * reach anything else. Worker thread only.
+     */
+    Bitmap decodeUpload(String url, int maxWidth, int maxHeight) {
+        if (!isUpload(url)) {
+            return null;
+        }
+        return decode(new Picture(url, "", ""), maxWidth, maxHeight, false);
+    }
+
     private InputStream openPicture(Picture picture) throws IOException {
         if (isUpload(picture.url)) {
             return new FileInputStream(Uri.parse(picture.url).getPath());

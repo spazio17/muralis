@@ -14,11 +14,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Bitcoin: a block clock's data from mempool's public API, on mempool.space or a server of the
- * person's own. Three asks: /api/blocks/tip/height (plain text), /api/v1/fees/recommended and
- * /api/v1/prices (JSON). A self-hosted mempool may have its prices switched off, so the prices
- * never fail the ask: without them the price and sats per unit are left out (unavailable), and
- * the height, the fees and the halving countdown still come through.
+ * The Bitcoin clock: the network's state from mempool's public API, on mempool.space or a server
+ * of the person's own, for its own full-screen page (BitcoinClock) and as values for the
+ * automations and MQTT. Three asks: /api/blocks/tip/height (plain text),
+ * /api/v1/fees/recommended and /api/v1/prices (JSON). A self-hosted mempool may have its prices
+ * switched off, so the prices never fail the ask: without them the price, sats per unit and
+ * market cap are left out (unavailable), and the height, the fees, the supply and the halving
+ * still come through. The supply and the halving are worked out from the height.
  */
 public final class BitcoinIntegration implements Integrations.Source {
     static final String ID = "bitcoin";
@@ -26,10 +28,12 @@ public final class BitcoinIntegration implements Integrations.Source {
     static final long HALVING_INTERVAL = 210_000L;
     /** Satoshis in one bitcoin. */
     private static final double SATS_PER_BITCOIN = 100_000_000d;
+    /** The first block reward, in satoshis; it halves every {@link #HALVING_INTERVAL} blocks. */
+    private static final long FIRST_REWARD_SATS = 50L * 100_000_000L;
 
     public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
-            "Bitcoin", "free",
-            "Block height, price, fees, halving.",
+            "Bitcoin clock", "free",
+            "A clock of the Bitcoin network, as a dashboard.",
             Arrays.asList(
                     new Integrations.Field("url", "Server", Integrations.Scope.SHARED, false, true,
                             Integrations.Kind.URL, Collections.emptyList(),
@@ -63,7 +67,10 @@ public final class BitcoinIntegration implements Integrations.Source {
                 new Integrations.ValueSpec("fee_hour", "Hour fee", Integrations.Type.NUMBER,
                         "sat/vB"),
                 new Integrations.ValueSpec("blocks_to_halving", "Blocks to halving",
-                        Integrations.Type.NUMBER, ""));
+                        Integrations.Type.NUMBER, ""),
+                new Integrations.ValueSpec("supply", "Supply", Integrations.Type.NUMBER, "BTC"),
+                new Integrations.ValueSpec("market_cap", "Market cap", Integrations.Type.NUMBER,
+                        instance.setting(definition, "currency")));
     }
 
     @Override
@@ -85,7 +92,8 @@ public final class BitcoinIntegration implements Integrations.Source {
                 return refused;
             }
             Map<String, Integrations.Value> values = read(height.body, fees.body);
-            values.putAll(price(prices(http, base + "/api/v1/prices", json), currency));
+            values.putAll(price(prices(http, base + "/api/v1/prices", json), currency,
+                    values.get("supply").number));
             return Integrations.Result.of(values);
         } catch (java.io.IOException unreachable) {
             return Integrations.Result.failed("mempool did not answer"
@@ -118,8 +126,8 @@ public final class BitcoinIntegration implements Integrations.Source {
     }
 
     /**
-     * The height, the fees and the halving countdown from the two answers that must come.
-     * Throws on an answer of another shape.
+     * The height, the fees, the halving countdown and the supply from the two answers that must
+     * come. Throws on an answer of another shape.
      */
     static Map<String, Integrations.Value> read(String heightBody, String feesBody) {
         String text = heightBody == null ? "" : heightBody.trim();
@@ -142,15 +150,34 @@ public final class BitcoinIntegration implements Integrations.Source {
         values.put("fee_hour", Integrations.Value.of((Double) hour));
         values.put("blocks_to_halving",
                 Integrations.Value.of(HALVING_INTERVAL - height % HALVING_INTERVAL));
+        values.put("supply", Integrations.Value.of(supplySats(height) / SATS_PER_BITCOIN));
         return values;
     }
 
     /**
-     * The price in {@code currency} and the sats one unit of it buys, or nothing when the answer
-     * is missing, unreadable, or has no positive price for it (mempool writes 0 or -1 for a
-     * currency it has no price for). Never throws: the prices never fail the ask.
+     * The satoshis issued up to and with the block at {@code height}: every block's reward, the
+     * genesis block's included, each era's reward half the last one's, in whole satoshis as the
+     * protocol rounds it down.
      */
-    static Map<String, Integrations.Value> price(String pricesBody, String currency) {
+    static long supplySats(long height) {
+        long blocks = height + 1;
+        long sats = 0;
+        for (int era = 0; blocks > 0 && era < 64; era++) {
+            long inEra = Math.min(blocks, HALVING_INTERVAL);
+            sats += inEra * (FIRST_REWARD_SATS >> era);
+            blocks -= inEra;
+        }
+        return sats;
+    }
+
+    /**
+     * The price in {@code currency}, the sats one unit of it buys and the market cap of
+     * {@code supply} bitcoins, or nothing when the answer is missing, unreadable, or has no
+     * positive price for it (mempool writes 0 or -1 for a currency it has no price for). Never
+     * throws: the prices never fail the ask.
+     */
+    static Map<String, Integrations.Value> price(String pricesBody, String currency,
+            double supply) {
         if (pricesBody == null) {
             return Collections.emptyMap();
         }
@@ -167,6 +194,7 @@ public final class BitcoinIntegration implements Integrations.Source {
         Map<String, Integrations.Value> values = new LinkedHashMap<>();
         values.put("price", Integrations.Value.of(price));
         values.put("sats_per_unit", Integrations.Value.of(Math.round(SATS_PER_BITCOIN / price)));
+        values.put("market_cap", Integrations.Value.of(Math.round(price * supply)));
         return values;
     }
 }

@@ -40,14 +40,25 @@ public final class BitcoinIntegrationTest {
                 && read.get("fee_half_hour").number == 8 && read.get("fee_hour").number == 5
                 && read.get("blocks_to_halving").number == 179_877,
                 "reading: halving in " + read.get("blocks_to_halving").number);
-        Map<String, Integrations.Value> euro = BitcoinIntegration.price(PRICES, "EUR");
-        require(euro.get("price").number == 62_000 && euro.get("sats_per_unit").number == 1613,
+        // Known supplies: the genesis block alone, the end of the first era, and block 840,000,
+        // the fourth halving, after which 19,687,500 BTC had been issued.
+        require(BitcoinIntegration.supplySats(0) == 5_000_000_000L
+                && BitcoinIntegration.supplySats(209_999) == 1_050_000_000_000_000L
+                && BitcoinIntegration.supplySats(839_999) == 1_968_750_000_000_000L,
+                "supply: " + BitcoinIntegration.supplySats(839_999));
+        require(BitcoinIntegration.supplySats(100_000_000) == 2_099_999_997_690_000L,
+                "the supply never passes 21 million: " + BitcoinIntegration.supplySats(100_000_000));
+        Map<String, Integrations.Value> euro = BitcoinIntegration.price(PRICES, "EUR",
+                19_000_000d);
+        require(euro.get("price").number == 62_000 && euro.get("sats_per_unit").number == 1613
+                && euro.get("market_cap").number == 62_000d * 19_000_000d,
                 "the price in euros: " + euro.get("sats_per_unit").number);
-        require(BitcoinIntegration.price(PRICES, "JPY").isEmpty(), "a price of -1 was taken");
+        require(BitcoinIntegration.price(PRICES, "JPY", 19_000_000d).isEmpty(),
+                "a price of -1 was taken");
 
         Integrations.Instance instance = new Integrations.Instance("bitcoin1", "bitcoin",
-                "Block clock", true, settings);
-        require(bitcoin.valuesOf(instance).size() == 7
+                "Bitcoin clock", true, settings);
+        require(bitcoin.valuesOf(instance).size() == 9
                 && bitcoin.valuesOf(instance).get(1).unit.equals("EUR")
                 && bitcoin.intervalOf(instance) == 60_000L, "values and interval");
         List<String> asked = new ArrayList<>();

@@ -1,9 +1,14 @@
-# Bitcoin
+# Bitcoin clock
 
-A block clock's data from mempool.space or your own mempool server: the block height, the price,
-how many sats one unit of your currency buys, the recommended fees and how many blocks are left
-until the next halving. The values are sensors of the panel: the automations act on them ("when
-the fast fee falls below 5 sat/vB, show a pop-up"), and MQTT publishes them.
+A clock of the Bitcoin network as the panel's dashboard: Dashboard › Integration shows its own
+full-screen page, a label cell and six digit cells, with the screens in rotation (block height,
+price, sats per unit, fee, halving, time, and the halving date, market cap and supply) and a
+flash when a new block arrives. Clock options set the look, the colours, the digits' font, a
+background picture, the size and place of the row, a date strip, the screens and their order.
+
+The data comes from mempool.space or your own mempool server. The values are sensors of the
+panel too: the automations act on them ("when the fast fee falls below 5 sat/vB, show a
+pop-up"), and MQTT publishes them.
 
 ## What you need
 
@@ -27,6 +32,8 @@ server instead, so no outside service sees the panel asking.
 | Sats per unit | number, sat: how many sats one unit of the currency buys |
 | Fast fee, Half-hour fee, Hour fee | number, sat/vB: mempool's recommended fees |
 | Blocks to halving | number |
+| Supply | number, BTC: worked out from the block height |
+| Market cap | number, in the chosen currency: the price times the supply |
 
 ## Limits
 

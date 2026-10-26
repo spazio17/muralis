@@ -48,6 +48,10 @@ final class KioskConfig {
     private static final String CAMERA_GROUPS = "camera_groups";
     /** The camera or group the dashboard shows when it shows cameras; empty when none chosen. */
     private static final String DASHBOARD_CAMERAS = "dashboard_cameras";
+    /** The integration whose own page the dashboard shows, its instance id. */
+    private static final String DASHBOARD_INTEGRATION = "dashboard_integration";
+    /** The Bitcoin clock's options, one key per integration instance after this prefix. */
+    private static final String CLOCK_OPTIONS = "clock_options_";
     /** What the dashboard shows: KioskCommandDispatcher.DASHBOARD_PAGE, _APP or _CAMERAS. */
     private static final String DASHBOARD_SHOWS = "dashboard_shows";
     /** How the camera view lays its cameras out: Cameras.LAYOUTS, the big tile's camera, names. */
@@ -427,6 +431,15 @@ final class KioskConfig {
          */
         Editor dashboardCameras(String name) {
             plain.putString(DASHBOARD_CAMERAS, name == null ? "" : name.trim());
+            return this;
+        }
+
+        /**
+         * The integration, its instance id, whose page the dashboard shows when it shows an
+         * integration. Only the choice, as for the cameras.
+         */
+        Editor dashboardIntegration(String instanceId) {
+            plain.putString(DASHBOARD_INTEGRATION, instanceId == null ? "" : instanceId.trim());
             return this;
         }
 
@@ -1699,7 +1712,40 @@ final class KioskConfig {
                 ? prefs.getString(DASHBOARD_CAMERAS, "") : "";
     }
 
-    /** What the dashboard shows: page, app or cameras. */
+    /** The integration chosen for the dashboard, shown or not; empty when none. */
+    static String dashboardIntegrationOf(Context context) {
+        return storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(DASHBOARD_INTEGRATION, "");
+    }
+
+    /** The integration whose page the dashboard shows now; empty while it shows anything else. */
+    static String shownIntegrationOf(Context context) {
+        SharedPreferences prefs = storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(dashboardShowsIn(prefs))
+                ? prefs.getString(DASHBOARD_INTEGRATION, "") : "";
+    }
+
+    /** The Bitcoin clock's options for one integration; the defaults until some are stored. */
+    static BitcoinClock.Options clockOptionsOf(Context context, String instanceId) {
+        return BitcoinClock.parse(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(CLOCK_OPTIONS + instanceId, null));
+    }
+
+    static void storeClockOptions(Context context, String instanceId,
+            BitcoinClock.Options options) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(CLOCK_OPTIONS + instanceId, options.toJson()).apply();
+    }
+
+    /** Forgets an integration's page options, when the integration is removed. */
+    static void forgetClockOptions(Context context, String instanceId) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .remove(CLOCK_OPTIONS + instanceId).apply();
+    }
+
+    /** What the dashboard shows: page, app, cameras or integration. */
     static String dashboardShowsOf(Context context) {
         return dashboardShowsIn(storageContext(context)
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE));
@@ -1720,13 +1766,18 @@ final class KioskConfig {
                 && prefs.getString(DASHBOARD_CAMERAS, "").isEmpty()) {
             return KioskCommandDispatcher.DASHBOARD_PAGE;
         }
+        if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(shows)
+                && prefs.getString(DASHBOARD_INTEGRATION, "").isEmpty()) {
+            return KioskCommandDispatcher.DASHBOARD_PAGE;
+        }
         return isDashboardShows(shows) ? shows : KioskCommandDispatcher.DASHBOARD_PAGE;
     }
 
     static boolean isDashboardShows(String value) {
         return KioskCommandDispatcher.DASHBOARD_PAGE.equals(value)
                 || KioskCommandDispatcher.DASHBOARD_APP.equals(value)
-                || KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(value);
+                || KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(value)
+                || KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(value);
     }
 
     static java.util.List<Cameras.Group> cameraGroupsOf(Context context) {

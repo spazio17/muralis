@@ -1772,6 +1772,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
             applied.put("network_speaker_port", config.networkSpeakerPort);
             applied.put("network_speaker_state", KioskRuntimeState.speakerState());
             applied.put("dashboard_cameras", KioskConfig.dashboardCamerasOf(this));
+            // By name, as the cameras: what the smart home's select shows and sends back.
+            String integration = KioskConfig.dashboardIntegrationOf(this);
+            String integrationName = "";
+            for (Integrations.Instance page : BitcoinClockPage.pageInstances(this)) {
+                if (page.id.equals(integration)) {
+                    integrationName = page.name;
+                }
+            }
+            applied.put("dashboard_integration", integrationName);
             applied.put("camera_layout", KioskConfig.cameraLayoutOf(this));
             applied.put("camera_big", KioskConfig.cameraBigOf(this));
             applied.put("camera_names", KioskConfig.cameraNamesOf(this));
@@ -2575,14 +2584,47 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     @Override
+    public String setDashboardIntegration(String nameOrId) {
+        String chosen = Integrations.pageInstance(KioskConfig.integrationsOf(this),
+                nameOrId == null ? "" : nameOrId.trim());
+        if (chosen == null) {
+            return "no integration with a page has that name";
+        }
+        KioskConfig.edit(this).dashboardIntegration(chosen).apply();
+        // As the cameras: shown at once only while the dashboard shows an integration.
+        if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(KioskConfig.dashboardShowsOf(this))
+                && KioskConfig.load(this).wayOutReady()
+                && !KioskRuntimeState.wizardOnScreen()) {
+            sendUiCommand("dashboard.changed", -1, null);
+        }
+        publishTelemetrySoon(this);
+        return null;
+    }
+
+    @Override
     public String setDashboardShows(String value) {
         java.util.List<Cameras.Camera> cameras = KioskConfig.camerasOf(this);
         java.util.List<Cameras.Group> groups = KioskConfig.cameraGroupsOf(this);
         String chosen = KioskConfig.dashboardCamerasOf(this);
         boolean exists = !chosen.isEmpty() && (Cameras.find(cameras, chosen) != null
                 || Cameras.findGroup(groups, chosen) != null);
+        java.util.List<Integrations.Instance> integrations = KioskConfig.integrationsOf(this);
+        // The integration needs none chosen first when one has a page: there is usually one, the
+        // Bitcoin clock, so the answer takes it.
+        if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(value)
+                && Integrations.pageInstance(integrations,
+                        KioskConfig.dashboardIntegrationOf(this)) == null) {
+            for (Integrations.Instance instance : integrations) {
+                if (Integrations.hasPage(instance.definition)) {
+                    KioskConfig.edit(this).dashboardIntegration(instance.id).apply();
+                    break;
+                }
+            }
+        }
         String problem = KioskCommandDispatcher.dashboardShowProblem(value,
-                KioskConfig.chosenAppOf(this), !cameras.isEmpty() || !groups.isEmpty(), exists);
+                KioskConfig.chosenAppOf(this), !cameras.isEmpty() || !groups.isEmpty(), exists,
+                Integrations.anyPage(integrations), Integrations.pageInstance(integrations,
+                        KioskConfig.dashboardIntegrationOf(this)) != null);
         if (problem != null) {
             return problem;
         }
