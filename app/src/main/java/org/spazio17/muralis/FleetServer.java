@@ -1208,7 +1208,7 @@ final class FleetServer {
                             .put("name", KioskConfig.fleetNameOf(context)))
                     .put("version", FleetDocument.version(KioskConfig.fleetDocumentOf(context)))
                     // No way out recorded yet: the adder may send its own (POST /fleet/setup).
-                    .put("needs_setup", !KioskConfig.load(context).escapeSequencesConfigured());
+                    .put("needs_setup", !KioskConfig.load(context).wayOutReady());
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
@@ -3111,8 +3111,8 @@ final class FleetServer {
             return;
         }
         KioskConfig config = KioskConfig.load(context);
-        if (config.escapeSequencesConfigured()) {
-            respond(output, 409, error("this panel has its combinations already"));
+        if (config.wayOutReady()) {
+            respond(output, 409, error("this panel has its way out already"));
             return;
         }
         String settings = setup.optString("settings_sequence", "");

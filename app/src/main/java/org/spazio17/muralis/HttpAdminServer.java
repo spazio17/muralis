@@ -2454,6 +2454,10 @@ final class HttpAdminServer {
     }
 
     private String sequencesSummary(KioskConfig config) {
+        // A TV has no corners to tap: the remote's Back held, or Menu, is its way in.
+        if (!config.touchscreen) {
+            return "Back held or Menu" + (KioskConfig.escapePinSet(context) ? " · PIN" : "");
+        }
         if (config.settingsSequence.isEmpty() || config.launcherSequence.isEmpty()) {
             return "Not recorded yet";
         }
@@ -4849,6 +4853,15 @@ final class HttpAdminServer {
                 .append("</p></details>").toString();
     }
 
+    /** The Way out section's words on a screen without touch, a TV, on both surfaces. */
+    static final String NO_TOUCH_WAY_OUT = "This screen has no touch: on the remote, hold Back for"
+            + " three seconds, or press Menu, to open the settings, behind the PIN when one is"
+            + " set. The buttons below work from here.";
+    /** The same on the panel, whose Way out section holds Go to home screen. */
+    static final String NO_TOUCH_WAY_IN = "This screen has no touch: on the remote, hold Back for"
+            + " three seconds, or press Menu, to open the settings, behind the PIN when one is"
+            + " set.";
+
     /**
      * The question before Go to home screen, for the browser's confirm(): this
      * panel when {@code name} is null, else the one named. The panel asks the same words.
@@ -5865,12 +5878,17 @@ final class HttpAdminServer {
         return sectionFormStart("sequences", notice, noticeSection)
                 + "<input type=\"hidden\" name=\"sequence_baseline\" value=\""
                 + escapeHtml(config.settingsSequence + "|" + config.launcherSequence) + "\">"
-                + "<p class=\"hint\">Corner taps in order: TL, TR, BL, BR, separated by commas. "
-                + "Between " + EscapeSequence.MIN_LENGTH + " and " + EscapeSequence.MAX_LENGTH
-                + " taps. Recording them on the tablet is easier than typing them here.</p>"
-                + field("text", "settings_sequence", "Open settings", config.settingsSequence)
-                + field("text", "launcher_sequence", "Go to home screen",
-                        config.launcherSequence)
+                // A TV has no corners to tap: Back held, or Menu, opens the settings.
+                + (config.touchscreen
+                        ? "<p class=\"hint\">Corner taps in order: TL, TR, BL, BR, separated by"
+                                + " commas. Between " + EscapeSequence.MIN_LENGTH + " and "
+                                + EscapeSequence.MAX_LENGTH + " taps. Recording them on the tablet"
+                                + " is easier than typing them here.</p>"
+                                + field("text", "settings_sequence", "Open settings",
+                                        config.settingsSequence)
+                                + field("text", "launcher_sequence", "Go to home screen",
+                                        config.launcherSequence)
+                        : "<p class=\"hint\">" + escapeHtml(NO_TOUCH_WAY_OUT) + "</p>")
                 + "<p class=\"hint\">Optional PIN, asked after either combination: "
                 + EscapePin.MIN_LENGTH + " to " + EscapePin.MAX_LENGTH
                 + " digits. A combination can be watched and repeated; a PIN has to be known. "

@@ -783,6 +783,19 @@ public final class KioskActivity extends Activity {
         // when no instance exists, and must not do so over one that is halfway through onCreate.
         KioskRuntimeState.publishDashboardAlive(true);
         mainHandler.postDelayed(screensaverClock, SCREENSAVER_TICK_MS);
+        // A TV is driven by its remote's arrows: the control in focus wears Material's focus
+        // ring, which the controls' own focused shade is far too faint to replace on a TV.
+        if (!KioskConfig.hasTouchscreen(this)) {
+            getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener(
+                    (was, now) -> {
+                        if (was != null && was.getForeground() instanceof FocusRing) {
+                            was.setForeground(null);
+                        }
+                        if (wantsFocusRing(now)) {
+                            now.setForeground(new FocusRing(currentTheme().accent, dp(3)));
+                        }
+                    });
+        }
         // Every layout pass, so a new screen, the film coming or going and a stopped kiosk all
         // reach the frame without each of them having to remember it; the check reads memory
         // only and changes nothing when nothing changed.
@@ -868,7 +881,7 @@ public final class KioskActivity extends Activity {
         // The wizard outranks everything, Google included: without both escape combinations the
         // kiosk has no way out, so neither the dashboard nor the ordinary configuration screen is
         // safe to show, and nothing that can put a window in front of it may run first.
-        if (!config.escapeSequencesConfigured()) {
+        if (!config.wayOutReady()) {
             showFirstStartWizard();
             return;
         }
@@ -1042,8 +1055,41 @@ public final class KioskActivity extends Activity {
                 && KioskConfig.volumeButtonsDisabled(this)) {
             return true;
         }
+        // A TV box has no corners to tap: Back held for three seconds, which every remote has,
+        // or the Menu button where the remote has one, opens the settings, behind the PIN when
+        // one is set, as the first combination does on a tablet (Google's TV-DM: no app may
+        // depend on a Menu button).
+        boolean tvWayIn = !KioskConfig.hasTouchscreen(this) && !configurationVisible
+                && !recorderVisible && !wizardVisible;
+        if ((code == android.view.KeyEvent.KEYCODE_MENU
+                || code == android.view.KeyEvent.KEYCODE_SETTINGS) && tvWayIn) {
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                escapeMatched(false);
+            }
+            return true;
+        }
+        if (code == android.view.KeyEvent.KEYCODE_BACK && backHeldFired) {
+            // The hold opened the settings: its remaining repeats and its release are not also a
+            // Back, which would close them again at once on an ordinary install.
+            if (event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                backHeldFired = false;
+            }
+            return true;
+        }
+        if (code == android.view.KeyEvent.KEYCODE_BACK && tvWayIn
+                && event.getAction() == android.view.KeyEvent.ACTION_DOWN
+                && event.getEventTime() - event.getDownTime() >= BACK_HOLD_MS) {
+            backHeldFired = true;
+            escapeMatched(false);
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
+
+    /** How long Back is held on a TV to open the settings. */
+    private static final long BACK_HOLD_MS = 3_000L;
+    /** Back's hold opened the settings, so its release is swallowed. */
+    private boolean backHeldFired;
 
     @Override
     protected void onPause() {
@@ -1958,7 +2004,7 @@ public final class KioskActivity extends Activity {
         boolean fresh = android.os.SystemClock.elapsedRealtime() - pendingEscapeAt < 5_000L;
         pendingEscape = null;
         takeRemoteAsk();
-        if (escape != null && fresh && KioskConfig.load(this).escapeSequencesConfigured()) {
+        if (escape != null && fresh && KioskConfig.load(this).wayOutReady()) {
             escapeMatched(ESCAPE_LAUNCHER.equals(escape));
         }
     }
@@ -3806,6 +3852,55 @@ public final class KioskActivity extends Activity {
         return mode;
     }
 
+    /**
+     * Material's focus indicator, a 3 dp ring in the accent around the focused control, rounded
+     * like a pill up to 16 dp; for the remote's arrows on a TV.
+     */
+    private static final class FocusRing extends android.graphics.drawable.Drawable {
+        private final android.graphics.Paint paint =
+                new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF box = new android.graphics.RectF();
+
+        FocusRing(int color, int width) {
+            paint.setStyle(android.graphics.Paint.Style.STROKE);
+            paint.setColor(color);
+            paint.setStrokeWidth(width);
+        }
+
+        @Override
+        public void draw(android.graphics.Canvas canvas) {
+            float half = paint.getStrokeWidth() / 2f;
+            box.set(getBounds());
+            box.inset(half, half);
+            float radius = Math.min(box.height() / 2f, paint.getStrokeWidth() * 16f / 3f);
+            canvas.drawRoundRect(box, radius, radius, paint);
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            paint.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter filter) {
+            paint.setColorFilter(filter);
+        }
+
+        @Override
+        public int getOpacity() {
+            return android.graphics.PixelFormat.TRANSLUCENT;
+        }
+    }
+
+    /**
+     * Whether {@code view} gets the TV's focus ring: a control, never a web page, which draws
+     * its own focus on its links and fills the screen.
+     */
+    private static boolean wantsFocusRing(View view) {
+        return view != null && view.getForeground() == null
+                && !(view instanceof android.webkit.WebView);
+    }
+
     /** The PIN prompt on show, if it is. */
     private Runnable pinPrompt;
 
@@ -3823,6 +3918,16 @@ public final class KioskActivity extends Activity {
         super.setContentView(view);
         pageBack = pendingBack;
         pendingBack = null;
+        // On a TV the control focused while the screen was built gets its ring too: the focus
+        // listener hears only changes after the screen is up.
+        if (!KioskConfig.hasTouchscreen(this)) {
+            view.post(() -> {
+                View focused = getCurrentFocus();
+                if (wantsFocusRing(focused)) {
+                    focused.setForeground(new FocusRing(currentTheme().accent, dp(3)));
+                }
+            });
+        }
     }
 
     /**
@@ -4677,13 +4782,23 @@ public final class KioskActivity extends Activity {
         TextView escapeSummary = new FlushText(this);
         escapeSummary.setTextColor(theme.subtext);
         escapeSummary.setTextSize(14);
-        escapeSummary.setText("Open settings: "
+        // A TV has no corners to tap: Back held, or Menu, opens the settings.
+        escapeSummary.setText((config.touchscreen ? "Open settings: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.settingsSequence))
                 + "\nGo to home screen: "
                 + EscapeSequence.describe(EscapeSequence.parse(config.launcherSequence))
+                : HttpAdminServer.NO_TOUCH_WAY_IN)
                 + "\nPIN: " + (KioskConfig.escapePinSet(this) ? "set" : "not set"));
         escapeCard.addView(escapeSummary, matchWrap());
-        Button manageSequences = textButtonOnward(theme, "Change the combinations");
+        Button manageSequences = textButtonOnward(theme, config.touchscreen
+                ? "Change the combinations" : "Set the PIN");
+        if (!config.touchscreen) {
+            // A TV's second way out, the corners' "Go to home screen": the remote is already past
+            // the PIN here, in the settings.
+            Button home = textButton(theme, "Go to home screen");
+            home.setOnClickListener(view -> openSystemLauncher());
+            escapeCard.addView(buttonRow(home), matchWrap());
+        }
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(buttonRow(manageSequences), matchWrap());
         LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
@@ -5151,7 +5266,8 @@ public final class KioskActivity extends Activity {
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
         // so handing it the screen left no way back. Wi-Fi is set up once during provisioning, and
         // Settings is still reachable through the escape sequence when it is genuinely needed.
-        page.addView(settingsMenu(theme, sections, openDashboard), matchWrap());
+        View menu = settingsMenu(theme, sections, openDashboard);
+        page.addView(menu, matchWrap());
 
         // The page itself takes the initial focus, so no field holds it uninvited. Without this,
         // the first EditText (the dashboard URL) silently owned the focus from the moment the
@@ -5159,14 +5275,20 @@ public final class KioskActivity extends Activity {
         // ran a pre-check on a field they never visited: reported 2026-08-24 as the URL box
         // turning green while resetting the admin password. A probe should only ever follow a
         // deliberate visit.
-        page.setFocusableInTouchMode(true);
-        // Without this the scroller brings the newly focused page "into view" at its first
-        // layout, which on a window padded for the status bar (PageScroll) means scrolling the
-        // page's top edge up to the screen's, as far as the page allows: on the Pixel 9 Pro XL
-        // every opening of this screen started 196px down, the title under the clock
-        // (2026-09-25). A page with no padding above it had nothing to scroll and never showed it.
-        page.setRevealOnFocusHint(false);
-        page.requestFocus();
+        // On a TV the remote's arrows need the focus on a control: the first section of the
+        // menu takes it there instead.
+        if (KioskConfig.hasTouchscreen(this)) {
+            page.setFocusableInTouchMode(true);
+            // Without this the scroller brings the newly focused page "into view" at its first
+            // layout, which on a window padded for the status bar (PageScroll) means scrolling
+            // the page's top edge up to the screen's, as far as the page allows: on the Pixel 9
+            // Pro XL every opening of this screen started 196px down, the title under the clock
+            // (2026-09-25). A page with no padding above it had nothing to scroll.
+            page.setRevealOnFocusHint(false);
+            page.requestFocus();
+        } else {
+            menu.requestFocus();
+        }
         setContentView(scrollPage(theme, page));
         // Rotating rebuilds this screen, so it has to carry the half-typed fields across. Rebuilt
         // from a fresh load with the boxes laid over it, which is the rule the Save button follows
@@ -7696,6 +7818,10 @@ public final class KioskActivity extends Activity {
     }
 
     private String sequencesSummary(KioskConfig config) {
+        // A TV has no corners to tap: the remote's Back held, or Menu, is its way in.
+        if (!config.touchscreen) {
+            return "Back held or Menu" + (KioskConfig.escapePinSet(this) ? " · PIN" : "");
+        }
         if (config.settingsSequence.isEmpty() || config.launcherSequence.isEmpty()) {
             return "Not recorded yet";
         }
@@ -14507,14 +14633,15 @@ public final class KioskActivity extends Activity {
         applyKioskPolicy();
         KioskTheme theme = currentTheme();
         LinearLayout page = pageColumn(theme);
-        page.addView(pageHeading(theme, "Way out",
-                "Tap combinations that unlock the kiosk",
+        page.addView(pageHeading(theme, "Way out", config.touchscreen
+                ? "Tap combinations that unlock the kiosk" : "The PIN behind the remote's way in",
                 this::showSettings), matchWrap());
 
-        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
+        // A TV has no corners to tap: the PIN alone, behind Back held or Menu.
+        page.addView(cardGrid(theme, config.touchscreen ? java.util.Arrays.<View>asList(
                 sequenceCard(theme, "Open settings", config.settingsSequence, false),
                 sequenceCard(theme, "Go to home screen", config.launcherSequence, true),
-                pinCard(theme))),
+                pinCard(theme)) : java.util.Collections.<View>singletonList(pinCard(theme))),
                 matchWrap());
 
         setContentView(scrollPage(theme, page));
@@ -14626,7 +14753,7 @@ public final class KioskActivity extends Activity {
             return;
         }
         KioskConfig config = KioskConfig.load(this);
-        if (config.escapeSequencesConfigured()) {
+        if (config.wayOutReady()) {
             // Both combinations arrived while the wizard was up, typed into the web admin of an
             // updated install. Nothing left to record.
             continueAfterFirstStartWizard();
@@ -14732,7 +14859,7 @@ public final class KioskActivity extends Activity {
                 }
                 // The way out may arrive from the fleet (a join made from the web admin's Fleet
                 // section too): the wizard is done then.
-                if (KioskConfig.load(KioskActivity.this).escapeSequencesConfigured()) {
+                if (KioskConfig.load(KioskActivity.this).wayOutReady()) {
                     continueAfterFirstStartWizard();
                     return;
                 }
@@ -15827,8 +15954,11 @@ public final class KioskActivity extends Activity {
         // and whether the check sees it depends on the package manager having applied the policy by
         // then. It does today, synchronously, but a button that is hidden by statement order is not
         // hidden by design. Device owner means the policy pins HOME itself; there is never a prompt.
+        // A TV chooses its home app itself: its settings answer the request with an empty stub,
+        // so the button would do nothing (Mi Box 3, 2026-10-26).
         if (KioskDeviceAdminReceiver.isDeviceOwner(this)
-                || getPackageName().equals(resolvedHomePackage())) {
+                || getPackageName().equals(resolvedHomePackage())
+                || !KioskConfig.hasTouchscreen(this)) {
             return null;
         }
         Button setDefault = secondaryButton(theme, getString(R.string.set_default_launcher));
@@ -17361,8 +17491,11 @@ public final class KioskActivity extends Activity {
      * sketches, and the About screen carries the CC BY 3.0 sentence Google requires for the robot.
      */
     private void showParkingPage() {
-        showParkingPage("No dashboard yet.",
-                "Open the Muralis settings and enter one. The panel does the rest.");
+        // On a TV the way in is the remote's Back held, or Menu, said where the question arises.
+        showParkingPage("No dashboard yet.", KioskConfig.hasTouchscreen(this)
+                ? "Open the Muralis settings and enter one. The panel does the rest."
+                : "Hold Back for three seconds, or press Menu, to open the settings and enter"
+                        + " one. The panel does the rest.");
     }
 
     /** The parking screen with its own words; see {@link #parkingScene}. */
@@ -20584,7 +20717,7 @@ public final class KioskActivity extends Activity {
         // allowlist stays current, and HOME, the safe-mode block and the pin all engage on the
         // first applyKioskPolicy after the wizard finishes. The status bar is left alone for the same reason
         // disableStatusBarIfPinned exists: it only ever acts once the pin is actually held.
-        if (!KioskConfig.load(this).escapeSequencesConfigured()) {
+        if (!KioskConfig.load(this).wayOutReady()) {
             return;
         }
         // Only claimed when it is not already ours. applyKioskPolicy runs from onResume, and
