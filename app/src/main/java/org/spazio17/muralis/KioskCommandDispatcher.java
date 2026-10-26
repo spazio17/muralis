@@ -550,12 +550,12 @@ final class KioskCommandDispatcher {
                 }
                 executor.setScreensaverSetting(ScreensaverSetting.MODE, args.value);
                 return accepted();
-            case "ambient.playlist":
+            case "ambient.album":
                 // By name, not by id: a name is what a person and a smart-home card know, and
                 // an id is an implementation detail nobody types. An empty value means "none",
                 // which is a real state since a playlist can be deleted while it is in use.
                 if (args.value == null) {
-                    return rejected("value must be a playlist name, or empty for none");
+                    return rejected("value must be an album name, or empty for none");
                 }
                 String refusal = executor.setScreensaverPlaylist(args.value);
                 if (refusal != null) {

@@ -729,25 +729,25 @@ public final class KioskCommandDispatcherTest {
      */
     private static void screensaverPlaylistIsChosenByName() {
         RecordingExecutor executor = new RecordingExecutor();
-        require(KioskCommandDispatcher.dispatch("ambient.playlist",
+        require(KioskCommandDispatcher.dispatch("ambient.album",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Holidays"), executor)
-                .status.equals("accepted"), "a playlist name must be accepted");
+                .status.equals("accepted"), "an album name must be accepted");
         require("Holidays".equals(executor.lastPlaylist), "the name must reach the executor");
-        require(KioskCommandDispatcher.dispatch("ambient.playlist",
+        require(KioskCommandDispatcher.dispatch("ambient.album",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, ""), executor)
                 .status.equals("accepted"), "an empty name means none and must be accepted");
         require("".equals(executor.lastPlaylist), "the empty name must reach the executor");
         // No value at all is a caller mistake rather than a request for none.
-        require(KioskCommandDispatcher.dispatch("ambient.playlist",
+        require(KioskCommandDispatcher.dispatch("ambient.album",
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("rejected"),
-                "a playlist command with no value must be rejected");
+                "an album command with no value must be rejected");
         // The executor's own refusal is what the caller is told, so a wrong name names the right ones.
-        executor.playlistProblem = "no playlist called Nope; this panel has Holidays";
+        executor.playlistProblem = "no album called Nope; this panel has Holidays";
         KioskCommandDispatcher.Result refused = KioskCommandDispatcher.dispatch(
-                "ambient.playlist",
+                "ambient.album",
                 new KioskCommandDispatcher.CommandArgs(-1, null, null, "Nope"), executor);
         require(refused.status.equals("rejected") && refused.detail.contains("has Holidays"),
-                "an unknown playlist must be refused with the names that exist: " + refused.detail);
+                "an unknown album must be refused with the names that exist: " + refused.detail);
     }
 
     /**
@@ -1382,7 +1382,7 @@ public final class KioskCommandDispatcherTest {
 
         @Override
         public String setScreensaverPlaylist(String name) {
-            calls.add("setAmbientPlaylist:" + name);
+            calls.add("setAmbientAlbum:" + name);
             if (playlistProblem != null) {
                 return playlistProblem;
             }

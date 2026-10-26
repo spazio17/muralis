@@ -37,7 +37,7 @@ final class PlaylistDocument {
     static final int MAX_PICTURES = 1000;
     static final int MAX_NAME_LENGTH = 60;
     /** The refusal for an id no playlist has (any more); the web's Delete tells it apart. */
-    static final String GONE = "that playlist is gone";
+    static final String GONE = "that album is gone";
     private static final int VERSION = 1;
 
     static final class Playlist {
@@ -196,27 +196,27 @@ final class PlaylistDocument {
     String nameProblem(String name, String exceptId) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) {
-            return "a playlist needs a name";
+            return "an album needs a name";
         }
         if (trimmed.length() > MAX_NAME_LENGTH) {
             return "a name is at most " + MAX_NAME_LENGTH + " characters";
         }
         Playlist existing = byName(trimmed);
         if (existing != null && !existing.id.equals(exceptId)) {
-            return "there is already a playlist called " + existing.name;
+            return "there is already an album called " + existing.name;
         }
         return null;
     }
 
     String create(String id, String name, long now) {
         if (id == null || id.isEmpty()) {
-            return "a playlist needs an identifier";
+            return "an album needs an identifier";
         }
         if (byId(id) != null) {
-            return "that playlist already exists";
+            return "that album already exists";
         }
         if (playlists.size() >= MAX_PLAYLISTS) {
-            return "there is room for " + MAX_PLAYLISTS + " playlists";
+            return "there is room for " + MAX_PLAYLISTS + " albums";
         }
         String problem = nameProblem(name, null);
         if (problem != null) {
@@ -279,7 +279,7 @@ final class PlaylistDocument {
                 continue;
             }
             if (playlist.items.size() >= MAX_PICTURES) {
-                return "a playlist holds at most " + MAX_PICTURES + " pictures"
+                return "an album holds at most " + MAX_PICTURES + " pictures"
                         + (added > 0 ? "; " + added + " were added" : "");
             }
             playlist.items.add(uri);
@@ -321,7 +321,7 @@ final class PlaylistDocument {
             return "the same picture appears twice in that order";
         }
         if (!arrived.equals(new LinkedHashSet<>(playlist.items))) {
-            return "the playlist changed while it was being reordered";
+            return "the album changed while it was being reordered";
         }
         playlist.items.clear();
         playlist.items.addAll(uris);

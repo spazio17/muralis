@@ -1088,11 +1088,11 @@ final class MqttController implements MqttCallbackExtended {
             }
             announcedPlaylists = PicturePlaylists.namesOf(playlists);
             add(components, select(
-                    "Ambient playlist",
-                    "ambient.playlist",
+                    "Ambient album",
+                    "ambient.album",
                     playlistNames,
-                    "{{ value_json.ambient.playlist if value_json.ambient is mapping "
-                            + "and value_json.ambient.playlist else '" + PLAYLIST_NONE + "' }}"));
+                    "{{ value_json.ambient.album if value_json.ambient is mapping "
+                            + "and value_json.ambient.album else '" + PLAYLIST_NONE + "' }}"));
             add(components, toggle(
                     "Ambient",
                     "{\"command\":\"ambient.start\"}",
@@ -1770,7 +1770,7 @@ final class MqttController implements MqttCallbackExtended {
      * MQTT select reads as no state at all and shows as unknown. The command side
      * turns it back into nothing.
      */
-    static final String PLAYLIST_NONE = "No playlist";
+    static final String PLAYLIST_NONE = "No album";
 
     /** A press. Stateless, so it needs no template and reads nothing. */
     private JSONObject button(String name, String command) throws JSONException {

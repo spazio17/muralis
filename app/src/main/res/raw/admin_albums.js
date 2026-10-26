@@ -1,17 +1,17 @@
-// The playlist table, without the page reloading under the reader.
+// The album table, without the page reloading under the reader.
 //
-// Use and Create playlist used to post for real and come back as the whole screensaver
-// page with a sentence on top ("Playlist in use.") and /api/playlists/activate in the address bar.
+// Use and Create album used to post for real and come back as the whole screensaver
+// page with a sentence on top ("Album in use.") and /api/albums/activate in the address bar.
 // For Use the sentence said nothing that the "In use" mark moving to the row did not already say
-// (2026-09-19: tap the playlist you want and simply switch). So the table is re-read in place
+// (2026-09-19: tap the album you want and simply switch). So the table is re-read in place
 // and a success is silent; only a refusal is said, in the banner under the table.
 //
 // One delegated listener on the box rather than one per row: the box's contents are replaced on
 // every change, and per-row listeners would have to be re-attached each time.
 (function(){
-var box=document.getElementById('playlist-table');
+var box=document.getElementById('album-table');
 if(!box){return;}
-var banner=document.getElementById('playlist-banner');
+var banner=document.getElementById('album-banner');
 
 function say(message){
 if(!banner){return;}
@@ -27,7 +27,7 @@ if(banner){banner.querySelector('.dismiss').addEventListener('click',function(){
 var unreachable='The panel did not answer. It may be rebooting or off the network.';
 
 function reload(){
-return fetch('/api/playlists/table',{credentials:'same-origin'})
+return fetch('/api/albums/table',{credentials:'same-origin'})
 .then(function(r){return r.text();})
 .then(function(html){box.innerHTML=html;})
 .catch(function(){say(unreachable);});
@@ -40,7 +40,7 @@ if(!radio||radio.type!=='radio'||radio.name!=='active'){return;}
 var form=radio.closest?radio.closest('form.use'):null;
 if(form){form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}});
 
-// The row itself is a link to the playlist's own page, where Delete is; it is left alone.
+// The row itself is a link to the album's own page, where Delete is; it is left alone.
 box.addEventListener('submit',function(event){
 var form=event.target;
 if(form.tagName!=='FORM'||(form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}

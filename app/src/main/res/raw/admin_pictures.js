@@ -1,11 +1,11 @@
-// The playlist page, without the page reloading under the reader.
+// The album page, without the page reloading under the reader.
 //
 // Every folder tap, tick, name and delete used to be a form post that re-rendered the whole
 // settings page, so the browser threw the document away and came back at the top: pick a folder,
 // scroll down, tick one picture, and you are at the top again (2026-09-10, C3 and C4). The
 // server answers all of it twice over now, as a page for a browser with no scripting and as
 // fragments plus one sentence for this file, so with scripting nothing navigates at all. Three
-// fragments since 2026-09-19: the Folders panel, the Content panel and what the playlist holds.
+// fragments since 2026-09-19: the Folders panel, the Content panel and what the album holds.
 //
 // Delegated listeners on <main> rather than a listener per row: the panels' contents are replaced
 // on every change, and per-row listeners would have to be re-attached each time.
@@ -15,7 +15,7 @@ if(!folders||!content){return;}
 var main=document.querySelector('main')||document;
 var banner=document.getElementById('picture-banner'),
     upload=document.getElementById('picture-upload'),
-    picked=document.getElementById('playlist-items'),
+    picked=document.getElementById('album-items'),
     at=null,hideTimer=0;
 // The folder the browser is showing, taken from the address so a reload, a bookmark or a
 // second tab opens the same folder. It is never stored on the panel: two people browsing from
@@ -23,11 +23,11 @@ var banner=document.getElementById('picture-banner'),
 // same as "" (the top of the volume); the right pane says so.
 var startAt=/[?&]at=([^&]*)/.exec(window.location.search);
 if(startAt){at=decodeURIComponent(startAt[1].replace(/\+/g,' '));}
-// Which playlist this page is editing. The browser belongs to one playlist since 2026-09-12, so
+// Which album this page is editing. The browser belongs to one album since 2026-09-12, so
 // every fetch and every form carries it; without it the panel would edit whichever is playing.
-var playlist='';
+var album='';
 var startId=/[?&]id=([^&]*)/.exec(window.location.search);
-if(startId){playlist=decodeURIComponent(startId[1].replace(/\+/g,' '));}
+if(startId){album=decodeURIComponent(startId[1].replace(/\+/g,' '));}
 // How many pictures Content shows at once: ten unless the address says otherwise, the same four
 // choices the panel offers. It rides in the address so a reload keeps it, and in every fragment
 // request so the panel pages the same way.
@@ -35,7 +35,7 @@ var n=10;
 var startN=/[?&]n=(\d+)/.exec(window.location.search);
 if(startN){n=parseInt(startN[1],10);}
 
-// A success says nothing on this page (2026-09-19: "Playlist updated." on every added
+// A success says nothing on this page (2026-09-19: "Album updated." on every added
 // picture was noise): the panels re-read after it are the whole answer. Only a refusal is said,
 // red, and "Uploading..." while a file is on its way, which is a state and not a verdict.
 function say(message,ok){
@@ -56,9 +56,10 @@ if(hideTimer){clearTimeout(hideTimer);}});}
 // Re-reads the three panels at the folder that is open. The address bar follows, without a
 // history entry per folder: going back should leave the page, not walk back through forty folders.
 function reload(){
-var q='?playlist='+encodeURIComponent(playlist)
+var q='?album='+encodeURIComponent(album)
        +(at===null?'':'&at='+encodeURIComponent(at))+'&n='+n;
-var shown='/playlist?id='+encodeURIComponent(playlist)
+// An album's page, or the Gallery's Pictures when the browser edits no album.
+var shown=(album?'/album?id='+encodeURIComponent(album):'/gallery?tab=pictures')
        +(at===null?'':'&at='+encodeURIComponent(at))+'&n='+n;
 function text(r){return r.text();}
 // All three, because a tick changes the folder's row, an upload changes a folder's count, and
@@ -66,11 +67,11 @@ function text(r){return r.text();}
 return Promise.all([
 fetch('/api/pictures/folders'+q,{credentials:'same-origin'}).then(text),
 fetch('/api/pictures/content'+q,{credentials:'same-origin'}).then(text),
-picked?fetch('/api/playlists/items?playlist='+encodeURIComponent(playlist),
+picked?fetch('/api/albums/items?album='+encodeURIComponent(album),
 {credentials:'same-origin'}).then(text):null])
 .then(function(parts){folders.innerHTML=parts[0];content.innerHTML=parts[1];
 if(picked&&parts[2]!==null){picked.innerHTML=parts[2];}
-markSome();paintTree();paintHeld();
+markSome();paintTree();paintHeld();paintBar();
 try{history.replaceState(null,'',shown);}
 catch(ignored){}})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
@@ -136,7 +137,7 @@ if(branches&&target!=='uploads'){var walk=target;branches[walk]='1';
 while(walk!==''){walk=parentOf(walk);branches[walk]='1';}}
 reload();}
 
-// The title is the playlist's name and the pencil beside it opens the rename box. Opening it
+// The title is the album's name and the pencil beside it opens the rename box. Opening it
 // puts the cursor in the name; Cancel closes it; a refusal is said inside the box, under the name,
 // and a success needs no sentence, the title itself has changed.
 var rename=document.querySelector('details.rename');
@@ -146,7 +147,7 @@ main.addEventListener('click',function(event){
 if(event.target.closest&&event.target.closest('details.rename .cancel')){rename.open=false;}});}
 function renamed(form,ok,message){
 var problem=form.querySelector('.hint');
-if(ok){document.getElementById('playlist-name').textContent=form.elements.name.value.trim();
+if(ok){document.getElementById('album-name').textContent=form.elements.name.value.trim();
 problem.classList.add('gone');rename.open=false;return;}
 problem.textContent=message||'The panel refused the name.';problem.classList.remove('gone');
 }
@@ -165,7 +166,7 @@ openFolder(link.dataset.at||'');
 });
 
 // Every form on this page posts the same way and is answered the same way, so one handler covers
-// ticking a picture, naming it, removing it, deleting an upload and renaming the playlist. It is
+// ticking a picture, naming it, removing it, deleting an upload and renaming the album. It is
 // on <main> rather than on the browser because the name box and the held-pictures list are
 // outside the browser and would otherwise navigate to /api/... and leave that address in the bar.
 // One change at a time, in the order they were made: a name stored as its box lets go and the
@@ -178,7 +179,7 @@ function post(form){
 // picture was refused with "Supply a boolean selection" (caught in the browser, 2026-09-10).
 var data=new URLSearchParams(new FormData(form));
 if(at===null){data.delete('at');}else{data.set('at',at);}
-data.set('playlist',playlist);
+data.set('album',album);
 function send(){return fetch(form.action+'?fragment=1',{method:'POST',credentials:'same-origin',
 // Kept alive so a name whose box lets go because the page is being left still arrives.
 keepalive:true,headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
@@ -191,27 +192,8 @@ var sent=posting.then(send,send);
 posting=sent.catch(function(){});
 return sent;}
 
-// A picture's name is stored when its box lets go of the focus, or on Enter (2026-09-25:
-// the save tick inside the box went). Only a change is sent, and the list is not re-read after
-// it: nothing in it changes, and re-reading would take the focus out of the next box somebody
-// has already moved to. A refusal is said and the box keeps what was typed.
-function saveName(form){
-var box=form.querySelector('input[name=caption]');
-if(!box||box.disabled){return;}
-var typed=box.value.trim(),stored=(box.dataset.stored!==undefined?box.dataset.stored:box.defaultValue).trim();
-if(typed===stored){return;}
-box.dataset.stored=typed;
-post(form).then(function(r){if(!r.ok){box.dataset.stored=stored;}say(r.message,r.ok);})
-.catch(function(){box.dataset.stored=stored;
-say('The panel did not answer. It may be rebooting or off the network.',false);});
-}
-main.addEventListener('change',function(event){
-var box=event.target;
-if(box&&box.name==='caption'&&box.form&&box.form.classList.contains('caption')){saveName(box.form);}
-});
-
 // A picture's check box, in a row or in a tile's corner, is the form that puts it in the
-// playlist or takes it out: ticking posts at once, no button. The header box ticks or clears
+// album or takes it out: ticking posts at once, no button. The header box ticks or clears
 // every picture on the page whose state differs, then the panels are re-read once.
 main.addEventListener('change',function(event){
 var box=event.target;
@@ -225,24 +207,52 @@ var refused=results.filter(function(r){return !r.ok;})[0];
 say(refused?refused.message:'',!refused);return reload();})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
 return;}
+if(box.id==='gallery-all'||box.classList.contains('gsel')){
+if(box.id==='gallery-all'){Array.prototype.forEach.call(content.querySelectorAll('input.gsel'),
+function(b){b.checked=box.checked;});}
+paintBar();return;}
 var form=box.closest?box.closest('form.pick'):null;
 if(!form){return;}
 box.disabled=true;
 post(form).then(function(r){say(r.message,r.ok);return reload();})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
 });
-// The header box shows a dash while only some of the page is in the playlist; only a script can
+// The header box shows a dash while only some of the page is in the album; only a script can
 // set that state, so the fragment marks it and this reads the mark after every re-read.
 function markSome(){var all=document.getElementById('select-all');
 if(all){all.indeterminate=!!all.dataset.some;}}
 markSome();paintTree();
 
-// The order of what the playlist holds, which is the order the screensaver shows it in
+// The Gallery's selection: the bar under the list says how many are picked and acts on them,
+// adding them to an album or deleting them (uploads only), then the panels are read again.
+function selected(){return Array.prototype.filter.call(content.querySelectorAll('input.gsel'),
+function(b){return b.checked;}).map(function(b){return b.dataset.uri;});}
+function paintBar(){var bar=document.getElementById('gallery-bar');if(!bar){return;}
+var picks=selected();bar.hidden=picks.length===0;
+document.getElementById('gallery-count').textContent=picks.length+' selected';}
+function act(path,extra){var data=new URLSearchParams(extra||{});data.set('uris',selected().join('\n'));
+fetch(path+'?fragment=1',{method:'POST',credentials:'same-origin',
+headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
+.then(function(r){return r.text();})
+.then(function(text){var ok=true,message=text;
+try{var parsed=JSON.parse(text);ok=parsed.ok!==false;message=parsed.message||'';}catch(ignored){ok=false;}
+say(message,ok);return reload();})
+.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});}
+main.addEventListener('click',function(event){
+var add=event.target.closest?event.target.closest('#gallery-add'):null;
+if(add){act('/api/gallery/add',{album:document.getElementById('gallery-album').value});return;}
+var del=event.target.closest?event.target.closest('#gallery-delete'):null;
+if(del){var count=selected().length;
+if(window.confirm('Delete '+count+(count===1?' picture':' pictures')+'?\n\nUploads are deleted and leave every album that holds them; one in use leaves Ambient\'s album or stops being the clock\'s background. This panel\'s own pictures are kept.')){
+act('/api/gallery/delete');}}});
+paintBar();
+
+// The order of what the album holds, which is the order the screensaver shows it in
 // (2026-09-25). A picture is dragged by its grip, the six dots drawn beside it, or by its
 // thumbnail: pointer events, so a mouse, a finger and a pen all do the same thing, and the
 // neighbours slide aside while it moves. Nothing is posted
 // until the drop, and then the whole order goes at once, which the panel refuses whole if it is
-// not exactly the playlist's pictures (a page opened before somebody else's change), in which
+// not exactly the album's pictures (a page opened before somebody else's change), in which
 // case the refusal is said and the list is read again. The arrow keys move a focused thumbnail
 // one place, for anyone not using a pointer.
 function heldItems(list){return Array.prototype.slice.call(list.children);}
@@ -263,9 +273,9 @@ else{['role','tabindex','title','aria-label'].forEach(function(a){grab.removeAtt
 paintHeld();
 function saveOrder(list){
 var data=new URLSearchParams();
-data.set('id',playlist);data.set('playlist',playlist);
+data.set('id',album);data.set('album',album);
 data.set('order',heldItems(list).map(function(li){return li.dataset.uri;}).join('\n'));
-return fetch('/api/playlists/order?fragment=1',{method:'POST',credentials:'same-origin',
+return fetch('/api/albums/order?fragment=1',{method:'POST',credentials:'same-origin',
 headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
 .then(function(r){return r.text();})
 .then(function(text){var ok=true,message='';
@@ -296,7 +306,7 @@ var shift=k>d.from&&k<=to?-h:k<d.from&&k>=to?h:0;
 li.style.transform=shift?'translateY('+shift+'px)':'';});
 }
 // Near the top or the bottom of the window the page scrolls by itself, faster the closer the
-// pointer is, so a long playlist can be crossed in one drag.
+// pointer is, so a long album can be crossed in one drag.
 function scrollDrag(){
 var d=drag;
 if(!d||d.frame){return;}
@@ -351,18 +361,17 @@ if(moveHeld(list,from,from+(event.key==='ArrowUp'?-1:1))){grab.focus();paintHeld
 
 main.addEventListener('submit',function(event){
 var form=event.target;
-// A form marked native is the browser's: the playlist page's Delete, answered with a redirect.
+// A form marked native is the browser's: the album page's Delete, answered with a redirect.
 if(form.tagName!=='FORM'||form.id==='picture-upload'||form.hasAttribute('data-native')){return;}
-// A GET form is navigation, not a change: Edit opens the playlist's page and must be left alone.
+// A GET form is navigation, not a change: Edit opens the album's page and must be left alone.
 if((form.getAttribute('method')||'get').toLowerCase()!=='post'){return;}
 event.preventDefault();
-if(form.classList.contains('caption')){saveName(form);return;}
 // Deleting a file asks first, as the panel does: an icon button carries no word to slow the
 // hand down, and the file is gone for good.
 if(/\/api\/pictures\/delete$/.test(form.action)){
 // The panel's words (confirmDelete): the name quoted, then what else changes.
 var tile=form.closest('li,.tile'),named=tile&&tile.querySelector('.name,.h'),name=named?'"'+named.textContent.trim()+'"':'this picture';
-if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'It')+' will be deleted. It leaves every playlist that holds it.')){return;}}
+if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'It')+' will be deleted. It leaves every album that holds it.')){return;}}
 post(form).then(function(r){
 if(form.closest&&form.closest('details.rename')){renamed(form,r.ok,r.message);return;}
 say(r.message,r.ok);
@@ -384,7 +393,7 @@ event.preventDefault();
 var files=upload.querySelector('input[type=file]');
 if(files&&files.files&&files.files.length===0){say('Choose a picture first.',false);return;}
 say('Uploading...','busy');
-fetch('/api/pictures?fragment=1&playlist='+encodeURIComponent(playlist),
+fetch('/api/pictures?fragment=1&album='+encodeURIComponent(album),
 {method:'POST',credentials:'same-origin',body:new FormData(upload)})
 .then(function(r){return r.text();})
 .then(function(text){var ok=true,message=text;
