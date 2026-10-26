@@ -59,7 +59,7 @@ var SIZES={s:.48,m:.64,l:.8,full:.96};
 var CROSSED='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
 +' stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 16L16 8"/></svg>';
 var state=null,options=null,override=null,index=0,shownAt=0,flashUntil=0;
-var lastHeight=null,lastPollAt=0,paused=false;
+var lastHeight=null,lastPollAt=0,paused=false,forced=null;
 function o(){return override||options;}
 function rgb(v){return 'rgb('+v+')';}
 function val(id){var v=state&&state.entry&&state.entry.values?state.entry.values[id]:null;
@@ -121,7 +121,10 @@ document.getElementById('clock').textContent=pad2(now.getHours())+':'+pad2(now.g
 layout();draw();}
 // The screen to show: the one in turn, skipping a screen whose value is unknown; null when none
 // has a value.
-function current(){var keys=onScreens();if(!keys.length){return null;}
+function current(){
+// A screen asked for by the preview shows until the next step, switched on or not.
+if(forced){var f=screen(forced);if(f){return f;}}
+var keys=onScreens();if(!keys.length){return null;}
 for(var tries=0;tries<keys.length;tries++){var k=keys[(index+tries)%keys.length],s=screen(k);
 if(s){index=(index+tries)%keys.length;return s;}}return null;}
 function draw(){var row=document.getElementById('row'),s=current(),age=document.getElementById('age');
@@ -143,12 +146,12 @@ row.innerHTML=html+'</div>';
 document.body.classList.toggle('flash',Date.now()<flashUntil);}
 function screenWord(key){return {height:'Height',price:'Price',sats:'Sats',fee:'Fee',
 halving:'Halving',halving_date:'Halving',market_cap:'Mcap',supply:'Supply',time:'Time'}[key]||'';}
-function next(step){var keys=onScreens();if(!keys.length){return;}
+function next(step){forced=null;var keys=onScreens();if(!keys.length){return;}
 index=(index+step+keys.length)%keys.length;
 // Skip forward or back past screens with nothing to show.
 for(var t=0;t<keys.length&&!screen(keys[index]);t++){index=(index+(step<0?-1:1)+keys.length)%keys.length;}
 shownAt=Date.now();draw();}
-function flash(){var keys=onScreens();var h=keys.indexOf('height');if(h>=0){index=h;}
+function flash(){forced=null;var keys=onScreens();var h=keys.indexOf('height');if(h>=0){index=h;}
 flashUntil=Date.now()+3000;shownAt=Date.now();draw();setTimeout(draw,3050);}
 function tick(){var opt=o();if(!opt||paused){return;}
 if(Date.now()-shownAt>=opt.seconds*1000){next(1);}else{draw();}
@@ -173,6 +176,8 @@ document.getElementById('strip').style.transform='translate('+x+'px,'+y+'px)';}
 function command(data){if(!data){return;}
 if(data.options){override=data.options;paint();}
 if(data.step){next(data.step);}if(data.flash){flash();}
+if(data.show){var at=onScreens().indexOf(data.show);if(at>=0){index=at;forced=null;}else{forced=data.show;}
+shownAt=Date.now();draw();}
 // Unseen (the display off, Ambient, the settings in front): no asking and no drawing until seen.
 if(data.paused!=null){var was=paused;paused=!!data.paused;if(was&&!paused){poll();}}}
 window.addEventListener('message',function(e){if(e.origin===location.origin){command(e.data);}});

@@ -270,8 +270,8 @@ html.js details.box>.body::before{content:attr(data-title);display:block;font-si
 .two>.card+.card{margin-top:0}
 @media (min-width:840px){
 .two{grid-template-columns:1fr 1fr}
-.two.playlist{grid-template-rows:min-content 1fr}
-#playlist-folders{grid-column:1;grid-row:1}#playlist-content{grid-column:2;grid-row:1/span 2}#playlist-held{grid-column:1;grid-row:2}
+.two.album{grid-template-rows:min-content 1fr}
+#album-folders{grid-column:1;grid-row:1}#album-content{grid-column:2;grid-row:1/span 2}#album-held{grid-column:1;grid-row:2}
 }
 /* ---- stats readout ---- */
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;background:var(--lowest);border-radius:8px;padding:12px 14px;color:var(--subtext);margin:8px 0 0}
@@ -360,7 +360,7 @@ ul.pictures.details img.thumb{width:48px;height:48px}
 .sizes a.size{display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--outline);font-size:14px;font-weight:500;color:var(--subtext);text-decoration:none;font-variant-numeric:tabular-nums}
 .sizes a.size.on{background:var(--secondary-container);border-color:transparent;color:var(--on-secondary-container)}
 .sizes a.size.on::before{content:"\2713";font-size:12px}
-/* ---- what the playlist holds, in the order it is shown: the grip and the picture, the path, then
+/* ---- what the album holds, in the order it is shown: the grip and the picture, the path, then
    the credit field, which stores itself when it lets go, the credit's eye and the remove button,
    all 40 px on one line. The grip, Material's six dots, and the thumbnail are the handle a picture is dragged
    by; admin_pictures.js marks the list movable when it holds more than one, and without scripting
@@ -538,8 +538,8 @@ label.fchip:has(input:focus-visible){outline:2px solid var(--accent-alt);outline
 .ld .nav ul.list li.refusal,.ld .nav ul.list li.refusal:hover{min-height:0;padding:4px 16px 8px;border-radius:0;cursor:default;background:none}
 .ld .nav .chev,.ld .nav .divider{display:none}
 .ld .nav ul.list li,.ld .nav ul.list li.two{min-height:64px;padding:4px 12px;cursor:pointer}
-/* The Screensaver page's playlists are the panel's left menu there (addMenuRow): 64 px rows. */
-#playlist-table ul.list li.two{min-height:64px}
+/* The Screensaver page's albums are the panel's left menu there (addMenuRow): 64 px rows. */
+#album-table ul.list li.two{min-height:64px}
 /* The left menu's chosen row is a tinted segment, as Android marks a selected row (addMenuRow). */
 html:root .ld .nav ul.list li.on{background:var(--secondary-container)}
 html:root .ld .nav ul.list li:hover{background:color-mix(in srgb,var(--text) 6%,var(--card-high))}
@@ -646,18 +646,42 @@ details.brands{margin:4px 0 12px}details.brands summary{cursor:pointer;color:var
 /* Clock options: the preview in the panel's shape, the swatches, the screens' rows. */
 .clock-preview{width:100%;max-height:70vh;border-radius:12px;overflow:hidden;background:#000}
 .clock-preview iframe{width:100%;height:100%;border:0;display:block}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:16px;margin-top:16px;align-items:start}
-.cards>.card{margin:0}
 .swatches{display:flex;gap:12px;margin:8px 0 0}
 .swatch{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);padding:0;cursor:pointer}
 .swatch.on{outline:3px solid var(--accent);outline-offset:2px}
 label.range{display:flex;align-items:center;gap:12px;margin-top:16px}
 label.range input{flex:1}
 ul.clock-screens li{display:flex;align-items:center;gap:4px;min-height:56px}
-ul.clock-screens li .text{flex:1;margin-left:8px}
 .segradios{display:flex;border:1px solid var(--border);border-radius:20px;overflow:hidden;margin:8px 0 4px}
 .segradios label{flex:1;position:relative;min-height:40px;display:flex;align-items:center;justify-content:center;padding:0 8px;cursor:pointer;font-size:14px;font-weight:500}
 .segradios label+label{border-left:1px solid var(--border)}
 .segradios input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
 .segradios label:has(input:checked){background:var(--secondary-container);color:var(--on-secondary-container)}
 .segradios label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:-2px}
+/* Clock options laid out as page editors are: the options at the left, the preview kept in view
+   at the right; on a narrow screen the preview pinned on top and the groups under it. */
+main:has(.clock-editor){max-width:1600px}
+.clock-editor{display:grid;grid-template-columns:380px minmax(0,1fr);gap:24px;align-items:start}
+.clock-editor .clock-options{grid-column:1;grid-row:1;display:flex;flex-direction:column;max-height:calc(100vh - 96px);position:sticky;top:8px}
+.clock-editor .clock-stage{grid-column:2;grid-row:1;position:sticky;top:8px}
+.clock-editor .clock-preview{width:min(100%,calc((100vh - 180px) * var(--ar,1.6)));max-height:none}
+.clock-groups{overflow:auto;flex:1;border:1px solid var(--border);border-radius:16px;background:var(--card)}
+details.clock-group+details.clock-group{border-top:1px solid var(--border)}
+details.clock-group>summary{display:flex;align-items:center;gap:8px;min-height:64px;padding:8px 16px;cursor:pointer;list-style:none}
+details.clock-group>summary::-webkit-details-marker{display:none}
+details.clock-group>summary svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;transition:transform .2s}
+details.clock-group[open]>summary svg{transform:rotate(180deg)}
+details.clock-group>summary .text{flex:1;display:flex;flex-direction:column}
+details.clock-group>summary .s{color:var(--subtext);font-size:14px}
+.clock-body{padding:0 16px 16px}
+.clock-save{display:flex;align-items:center;gap:16px;padding:12px 0 0}
+.clock-screens li button.text{flex:1;text-align:left;justify-content:flex-start}
+@media (max-width:839px){.clock-editor{grid-template-columns:minmax(0,1fr);gap:8px}
+.clock-editor .clock-stage{grid-column:1;grid-row:1;top:0;z-index:2;background:var(--base);padding-bottom:4px}
+.clock-editor .clock-options{grid-column:1;grid-row:2;position:static;max-height:none}
+.clock-editor .clock-preview{width:100%;height:22vh;aspect-ratio:auto}
+.clock-save{position:sticky;bottom:0;background:var(--base);padding:12px 0}}
+/* A picture's page in the Gallery: the picture fitted into its card. */
+img.large{display:block;max-width:100%;height:auto;max-height:70vh;margin:0 auto;border-radius:12px}
+.selbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px;margin-top:12px;background:var(--card-high,var(--card));border-radius:16px}
+.selbar select{min-height:40px}
