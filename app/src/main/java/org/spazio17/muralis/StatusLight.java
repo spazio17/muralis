@@ -17,10 +17,10 @@ final class StatusLight {
     static final String COLOR_RULE = "colour must be three numbers from 0 to 255, like 255,0,0";
     static final String PERCENT_RULE = "brightness must be a whole number from 1 to 100";
 
-    /** The colours both surfaces offer by name; any other stays settable over HTTP and MQTT. */
+    /** The main colours both surfaces show by name; any other value is shown as it is, r,g,b. */
     static final String[][] NAMED = {
             {"Red", "255,0,0"},
-            {"Amber", "255,160,0"},
+            {"Orange", "255,165,0"},
             {"Green", "0,200,0"},
             {"Blue", "0,90,255"},
             {"White", "255,255,255"},

@@ -258,11 +258,11 @@ final class ScreensaverPolicy {
     }
 
     /**
-     * "Pictures options", and so on: the mode named where its settings are, on both surfaces
+     * "Picture options", and so on: the mode named where its settings are, on both surfaces
      * and in the web page's own titles for a mode changed without a reload.
      */
     static String optionsTitle(String mode) {
-        return modeName(mode) + " options";
+        return (PICTURES.equals(mode) ? "Picture" : modeName(mode)) + " options";
     }
 
     /** Whether the on-wake choice means anything in this mode; false for the film and for off. */
@@ -322,8 +322,7 @@ final class ScreensaverPolicy {
         }
         StringBuilder text = new StringBuilder(modeName(settings.mode));
         if (settings.idleSeconds > 0) {
-            text.append(" after ").append(describeDuration(settings.idleSeconds))
-                    .append(" without a touch");
+            text.append(" after ").append(describeDuration(settings.idleSeconds));
         } else {
             text.append(", only when asked for");
         }

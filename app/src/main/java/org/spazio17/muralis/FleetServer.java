@@ -169,8 +169,13 @@ final class FleetServer {
     }
 
     /** The Fleet section's summary on both surfaces, stored values only like every summary. */
-    static String summaryOf(int memberPort) {
-        return "Port " + memberPort;
+    static String summaryOf(Context context) {
+        if (KioskConfig.fleetIdOf(context).isEmpty()) {
+            return "Not in a fleet";
+        }
+        int panels = FleetDocument.members(KioskConfig.fleetDocumentOf(context)).size();
+        return KioskConfig.fleetNameOf(context) + " · " + panels
+                + (panels == 1 ? " panel" : " panels");
     }
 
     /** The line under the member port on both surfaces, worded once; the web page's poll copies it. */
@@ -513,21 +518,10 @@ final class FleetServer {
             return "Removed from the fleet " + removedFrom + ". Tap Leave, then this panel can"
                     + " create or join a fleet.";
         }
-        StringBuilder others = new StringBuilder();
-        long now = android.os.SystemClock.elapsedRealtime();
-        for (java.util.Map<String, Object> one
-                : FleetDocument.members(KioskConfig.fleetDocumentOf(context))) {
-            if (isSelf(context, one)) {
-                continue;
-            }
-            Peer known = peers.get(TinyJson.string(one, FleetDocument.SPKI, ""));
-            others.append(others.length() == 0 ? "" : ", ")
-                    .append(TinyJson.string(one, FleetDocument.NAME, ""))
-                    .append(known == null ? " (not heard from yet)"
-                            : now - known.seenAt >= OFFLINE_AFTER_MS ? " (offline)" : "");
-        }
-        return "Member of the fleet " + KioskConfig.fleetNameOf(context)
-                + (others.length() == 0 ? "" : ", with " + others);
+        // The names and who is offline are on the Fleet page; here the fleet and a count.
+        int others = FleetDocument.members(KioskConfig.fleetDocumentOf(context)).size() - 1;
+        return KioskConfig.fleetNameOf(context) + " · " + (others <= 0 ? "Only this panel"
+                : "This panel and " + others + (others == 1 ? " other" : " others"));
     }
 
     /** What another panel's member endpoint answered: its status and its JSON. */

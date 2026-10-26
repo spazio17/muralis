@@ -845,7 +845,7 @@ final class IntegrationRunner {
                     : by + ". " + line(state, null, one.fleetProblem);
         }
         if (one != null && one.forFleet && "ok".equals(state)) {
-            return "Asking for the fleet";
+            return "Fetches for the whole fleet";
         }
         return line(state, one == null ? null : one.blocked, one == null ? null : one.problem);
     }

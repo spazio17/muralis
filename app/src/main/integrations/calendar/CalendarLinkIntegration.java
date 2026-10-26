@@ -49,7 +49,7 @@ public final class CalendarLinkIntegration implements Integrations.Source {
 
     public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
             "Calendar from a link", "free",
-            "Whether something is on now and what comes next, from a calendar's secret iCal link.",
+            "Busy now and what comes next.",
             Arrays.asList(
                     new Integrations.Field("url", "Calendar link (iCal)", Integrations.Scope.SHARED,
                             true, true, Integrations.Kind.TEXT, Collections.emptyList(), "", 0, 0,
@@ -57,7 +57,7 @@ public final class CalendarLinkIntegration implements Integrations.Source {
                     new Integrations.Field("all_day", "All-day events count as busy",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.CHOICE,
                             Arrays.asList(NO, YES), NO, 0, 0,
-                            "No leaves holidays and day-long events out of Busy and Next."),
+                            ""),
                     new Integrations.Field("interval_s", "Ask every (seconds)",
                             Integrations.Scope.SHARED, false, false, Integrations.Kind.NUMBER,
                             Collections.emptyList(), "900", 300, 86_400, "")),

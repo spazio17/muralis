@@ -29,8 +29,7 @@ public final class BitcoinIntegration implements Integrations.Source {
 
     public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
             "Bitcoin", "free",
-            "A block clock: the Bitcoin block height, price, fees and the halving countdown, from"
-                    + " mempool.space or your own mempool server.",
+            "Block height, price, fees, halving.",
             Arrays.asList(
                     new Integrations.Field("url", "Server", Integrations.Scope.SHARED, false, true,
                             Integrations.Kind.URL, Collections.emptyList(),

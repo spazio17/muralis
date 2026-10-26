@@ -508,9 +508,7 @@ public final class KioskActivity extends Activity {
             brightnessModeNote.setVisibility(
                     KioskService.hasLightSensor(this) ? View.VISIBLE : View.GONE);
             brightnessModeNote.setText(sensorInCharge
-                    ? "The light sensor is setting the brightness. "
-                            + "Turn off the switch to set it by hand."
-                    : "Set by hand. Turn on the switch to let the light sensor set it.");
+                    ? "Set by the light sensor." : "Set by hand.");
             brightnessModeNote.setTextColor(theme.subtext);
         }
     }
@@ -1268,8 +1266,7 @@ public final class KioskActivity extends Activity {
         // about a certificate while none is served (review, 2026-10-05).
         note.setVisibility(listening ? View.VISIBLE : View.GONE);
         note.setTextColor(secure ? theme.subtext : theme.bad);
-        note.setText(secure ? AdminCertificate.servedSentence(KioskConfig.CERTIFICATE_UPLOADED
-                .equals(KioskRuntimeState.httpAdminCertificate()), "that page")
+        note.setText(secure ? AdminCertificate.FINGERPRINT_SENTENCE
                 : AdminCertificate.CLOSED_WITHOUT_TLS_SENTENCE);
         choice.removeAllViews();
         LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
@@ -2601,7 +2598,7 @@ public final class KioskActivity extends Activity {
 
         // What the page may use, applied the moment they are touched: on an ordinary
         // install Android is asked first, and the switch is tapped again once it said yes.
-        LinearLayout useCard = card(theme, "The page may use");
+        LinearLayout useCard = card(theme, "Permissions");
         CompoundButton cameraInput = themedSwitch(theme, "The camera", browser.pageCamera);
         CompoundButton microphoneInput = themedSwitch(theme, "The microphone",
                 browser.pageMicrophone);
@@ -2682,7 +2679,7 @@ public final class KioskActivity extends Activity {
             TextView none = new FlushText(this);
             none.setTextColor(theme.subtext);
             none.setTextSize(13);
-            none.setText("None. A page whose certificate Android does not trust asks first.");
+            none.setText("None yet");
             pinsCard.addView(none, matchWrapClose());
         }
         for (java.util.Map.Entry<String, String> pin : pins.entrySet()) {
@@ -2769,7 +2766,7 @@ public final class KioskActivity extends Activity {
         }
         if (choices.getChildCount() == 0) {
             card.addView(emptyState(theme, "No cameras yet",
-                    "Add one in Cameras, under Screen."), matchWrapClose());
+                    "Add one in Cameras, under Panel."), matchWrapClose());
         }
         // Checked only while the dashboard shows it: a camera kept from before is not ticked
         // as if it were on the glass, and a tap on it shows it again.
@@ -2856,22 +2853,20 @@ public final class KioskActivity extends Activity {
      */
     private void showAppLockPage() {
         currentScreen = this::showAppLockPage;
-        LinearLayout page = subPage("Dashboard app", this::showSettings);
+        LinearLayout page = subPage("App", this::showSettings);
         KioskTheme theme = currentTheme();
         String chosen = KioskConfig.chosenAppOf(this);
         LinearLayout card = card(theme, "The app this panel shows");
         TextView about = new FlushText(this);
         about.setTextSize(13);
         about.setTextColor(theme.subtext);
-        about.setText("One app instead of the web page, opened again whenever it closes. Your"
-                + " corner combinations work over it.");
+        about.setText("Opened again whenever it closes.");
         card.addView(about, matchWrapClose());
         if (!AppLock.canDrawOver(this)) {
             TextView needs = new FlushText(this);
             needs.setTextSize(13);
             needs.setTextColor(theme.bad);
-            needs.setText("Muralis needs to display over other apps, or your corner taps cannot"
-                    + " reach it over the app. Allow, then turn on the switch for Muralis.");
+            needs.setText("Needs \"Display over other apps\": Allow, then turn on Muralis.");
             card.addView(needs, matchWrapClose());
             Button allow = primaryButton(theme, "Allow");
             allow.setOnClickListener(view -> offerOverlayGrant());
@@ -3001,29 +2996,26 @@ public final class KioskActivity extends Activity {
         return on + " of " + block.length() + " on";
     }
 
-    /** A row's line: the values in words while it answers, else its status line. */
+    /** A row's line: Off, the problem, or the first value in words. */
     private static String integrationLine(org.json.JSONObject entry) {
+        // One short state, the same on both surfaces: Off, the problem, or the first value.
+        if (!entry.optBoolean("enabled")) {
+            return "Off";
+        }
         if (!"ok".equals(entry.optString("state"))) {
             return entry.optString("status");
         }
         org.json.JSONObject values = entry.optJSONObject("values");
-        StringBuilder line = new StringBuilder();
         java.util.Iterator<String> ids = values == null
                 ? java.util.Collections.emptyIterator() : values.keys();
         while (ids.hasNext()) {
             org.json.JSONObject value = values.optJSONObject(ids.next());
-            if (value == null) {
-                continue;
+            if (value != null) {
+                return (values.length() > 1 ? value.optString("name") + " " : "")
+                        + integrationValueWords(value);
             }
-            if (line.length() > 0) {
-                line.append(", ");
-            }
-            if (values.length() > 1) {
-                line.append(value.optString("name")).append(' ');
-            }
-            line.append(integrationValueWords(value));
         }
-        return line.length() == 0 ? entry.optString("status") : line.toString();
+        return entry.optString("status");
     }
 
     private static String integrationValueWords(org.json.JSONObject value) {
@@ -3078,7 +3070,7 @@ public final class KioskActivity extends Activity {
         list.addView(listHead(theme, "Integrations", count), listHeadParams(wide));
         if (instances.isEmpty()) {
             TextView none = new FlushText(this);
-            none.setText("None added yet.");
+            none.setText("No integrations yet.");
             none.setTextColor(theme.subtext);
             none.setTextSize(14);
             if (wide) {
@@ -3090,24 +3082,17 @@ public final class KioskActivity extends Activity {
             org.json.JSONObject entry = status.get(instance.id);
             addIntegrationRow(list, theme, wide, "i:" + instance.id, instance.name,
                     entry == null ? "" : integrationLine(entry), instance == instances.get(0),
-                    chosen);
+                    chosen, integrationSwitch(theme, instance.id, instance.name, instance.enabled));
         }
+        // Under the list, as every Add; the kinds are its pane at the right, or its page.
         if (instances.size() < Integrations.MAX_INSTANCES) {
-            LinearLayout.LayoutParams addHead = listHeadParams(wide);
-            addHead.topMargin = dp(24);
-            // No count beside it, as the web's head: what can be added is not a tally.
-            list.addView(listHead(theme, "Add", new FlushText(this)), addHead);
-            list.setTag(null);
-            boolean first = true;
-            for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
-                if ("business".equals(definition.edition)) {
-                    // Business does not exist yet: nothing of it is offered.
-                    continue;
-                }
-                addIntegrationRow(list, theme, wide, "d:" + definition.id, definition.name,
-                        definition.summary, first, chosen);
-                first = false;
+            Button add = withPlus(tonalButton(theme, "Add an integration"));
+            add.setOnClickListener(view -> openIntegrationItem(wide, "add"));
+            LinearLayout addRow = buttonRow(add);
+            if (wide) {
+                addRow.setPadding(dp(12), dp(8), dp(12), dp(4));
             }
+            list.addView(addRow, matchWrap());
         }
         LinearLayout.LayoutParams params = matchWrap();
         params.topMargin = dp(16);
@@ -3137,15 +3122,39 @@ public final class KioskActivity extends Activity {
     }
 
     private void addIntegrationRow(LinearLayout list, KioskTheme theme, boolean wide,
-            String item, String name, String sub, boolean first, String chosen) {
+            String item, String name, String sub, boolean first, String chosen, View trailing) {
         Runnable open = () -> openIntegrationItem(wide, item);
-        LinearLayout row = glyphRow(theme, R.drawable.ic_integrations, name, sub, null, open,
+        LinearLayout row = glyphRow(theme, R.drawable.ic_integrations, name, sub, trailing, open,
                 false, !wide);
         if (wide) {
             addMenuRow(list, theme, row, first, item.equals(chosen), open);
         } else {
             addListRow(list, theme, row, first);
         }
+    }
+
+    /** An integration's row switch, as an automation's: on or off at once, a refusal said. */
+    private CompoundButton integrationSwitch(KioskTheme theme, String id, String name,
+            boolean enabled) {
+        CompoundButton toggle = themedSwitch(theme, "", enabled);
+        toggle.setContentDescription(name);
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            if (syncingLiveControls) {
+                return;
+            }
+            String problem = IntegrationSettings.setEnabled(this, id, checked);
+            if (problem != null) {
+                Toast.makeText(this, "Not changed: " + problem + ".", Toast.LENGTH_LONG).show();
+                // Back as stored, without storing it again.
+                syncingLiveControls = true;
+                try {
+                    button.setChecked(!checked);
+                } finally {
+                    syncingLiveControls = false;
+                }
+            }
+        });
+        return toggle;
     }
 
     private void openIntegrationItem(boolean wide, String item) {
@@ -3160,9 +3169,10 @@ public final class KioskActivity extends Activity {
     /** The item to show: the one asked for when it exists, else the first added, else the first kind. */
     private static String integrationItemOrFirst(String item,
             java.util.List<Integrations.Instance> instances) {
+        boolean room = instances.size() < Integrations.MAX_INSTANCES;
         if (item != null) {
-            if (item.startsWith("d:") && Integrations.DEFINITIONS.containsKey(item.substring(2))
-                    && instances.size() < Integrations.MAX_INSTANCES) {
+            if (room && (item.equals("add") || item.startsWith("d:")
+                    && Integrations.DEFINITIONS.containsKey(item.substring(2)))) {
                 return item;
             }
             for (Integrations.Instance instance : instances) {
@@ -3171,8 +3181,7 @@ public final class KioskActivity extends Activity {
                 }
             }
         }
-        return instances.isEmpty() ? "d:" + Integrations.DEFINITIONS.keySet().iterator().next()
-                : "i:" + instances.get(0).id;
+        return instances.isEmpty() ? "add" : "i:" + instances.get(0).id;
     }
 
     /** Below 840 dp, an integration's box as a page of its own, back to the list. */
@@ -3183,8 +3192,9 @@ public final class KioskActivity extends Activity {
         }
         String item = integrationItemOrFirst(select, KioskConfig.integrationsOf(this));
         currentScreen = () -> showIntegrationItemPage(item);
-        LinearLayout page = subPage(item.startsWith("d:") ? "New integration"
-                : "Edit integration", () -> showIntegrationsPage(null));
+        LinearLayout page = subPage(item.equals("add") ? "Add an integration"
+                : item.startsWith("d:") ? "New integration" : "Edit integration",
+                () -> showIntegrationsPage(null));
         KioskTheme theme = currentTheme();
         page.addView(paneOf(integrationBox(theme, item, false)), matchWrap());
         setContentView(scrollPage(theme, page));
@@ -3205,9 +3215,26 @@ public final class KioskActivity extends Activity {
 
     /**
      * One integration's box: its name, its settings drawn from the definition's fields, its status
-     * and values while added, and Add or Save, Try, Switch off or on, Remove; the web's box.
+     * and values while added, and Add or Save, Try, Remove; the web's box.
      */
     private LinearLayout integrationBox(KioskTheme theme, String item, boolean wide) {
+        if (item.equals("add")) {
+            // The kinds this version offers, each opening its box to add one.
+            LinearLayout card = card(theme, "Add an integration");
+            boolean first = true;
+            for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+                if ("business".equals(definition.edition)) {
+                    // Business does not exist yet: nothing of it is offered.
+                    continue;
+                }
+                String kind = "d:" + definition.id;
+                addListRow(card, theme, glyphRow(theme, R.drawable.ic_integrations,
+                        definition.name, definition.summary, null,
+                        () -> openIntegrationItem(wide, kind), false), first);
+                first = false;
+            }
+            return card;
+        }
         Integrations.Instance instance = null;
         Integrations.Definition definition;
         if (item.startsWith("i:")) {
@@ -3245,8 +3272,10 @@ public final class KioskActivity extends Activity {
         org.json.JSONObject entry = fresh ? null : integrationStatus().get(instance.id);
         LinearLayout card = card(theme, fresh ? definition.name : instance.name);
         TextView about = new FlushText(this);
-        about.setText(fresh ? definition.summary : definition.name + ". "
-                + (entry == null ? "" : entry.optString("status")));
+        // The kind only where the name does not already say it.
+        about.setText(fresh ? definition.summary
+                : (instance.name.equals(definition.name) ? "" : definition.name + " · ")
+                        + (entry == null ? "" : entry.optString("status")));
         about.setTextColor(theme.subtext);
         about.setTextSize(14);
         card.addView(about, matchWrap());
@@ -3270,14 +3299,12 @@ public final class KioskActivity extends Activity {
                 new java.util.LinkedHashMap<>();
         for (Integrations.Field field : definition.fields) {
             // "(optional)" only where empty means nothing: a menu always holds a choice, and a
-            // box with a fallback says what empty means under it.
+            // box with a fallback shows it inside, greyed.
             boolean optional = !field.required && field.fallback.isEmpty();
             String label = field.label + (optional ? " (optional)" : "");
             boolean stored = entry != null && integrationSecretSet(entry, field.id);
             String support = field.secret && stored ? "Stored. Empty keeps it."
-                    : !field.hint.isEmpty() ? field.hint
-                    : field.kind == Integrations.Kind.NUMBER && !field.fallback.isEmpty()
-                            ? "Empty means " + field.fallback + "." : null;
+                    : !field.hint.isEmpty() ? field.hint : null;
             if (field.kind == Integrations.Kind.CHOICE) {
                 MenuField menu = new MenuField(card, theme, label);
                 for (String option : field.options) {
@@ -3295,6 +3322,9 @@ public final class KioskActivity extends Activity {
                         | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
             } else if (field.kind == Integrations.Kind.NUMBER) {
                 input.setInputType(InputType.TYPE_CLASS_NUMBER);
+            }
+            if (!field.secret && !field.fallback.isEmpty()) {
+                input.setHint(field.fallback);
             }
             if (support == null) {
                 addField(card, theme, label, input);
@@ -3352,25 +3382,14 @@ public final class KioskActivity extends Activity {
         buttons.add(save);
         buttons.add(tryIt);
         if (!fresh) {
-            boolean on = instance.enabled;
+            // On and off is the row's switch in the list.
             String name = instance.name;
-            Button toggle = textButton(theme, on ? "Switch off" : "Switch on");
-            toggle.setOnClickListener(view -> {
-                String problem = IntegrationSettings.setEnabled(this, id, !on);
-                if (problem != null) {
-                    Toast.makeText(this, "Not changed: " + problem + ".", Toast.LENGTH_LONG)
-                            .show();
-                    return;
-                }
-                afterIntegrationChange(wide, "i:" + id);
-            });
             Button remove = textButton(theme, "Remove");
             remove.setOnClickListener(view -> confirmRemove("Remove \"" + name + "\"?",
                     IntegrationSettings.REMOVED, () -> {
                         IntegrationSettings.remove(this, id);
                         afterIntegrationChange(wide, null);
                     }));
-            buttons.add(toggle);
             buttons.add(remove);
         }
         card.addView(fittingButtonRow(buttons.toArray(new Button[0])), matchWrap());
@@ -3393,8 +3412,9 @@ public final class KioskActivity extends Activity {
     /** The Network speaker section's line, the web's words. */
     private static String speakerSummary(KioskConfig config) {
         String state = KioskRuntimeState.speakerState();
-        return !config.networkSpeaker ? "Off" : "on".equals(state)
-                ? "On · port " + config.networkSpeakerPort : "Not on: " + state;
+        return (!config.networkSpeaker ? "Speaker off" : "on".equals(state) ? "Speaker on"
+                : "Speaker not on") + (config.volumeButtonsDisabled ? " · buttons off"
+                        : " · buttons on");
     }
 
     /** The camera or group chosen on the Cameras page: "c:" or "g:" and its name, empty to add. */
@@ -3442,7 +3462,7 @@ public final class KioskActivity extends Activity {
             list.addView(none, matchWrap());
         }
         for (Cameras.Camera camera : cameras) {
-            addCameraItemRow(list, theme, wide, "c:" + camera.name, camera.name, camera.url,
+            addCameraItemRow(list, theme, wide, "c:" + camera.name, camera.name, Cameras.rowLine(camera.url),
                     camera == cameras.get(0), chosen);
         }
         if (!groups.isEmpty()) {
@@ -3580,11 +3600,6 @@ public final class KioskActivity extends Activity {
             brands.addView(line, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
-        TextView note = new FlushText(this);
-        note.setTextSize(13);
-        note.setTextColor(theme.subtext);
-        note.setText(Cameras.RTSP_BRANDS_NOTE);
-        brands.addView(note, matchWrapClose());
         Button toggle = textButton(theme, "RTSP addresses by brand");
         android.graphics.drawable.Drawable more = getDrawable(R.drawable.ic_expand_more).mutate();
         more.setTint(theme.accent);
@@ -3635,8 +3650,7 @@ public final class KioskActivity extends Activity {
         EditText fullInput = themedInput(theme, fresh ? "" : camera.full, false);
         fullInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        addField(card, theme, "Full-screen address (optional)", fullInput,
-                "A bigger stream of the same camera, for full screen and zoom.");
+        addField(card, theme, "Full-screen address (optional)", fullInput);
         EditText userInput = themedInput(theme, login == null ? "" : login.user, false);
         addField(card, theme, "User", userInput);
         // Rendered empty, as every password box: empty keeps the stored one.
@@ -3781,6 +3795,25 @@ public final class KioskActivity extends Activity {
     private static String browserBaseline(BrowserOptions.Settings browser) {
         return browser.userAgent + "|" + browser.textSize + "|" + browser.pageZoom + "|"
                 + browser.dark + "|" + browser.backAfterSeconds + "|" + browser.signInUser;
+    }
+
+    /**
+     * Checks the status light's colour: a main colour by its name, any other value an outside
+     * system wrote as its own r,g,b choice on top, replacing the previous one.
+     */
+    private void showLightColour(KioskTheme theme, RadioGroup group, int color) {
+        String rgb = StatusLight.formatColor(color);
+        if (group.findViewWithTag(rgb) == null) {
+            View first = group.getChildAt(0);
+            if (first != null && StatusLight.nameOf(
+                    StatusLight.parseColor(String.valueOf(first.getTag()))) == null) {
+                group.removeView(first);
+            }
+            RadioButton raw = radioChoice(theme, group, rgb, rgb);
+            group.removeView(raw);
+            group.addView(raw, 0, raw.getLayoutParams());
+        }
+        checkRadioIfChanged(group, rgb);
     }
 
     /** One radio option, carrying its stored spelling as the tag the listener reads back. */
@@ -3975,12 +4008,16 @@ public final class KioskActivity extends Activity {
         // and the day and night toggle (2026-10-15).
         page.addView(pageHeading(theme, titleText(theme, "Muralis"), config.deviceId, null, null,
                 themeToggle(theme), true), matchWrap());
-        View provisioningNotice = provisioningNotice(theme);
-        if (provisioningNotice != null) {
-            page.addView(provisioningNotice, matchWrap());
-        }
+        // The warning and its one remedy here, Set Muralis as the default launcher, as one
+        // notice with the button inside (the settings round, 2026-10-26).
+        LinearLayout provisioningNotice = provisioningNotice(theme);
         Button launcherPrompt = defaultLauncherPrompt(theme);
-        if (launcherPrompt != null) {
+        if (provisioningNotice != null) {
+            if (launcherPrompt != null) {
+                provisioningNotice.addView(buttonRow(launcherPrompt), matchWrapClose());
+            }
+            page.addView(provisioningNotice, matchWrap());
+        } else if (launcherPrompt != null) {
             page.addView(buttonRow(launcherPrompt), matchWrap());
         }
 
@@ -3996,7 +4033,11 @@ public final class KioskActivity extends Activity {
         // Cameras, the third answer, once there is a camera or a group to show.
         boolean offerCameras = showsCameras || !KioskConfig.camerasOf(this).isEmpty()
                 || !KioskConfig.cameraGroupsOf(this).isEmpty();
-        dashboardCard.addView(fieldCaption(theme, "Dashboard"), matchWrapClose());
+        // The fleet shares the address, not the choice, so its line shows with a web page only;
+        // first, as in every section. The section's heading names the choice.
+        if (!showsApp && !showsCameras) {
+            addSharedLine(dashboardCard, theme, "dashboard");
+        }
         LinearLayout.LayoutParams showsParams = matchWrapClose();
         showsParams.topMargin = dp(8);
         String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
@@ -4038,8 +4079,6 @@ public final class KioskActivity extends Activity {
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         if (!showsApp && !showsCameras) {
-            // The fleet shares the address, not the choice above it, so its line stands here.
-            addSharedLine(dashboardCard, theme, "dashboard");
             addField(dashboardCard, theme, "Dashboard URL", urlInput);
         }
         // The panel's name (the device id) is in This panel since 2026-09-27; its box is built
@@ -4402,8 +4441,7 @@ public final class KioskActivity extends Activity {
             TextView noSensor = new FlushText(this);
             noSensor.setTextColor(theme.subtext);
             noSensor.setTextSize(13);
-            noSensor.setText("This tablet has no ambient light sensor, so brightness is manual "
-                    + "only. Set it remotely with display.brightness.");
+            noSensor.setText("No light sensor: brightness is set by hand.");
             displayCard.addView(noSensor, matchWrapClose());
         }
 
@@ -4547,7 +4585,7 @@ public final class KioskActivity extends Activity {
         // colour with no name is offered as it is.
         StatusLight.State light = KioskConfig.statusLightOf(this);
         CompoundButton lightInput = themedSwitch(theme,
-                "Status light, a coloured frame around the screen", light.on);
+                "Status light", light.on);
         displayCard.addView(lightInput, matchWrapClose());
         TextView lightColourLabel = fieldCaption(theme, "Status light colour");
         LinearLayout.LayoutParams lightColourParams = new LinearLayout.LayoutParams(
@@ -4555,14 +4593,10 @@ public final class KioskActivity extends Activity {
         lightColourParams.topMargin = dp(14);
         displayCard.addView(lightColourLabel, lightColourParams);
         RadioGroup lightColourInput = new RadioGroup(this);
-        if (StatusLight.nameOf(light.color) == null) {
-            radioChoice(theme, lightColourInput, StatusLight.formatColor(light.color),
-                    StatusLight.formatColor(light.color));
-        }
         for (String[] named : StatusLight.NAMED) {
             radioChoice(theme, lightColourInput, named[0], named[1]);
         }
-        checkRadioIfChanged(lightColourInput, StatusLight.formatColor(light.color));
+        showLightColour(theme, lightColourInput, light.color);
         displayCard.addView(lightColourInput, matchWrapClose());
         lightInput.setOnCheckedChangeListener((button, on) -> {
             if (!syncingLiveControls) {
@@ -4754,7 +4788,7 @@ public final class KioskActivity extends Activity {
                             KioskConfig.displayOffMethodOf(KioskActivity.this));
                     StatusLight.State lit = KioskConfig.statusLightOf(KioskActivity.this);
                     setCheckedIfChanged(lightInput, lit.on);
-                    checkRadioIfChanged(lightColourInput, StatusLight.formatColor(lit.color));
+                    showLightColour(theme, lightColourInput, lit.color);
                     // The sentence changes on its own when a sleep ends badly, so it follows too,
                     // and the method radio with it, since a bad sleep switches the stored method.
                     paintDisplayOffNote(displayOffNote, theme);
@@ -4801,9 +4835,6 @@ public final class KioskActivity extends Activity {
         }
         manageSequences.setOnClickListener(view -> showEscapeSequences(KioskConfig.load(this)));
         escapeCard.addView(buttonRow(manageSequences), matchWrap());
-        LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
-        volumeButtonsParams.topMargin = dp(14);
-        escapeCard.addView(volumeButtonsInput, volumeButtonsParams);
 
         // Cameras: one row a camera, then More camera settings, as Automations lists its rules;
         // a row opens the Cameras page on that camera.
@@ -4811,7 +4842,7 @@ public final class KioskActivity extends Activity {
         for (Cameras.Camera camera : KioskConfig.camerasOf(this)) {
             String item = "c:" + camera.name;
             addListRow(camerasCard, theme, glyphRow(theme, R.drawable.ic_cameras, camera.name,
-                    camera.url, null, () -> showCamerasPage(item), false, false),
+                    Cameras.rowLine(camera.url), null, () -> showCamerasPage(item), false, false),
                     camerasCard.getChildCount() == 0);
         }
         Button camerasMore = textButtonOnward(theme, "More camera settings");
@@ -4822,9 +4853,7 @@ public final class KioskActivity extends Activity {
         addSharedLine(speakerCard, theme, "speaker");
         speakerCard.addView(speakerInput, matchWrap());
         TextView speakerNote = new FlushText(this);
-        speakerNote.setText("Smart-home systems and apps that play to a speaker on the network find"
-                + " the panel by themselves and can play on it."
-                + " While it is on, anyone on your network can play sound on this panel.");
+        speakerNote.setText("While it is on, anyone on your network can play sound here.");
         speakerNote.setTextColor(theme.subtext);
         speakerNote.setTextSize(14);
         speakerCard.addView(speakerNote, matchWrapClose());
@@ -4839,6 +4868,11 @@ public final class KioskActivity extends Activity {
                     refused == null ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
         });
         speakerCard.addView(fittingButtonRow(speakerSave), matchWrap());
+        // The device's volume keys, sound like the speaker, as Android's Sound keeps volume
+        // (the settings round, 2026-10-26: in Way out until then, as a lock-down choice).
+        LinearLayout.LayoutParams volumeButtonsParams = matchWrapClose();
+        volumeButtonsParams.topMargin = dp(14);
+        speakerCard.addView(volumeButtonsInput, volumeButtonsParams);
 
         // Integrations: one row an added integration with its status line, then More
         // integration settings, as Cameras lists its cameras; a row opens the Integrations page.
@@ -4851,14 +4885,14 @@ public final class KioskActivity extends Activity {
             }
             String item = "i:" + entry.optString("id");
             addListRow(integrationsCard, theme, glyphRow(theme, R.drawable.ic_integrations,
-                    entry.optString("name"), integrationLine(entry), null,
+                    entry.optString("name"), integrationLine(entry),
+                    integrationSwitch(theme, entry.optString("id"), entry.optString("name"),
+                            entry.optBoolean("enabled")),
                     () -> showIntegrationsPage(item), false, false),
                     integrationsCard.getChildCount() == 0);
         }
         if (integrationBlock.length() == 0) {
-            integrationsCard.addView(emptyState(theme, "No integrations yet",
-                    "An integration brings data from another service to the panel, for the"
-                            + " automations and MQTT."), matchWrap());
+            integrationsCard.addView(emptyState(theme, "No integrations yet", null), matchWrap());
         }
         Button integrationsMore = textButtonOnward(theme, integrationBlock.length() == 0
                 ? "Add an integration" : "More integration settings");
@@ -4923,11 +4957,19 @@ public final class KioskActivity extends Activity {
             hideKeyboard(view);
             return true;
         });
-        // The web's row: the stats glyph and the overlay's state under the name (review,
-        // 2026-10-01).
-        aboutCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
-                config.statsOverlay ? "Overlay on" : "Overlay off", null, this::showStatsPage,
+        // Backup and diagnostics (the settings round, 2026-10-26): the tools, apart from About,
+        // as Android keeps them. The settings file, the screenshot and the diagnostics file are
+        // files, so they open in the web admin: greyed rows here, the same four items as there.
+        LinearLayout diagnosticsCard = sectionBody(theme);
+        diagnosticsCard.addView(glyphRow(theme, R.drawable.ic_stats, "System stats and log",
+                config.statsOverlay ? "Stats overlay on" : "Stats overlay off", null, this::showStatsPage,
                 false), matchWrap());
+        diagnosticsCard.addView(glyphRow(theme, R.drawable.ic_folder, "Settings file",
+                "In the web admin", null, null, true), matchWrap());
+        diagnosticsCard.addView(glyphRow(theme, R.drawable.ic_sensor_display, "Screenshot",
+                "In the web admin", null, null, true), matchWrap());
+        diagnosticsCard.addView(glyphRow(theme, R.drawable.ic_info, "Download diagnostics",
+                "In the web admin", null, null, true), matchWrap());
         TextView buildLine = new FlushText(this);
         buildLine.setTextColor(theme.subtext);
         buildLine.setTextSize(13);
@@ -4943,9 +4985,7 @@ public final class KioskActivity extends Activity {
         TextView proWhat = new FlushText(this);
         proWhat.setTextColor(theme.subtext);
         proWhat.setTextSize(14);
-        proWhat.setText("The fleet: up to " + FleetTier.MAX_PANELS + " panels managed from any of"
-                + " them, sharing their settings, with alerts and history. One panel has"
-                + " everything without it.");
+        proWhat.setText("Up to " + FleetTier.MAX_PANELS + " panels, managed from any of them.");
         aboutCard.addView(proWhat, matchWrapClose());
         TextView proLease = new FlushText(this);
         proLease.setTextColor(theme.text);
@@ -5000,8 +5040,8 @@ public final class KioskActivity extends Activity {
 
         // The fleet's own port on this panel, saved with the other connection fields by the foot
         // button, and whether the member endpoint listens on it, with the reason when it does not.
-        // In the order a person needs it (the UI round, 2026-10-15): the fleet and its panels,
-        // adding one, what this panel follows and the Fleet page, then the port and Leave.
+        // In the order of the UI round of 2026-10-26, the same on the web: the fleet and a count,
+        // the ways in outside one, what this panel follows, the port and Leave, the Fleet page.
         LinearLayout fleetCard = sectionBody(theme);
         EditText memberPortInput = themedInput(theme, Integer.toString(config.fleetPort), false);
         memberPortInput.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -5040,14 +5080,6 @@ public final class KioskActivity extends Activity {
             java.util.Map<String, Object> fleetList = KioskConfig.fleetDocumentOf(this);
             java.util.List<String> myGroups = FleetDocument.memberGroups(fleetList,
                     FleetDocument.memberByKey(fleetList, KioskRuntimeState.fleetKey()));
-            // The groups: which ones this panel is in, a new one with
-            // a name the person types (generic suggestions offered), and Remove for each.
-            // The panels, adding one, the groups, what each scope shares, the alerts and the
-            // history: the Fleet page (the redesign of 2026-10-25).
-            LinearLayout fleetPageRow = glyphRow(theme, R.drawable.ic_fleet, "Fleet page",
-                    "Panels, groups, shared settings", null, null, false);
-            fleetPageRow.setOnClickListener(view -> openFleetPage());
-            addListRow(fleetCard, theme, fleetPageRow, true);
             // Whether this panel takes what the whole fleet shares; its groups it always follows.
             CompoundButton follows = themedSwitch(theme, "Follow the fleet's shared settings",
                     FleetDocument.followsFleet(FleetDocument.memberByKey(fleetList,
@@ -5065,7 +5097,7 @@ public final class KioskActivity extends Activity {
             boolean pro = FleetServer.proStatus(this).pro;
             follows.setEnabled(pro);
             follows.setAlpha(pro ? 1f : 0.38f);
-            fleetCard.addView(sectionTitle(theme, "This panel's groups", 18), matchWrap());
+            fleetCard.addView(sectionTitle(theme, "Groups", 18), matchWrap());
             if (FleetDocument.groups(fleetList).isEmpty()) {
                 TextView none = new FlushText(this);
                 none.setTextSize(13);
@@ -5105,6 +5137,13 @@ public final class KioskActivity extends Activity {
         addField(fleetCard, theme, "Member port", memberPortInput);
         fleetCard.addView(fleetState, fleetStateParams);
         fleetCard.addView(fittingButtonRow(fleetLeaveButton), matchWrap());
+        // The panels, adding one, the groups, what each scope shares, the alerts and the
+        // history: the Fleet page, the onward link last.
+        if (!KioskConfig.fleetIdOf(this).isEmpty()) {
+            Button fleetPageLink = textButtonOnward(theme, "Fleet page");
+            fleetPageLink.setOnClickListener(view -> openFleetPage());
+            fleetCard.addView(buttonRow(fleetPageLink), matchWrap());
+        }
         int adminPortNow = config.httpPort;
         memberPortInput.setOnFocusChangeListener((view, hasFocus) -> {
             clearPrecheck(memberPortInput, theme);
@@ -5123,12 +5162,14 @@ public final class KioskActivity extends Activity {
         final List<Section> sections = java.util.Arrays.asList(
                 new Section(GROUP_SHOWS, R.drawable.ic_dashboard, "Dashboard",
                         dashboardSummary(config), dashboardCard),
+                new Section(GROUP_SHOWS, R.drawable.ic_screensaver, "Ambient",
+                        screensaverSummary(), screensaverCard),
+                new Section(GROUP_SHOWS, R.drawable.ic_cameras, "Cameras",
+                        camerasSummary(), camerasCard),
                 new Section(GROUP_SCREEN, R.drawable.ic_display, "Display", displaySummary(),
                         displayCard),
-                new Section(GROUP_SCREEN, R.drawable.ic_screensaver, "Ambient",
-                        screensaverSummary(), screensaverCard),
-                new Section(GROUP_SCREEN, R.drawable.ic_cameras, "Cameras",
-                        camerasSummary(), camerasCard),
+                new Section(GROUP_SCREEN, R.drawable.ic_sensor_audio, "Sound",
+                        speakerSummary(config), speakerCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_sensors, "Sensors", sensorsSummary(),
                         sensorsCard),
                 new Section(GROUP_AUTOMATION, R.drawable.ic_automations, "Automations",
@@ -5140,14 +5181,15 @@ public final class KioskActivity extends Activity {
                                 : config.mqttHost + ":" + config.mqttPort, mqttCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_web, "Web admin",
                         webAdminSummary(config), httpCard),
-                new Section(GROUP_CONNECTIONS, R.drawable.ic_sensor_audio, "Network speaker",
-                        speakerSummary(config), speakerCard),
                 new Section(GROUP_CONNECTIONS, R.drawable.ic_fleet, "Fleet",
-                        FleetServer.summaryOf(config.fleetPort), fleetCard),
+                        FleetServer.summaryOf(this), fleetCard),
                 new Section(GROUP_SECURITY, R.drawable.ic_escape, "Way out",
                         sequencesSummary(config), escapeCard),
-                new Section("", R.drawable.ic_sensor_panel, "About this panel", config.deviceId,
-                        aboutCard));
+                new Section(GROUP_SYSTEM, R.drawable.ic_storage, "Backup and diagnostics",
+                        config.statsOverlay ? "Stats overlay on" : "Stats overlay off",
+                        diagnosticsCard),
+                new Section(GROUP_SYSTEM, R.drawable.ic_sensor_panel, "About this panel",
+                        config.deviceId, aboutCard));
 
         Runnable openDashboard = () -> {
             String url = normalizeUrl(urlInput.getText().toString());
@@ -5879,8 +5921,7 @@ public final class KioskActivity extends Activity {
             TextView how = new FlushText(this);
             how.setTextSize(14);
             how.setTextColor(theme.subtext);
-            how.setText("By the code under its Join QR, or with an invitation QR for a new"
-                    + " tablet.");
+            how.setText("By its Join code, or an invitation QR.");
             next.addView(how, matchWrapClose());
             Button add = withPlus(tonalButton(theme, "Add a panel"));
             add.setOnClickListener(view -> showFleetAddPage());
@@ -6348,8 +6389,7 @@ public final class KioskActivity extends Activity {
             TextView none = new FlushText(this);
             none.setTextSize(14);
             none.setTextColor(theme.subtext);
-            none.setText("No groups yet. Panels with the same job, such as the meeting rooms or"
-                    + " the lobby screens, can share more than the whole fleet does.");
+            none.setText("No groups yet.");
             card.addView(none, matchWrapClose());
         }
         boolean first = true;
@@ -6428,12 +6468,6 @@ public final class KioskActivity extends Activity {
             });
         });
         card.addView(fittingButtonRow(addGroup), matchWrapClose());
-        TextView hint = new FlushText(this);
-        hint.setTextSize(13);
-        hint.setTextColor(theme.subtext);
-        hint.setText("A panel is put in a group on its page, under Panels, or several at once by"
-                + " ticking them.");
-        card.addView(hint, matchWrapClose());
         return card;
     }
 
@@ -6602,8 +6636,7 @@ public final class KioskActivity extends Activity {
                 ? "Not shared: no alerts are raised for " + in + ". Switched on, this panel's"
                         + " alerts are shared."
                 : "Not shared: each panel keeps its own.")
-                : "Shared: these values apply to every panel of " + in + ". Switched on, this"
-                        + " panel's values at that moment were shared.");
+                : "Shared with every panel of " + in + ".");
         card.addView(rule, matchWrapClose());
         if (section.equals("alerts")) {
             // Alerts are edited here, where they are shared; the other sections are changed
@@ -6636,7 +6669,8 @@ public final class KioskActivity extends Activity {
         }
         Button change = textButtonOnward(theme, "Change on this panel");
         change.setOnClickListener(view -> {
-            openSection = FleetDocument.sectionLabel(section);
+            // The shared speaker section lives in Sound on this panel.
+            openSection = "speaker".equals(section) ? "Sound" : FleetDocument.sectionLabel(section);
             showSettings();
         });
         card.addView(fittingButtonRow(change), matchWrapClose());
@@ -6664,13 +6698,6 @@ public final class KioskActivity extends Activity {
             java.util.Map<String, Object> values) {
         Context app = getApplicationContext();
         String section = "alerts";
-        TextView about = new FlushText(this);
-        about.setTextSize(13);
-        about.setTextColor(theme.subtext);
-        about.setText("Each alert comes once when it starts and once when it ends.");
-        LinearLayout.LayoutParams aboutParams = matchWrap();
-        aboutParams.topMargin = dp(12);
-        card.addView(about, aboutParams);
         java.util.Map<String, java.util.function.Supplier<String>> readers =
                 new java.util.LinkedHashMap<>();
         for (FleetProfile.Field field : FleetProfile.fields(section)) {
@@ -7242,11 +7269,12 @@ public final class KioskActivity extends Activity {
      */
     private String openSection = "";
     /** The settings menu's groups, as the web page names them; About this panel stands alone. */
-    private static final String GROUP_SHOWS = "What the panel shows";
-    private static final String GROUP_SCREEN = "Screen";
+    private static final String GROUP_SHOWS = "Panel";
+    private static final String GROUP_SCREEN = "Screen and sound";
     private static final String GROUP_AUTOMATION = "Automation";
     private static final String GROUP_CONNECTIONS = "Connections";
     private static final String GROUP_SECURITY = "Security";
+    private static final String GROUP_SYSTEM = "System";
 
     /**
      * The settings as one menu, in the shape the width allows.
@@ -7588,6 +7616,9 @@ public final class KioskActivity extends Activity {
         heading.setTextColor(theme.text);
         heading.setTextSize(16);
         box.addView(heading, wideRow());
+        if (line == null || line.isEmpty()) {
+            return box;
+        }
         TextView body = new FlushText(this);
         body.setText(line);
         body.setTextColor(theme.subtext);
@@ -7820,26 +7851,20 @@ public final class KioskActivity extends Activity {
     private String sequencesSummary(KioskConfig config) {
         // A TV has no corners to tap: the remote's Back held, or Menu, is its way in.
         if (!config.touchscreen) {
-            return "Back held or Menu" + (KioskConfig.escapePinSet(this) ? " · PIN" : "");
+            return "Back held or Menu" + (KioskConfig.escapePinSet(this) ? " · PIN" : " · no PIN");
         }
         if (config.settingsSequence.isEmpty() || config.launcherSequence.isEmpty()) {
             return "Not recorded yet";
         }
-        return config.settingsSequence + " · " + config.launcherSequence
-                + (KioskConfig.escapePinSet(this) ? " · PIN" : "");
+        return "2 combinations" + (KioskConfig.escapePinSet(this) ? " · PIN" : " · no PIN");
     }
 
     private String displaySummary() {
         String orientation = KioskConfig.orientationOf(this);
-        // An ordinary install has one way to darken, the film, whatever is stored: it offers
-        // Black film alone, greyed (2026-09-24), and the summary must not say "automatic" beside it.
-        String method = KioskService.isDeviceOwner(this) ? KioskConfig.displayOffMethodOf(this)
-                : DisplayOffPolicy.FILM;
         return (KioskConfig.ORIENTATION_AUTO.equals(orientation) ? "Auto-rotate"
                 : KioskConfig.ORIENTATION_PORTRAIT.equals(orientation) ? "Portrait" : "Landscape")
-                + " · "
-                + (DisplayOffPolicy.SLEEP.equals(method) ? "screen off"
-                        : DisplayOffPolicy.FILM.equals(method) ? "black film" : "automatic");
+                + (KioskService.isAutoBrightnessOn(this) ? " · auto brightness"
+                        : " · manual brightness");
     }
 
     private String screensaverSummary() {
@@ -9510,7 +9535,7 @@ public final class KioskActivity extends Activity {
                 addListRow(list, theme, row, rule == rules.get(0));
             }
         }
-        Button add = withPlus(tonalButton(theme, "Add"));
+        Button add = withPlus(tonalButton(theme, "Add an automation"));
         if (wide) {
             add.setOnClickListener(view -> leaveTo.accept(() -> {
                 hideKeyboardIfShown();
@@ -9737,8 +9762,6 @@ public final class KioskActivity extends Activity {
             }
         };
         collectAll[0] = collect;
-        Button cancel = textButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> leaveAutomationEditor(collect, draft, done, reopen));
         // Why a save was refused, in red over the buttons, by the controls as the web page has
         // its notice: a toast was too quick to read (review, 2026-10-01), and under the buttons
         // it stood half below the screen's edge. Brought into sight with the buttons once it is
@@ -9800,12 +9823,14 @@ public final class KioskActivity extends Activity {
         });
         Button delete = null;
         if (!fresh) {
-            delete = dangerOutlinedButton(theme, "Delete");
+            delete = dangerOutlinedButton(theme, "Remove");
             delete.setOnClickListener(view -> {
                 // The stored name, not the draft's: what is typed in the Name box and never
-                // saved is not what is deleted.
+                // saved is not what is removed.
                 Automations.Rule named = Automations.find(KioskConfig.automationsOf(this), draft.id);
-                confirmDelete(named != null ? named.name : draft.name, null, () -> {
+                String quoted = "\"" + (named != null ? named.name : draft.name) + "\"";
+                showConfirm("Remove " + quoted + "?", quoted + " will be removed.", "Remove",
+                        true, () -> {
                 synchronized (Automations.STORE) {
                     java.util.List<Automations.Rule> rules = KioskConfig.automationsOf(this);
                     Automations.Rule stored = Automations.find(rules, draft.id);
@@ -9824,7 +9849,7 @@ public final class KioskActivity extends Activity {
         refusedParams.topMargin = dp(16);
         refusedParams.leftMargin = dp(16);
         into.addView(refused, refusedParams);
-        buttonRow[0] = editorButtonRow(delete, cancel, save);
+        buttonRow[0] = editorButtonRow(save, delete);
         into.addView(buttonRow[0], matchWrap());
         // The draft as the boxes read untouched, once per editor opened: what leaving compares.
         collect.run();
@@ -10809,7 +10834,7 @@ public final class KioskActivity extends Activity {
             }
         });
         CompoundButton statsOverlayInput = themedSwitch(theme,
-                "Show system stats on the dashboard", KioskConfig.statsOverlayEnabled(this));
+                "Stats overlay", KioskConfig.statsOverlayEnabled(this));
         statsOverlayInput.setOnCheckedChangeListener(
                 (button, checked) -> applyLiveSetting(editor -> editor.statsOverlay(checked)));
         statsCard.addView(statsOverlayInput, matchWrap());
@@ -10894,7 +10919,7 @@ public final class KioskActivity extends Activity {
 
     /** The same on the Fleet section's button, where the section already says fleet. */
     private String addPanelLabel() {
-        return KioskConfig.fleetIdOf(this).isEmpty() ? "Create" : "Add a panel";
+        return KioskConfig.fleetIdOf(this).isEmpty() ? "Create a fleet" : "Add a panel";
     }
 
     /**
@@ -12406,12 +12431,6 @@ public final class KioskActivity extends Activity {
         checkRadioIfChanged(fitInput, settings.pictureFit);
         group.addView(fitInput, matchWrapClose());
         controls.fitInput = fitInput;
-        TextView fitNote = new FlushText(this);
-        fitNote.setText("Fit shows the whole picture, Fill crops it to the edges, Stretch pulls "
-                + "it out of shape, Actual size does not scale it.");
-        fitNote.setTextColor(theme.subtext);
-        fitNote.setTextSize(12);
-        group.addView(fitNote, matchWrapClose());
 
         CompoundButton shuffle = themedSwitch(theme, "Shuffle", settings.shuffle);
         LinearLayout.LayoutParams boxParams = matchWrapClose();
@@ -12532,7 +12551,7 @@ public final class KioskActivity extends Activity {
             TextView none = new FlushText(this);
             none.setTextColor(theme.subtext);
             none.setTextSize(12);
-            none.setText("No playlists yet. Create one, then open it and pick its pictures.");
+            none.setText("No playlists yet.");
             group.addView(none, matchWrapClose());
         }
         for (int index = 0; index < all.size(); index++) {
@@ -12748,9 +12767,8 @@ public final class KioskActivity extends Activity {
     private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist, Runnable back) {
         confirmDelete(playlist.name,
                 playlist.active
-                        ? "It is the playlist in use, so Ambient will have none until you "
-                                + "choose another. The pictures themselves are not deleted."
-                        : "The pictures themselves are not deleted.",
+                        ? "It is in use: Ambient will have no playlist. The pictures stay."
+                        : "The pictures stay.",
                 () -> {
                     showScreensaverSettings();
                     changePlaylists(document -> {
@@ -13052,13 +13070,10 @@ public final class KioskActivity extends Activity {
         page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
                 screen.folders.card, screen.pictures.card, screen.selected.card)), matchWrap());
 
-        Button cancel = textButton(theme, "Cancel");
-        cancel.setOnClickListener(view -> leavePlaylistPage(draft));
         Button save = primaryButton(theme, "Save");
         save.setOnClickListener(view -> savePlaylist(draft));
-        // Delete at the start for a stored playlist, outlined red as in every editor (the delete
-        // rules, 2026-10-01); it left the list's row on 2026-10-04. Cancel then Save at the end,
-        // paired rather than stacked (2026-09-10, B4).
+        // Delete after Save for a stored playlist, outlined red as in every editor (the delete
+        // rules, 2026-10-01); it left the list's row on 2026-10-04.
         Button delete = null;
         if (draft.id != null) {
             delete = dangerOutlinedButton(theme, "Delete");
@@ -13085,7 +13100,7 @@ public final class KioskActivity extends Activity {
                 });
             });
         }
-        page.addView(editorButtonRow(delete, cancel, save), matchWrap());
+        page.addView(editorButtonRow(save, delete), matchWrap());
 
         setContentView(scrollPage(theme, page));
         currentScreen = () -> showPlaylistPage(draft);
@@ -14657,7 +14672,7 @@ public final class KioskActivity extends Activity {
         current.setTextSize(14);
         current.setText(set
                 ? "A PIN is asked after either combination."
-                : "Optional. A combination can be watched and repeated; a PIN has to be known.");
+                : "Optional. None is set.");
         item.addView(current, matchWrap());
         EditText pin = themedInput(theme, "", true);
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
@@ -14802,8 +14817,7 @@ public final class KioskActivity extends Activity {
         TextView note = new FlushText(this);
         note.setTextColor(theme.subtext);
         note.setTextSize(13);
-        note.setText("You can change them later in settings. Keep them to yourself, anyone who "
-                + "watches you tap can do it too.");
+        note.setText("Keep them to yourself: anyone who watches can repeat them.");
         page.addView(note, matchWrap());
 
         Button start = primaryButton(theme, "Record the first one");
@@ -15908,7 +15922,7 @@ public final class KioskActivity extends Activity {
      * written to the log rather than the screen, since it is an instruction for whoever has the cable,
      * not for whoever walks past the panel.
      */
-    private View provisioningNotice(KioskTheme theme) {
+    private LinearLayout provisioningNotice(KioskTheme theme) {
         String installer = installerPackageName();
         Provisioning.Advice advice = Provisioning.adviceForInstaller(installer, isDeviceOwner());
         if (advice == Provisioning.Advice.NONE) {
@@ -15924,10 +15938,14 @@ public final class KioskActivity extends Activity {
                         + "set-device-owner org.spazio17.muralis/.KioskDeviceAdminReceiver`, which "
                         + "requires that no accounts are signed in on the device.");
 
-        TextView notice = new FlushText(this);
-        notice.setText(getString(R.string.provisioning_warning));
-        notice.setTextSize(15f);
-        notice.setTextColor(theme.warn);
+        LinearLayout notice = new LinearLayout(this);
+        notice.setOrientation(LinearLayout.VERTICAL);
+        TextView words = new FlushText(this);
+        words.setText(getString(R.string.provisioning_warning));
+        words.setTextSize(15f);
+        words.setTextColor(theme.warn);
+        notice.addView(words, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         notice.setPadding(dp(20), dp(16), dp(20), dp(16));
         // Same rounded plate as every card on this screen, so the warning sits in the design rather
         // than on top of it.
@@ -16073,35 +16091,15 @@ public final class KioskActivity extends Activity {
         page.addView(pageHeading(theme, "About", appVersionSummary(),
                 this::showSettings), matchWrap());
 
-        // Two cards rather than one titled "This build": half these facts are about the app and half
-        // about the tablet, so a single title could only be vague. Splitting also balances the lanes,
-        // which one seven-row card did not.
-        LinearLayout appCard = card(theme, getString(R.string.app_name));
-        addAboutRow(appCard, theme, "Version", appVersionName());
-        addAboutRow(appCard, theme, "Build", Long.toString(appVersionCode()));
-        addAboutRow(appCard, theme, "Package", getPackageName());
-
-        LinearLayout deviceCard = card(theme, "This tablet");
-        addAboutRow(deviceCard, theme, "Model",
-                android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
-        addAboutRow(deviceCard, theme, "Android",
-                android.os.Build.VERSION.RELEASE + " (API " + android.os.Build.VERSION.SDK_INT + ")");
-        String engine = webViewProviderSummary();
-        addAboutRow(deviceCard, theme, "Rendering engine", engine == null ? "unknown" : engine);
-        addAboutRow(deviceCard, theme, "Device owner", isDeviceOwner() ? "yes" : "no");
-
-        LinearLayout creditsCard = card(theme, "Credits");
-        addAboutRow(creditsCard, theme, "Eclipse Paho", "MQTT client (EPL/EDL)");
-        addAboutRow(creditsCard, theme, "ZXing", "QR codes (Apache 2.0)");
-        // The parking page shows the Android robot, shared by Google under CC BY 3.0, and this is
-        // the credit for it: author, licence, modified, like the two rows above it. Here rather than
-        // on the parking page itself, because the page is a full-screen illustration and this is
-        // where the app already says who it owes what to. See the string's comment for Google's
-        // own longer phrasing and why the row does not carry it.
-        addAboutRow(creditsCard, theme, "Android robot", getString(R.string.android_robot_attribution));
-        // Every glyph on both surfaces is drawn after Google's Material Symbols, as a stroke path
-        // of our own; the shapes are theirs and this says so.
-        addAboutRow(creditsCard, theme, "Icons", "After Material Symbols by Google (Apache 2.0)");
+        // The facts, shared with the web admin's About page so the two say the same.
+        List<View> cards = new ArrayList<>();
+        for (String[][] facts : aboutCards(this)) {
+            LinearLayout card = card(theme, facts[0][0]);
+            for (int row = 1; row < facts.length; row++) {
+                addAboutRow(card, theme, facts[row][0], facts[row][1]);
+            }
+            cards.add(card);
+        }
 
         // No Legal card here. The privacy policy and the terms are rows of the About section on
         // the settings page, two taps from the panel, and this page is one tap further in: the
@@ -16109,10 +16107,58 @@ public final class KioskActivity extends Activity {
 
         // Order chosen for cardGrid's round-robin: the two short cards share a lane, the taller
         // device card takes the other.
-        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
-                appCard, deviceCard, creditsCard)), matchWrap());
+        page.addView(cardGrid(theme, cards), matchWrap());
 
         setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * The About page's cards on both surfaces, each a title then its rows of name and value.
+     * Two cards rather than one titled "This build": half these facts are about the app and half
+     * about the tablet, so a single title could only be vague. Ordered for cardGrid's
+     * round-robin: the two short cards share a lane, the taller device card takes the other.
+     */
+    static String[][][] aboutCards(Context context) {
+        String version = "unknown";
+        long code = -1;
+        try {
+            android.content.pm.PackageInfo info = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0);
+            version = info.versionName == null ? "unknown" : info.versionName;
+            // getLongVersionCode is API 28; the int field is the only option on API 26.
+            code = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
+                    ? info.getLongVersionCode() : info.versionCode;
+        } catch (Exception unavailable) {
+            Log.w(TAG, "Could not read the app version", unavailable);
+        }
+        String engine = "unknown";
+        try {
+            android.content.pm.PackageInfo provider = WebView.getCurrentWebViewPackage();
+            if (provider != null) {
+                engine = provider.packageName + " " + provider.versionName;
+            }
+        } catch (RuntimeException unavailable) {
+            Log.w(TAG, "Could not read the WebView provider version", unavailable);
+        }
+        return new String[][][] {
+                {{context.getString(R.string.app_name)},
+                        {"Version", version},
+                        {"Build", Long.toString(code)},
+                        {"Package", context.getPackageName()}},
+                {{"This tablet"},
+                        {"Model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL},
+                        {"Android", android.os.Build.VERSION.RELEASE + " (API "
+                                + android.os.Build.VERSION.SDK_INT + ")"},
+                        {"Rendering engine", engine},
+                        {"Device owner", KioskService.isDeviceOwner(context) ? "yes" : "no"}},
+                // The parking page shows the Android robot, shared by Google under CC BY 3.0, and
+                // this is its credit; every glyph is drawn after Google's Material Symbols.
+                {{"Credits"},
+                        {"Eclipse Paho", "MQTT client (EPL/EDL)"},
+                        {"ZXing", "QR codes (Apache 2.0)"},
+                        {"Android robot", context.getString(R.string.android_robot_attribution)},
+                        {"Icons", "After Material Symbols by Google (Apache 2.0)"}},
+        };
     }
 
     /**
@@ -20950,28 +20996,22 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * An editor's buttons on one row, Material's placement for a form that can also destroy
-     * what it edits: the destructive action at the start, apart from the pair it must not be
-     * taken for, and the dismissive then the confirming action at the end, Save last. One row at
-     * every width, the three labels are short (2026-09-28).
+     * An editor's buttons on one row, as every button row since the UI round of 2026-10-26: Save
+     * first, the destructive action last. No Cancel: the back arrow leaves. One row at every
+     * width, the labels are short.
      */
-    private LinearLayout editorButtonRow(Button delete, Button cancel, Button save) {
+    private LinearLayout editorButtonRow(Button save, Button remove) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setBaselineAligned(false);
         row.setGravity(Gravity.START | Gravity.TOP);
-        if (delete != null) {
+        for (Button button : new Button[] {save, remove}) {
+            if (button == null) {
+                continue;
+            }
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.topMargin = dp(8);
-            row.addView(delete, params);
-        }
-        row.addView(new View(this), new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        for (Button button : new Button[] {cancel, save}) {
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.leftMargin = dp(8);
+            params.rightMargin = dp(8);
             params.topMargin = dp(8);
             row.addView(button, params);
         }

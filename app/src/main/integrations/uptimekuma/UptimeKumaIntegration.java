@@ -25,8 +25,7 @@ public final class UptimeKumaIntegration implements Integrations.Source {
 
     public static final Integrations.Definition DEFINITION = new Integrations.Definition(ID,
             "Uptime Kuma", "free",
-            "Which monitors of an Uptime Kuma status page are down, for the status light and the"
-                    + " automations.",
+            "Which monitors are down.",
             Arrays.asList(
                     new Integrations.Field("url", "Uptime Kuma address", Integrations.Scope.SHARED,
                             false, true, Integrations.Kind.URL, Collections.emptyList(), "", 0, 0,

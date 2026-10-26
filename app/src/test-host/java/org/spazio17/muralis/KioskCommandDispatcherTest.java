@@ -783,7 +783,7 @@ public final class KioskCommandDispatcherTest {
                 KioskCommandDispatcher.CommandArgs.EMPTY, executor).status.equals("accepted")
                 && Boolean.FALSE.equals(executor.lightOn), "light.off");
         require(StatusLight.formatColor(StatusLight.parseColor("255,160,0")).equals("255,160,0")
-                && "Amber".equals(StatusLight.nameOf(0xFFA000)) && StatusLight.nameOf(0x123456) == null,
+                && "Orange".equals(StatusLight.nameOf(0xFFA500)) && StatusLight.nameOf(0x123456) == null,
                 "colours round-trip and the named ones are found");
         require((StatusLight.argb(new StatusLight.State(true, 0xFF0000, 100)) >>> 24) == 255
                 && (StatusLight.argb(new StatusLight.State(true, 0xFF0000, 50)) >>> 24) == 128,

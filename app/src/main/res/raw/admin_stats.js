@@ -98,6 +98,11 @@ if(!local){return false;}
 var same=el.type==='checkbox'?((value===true||value==='1'||value==='true')===(local.value==='1')):String(value)===String(local.value);
 if(same){delete window.muralisLocal[el.dataset.setting];return false;}
 return local.at>requestedAt||Date.now()-local.at<20000;}
+// A radio group: the one with the panel's value is checked, unless a pick here is on its way.
+function followRadios(name,value){var el=value==null?null:document.querySelector('input[name="'+name+'"][value="'+value+'"]');
+if(!el||el.checked||el.disabled||localWins(el,value)){return;}
+var group=el.closest?el.closest('.radios'):null;if(group&&group.dataset.pending){return;}
+el.checked=true;}
 function follow(id,value){var el=document.getElementById(id);
 if(!el||el.disabled||el.dataset.pending||value==null||localWins(el,value)){return;}
 var typing=el.tagName==='INPUT'&&el.type!=='checkbox'&&document.activeElement===el;
@@ -178,7 +183,7 @@ if(pollSentAt>fleetJoinAt){fleetJoinPaint(cfg.fleet_join);}
 var dn=document.getElementById('display-off-note');
 if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_warning?disp.off_method_reason:'';dn.hidden=!disp.off_method_warning;}
 var ss=data.ambient||{};
-follow('ambient-mode',ss.mode);
+followRadios('opt-ambient_mode',ss.mode);
 // The screensaver page has no chooser: its shell carries the mode for admin_setting.js.
 var sp=document.getElementById('ambient-page');
 if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}
