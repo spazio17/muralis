@@ -3397,7 +3397,8 @@ public final class KioskActivity extends Activity {
             // Its own page, the dashboard's fourth answer: how it looks is set there.
             String pageOf = instance.id;
             Button options = textButtonOnward(theme, "Clock options");
-            options.setOnClickListener(view -> showClockOptionsPage(pageOf));
+            options.setOnClickListener(view -> showClockOptionsPage(pageOf,
+                    () -> showIntegrationsPage(null)));
             card.addView(buttonRow(options), matchWrap());
         }
         LinearLayout.LayoutParams answerParams = matchWrap();
@@ -8477,41 +8478,97 @@ public final class KioskActivity extends Activity {
             {"242,242,242", "20,20,20", "247,147,26"},
             {"247,147,26", "224,67,0", "0,90,255", "0,200,0"}};
 
+    /** The Clock options group that is open; one at a time, kept across a redraw. */
+    private String clockOpenGroup = "";
+    /** Where Clock options leaves to: the settings, or the Integrations page it came from. */
+    private Runnable clockBack;
+
     /**
-     * Clock options: how the Bitcoin clock's page looks, with a live preview of the page itself
-     * on top (Emmet's sketch, decided 2026-10-26). A look to start from, the background, the
-     * text and accent colours, the digit font, the size and place of the row, the date strip,
-     * the screens with their order, the time each stays and the flash; Save stores them all.
+     * Clock options: how the Bitcoin clock's page looks, laid out as page editors are (Juri's
+     * decisions of 2026-10-26 on Emmet's sketch): the live preview always in view, on the right
+     * from 840 dp and pinned on top below that, and the options in one column of groups, one
+     * open at a time, each closed group saying its value. Save is pinned under the groups;
+     * leaving with changes not saved asks first.
      */
     private void showClockOptionsPage(String instanceId) {
-        showClockOptionsPage(instanceId, KioskConfig.clockOptionsOf(this, instanceId));
+        showClockOptionsPage(instanceId, this::showSettings);
     }
 
-    private void showClockOptionsPage(String instanceId, BitcoinClock.Options draft) {
-        currentScreen = () -> showClockOptionsPage(instanceId);
-        LinearLayout page = subPage("Clock options", this::showSettings);
+    /**
+     * Opens Clock options with every group closed, so each one's value line shows; {@code back}
+     * is where leaving goes.
+     */
+    private void showClockOptionsPage(String instanceId, Runnable back) {
+        BitcoinClock.Options stored = KioskConfig.clockOptionsOf(this, instanceId);
+        clockOpenGroup = "";
+        clockBack = back;
+        showClockOptionsPage(instanceId, stored, stored.toJson());
+    }
+
+    private void showClockOptionsPage(String instanceId, BitcoinClock.Options draft,
+            String baseline) {
+        currentScreen = () -> showClockOptionsPage(instanceId, draft, baseline);
+        Runnable leaveTo = clockBack == null ? this::showSettings : clockBack;
+        // The seconds box, read on leaving too: a value typed but not usable is not in the
+        // draft, and leaving must still ask before it is lost.
+        EditText[] secondsBox = new EditText[1];
+        Runnable leave = () -> {
+            boolean typed = secondsBox[0] != null && !secondsBox[0].getText().toString().trim()
+                    .equals(String.valueOf(draft.seconds));
+            if (draft.toJson().equals(baseline) && !typed) {
+                leaveTo.run();
+                return;
+            }
+            hideKeyboardIfShown();
+            showConfirm("Discard your changes?", "The changes you made will not be kept.",
+                    "Discard", true, leaveTo,
+                    () -> showClockOptionsPage(instanceId, draft, baseline));
+        };
+        LinearLayout page = subPage("Clock options", leave);
         KioskTheme theme = currentTheme();
-        String baseline = KioskConfig.clockOptionsOf(this, instanceId).toJson();
-        Runnable preview = () -> {
+        boolean wide = widthClass() == 2;
+        Runnable redraw = () -> redrawInPlace(
+                () -> showClockOptionsPage(instanceId, draft, baseline));
+
+        // The groups' value lines and the "Not saved" mark follow every change.
+        java.util.Map<String, TextView> values = new java.util.LinkedHashMap<>();
+        TextView notSaved = new FlushText(this);
+        notSaved.setText("Not saved");
+        notSaved.setTextColor(theme.subtext);
+        notSaved.setTextSize(14);
+        Runnable changed = () -> {
             if (clockPreview != null) {
                 clockPreview.evaluateJavascript("window.clockPreview&&window.clockPreview("
                         + "{options:" + draft.toJson() + "})", null);
             }
+            for (java.util.Map.Entry<String, TextView> line : values.entrySet()) {
+                line.getValue().setText(clockGroupValue(line.getKey(), draft));
+            }
+            notSaved.setVisibility(draft.toJson().equals(baseline) ? View.INVISIBLE
+                    : View.VISIBLE);
         };
-        // Drawn again from the draft, for a change that moves other controls (a look sets the
-        // colours, a screen moves).
-        Runnable redraw = () -> redrawInPlace(() -> showClockOptionsPage(instanceId, draft));
 
-        // The preview: the page itself, the panel's own shape, stepping through the screens.
-        LinearLayout previewCard = card(theme, "Preview");
+        // The preview: the page itself in the panel's own shape, fitted into its place.
         android.util.DisplayMetrics screen = getResources().getDisplayMetrics();
         float shape = (float) screen.heightPixels / Math.max(1, screen.widthPixels);
+        int narrowCap = Math.round(screen.heightPixels * (contentWidthDp() >= 600 ? 0.3f : 0.22f));
         FrameLayout box = new FrameLayout(this) {
             @Override
             protected void onMeasure(int widthSpec, int heightSpec) {
                 int width = MeasureSpec.getSize(widthSpec);
-                super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(
-                        Math.min(Math.round(width * shape), dp(280)), MeasureSpec.EXACTLY));
+                int room = MeasureSpec.getMode(heightSpec) == MeasureSpec.UNSPECIFIED
+                        ? narrowCap : MeasureSpec.getSize(heightSpec);
+                if (!wide) {
+                    // A band across the whole width: the clock is a row, and the panel's own
+                    // tall shape in a fifth of a phone left a strip too thin to judge it.
+                    super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+                            MeasureSpec.makeMeasureSpec(narrowCap, MeasureSpec.EXACTLY));
+                    return;
+                }
+                int height = Math.min(Math.round(width * shape), room);
+                int fitted = Math.min(width, Math.round(height / shape));
+                super.onMeasure(MeasureSpec.makeMeasureSpec(fitted, MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
             }
         };
         if (clockPreview != null) {
@@ -8522,8 +8579,8 @@ public final class KioskActivity extends Activity {
         box.addView(clockPreview, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         // The draft once the page is up, so unsaved changes survive a redraw.
-        clockPreview.postDelayed(preview, 600);
-        previewCard.addView(box, matchWrapClose());
+        clockPreview.postDelayed(changed, 600);
+        clockPreview.postDelayed(changed, 1500);
         ImageButton back = iconButton(theme, R.drawable.ic_chevron_left, "Previous screen");
         back.setOnClickListener(view -> clockPreview.evaluateJavascript(
                 "window.clockPreview({step:-1})", null));
@@ -8537,52 +8594,127 @@ public final class KioskActivity extends Activity {
         steps.setGravity(Gravity.CENTER_VERTICAL);
         steps.addView(back);
         steps.addView(forward);
-        LinearLayout.LayoutParams flashParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        flashParams.leftMargin = dp(8);
-        steps.addView(flash, flashParams);
-        previewCard.addView(steps, matchWrapClose());
-
-        // The look: a start for the colours, which stay changeable one by one.
-        LinearLayout lookCard = card(theme, "Look");
-        String[] lookWords = new String[BitcoinClock.LOOK_WORDS.length];
-        int lookIndex = 0;
-        for (int index = 0; index < lookWords.length; index++) {
-            lookWords[index] = BitcoinClock.LOOK_WORDS[index][1];
-            if (BitcoinClock.LOOK_WORDS[index][0].equals(draft.look)) {
-                lookIndex = index;
-            }
+        steps.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        steps.addView(flash);
+        LinearLayout previewPane = new LinearLayout(this);
+        previewPane.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams boxParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, wide ? 1f : 0f);
+        if (!wide) {
+            boxParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
         }
-        lookCard.addView(segmentedChoice(theme, lookWords, lookIndex, index -> {
-            BitcoinClock.Options next = BitcoinClock.withLook(draft,
-                    BitcoinClock.LOOK_WORDS[index][0]);
-            redrawInPlace(() -> showClockOptionsPage(instanceId, next));
+        previewPane.addView(box, boxParams);
+        previewPane.addView(steps, matchWrapClose());
+
+        // The groups, one open at a time.
+        LinearLayout groups = new LinearLayout(this);
+        groups.setOrientation(LinearLayout.VERTICAL);
+        java.util.Map<String, View> bodies = new java.util.LinkedHashMap<>();
+        java.util.Map<String, ImageView> chevrons = new java.util.HashMap<>();
+        java.util.function.BiConsumer<String[], LinearLayout> group = (names, body) -> {
+            String key = names[0];
+            LinearLayout head = new LinearLayout(this);
+            head.setGravity(Gravity.CENTER_VERTICAL);
+            head.setMinimumHeight(dp(64));
+            head.setPadding(dp(4), dp(8), dp(4), dp(8));
+            LinearLayout words = new LinearLayout(this);
+            words.setOrientation(LinearLayout.VERTICAL);
+            TextView title = new FlushText(this);
+            title.setText(names[1]);
+            title.setTextColor(theme.text);
+            title.setTextSize(16);
+            TextView value = new FlushText(this);
+            value.setTextColor(theme.subtext);
+            value.setTextSize(14);
+            values.put(key, value);
+            words.addView(title);
+            words.addView(value);
+            head.addView(words, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            ImageView chevron = new ImageView(this);
+            chevron.setImageResource(R.drawable.ic_expand_more);
+            chevron.setColorFilter(theme.subtext);
+            chevrons.put(key, chevron);
+            head.addView(chevron, new LinearLayout.LayoutParams(dp(24), dp(24)));
+            head.setContentDescription(names[1]);
+            head.setOnClickListener(view -> {
+                clockOpenGroup = key.equals(clockOpenGroup) ? "" : key;
+                for (java.util.Map.Entry<String, View> each : bodies.entrySet()) {
+                    boolean open = each.getKey().equals(clockOpenGroup);
+                    each.getValue().setVisibility(open ? View.VISIBLE : View.GONE);
+                    chevrons.get(each.getKey()).setRotation(open ? 180f : 0f);
+                }
+            });
+            body.setPadding(dp(4), 0, dp(4), dp(16));
+            boolean open = key.equals(clockOpenGroup);
+            body.setVisibility(open ? View.VISIBLE : View.GONE);
+            chevron.setRotation(open ? 180f : 0f);
+            bodies.put(key, body);
+            if (groups.getChildCount() > 0) {
+                View rule = new View(this);
+                rule.setBackgroundColor(theme.border);
+                groups.addView(rule, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            }
+            groups.addView(head, matchWrapClose());
+            groups.addView(body, matchWrapClose());
+        };
+
+        // Look: a start for the colours, then the colours themselves.
+        LinearLayout look = new LinearLayout(this);
+        look.setOrientation(LinearLayout.VERTICAL);
+        look.addView(clockSegments(theme, BitcoinClock.LOOK_WORDS, draft.look, key -> {
+            BitcoinClock.Options next = BitcoinClock.withLook(draft, key);
+            redrawInPlace(() -> showClockOptionsPage(instanceId, next, baseline));
         }), matchWrapClose());
-        addClockColour(lookCard, theme, "Background", CLOCK_SWATCHES[0], draft.background,
-                rgb -> {
-                    draft.background = rgb;
-                    preview.run();
-                });
-        addClockColour(lookCard, theme, "Text", CLOCK_SWATCHES[1], draft.text, rgb -> {
+        addClockColour(look, theme, "Background", CLOCK_SWATCHES[0], draft.background, rgb -> {
+            draft.background = rgb;
+            changed.run();
+        });
+        addClockColour(look, theme, "Text", CLOCK_SWATCHES[1], draft.text, rgb -> {
             draft.text = rgb;
-            preview.run();
+            changed.run();
         });
-        addClockColour(lookCard, theme, "Accent", CLOCK_SWATCHES[2], draft.accent, rgb -> {
+        addClockColour(look, theme, "Accent", CLOCK_SWATCHES[2], draft.accent, rgb -> {
             draft.accent = rgb;
-            preview.run();
+            changed.run();
         });
-        lookCard.addView(fieldCaption(theme, "Digits"), matchWrapClose());
-        lookCard.addView(clockSegments(theme, BitcoinClock.FONT_WORDS, draft.font, key -> {
+        group.accept(new String[] {"look", "Look"}, look);
+
+        LinearLayout digits = new LinearLayout(this);
+        digits.setOrientation(LinearLayout.VERTICAL);
+        digits.addView(clockSegments(theme, BitcoinClock.FONT_WORDS, draft.font, key -> {
             draft.font = key;
-            preview.run();
+            changed.run();
         }), matchWrapClose());
+        group.accept(new String[] {"digits", "Digits"}, digits);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.addView(fieldCaption(theme, "Size"), matchWrapClose());
+        layout.addView(clockSegments(theme, BitcoinClock.SIZE_WORDS, draft.size, key -> {
+            draft.size = key;
+            changed.run();
+        }), matchWrapClose());
+        layout.addView(fieldCaption(theme, "Position"), matchWrapClose());
+        layout.addView(clockSegments(theme, BitcoinClock.POSITION_WORDS, draft.position, key -> {
+            draft.position = key;
+            changed.run();
+        }), matchWrapClose());
+        layout.addView(fieldCaption(theme, "Date and time"), matchWrapClose());
+        layout.addView(clockSegments(theme, BitcoinClock.STRIP_WORDS, draft.strip, key -> {
+            draft.strip = key;
+            changed.run();
+        }), matchWrapClose());
+        group.accept(new String[] {"layout", "Layout"}, layout);
 
         // A picture behind the clock: one of the uploads, darkened.
-        LinearLayout pictureCard = card(theme, "Background picture");
+        LinearLayout picture = new LinearLayout(this);
+        picture.setOrientation(LinearLayout.VERTICAL);
         RadioGroup pictures = new RadioGroup(this);
         radioChoice(theme, pictures, "None", "");
         checkRadioIfChanged(pictures, draft.picture);
-        pictureCard.addView(pictures, matchWrapClose());
+        picture.addView(pictures, matchWrapClose());
         PictureLibrary library = PictureLibrary.get(this);
         library.run(() -> {
             PictureBrowser.Page uploads = library.uploads(0, 200);
@@ -8598,19 +8730,19 @@ public final class KioskActivity extends Activity {
                     TextView none = new FlushText(this);
                     none.setTextColor(theme.subtext);
                     none.setTextSize(13);
-                    none.setText("Upload pictures in the web admin, under Ambient.");
-                    pictureCard.addView(none, 1, matchWrapClose());
+                    none.setText("No pictures uploaded yet.");
+                    picture.addView(none, 1, matchWrapClose());
                 }
             });
         });
-        pictures.setOnCheckedChangeListener((group, checkedId) -> {
-            View checked = group.findViewById(checkedId);
+        pictures.setOnCheckedChangeListener((radios, checkedId) -> {
+            View checked = radios.findViewById(checkedId);
             if (checked != null) {
                 draft.picture = (String) checked.getTag();
-                preview.run();
+                changed.run();
             }
         });
-        pictureCard.addView(fieldCaption(theme, "Dimming"), matchWrapClose());
+        picture.addView(fieldCaption(theme, "Dimming"), matchWrapClose());
         SeekBar dim = new SeekBar(this);
         dim.setMax(BitcoinClock.MAX_DIM);
         dim.setProgress(draft.dim);
@@ -8623,7 +8755,7 @@ public final class KioskActivity extends Activity {
             @Override
             public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                 draft.dim = progress;
-                preview.run();
+                changed.run();
             }
 
             @Override
@@ -8634,29 +8766,13 @@ public final class KioskActivity extends Activity {
             public void onStopTrackingTouch(SeekBar bar) {
             }
         });
-        pictureCard.addView(dim, matchWrapClose());
+        picture.addView(dim, matchWrapClose());
+        group.accept(new String[] {"picture", "Background picture"}, picture);
 
-        // Where the row sits and how big, and the date strip: steps, the same on every screen.
-        LinearLayout layoutCard = card(theme, "Layout");
-        layoutCard.addView(fieldCaption(theme, "Size"), matchWrapClose());
-        layoutCard.addView(clockSegments(theme, BitcoinClock.SIZE_WORDS, draft.size, key -> {
-            draft.size = key;
-            preview.run();
-        }), matchWrapClose());
-        layoutCard.addView(fieldCaption(theme, "Position"), matchWrapClose());
-        layoutCard.addView(clockSegments(theme, BitcoinClock.POSITION_WORDS, draft.position,
-                key -> {
-                    draft.position = key;
-                    preview.run();
-                }), matchWrapClose());
-        layoutCard.addView(fieldCaption(theme, "Date and time"), matchWrapClose());
-        layoutCard.addView(clockSegments(theme, BitcoinClock.STRIP_WORDS, draft.strip, key -> {
-            draft.strip = key;
-            preview.run();
-        }), matchWrapClose());
-
-        // The screens in their order, each on or off, moved with the arrows.
-        LinearLayout screensCard = card(theme, "Screens");
+        // The screens in their order, each on or off, moved with the arrows; a tap on a name
+        // shows that screen in the preview.
+        LinearLayout screensBody = new LinearLayout(this);
+        screensBody.setOrientation(LinearLayout.VERTICAL);
         for (int index = 0; index < draft.screens.size(); index++) {
             BitcoinClock.Screen one = draft.screens.get(index);
             int at = index;
@@ -8664,7 +8780,7 @@ public final class KioskActivity extends Activity {
             on.setContentDescription(BitcoinClock.screenName(one.key));
             on.setOnCheckedChangeListener((button, checked) -> {
                 draft.screens.set(at, new BitcoinClock.Screen(one.key, checked));
-                preview.run();
+                changed.run();
             });
             ImageButton up = iconButton(theme, R.drawable.ic_arrow_up,
                     "Move " + BitcoinClock.screenName(one.key) + " up");
@@ -8689,6 +8805,10 @@ public final class KioskActivity extends Activity {
             name.setText(BitcoinClock.screenName(one.key));
             name.setTextColor(theme.text);
             name.setTextSize(16);
+            name.setMinHeight(dp(48));
+            name.setGravity(Gravity.CENTER_VERTICAL);
+            name.setOnClickListener(view -> clockPreview.evaluateJavascript(
+                    "window.clockPreview({show:'" + one.key + "'})", null));
             row.addView(up);
             row.addView(down);
             LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0,
@@ -8696,17 +8816,44 @@ public final class KioskActivity extends Activity {
             nameParams.leftMargin = dp(8);
             row.addView(name, nameParams);
             row.addView(on);
-            screensCard.addView(row, matchWrapClose());
+            screensBody.addView(row, matchWrapClose());
         }
+        group.accept(new String[] {"screens", "Screens"}, screensBody);
+
+        LinearLayout timing = new LinearLayout(this);
+        timing.setOrientation(LinearLayout.VERTICAL);
         EditText seconds = themedInput(theme, String.valueOf(draft.seconds), false);
         seconds.setInputType(InputType.TYPE_CLASS_NUMBER);
-        addField(screensCard, theme, "Time per screen (seconds)", seconds);
+        secondsBox[0] = seconds;
+        seconds.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable text) {
+                String typed = text.toString().trim();
+                if (typed.matches("\\d{1,4}")) {
+                    int value = Integer.parseInt(typed);
+                    if (value >= BitcoinClock.MIN_SECONDS && value <= BitcoinClock.MAX_SECONDS) {
+                        draft.seconds = value;
+                        changed.run();
+                    }
+                }
+            }
+        });
+        addField(timing, theme, "Time per screen (seconds)", seconds);
         CompoundButton flashOn = themedSwitch(theme, "Flash on a new block", draft.flash);
         flashOn.setOnCheckedChangeListener((button, checked) -> {
             draft.flash = checked;
-            preview.run();
+            changed.run();
         });
-        screensCard.addView(flashOn, matchWrapClose());
+        timing.addView(flashOn, matchWrapClose());
+        group.accept(new String[] {"time", "Time and flash"}, timing);
 
         Button save = primaryButton(theme, "Save");
         save.setOnClickListener(view -> {
@@ -8726,16 +8873,96 @@ public final class KioskActivity extends Activity {
                 return;
             }
             hideKeyboard(seconds);
-            KioskConfig.storeClockOptions(this, instanceId, BitcoinClock.apply(draft, form));
+            BitcoinClock.Options next = BitcoinClock.apply(draft, form);
+            KioskConfig.storeClockOptions(this, instanceId, next);
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
-            redrawInPlace(() -> showClockOptionsPage(instanceId));
+            redrawInPlace(() -> showClockOptionsPage(instanceId, next, next.toJson()));
         });
+        LinearLayout saveRow = new LinearLayout(this);
+        saveRow.setGravity(Gravity.CENTER_VERTICAL);
+        saveRow.setPadding(0, dp(8), 0, 0);
+        saveRow.addView(save);
+        LinearLayout.LayoutParams notSavedParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        notSavedParams.leftMargin = dp(16);
+        saveRow.addView(notSaved, notSavedParams);
 
-        page.addView(previewCard, matchWrap());
-        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(lookCard, layoutCard,
-                pictureCard, screensCard)), matchWrap());
-        page.addView(buttonRow(save), matchWrap());
-        setContentView(scrollPage(theme, page));
+        // The options column: the groups scroll on their own, Save stays under them.
+        PageScroll groupsScroll = new PageScroll(this);
+        groupsScroll.addView(groups, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        keepFocusedFieldAboveKeyboard(groupsScroll);
+        LinearLayout options = new LinearLayout(this);
+        options.setOrientation(LinearLayout.VERTICAL);
+        options.addView(groupsScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        options.addView(saveRow, matchWrap());
+
+        LinearLayout body = new LinearLayout(this);
+        if (wide) {
+            // Options at the left, the preview at the right, as the WordPress Customizer.
+            body.setOrientation(LinearLayout.HORIZONTAL);
+            body.addView(options, new LinearLayout.LayoutParams(dp(380),
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+            LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            previewParams.leftMargin = dp(24);
+            body.addView(previewPane, previewParams);
+        } else {
+            body.setOrientation(LinearLayout.VERTICAL);
+            body.addView(previewPane, matchWrap());
+            LinearLayout.LayoutParams optionsParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+            optionsParams.topMargin = dp(8);
+            body.addView(options, optionsParams);
+        }
+        page.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0,
+                1f));
+        page.setPadding(page.getPaddingLeft(), page.getPaddingTop(), page.getPaddingRight(),
+                dp(16));
+        setContentView(page);
+        changed.run();
+    }
+
+    /** What a closed group of Clock options says on its line. */
+    private static String clockGroupValue(String key, BitcoinClock.Options options) {
+        switch (key) {
+            case "look": {
+                BitcoinClock.Options look = BitcoinClock.withLook(options, options.look);
+                boolean own = look == null || !look.background.equals(options.background)
+                        || !look.text.equals(options.text) || !look.accent.equals(options.accent);
+                return wordOf(BitcoinClock.LOOK_WORDS, options.look)
+                        + (own ? " · own colours" : "");
+            }
+            case "digits":
+                return wordOf(BitcoinClock.FONT_WORDS, options.font);
+            case "layout":
+                return wordOf(BitcoinClock.SIZE_WORDS, options.size) + " · "
+                        + wordOf(BitcoinClock.POSITION_WORDS, options.position).toLowerCase()
+                        + " · " + ("off".equals(options.strip) ? "no date" : "date at the "
+                        + wordOf(BitcoinClock.STRIP_WORDS, options.strip).toLowerCase());
+            case "picture":
+                return options.picture.isEmpty() ? "None" : "A picture, " + options.dim
+                        + "% dimmed";
+            case "screens": {
+                int on = 0;
+                for (BitcoinClock.Screen screen : options.screens) {
+                    on += screen.on ? 1 : 0;
+                }
+                return on + " of " + options.screens.size() + " on";
+            }
+            default:
+                return options.seconds + " s · flash " + (options.flash ? "on" : "off");
+        }
+    }
+
+    private static String wordOf(String[][] table, String key) {
+        for (String[] row : table) {
+            if (row[0].equals(key)) {
+                return row[1];
+            }
+        }
+        return key;
     }
 
     /** One of the clock's colours: its swatches, then a box for any r,g,b. */
@@ -8788,9 +9015,19 @@ public final class KioskActivity extends Activity {
         card.addView(row, matchWrapClose());
     }
 
-    /** A segmented choice over one of BitcoinClock's tables, telling the key picked. */
-    private LinearLayout clockSegments(KioskTheme theme, String[][] table, String chosen,
+    /**
+     * A segmented choice over one of BitcoinClock's tables, telling the key picked; it draws its
+     * own new choice at once, so a pick shows without the page being drawn again.
+     */
+    private View clockSegments(KioskTheme theme, String[][] table, String chosen,
             java.util.function.Consumer<String> onPick) {
+        FrameLayout holder = new FrameLayout(this);
+        paintClockSegments(holder, theme, table, chosen, onPick);
+        return holder;
+    }
+
+    private void paintClockSegments(FrameLayout holder, KioskTheme theme, String[][] table,
+            String chosen, java.util.function.Consumer<String> onPick) {
         String[] words = new String[table.length];
         int at = 0;
         for (int index = 0; index < table.length; index++) {
@@ -8799,7 +9036,12 @@ public final class KioskActivity extends Activity {
                 at = index;
             }
         }
-        return segmentedChoice(theme, words, at, index -> onPick.accept(table[index][0]));
+        holder.removeAllViews();
+        holder.addView(segmentedChoice(theme, words, at, index -> {
+            paintClockSegments(holder, theme, table, table[index][0], onPick);
+            onPick.accept(table[index][0]);
+        }), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     /** The sensor the wide Sensors page shows at the right; see showSensorsPage. */

@@ -4726,10 +4726,12 @@ final class HttpAdminServer {
             {"247,147,26", "224,67,0", "0,90,255", "0,200,0"}};
 
     /**
-     * Clock options, as on the panel: the page itself as a live preview, then the look, the
-     * colours, the digits, the picture, the layout and the screens, one Save. admin_clock.js
-     * shows each change in the preview at once and keeps the screens' order; without it the
-     * form still saves, the order as it was.
+     * Clock options, as on the panel and laid out as page editors are (decided 2026-10-26): the
+     * options in one column of groups at the left, one open at a time, each closed group saying
+     * its value, Save pinned under them; the live preview at the right, kept in view, and pinned
+     * on top on a narrow screen. admin_clock.js shows each change in the preview at once, keeps
+     * the screens' order and the groups' value lines, and asks before leaving unsaved changes;
+     * without it the form still saves, the order as it was.
      */
     private String buildClockOptionsPage(String id, String notice) {
         StringBuilder html = new StringBuilder(pageStart("Clock options", null,
@@ -4742,23 +4744,26 @@ final class HttpAdminServer {
         if (notice != null) {
             html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
         }
+        html.append("<div class=\"clock-editor\">");
         // The preview in the panel's own shape, read from its screen.
         android.util.DisplayMetrics screen = context.getResources().getDisplayMetrics();
-        html.append("<section class=\"card\"><h2>Preview</h2><div class=\"clock-preview\""
-                + " style=\"aspect-ratio:").append(screen.widthPixels).append('/')
-                .append(screen.heightPixels).append("\"><iframe id=\"clock-frame\" src=\"/clock/page?id=")
-                .append(urlEncode(id)).append("\" title=\"Preview\"></iframe></div>"
-                        + "<div class=\"actions\">"
+        html.append("<div class=\"clock-stage\"><div class=\"clock-preview\" style=\"aspect-ratio:")
+                .append(screen.widthPixels).append('/').append(screen.heightPixels)
+                .append(";--ar:").append(String.format(java.util.Locale.ROOT, "%.4f",
+                        (float) screen.widthPixels / Math.max(1, screen.heightPixels)))
+                .append("\"><iframe id=\"clock-frame\" src=\"/clock/page?id=").append(urlEncode(id))
+                .append("\" title=\"Preview\"></iframe></div><div class=\"actions\">"
                         + "<button type=\"button\" class=\"ib\" data-clock-step=\"-1\" title=\"Previous"
                         + " screen\" aria-label=\"Previous screen\">" + glyph("prev") + "</button>"
                         + "<button type=\"button\" class=\"ib\" data-clock-step=\"1\" title=\"Next"
                         + " screen\" aria-label=\"Next screen\">" + glyph("next") + "</button>"
                         + "<button type=\"button\" class=\"tonal\" id=\"clock-flash\">Show a new"
-                        + " block</button></div></section>");
-        html.append("<form method=\"post\" action=\"/clock-options\" id=\"clock-form\">")
+                        + " block</button></div></div>");
+        html.append("<form method=\"post\" action=\"/clock-options\" id=\"clock-form\""
+                + " class=\"clock-options\">")
                 .append(hidden("id", id)).append(hidden("baseline", options.toJson()))
-                .append("<div class=\"cards\">");
-        // Look and colours.
+                .append("<div class=\"clock-groups\">");
+        // Look, with its colours.
         StringBuilder looks = new StringBuilder();
         for (String[] look : BitcoinClock.LOOK_WORDS) {
             BitcoinClock.Options colours = BitcoinClock.withLook(options, look[0]);
@@ -4769,67 +4774,75 @@ final class HttpAdminServer {
                     .append("\"").append(look[0].equals(options.look) ? " checked" : "")
                     .append('>').append(escapeHtml(look[1])).append("</label>");
         }
-        html.append("<section class=\"card\"><h2>Look</h2><div class=\"segradios\" role=\"radiogroup\""
-                + " aria-label=\"Look\">").append(looks).append("</div>")
-                .append(clockColour("background", "Background", CLOCK_SWATCHES[0], options.background))
-                .append(clockColour("text", "Text", CLOCK_SWATCHES[1], options.text))
-                .append(clockColour("accent", "Accent", CLOCK_SWATCHES[2], options.accent))
-                .append("<p class=\"label\">Digits</p>")
-                .append(clockRadios("font", "Digits", BitcoinClock.FONT_WORDS, options.font))
-                .append("</section>");
-        // Layout.
-        html.append("<section class=\"card\"><h2>Layout</h2><p class=\"label\">Size</p>")
-                .append(clockRadios("size", "Size", BitcoinClock.SIZE_WORDS, options.size))
-                .append("<p class=\"label\">Position</p>")
-                .append(clockRadios("position", "Position", BitcoinClock.POSITION_WORDS,
-                        options.position))
-                .append("<p class=\"label\">Date and time</p>")
-                .append(clockRadios("strip", "Date and time", BitcoinClock.STRIP_WORDS,
-                        options.strip))
-                .append("</section>");
+        html.append(clockGroup("look", "Look", "<div class=\"segradios\""
+                + " role=\"radiogroup\" aria-label=\"Look\">" + looks + "</div>"
+                + clockColour("background", "Background", CLOCK_SWATCHES[0], options.background)
+                + clockColour("text", "Text", CLOCK_SWATCHES[1], options.text)
+                + clockColour("accent", "Accent", CLOCK_SWATCHES[2], options.accent)));
+        html.append(clockGroup("digits", "Digits",
+                clockRadios("font", "Digits", BitcoinClock.FONT_WORDS, options.font)));
+        html.append(clockGroup("layout", "Layout", "<p class=\"label\">Size</p>"
+                + clockRadios("size", "Size", BitcoinClock.SIZE_WORDS, options.size)
+                + "<p class=\"label\">Position</p>"
+                + clockRadios("position", "Position", BitcoinClock.POSITION_WORDS,
+                        options.position)
+                + "<p class=\"label\">Date and time</p>"
+                + clockRadios("strip", "Date and time", BitcoinClock.STRIP_WORDS, options.strip)));
         // A picture behind the clock: one of the uploads, darkened.
         StringBuilder pictures = new StringBuilder(selectOption("", "None", options.picture));
         PictureBrowser.Page uploads = PictureLibrary.get(context).uploads(0, 200);
         for (PictureBrowser.Entry entry : uploads.entries) {
             pictures.append(selectOption(entry.uri, entry.name, options.picture));
         }
-        html.append("<section class=\"card\"><h2>Background picture</h2>")
-                .append(selectField("clock-picture", "picture", "Picture", null,
-                        pictures.toString(), uploads.entries.isEmpty()
-                                ? "Upload pictures under Ambient first." : null))
-                .append("<label class=\"range\">Dimming <input type=\"range\" name=\"dim\" min=\"0\""
-                        + " max=\"").append(BitcoinClock.MAX_DIM).append("\" value=\"")
-                .append(options.dim).append("\"></label></section>");
-        // The screens, in order, each on or off; the arrows move them (admin_clock.js).
+        html.append(clockGroup("picture", "Background picture",
+                selectField("clock-picture", "picture", "Picture", null, pictures.toString(),
+                        uploads.entries.isEmpty() ? "No pictures uploaded yet." : null)
+                        + "<label class=\"range\">Dimming <input type=\"range\" name=\"dim\""
+                        + " min=\"0\" max=\"" + BitcoinClock.MAX_DIM + "\" value=\"" + options.dim
+                        + "\"></label>"));
+        // The screens, in order, each on or off; the arrows move them, a name shows it.
         StringBuilder rows = new StringBuilder();
         StringBuilder order = new StringBuilder();
         for (BitcoinClock.Screen one : options.screens) {
-            String name = BitcoinClock.screenName(one.key);
+            String name = escapeHtml(BitcoinClock.screenName(one.key));
             order.append(order.length() == 0 ? "" : ",").append(one.key);
             rows.append("<li data-key=\"").append(one.key).append("\">")
                     .append("<button type=\"button\" class=\"ib\" data-move=\"-1\" title=\"Move ")
-                    .append(escapeHtml(name)).append(" up\" aria-label=\"Move ").append(escapeHtml(name))
-                    .append(" up\">").append(glyph("arrow_up")).append("</button>")
+                    .append(name).append(" up\" aria-label=\"Move ").append(name).append(" up\">")
+                    .append(glyph("arrow_up")).append("</button>")
                     .append("<button type=\"button\" class=\"ib\" data-move=\"1\" title=\"Move ")
-                    .append(escapeHtml(name)).append(" down\" aria-label=\"Move ")
-                    .append(escapeHtml(name)).append(" down\">").append(glyph("arrow_down"))
-                    .append("</button><span class=\"text\"><span class=\"h\">").append(escapeHtml(name))
-                    .append("</span></span><input type=\"checkbox\" class=\"sw\" name=\"on_")
-                    .append(one.key).append("\" value=\"1\" aria-label=\"").append(escapeHtml(name))
-                    .append('"').append(one.on ? " checked" : "").append("></li>");
+                    .append(name).append(" down\" aria-label=\"Move ").append(name)
+                    .append(" down\">").append(glyph("arrow_down")).append("</button>")
+                    .append("<button type=\"button\" class=\"text\" data-show=\"").append(one.key)
+                    .append("\">").append(name).append("</button>")
+                    .append("<input type=\"checkbox\" class=\"sw\" name=\"on_").append(one.key)
+                    .append("\" value=\"1\" aria-label=\"").append(name).append('"')
+                    .append(one.on ? " checked" : "").append("></li>");
         }
-        html.append("<section class=\"card\"><h2>Screens</h2><ul class=\"list clock-screens\">")
-                .append(rows).append("</ul>").append(hidden("screens", order.toString()))
-                .append(field("number", "seconds", "Time per screen (seconds)",
-                        String.valueOf(options.seconds)))
-                .append("<div class=\"switches\">")
-                .append(switchRow("clock-flash-on", "Flash on a new block",
-                        " name=\"flash\" value=\"1\"", options.flash))
-                .append("</div></section></div>")
-                .append("<input type=\"hidden\" name=\"flash_sent\" value=\"1\">")
-                .append("<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
-                        + "</button></div></form>");
+        html.append(clockGroup("screens", "Screens", "<ul class=\"list clock-screens\">"
+                + rows + "</ul>" + hidden("screens", order.toString())));
+        html.append(clockGroup("time", "Time and flash",
+                field("number", "seconds", "Time per screen (seconds)",
+                        String.valueOf(options.seconds))
+                        + "<div class=\"switches\">"
+                        + switchRow("clock-flash-on", "Flash on a new block",
+                                " name=\"flash\" value=\"1\"", options.flash)
+                        + "</div><input type=\"hidden\" name=\"flash_sent\" value=\"1\">"));
+        html.append("</div><div class=\"clock-save\"><button class=\"primary\" type=\"submit\">Save"
+                + "</button><span class=\"hint\" id=\"clock-unsaved\" hidden>Not saved</span></div>"
+                + "</form></div>");
         return html.append(clockScript).append(pageEnd()).toString();
+    }
+
+    /**
+     * One group of Clock options: a line with its name and value that opens it, one open at a
+     * time and all closed at first, so every value line shows (admin_clock.js closes the others
+     * and writes the value line).
+     */
+    private static String clockGroup(String key, String title, String body) {
+        return "<details class=\"clock-group\" data-group=\"" + key + "\"><summary><span class=\"text\"><span class=\"h\">" + escapeHtml(title)
+                + "</span><span class=\"s\" data-value=\"" + key + "\"></span></span>"
+                + glyph("down") + "</summary><div class=\"clock-body\">" + body + "</div></details>";
     }
 
     /** One colour of the clock: its swatches, which fill the box, and the r,g,b box. */
