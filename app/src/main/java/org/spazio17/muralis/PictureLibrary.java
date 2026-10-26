@@ -135,9 +135,9 @@ final class PictureLibrary {
             // Not an error and not an empty playlist: no playlist has been chosen, which is
             // the state a fresh panel and a panel whose active playlist was just deleted are
             // both in, and which Ambient must be able to say rather than going black.
-            return "No playlist is in use." + (issue == null ? "" : " " + issue);
+            return "No album is in use." + (issue == null ? "" : " " + issue);
         }
-        return (count < 0 ? "Reading the playlist"
+        return (count < 0 ? "Reading the album"
                 : count + (count == 1 ? " picture" : " pictures"))
                 + " from " + active.name + "."
                 + (issue == null ? "" : " " + issue);
@@ -273,7 +273,7 @@ final class PictureLibrary {
             }
         } catch (IOException | OutOfMemoryError | RuntimeException failed) {
             if (forSlideshow) {
-                unreadable = "A selected picture cannot be read. Check its storage or remove it from the playlist.";
+                unreadable = "A selected picture cannot be read. Check its storage or remove it from the album.";
             }
             Log.w(TAG, "Cannot decode " + picture.url + ": " + failed.getMessage());
             return null;
@@ -327,25 +327,8 @@ final class PictureLibrary {
      * error: the row's name still says what the picture is. Worker thread only.
      */
     File thumbnail(String uri) {
-        if (uri == null || !(isUpload(uri) || PictureBrowser.isMedia(uri))) {
+        if (!servable(uri)) {
             return null;
-        }
-        // A thumbnail made while the permission was there is not served once it is gone: the
-        // held list now shows without it, and a cached copy was still the picture (review,
-        // 2026-10-05).
-        if (PictureBrowser.isMedia(uri) && !browser.readsEveryPicture()) {
-            // Under the partial grant only a photo somebody picked: a cached copy of one they did
-            // not pick was still served (review, 2026-10-05).
-            if (!browser.canReadStorage()) {
-                return null;
-            }
-            try {
-                if (browser.mediaLabel(uri) == null) {
-                    return null;
-                }
-            } catch (PictureBrowser.Unavailable notNow) {
-                return null;
-            }
         }
         File dir = new File(app.getCacheDir(), "thumbs");
         File target = new File(dir, sha1(uri) + ".jpg");
@@ -387,6 +370,58 @@ final class PictureLibrary {
         }
     }
 
+    /**
+     * Whether a picture may be shown to a browser: an upload, or one of the panel's own the
+     * panel may read now. A thumbnail made while the permission was there is not served once it
+     * is gone (review, 2026-10-05), and under the partial grant only a photo somebody picked.
+     */
+    boolean servable(String uri) {
+        if (uri == null || !(isUpload(uri) || PictureBrowser.isMedia(uri))) {
+            return false;
+        }
+        if (isUpload(uri)) {
+            String path = Uri.parse(uri).getPath();
+            return path != null && new File(path).isFile();
+        }
+        if (PictureBrowser.isMedia(uri) && !browser.readsEveryPicture()) {
+            if (!browser.canReadStorage()) {
+                return false;
+            }
+            try {
+                return browser.mediaLabel(uri) != null;
+            } catch (PictureBrowser.Unavailable notNow) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * What uses a picture, in words, for its page and its delete question on both surfaces:
+     * Ambient through the album it plays, and a Bitcoin clock whose background it is.
+     */
+    java.util.List<String> usersOf(String uri, PlaylistDocument document) {
+        java.util.List<String> users = new java.util.ArrayList<>();
+        PlaylistDocument.Playlist active = document.active();
+        if (active != null && active.items.contains(uri)) {
+            users.add("Ambient, through " + active.name);
+        }
+        for (Integrations.Instance clock : BitcoinClockPage.pageInstances(app)) {
+            if (uri.equals(KioskConfig.clockOptionsOf(app, clock.id).picture)) {
+                users.add(clock.name);
+            }
+        }
+        return users;
+    }
+
+    /** How saveLocal says a picture was stored but did not reach its album; the reason follows. */
+    static final String STORED_NOT_ADDED = "stored in the Gallery, but not added to the album: ";
+
+    /** A picture scaled to fit {@code maxPx} for its page in the Gallery; null when not servable. */
+    Bitmap preview(String uri, int maxPx) {
+        return servable(uri) ? decode(new Picture(uri, "", ""), maxPx, maxPx, false) : null;
+    }
+
     /** The thumbnail of a picture that is gone, so a deleted upload's name cannot be reused for it. */
     private void forgetThumbnail(String uri) {
         File thumb = new File(new File(app.getCacheDir(), "thumbs"), sha1(uri) + ".jpg");
@@ -408,7 +443,7 @@ final class PictureLibrary {
 
     /** What both surfaces say where the panel's own pictures may not be read; uploads still work. */
     static final String OWN_PICTURES_NEED_PERMISSION = "This panel may not read its own pictures "
-            + "yet, so only uploaded pictures can go in a playlist.";
+            + "yet, so only uploaded pictures can go in an album.";
 
     /**
      * Whether this panel browses its own storage.
@@ -549,8 +584,8 @@ final class PictureLibrary {
             return null;
         }
         return count == 1
-                ? "One picture was removed from the playlist because its file is gone."
-                : count + " pictures were removed from the playlist because their files are gone.";
+                ? "One picture was removed from the album because its file is gone."
+                : count + " pictures were removed from the album because their files are gone.";
     }
 
     /**
@@ -810,13 +845,16 @@ final class PictureLibrary {
             if (!partial.renameTo(target)) {
                 throw new IOException("cannot store the picture");
             }
-            ensurePlaylist();
-            // Into the playlist whose page the upload came from; only a caller that names none
-            // gets the one in use. The page's uploads used to land in whichever was playing.
-            String selection = selectPicture(playlistId == null || playlistId.isEmpty()
-                    ? null : playlistId, Uri.fromFile(target).toString(), true);
             forgetLocalCount();
-            return selection == null ? null : "stored, but not selected: " + selection;
+            // Into the album whose page the upload came from; from the Gallery itself into
+            // no album, since the Gallery keeps the pictures and the albums pick from it
+            // (2026-10-26).
+            if (playlistId == null || playlistId.isEmpty()) {
+                return null;
+            }
+            String selection = selectPicture(playlistId, Uri.fromFile(target).toString(), true);
+            return selection == null ? null : STORED_NOT_ADDED
+                    + selection.replaceAll("\\.$", "").toLowerCase(java.util.Locale.ROOT);
         } catch (IOException | RuntimeException failed) {
             if (partial.exists() && !partial.delete()) {
                 Log.w(TAG, "Could not remove a partial upload: " + partial.getName());
@@ -1020,7 +1058,18 @@ final class PictureLibrary {
 
     /** How many pictures the upload store holds, the number beside its row in Folders. */
     int uploadCount() {
-        return uploadEntries().size();
+        // Counted by name, not measured: this is read for every settings page and Gallery line,
+        // and measuring each file's header and size was the cost of the whole folder listing.
+        File[] files = storeDir().listFiles();
+        int count = 0;
+        for (File file : files == null ? new File[0] : files) {
+            // The store also keeps its own small JSON files (captions, credits, names).
+            if (file.isFile() && !file.getName().endsWith(".part")
+                    && !file.getName().endsWith(".json")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private List<PictureBrowser.Entry> uploadEntries() {
@@ -1286,7 +1335,7 @@ final class PictureLibrary {
         PlaylistDocument.Playlist active = playlistId == null
                 ? document.active() : document.byId(playlistId);
         if (active == null && playlistId != null) {
-            return "That playlist is gone.";
+            return "That album is gone.";
         }
         if (active == null) {
             if (!selected) {

@@ -184,6 +184,7 @@ var dn=document.getElementById('display-off-note');
 if(dn&&disp.off_method_reason!=null){dn.textContent=disp.off_method_warning?disp.off_method_reason:'';dn.hidden=!disp.off_method_warning;}
 var ss=data.ambient||{};
 followRadios('opt-ambient_mode',ss.mode);
+follow('ambient-album',ss.album==null?'':ss.album);
 // The screensaver page has no chooser: its shell carries the mode for admin_setting.js.
 var sp=document.getElementById('ambient-page');
 if(sp&&ss.mode!=null){sp.dataset.mode=ss.mode;}

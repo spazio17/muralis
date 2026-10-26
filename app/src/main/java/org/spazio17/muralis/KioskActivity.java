@@ -5218,6 +5218,8 @@ public final class KioskActivity extends Activity {
                         screensaverSummary(), screensaverCard),
                 new Section(GROUP_SHOWS, R.drawable.ic_cameras, "Cameras",
                         camerasSummary(), camerasCard),
+                new Section(GROUP_SHOWS, R.drawable.ic_folder, "Gallery",
+                        HttpAdminServer.gallerySummary(this), galleryCard()),
                 new Section(GROUP_SCREEN, R.drawable.ic_display, "Display", displaySummary(),
                         displayCard),
                 new Section(GROUP_SCREEN, R.drawable.ic_sensor_audio, "Sound",
@@ -8730,7 +8732,7 @@ public final class KioskActivity extends Activity {
                     TextView none = new FlushText(this);
                     none.setTextColor(theme.subtext);
                     none.setTextSize(13);
-                    none.setText("No pictures uploaded yet.");
+                    none.setText("No pictures added yet: add them in the web admin, under Gallery.");
                     picture.addView(none, 1, matchWrapClose());
                 }
             });
@@ -12572,7 +12574,7 @@ public final class KioskActivity extends Activity {
         optionsTitle.setTextColor(theme.text);
         optionsTitle.setTextSize(18);
         optionsCard.addView(optionsTitle);
-        LinearLayout playlistCard = card(theme, "Playlists");
+        LinearLayout playlistCard = card(theme, "Album");
         boolean wide = widthClass() == 2;
         ScreensaverControls controls =
                 addScreensaverControls(null, optionsCard, playlistCard, theme, true);
@@ -12691,6 +12693,8 @@ public final class KioskActivity extends Activity {
         CompoundButton onePerCycleBox;
         CompoundButton creditBox;
         RadioGroup cornerInput;
+        /** Ambient's album, one radio each, followed like the other controls. */
+        RadioGroup albumInput;
 
         ScreensaverControls(KioskTheme theme, RadioGroup modeInput, EditText idleInput,
                 EditText offInput, EditText urlInput, EditText dimInput, RadioGroup onWakeInput,
@@ -12778,6 +12782,25 @@ public final class KioskActivity extends Activity {
         }
 
         void sync() {
+            if (albumInput != null) {
+                // The album Ambient plays, read off the main thread; a change from the web or
+                // the smart home moves the radio.
+                RadioGroup albums = albumInput;
+                PictureLibrary library = PictureLibrary.get(KioskActivity.this);
+                library.run(() -> {
+                    PlaylistDocument.Playlist playing = library.playlists().load().active();
+                    String name = playing == null ? "" : playing.name;
+                    library.onMain(() -> {
+                        boolean was = syncingLiveControls;
+                        syncingLiveControls = true;
+                        try {
+                            checkRadioIfChanged(albums, name);
+                        } finally {
+                            syncingLiveControls = was;
+                        }
+                    });
+                });
+            }
             ScreensaverPolicy.Settings settings = KioskConfig.screensaverOf(KioskActivity.this);
             boolean wasSyncing = syncingLiveControls;
             syncingLiveControls = true;
@@ -13025,7 +13048,7 @@ public final class KioskActivity extends Activity {
         // In the Playlist panel, not in this one, since 2026-09-11. On a card of its own they are
         // one subject rather than a list buried between the source and the time per picture.
         (playlistCard == null ? group : playlistCard).addView(playlists, matchWrapClose());
-        addPlaylistRows(playlists, theme);
+        controls.albumInput = addAlbumPick(playlists, theme);
 
         EditText pictureSeconds = themedInput(theme, String.valueOf(settings.pictureSeconds), false);
         pictureSeconds.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -13181,7 +13204,7 @@ public final class KioskActivity extends Activity {
             TextView none = new FlushText(this);
             none.setTextColor(theme.subtext);
             none.setTextSize(12);
-            none.setText("No playlists yet.");
+            none.setText("No albums yet.");
             group.addView(none, matchWrapClose());
         }
         for (int index = 0; index < all.size(); index++) {
@@ -13211,7 +13234,7 @@ public final class KioskActivity extends Activity {
         EditText newName = proseInput(theme, "");
         newName.setFilters(new android.text.InputFilter[] {
                 new android.text.InputFilter.LengthFilter(PlaylistDocument.MAX_NAME_LENGTH)});
-        addField(fieldColumn, theme, "New playlist name", newName);
+        addField(fieldColumn, theme, "New album name", newName);
         maker.addView(fieldColumn, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         TextView problem = new FlushText(this);
@@ -13242,42 +13265,248 @@ public final class KioskActivity extends Activity {
     }
 
 
-    /**
-     * One playlist as a row of the Ambient page's left menu, the Sensors page's shape
-     * (2026-10-04): Ambient's glyph, the name over its count, "in use" in green,
-     * and the Use radio at the end where a sensor has its switch, the control that switches
-     * which playlist plays (2026-09-23: Use is not a button, tap the circle). Edit and
-     * Delete left the row: a tap on it opens the playlist's own page, which has Delete as
-     * every editor does.
-     */
+    /** One album as a row of the Gallery: its name over its count, and whether Ambient plays it. */
     private LinearLayout playlistRow(KioskTheme theme, PlaylistDocument.Playlist playlist) {
-        RadioButton use = new RadioButton(this);
-        use.setChecked(playlist.active);
-        use.setButtonTintList(selectionTint(theme));
-        use.setContentDescription("Use " + playlist.name);
-        use.setMinWidth(dp(48));
-        use.setMinimumWidth(dp(48));
-        use.setOnClickListener(view -> {
-            if (playlist.active) {
-                return;
-            }
-            changePlaylists(document -> {
-                document.activate(playlist.id);
-                return null;
-            });
-        });
+        // Which album Ambient plays is picked in Ambient; the Gallery's row says it.
         int pictures = playlist.items.size();
         String countText = pictures + (pictures == 1 ? " picture" : " pictures");
         LinearLayout row = glyphRow(theme, R.drawable.ic_screensaver, playlist.name,
-                countText + (playlist.active ? " · in use" : ""), use, null, false, false);
+                countText + (playlist.active ? " · Ambient plays it" : ""), null, null, false,
+                widthClass() != 2);
         if (playlist.active) {
             TextView count = (TextView) row.getChildAt(1).getTag();
-            SpannableString styled = new SpannableString(countText + " · in use");
+            SpannableString styled = new SpannableString(countText + " · Ambient plays it");
             styled.setSpan(new android.text.style.ForegroundColorSpan(theme.ok),
                     countText.length() + 3, styled.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             count.setText(styled);
         }
         return row;
+    }
+
+    /**
+     * Ambient's album: one radio each and No album, stored the moment one is picked; the albums
+     * themselves are made and filled in the Gallery (2026-10-26).
+     */
+    private RadioGroup addAlbumPick(LinearLayout group, KioskTheme theme) {
+        group.removeAllViews();
+        PlaylistDocument document = PictureLibrary.get(this).playlists().load();
+        RadioGroup albums = new RadioGroup(this);
+        radioChoice(theme, albums, "No album", "");
+        for (PlaylistDocument.Playlist album : document.all()) {
+            radioChoice(theme, albums, album.name, album.name);
+        }
+        PlaylistDocument.Playlist playing = document.active();
+        checkRadioIfChanged(albums, playing == null ? "" : playing.name);
+        albums.setOnCheckedChangeListener((radios, checkedId) -> {
+            View checked = radios.findViewById(checkedId);
+            KioskService service = KioskService.liveService();
+            if (checked == null || service == null || syncingLiveControls) {
+                return;
+            }
+            String refused = service.setScreensaverPlaylist((String) checked.getTag());
+            if (refused != null) {
+                Toast.makeText(this, "Not changed: " + refused + ".", Toast.LENGTH_LONG).show();
+            }
+        });
+        group.addView(albums, matchWrapClose());
+        Button gallery = textButtonOnward(theme, "Edit in Gallery");
+        gallery.setOnClickListener(view -> showGalleryPage());
+        group.addView(buttonRow(gallery), matchWrap());
+        return albums;
+    }
+
+    /** The Gallery section: the albums, each opening its page, then the Gallery itself. */
+    private LinearLayout galleryCard() {
+        KioskTheme theme = currentTheme();
+        LinearLayout card = sectionBody(theme);
+        List<PlaylistDocument.Playlist> albums = PictureLibrary.get(this).playlists().load().all();
+        if (albums.isEmpty()) {
+            card.addView(paneNote(theme, "No albums yet.", false), matchWrapClose());
+        }
+        for (int index = 0; index < albums.size(); index++) {
+            PlaylistDocument.Playlist album = albums.get(index);
+            LinearLayout row = playlistRow(theme, album);
+            row.setOnClickListener(view -> editPlaylist(album));
+            addListRow(card, theme, row, index == 0);
+        }
+        Button open = textButtonOnward(theme, "Open Gallery");
+        open.setOnClickListener(view -> showGalleryPage());
+        card.addView(buttonRow(open), matchWrap());
+        return card;
+    }
+
+    /**
+     * The Gallery (2026-10-26): the albums, made, opened and filled here, and the pictures, the
+     * uploads and this panel's own folders, each opening its page. Pictures are added from a
+     * computer, in the web admin.
+     */
+    private void showGalleryPage() {
+        currentScreen = this::showGalleryPage;
+        LinearLayout page = subPage("Gallery", this::showSettings);
+        KioskTheme theme = currentTheme();
+        LinearLayout albums = card(theme, "Albums");
+        // Rows of their own, since the list is drawn again in place and the card keeps its title.
+        LinearLayout albumRows = new LinearLayout(this);
+        albumRows.setOrientation(LinearLayout.VERTICAL);
+        albums.addView(albumRows, matchWrapClose());
+        addPlaylistRows(albumRows, theme);
+        LinearLayout pictures = card(theme, "Pictures");
+        LinearLayout open = glyphRow(theme, R.drawable.ic_folder, "Browse pictures",
+                PictureLibrary.get(this).uploadCount() + " added here",
+                null, () -> {
+                    PlaylistDraft draft = new PlaylistDraft();
+                    draft.gallery = true;
+                    showPlaylistPage(draft);
+                }, false);
+        addListRow(pictures, theme, open, true);
+        addListRow(pictures, theme, glyphRow(theme, R.drawable.ic_upload, "Add pictures",
+                "In the web admin", null, null, true), false);
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(albums, pictures)),
+                matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /**
+     * One picture's page in the Gallery: the picture, its name for the credit and whether the
+     * credit shows, the albums it is in and one to add it to, what uses it, and Delete for an
+     * upload, whose question names what uses it; the web admin's picture page, the same.
+     */
+    private void showPicturePage(String uri, Runnable back) {
+        currentScreen = () -> showPicturePage(uri, back);
+        PictureLibrary library = PictureLibrary.get(this);
+        String label = library.displayPath(uri);
+        LinearLayout page = subPage(label.substring(label.lastIndexOf('/') + 1), back);
+        KioskTheme theme = currentTheme();
+        LinearLayout pictureCard = card(theme, null);
+        ImageView picture = new ImageView(this);
+        picture.setAdjustViewBounds(true);
+        picture.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        pictureCard.addView(picture, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(320)));
+        library.run(() -> {
+            android.graphics.Bitmap large = library.preview(uri, 1280);
+            library.onMain(() -> {
+                if (large != null && picture.isAttachedToWindow()) {
+                    picture.setImageBitmap(large);
+                }
+            });
+        });
+
+        LinearLayout about = card(theme, "Credit");
+        EditText caption = proseInput(theme, library.captions().getOrDefault(uri, ""));
+        caption.setFilters(new android.text.InputFilter[] {
+                new android.text.InputFilter.LengthFilter(200)});
+        caption.setHint(PictureSources.creditFromLabel(label));
+        addField(about, theme, "Name for the credit", caption);
+        boolean off = library.hiddenCredits().contains(uri);
+        Button saveCaption = primaryButton(theme, "Save");
+        saveCaption.setOnClickListener(view -> {
+            hideKeyboard(caption);
+            saveCredit(uri, caption.getText().toString().trim(), () -> { });
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+        });
+        about.addView(buttonRow(saveCaption), matchWrap());
+        // The web page's words: the credit hidden or shown for this picture alone.
+        Button credit = textButton(theme, off ? "Show its credit" : "Hide its credit");
+        credit.setOnClickListener(view -> library.run(() -> {
+            String refusal = library.setCreditHidden(uri, !off);
+            library.onMain(() -> afterPictureChange(refusal));
+        }));
+        about.addView(buttonRow(credit), matchWrap());
+
+        PlaylistDocument document = library.playlists().load();
+        LinearLayout inAlbums = card(theme, "In albums");
+        RadioGroup others = new RadioGroup(this);
+        boolean any = false;
+        for (PlaylistDocument.Playlist album : document.all()) {
+            if (album.items.contains(uri)) {
+                any = true;
+                ImageButton out = iconButton(theme, R.drawable.ic_remove_circle,
+                        "Take it out of " + album.name);
+                out.setOnClickListener(view -> library.run(() -> {
+                    String refusal = library.selectPicture(album.id, uri, false);
+                    library.onMain(() -> afterPictureChange(refusal));
+                }));
+                addListRow(inAlbums, theme, glyphRow(theme, R.drawable.ic_screensaver,
+                        album.name, null, out, null, false, false), inAlbums.getChildCount() <= 1);
+            } else {
+                radioChoice(theme, others, album.name, album.id);
+            }
+        }
+        if (!any) {
+            inAlbums.addView(paneNote(theme, "In no album.", false), matchWrapClose());
+        }
+        if (others.getChildCount() > 0) {
+            inAlbums.addView(fieldCaption(theme, "Add to album"), matchWrapClose());
+            inAlbums.addView(others, matchWrapClose());
+            Button add = tonalButton(theme, "Add to album");
+            add.setOnClickListener(view -> {
+                View checked = others.findViewById(others.getCheckedRadioButtonId());
+                if (checked == null) {
+                    Toast.makeText(this, "Pick an album first.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                String album = (String) checked.getTag();
+                library.run(() -> {
+                    String refusal = library.selectPicture(album, uri, true);
+                    library.onMain(() -> afterPictureChange(refusal));
+                });
+            });
+            inAlbums.addView(buttonRow(add), matchWrap());
+        }
+
+        java.util.List<String> users = library.usersOf(uri, document);
+        LinearLayout usedBy = card(theme, "Used by");
+        if (users.isEmpty()) {
+            usedBy.addView(paneNote(theme, "Nothing.", false), matchWrapClose());
+        }
+        for (String user : users) {
+            TextView line = new FlushText(this);
+            line.setText(user);
+            line.setTextColor(theme.text);
+            line.setTextSize(16);
+            line.setMinHeight(dp(40));
+            usedBy.addView(line, matchWrapClose());
+        }
+        if (library.isUpload(uri)) {
+            Button delete = dangerOutlinedButton(theme, "Delete");
+            delete.setOnClickListener(view -> confirmDelete(
+                    label.substring(label.lastIndexOf('/') + 1),
+                    (users.isEmpty() ? "" : "It is used by " + String.join(", ", users) + ". ")
+                            + "It leaves every album that holds it.",
+                    () -> library.run(() -> {
+                        String refusal = library.deleteLocal(uri);
+                        library.onMain(() -> {
+                            KioskService.publishTelemetrySoon(this);
+                            if (refusal != null) {
+                                Toast.makeText(this, PictureLibrary.capitalise(refusal),
+                                        Toast.LENGTH_LONG).show();
+                            }
+                            back.run();
+                        });
+                    }), () -> showPicturePage(uri, back)));
+            usedBy.addView(buttonRow(delete), matchWrap());
+        } else {
+            usedBy.addView(paneNote(theme, "This panel's own picture: it is never deleted here.",
+                    false), matchWrapClose());
+        }
+        page.addView(cardGrid(theme, java.util.Arrays.<View>asList(pictureCard, about,
+                inAlbums, usedBy)), matchWrap());
+        setContentView(scrollPage(theme, page));
+    }
+
+    /** After a change on a picture's page: the refusal said, the page drawn again. */
+    private void afterPictureChange(String refusal) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        if (refusal != null) {
+            Toast.makeText(this, PictureLibrary.capitalise(refusal), Toast.LENGTH_LONG).show();
+        }
+        KioskService.publishTelemetrySoon(this);
+        if (currentScreen != null) {
+            redrawInPlace(currentScreen);
+        }
     }
 
     /** Opens a playlist's own page, its name and its pictures, with a draft of it. */
@@ -13397,10 +13626,10 @@ public final class KioskActivity extends Activity {
     private void confirmDeletePlaylist(PlaylistDocument.Playlist playlist, Runnable back) {
         confirmDelete(playlist.name,
                 playlist.active
-                        ? "It is in use: Ambient will have no playlist. The pictures stay."
+                        ? "It is in use: Ambient will have no album. The pictures stay."
                         : "The pictures stay.",
                 () -> {
-                    showScreensaverSettings();
+                    showGalleryPage();
                     changePlaylists(document -> {
                         document.delete(playlist.id);
                         return null;
@@ -13533,6 +13762,8 @@ public final class KioskActivity extends Activity {
         /** How many pictures Content shows at once; the same four choices as the web page. */
         int pageSize = PictureBrowser.DEFAULT_PAGE_SIZE;
         boolean edited;
+        /** The Gallery's own browser, which edits no album: a picture opens its page. */
+        boolean gallery;
     }
 
     private PlaylistDraft playlistDraft;
@@ -13643,7 +13874,7 @@ public final class KioskActivity extends Activity {
             this.theme = theme;
             folders = new Pane(theme, "Folders");
             pictures = new Pane(theme, "Content");
-            selected = new Pane(theme, "In this playlist");
+            selected = new Pane(theme, "In this album");
         }
 
         /**
@@ -13688,11 +13919,25 @@ public final class KioskActivity extends Activity {
         LinearLayout page = pageColumn(theme);
         PlaylistPage screen = new PlaylistPage(draft, theme);
         playlistPage = screen;
-        page.addView(playlistHeading(screen), matchWrap());
+        page.addView(draft.gallery ? pageHeading(theme, "Pictures", null, this::showGalleryPage)
+                : playlistHeading(screen), matchWrap());
         // The view button in the Content card's head: the view in force, and the next one on a
         // tap (list, details, small thumbnails, big thumbnails), one preference for the panel
         // and the web page (2026-09-23).
         paintViewButton(screen);
+        if (draft.gallery) {
+            // The Gallery's pictures: folders and content, a picture opening its own page.
+            // Pictures are added from a computer, in the web admin.
+            page.addView(cardGrid(theme, java.util.Arrays.<View>asList(
+                    screen.folders.card, screen.pictures.card)), matchWrap());
+            setContentView(scrollPage(theme, page));
+            currentScreen = () -> showPlaylistPage(draft);
+            screen.folders.body.addView(paneNote(theme, "Add pictures in the web admin.", false),
+                    matchWrapClose());
+            loadFolderPane(screen);
+            loadPicturePane(screen);
+            return;
+        }
         // Two lanes where there is room, one under the other on a phone: the same rule and the
         // same 720 dp boundary as every other pair of cards in this app. The grid deals the cards
         // round-robin, so Folders and In this playlist share the left lane and Content has the
@@ -13722,7 +13967,7 @@ public final class KioskActivity extends Activity {
                         }
                         if (stored == null) {
                             showNotice("Not done", "\"" + draft.name + "\" is already gone.",
-                                    this::showScreensaverSettings);
+                                    this::showGalleryPage);
                             return;
                         }
                         confirmDeletePlaylist(stored, () -> showPlaylistPage(draft));
@@ -13758,10 +14003,10 @@ public final class KioskActivity extends Activity {
         LinearLayout heading = new LinearLayout(this);
         heading.setOrientation(LinearLayout.VERTICAL);
 
-        TextView title = titleText(theme, draft.name.isEmpty() ? "New playlist" : draft.name);
+        TextView title = titleText(theme, draft.name.isEmpty() ? "New album" : draft.name);
         // The pencil as an icon button against the title, the way the web page draws it; the
         // arrow at the left is the way back and asks about unsaved changes like Cancel does.
-        ImageButton pencil = iconButton(theme, R.drawable.ic_pencil, "Rename this playlist");
+        ImageButton pencil = iconButton(theme, R.drawable.ic_pencil, "Rename this album");
         LinearLayout shown = pageHeading(theme, title,
                 draft.id == null ? "Name it, then pick its pictures"
                         : "Change which pictures it shows", pencil,
@@ -13778,7 +14023,7 @@ public final class KioskActivity extends Activity {
         nameColumn.setOrientation(LinearLayout.VERTICAL);
         EditText name = proseInput(theme, draft.name);
         name.setTextSize(20);
-        addField(nameColumn, theme, "Playlist name", name);
+        addField(nameColumn, theme, "Album name", name);
         boxRow.addView(nameColumn, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button keep = primaryButton(theme, "Save");
@@ -13831,7 +14076,7 @@ public final class KioskActivity extends Activity {
     /** The open folder's name, the first line of Content, or that none has been tapped. */
     private String openFolderName(PlaylistDraft draft) {
         return draft.folder == null ? "Pictures"
-                : PictureBrowser.UPLOADS.equals(draft.folder) ? "Uploaded to Muralis"
+                : PictureBrowser.UPLOADS.equals(draft.folder) ? "Added here"
                 : draft.folder.isEmpty() ? "Internal storage" : trimSlash(draft.folder);
     }
 
@@ -13901,7 +14146,7 @@ public final class KioskActivity extends Activity {
         seedTree(screen);
         screen.folders.trailing(screen.tree.isEmpty() ? null : collapseAllButton(screen));
         screen.folders.clear();
-        screen.folders.body.addView(folderRow(screen, "Uploaded to Muralis",
+        screen.folders.body.addView(folderRow(screen, "Added here",
                 PictureBrowser.UPLOADS, 0, screen.uploadCount, false, false), matchWrapClose());
         if (screen.tree.isEmpty()) {
             screen.folders.body.addView(paneNote(screen.theme,
@@ -14154,7 +14399,9 @@ public final class KioskActivity extends Activity {
         }
         String view = KioskConfig.pictureViewOf(this);
         boolean tiles = PictureBrowser.VIEW_SMALL.equals(view) || PictureBrowser.VIEW_BIG.equals(view);
-        screen.pictures.body.addView(selectAllRow(screen, listing), matchWrapClose());
+        if (!draft.gallery) {
+            screen.pictures.body.addView(selectAllRow(screen, listing), matchWrapClose());
+        }
         if (tiles) {
             paintTiles(screen, listing, PictureBrowser.VIEW_BIG.equals(view));
         } else {
@@ -14214,8 +14461,11 @@ public final class KioskActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(details ? 72 : 56));
-        CheckBox box = pictureBox(screen, entry);
-        row.addView(box, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        boolean gallery = screen.draft.gallery;
+        CheckBox box = gallery ? null : pictureBox(screen, entry);
+        if (box != null) {
+            row.addView(box, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        }
         if (details) {
             ImageView thumb = thumbnailView(theme, dp(48));
             LinearLayout.LayoutParams thumbParams = new LinearLayout.LayoutParams(dp(48), dp(48));
@@ -14241,8 +14491,15 @@ public final class KioskActivity extends Activity {
         }
         row.addView(texts, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        // The whole row ticks the box: the name is the bigger target and the honest one.
-        row.setOnClickListener(v -> box.toggle());
+        // The whole row ticks the box: the name is the bigger target and the honest one. In the
+        // Gallery it opens the picture's page.
+        row.setOnClickListener(v -> {
+            if (box == null) {
+                showPicturePage(entry.uri, () -> showPlaylistPage(screen.draft));
+            } else {
+                box.toggle();
+            }
+        });
         if (PictureLibrary.get(this).isUpload(entry.uri)) {
             ImageButton bin = iconButton(theme, R.drawable.ic_trash, "Delete the file");
             bin.setOnClickListener(v -> confirmDeleteUpload(screen, entry));
@@ -14257,7 +14514,7 @@ public final class KioskActivity extends Activity {
         CheckBox box = new CheckBox(this);
         box.setChecked(draft.items.contains(entry.uri));
         box.setButtonTintList(selectionTint(screen.theme));
-        box.setContentDescription("In the playlist");
+        box.setContentDescription("In the album");
         box.setOnCheckedChangeListener((button, checked) -> {
             // The box already shows its own new state, and the folder list is unaffected, so
             // a tick repaints one pane: the list of what has been picked.
@@ -14329,19 +14586,21 @@ public final class KioskActivity extends Activity {
         int height = big ? tile * 3 / 4 : tile;
         pic.addView(thumb, new FrameLayout.LayoutParams(tile, height));
         loadThumbnail(thumb, entry.uri);
-        CheckBox box = pictureBox(screen, entry);
-        // A check circle rather than a square, the mark every gallery puts on a picture, white
-        // on a translucent disc so it reads on any photograph.
-        box.setButtonDrawable(R.drawable.check_circle);
-        box.setButtonTintList(new ColorStateList(new int[][] {
-                new int[] {android.R.attr.state_checked}, new int[0]},
-                new int[] {theme.accent, Color.WHITE}));
-        box.setBackground(theme.pill(Color.argb(0x66, 0x1e, 0x1e, 0x2e)));
-        FrameLayout.LayoutParams boxParams = new FrameLayout.LayoutParams(dp(40), dp(40));
-        boxParams.gravity = Gravity.TOP | Gravity.START;
-        boxParams.leftMargin = dp(2);
-        boxParams.topMargin = dp(2);
-        pic.addView(box, boxParams);
+        CheckBox box = screen.draft.gallery ? null : pictureBox(screen, entry);
+        if (box != null) {
+            // A check circle rather than a square, the mark every gallery puts on a picture,
+            // white on a translucent disc so it reads on any photograph.
+            box.setButtonDrawable(R.drawable.check_circle);
+            box.setButtonTintList(new ColorStateList(new int[][] {
+                    new int[] {android.R.attr.state_checked}, new int[0]},
+                    new int[] {theme.accent, Color.WHITE}));
+            box.setBackground(theme.pill(Color.argb(0x66, 0x1e, 0x1e, 0x2e)));
+            FrameLayout.LayoutParams boxParams = new FrameLayout.LayoutParams(dp(40), dp(40));
+            boxParams.gravity = Gravity.TOP | Gravity.START;
+            boxParams.leftMargin = dp(2);
+            boxParams.topMargin = dp(2);
+            pic.addView(box, boxParams);
+        }
         if (PictureLibrary.get(this).isUpload(entry.uri)) {
             ImageButton bin = iconButton(theme, R.drawable.ic_trash, "Delete the file");
             bin.setImageTintList(ColorStateList.valueOf(Color.WHITE));
@@ -14355,7 +14614,13 @@ public final class KioskActivity extends Activity {
             binParams.topMargin = dp(4);
             pic.addView(bin, binParams);
         }
-        pic.setOnClickListener(v -> box.toggle());
+        pic.setOnClickListener(v -> {
+            if (box == null) {
+                showPicturePage(entry.uri, () -> showPlaylistPage(screen.draft));
+            } else {
+                box.toggle();
+            }
+        });
         column.addView(pic, new LinearLayout.LayoutParams(tile, height));
         TextView name = new FlushText(this);
         name.setText(entry.name);
@@ -14457,7 +14722,7 @@ public final class KioskActivity extends Activity {
             }
             screen.draft.edited = true;
             if (screen.draft.items.size() > PlaylistDocument.MAX_PICTURES) {
-                Toast.makeText(this, "A playlist holds at most "
+                Toast.makeText(this, "An album holds at most "
                         + PlaylistDocument.MAX_PICTURES + " pictures.", Toast.LENGTH_LONG).show();
             }
             paintSelectedPane(screen);
@@ -14511,7 +14776,7 @@ public final class KioskActivity extends Activity {
         }
         screen.selectAllWords.setText("Select all"
                 + (screen.listing.available > shown ? " on this page" : "")
-                + " · " + held + " of " + screen.listing.available + " in the playlist");
+                + " · " + held + " of " + screen.listing.available + " in the album");
     }
 
     /** The view button in the Content card's head, redrawn for the view in force. */
@@ -14542,7 +14807,7 @@ public final class KioskActivity extends Activity {
      */
     private void confirmDeleteUpload(PlaylistPage screen, PictureBrowser.Entry entry) {
         PlaylistDraft draft = screen.draft;
-        confirmDelete(entry.name, "It leaves every playlist that holds it.",
+        confirmDelete(entry.name, "It leaves every album that holds it.",
                 () -> {
                     PictureLibrary library = PictureLibrary.get(this);
                     library.run(() -> {
@@ -14662,14 +14927,8 @@ public final class KioskActivity extends Activity {
         screen.selected.body.addView(paneNote(theme, draft.items.size()
                 + (draft.items.size() == 1 ? " picture" : " pictures"), false), matchWrapClose());
         PictureLibrary library = PictureLibrary.get(this);
-        java.util.Map<String, String> captions = library.captions();
-        java.util.Set<String> creditsOff = library.hiddenCredits();
         List<String> unnamed = new ArrayList<>();
         List<String> items = new ArrayList<>(draft.items);
-        // On a phone the credit line goes under the grip and the picture instead of beside them,
-        // so the name box keeps the width its label needs; the web page does the same below
-        // 480 px.
-        boolean narrow = getResources().getConfiguration().screenWidthDp < 480;
         // The rows alone in a column of their own, each with its own rule above it, so a row
         // being dragged carries its rule along and a row's index is its place in the draft.
         LinearLayout list = new LinearLayout(this);
@@ -14733,100 +14992,16 @@ public final class KioskActivity extends Activity {
                 grip.setAccessibilityDelegate(new HeldMoveActions(screen, uri));
             }
 
-            // The credit field, dense, then the eye and the minus beside it on the same line: the
-            // name and the eye belong to the file and are stored at once, only a refusal is said.
+            // The minus beside the name; the credit is set on the picture's own page in the
+            // Gallery, where the name leads (2026-10-26: it belongs to the picture).
             LinearLayout acts = new LinearLayout(this);
             acts.setOrientation(LinearLayout.HORIZONTAL);
             acts.setGravity(Gravity.CENTER_VERTICAL);
-            EditText credit = proseInput(theme, captions.getOrDefault(uri, ""));
-            // The store's own limit, which the web page's box has as maxlength.
-            credit.setFilters(new android.text.InputFilter[] {
-                    new android.text.InputFilter.LengthFilter(200)});
-            credit.setTextSize(14);
-            credit.setMinHeight(dp(40));
-            credit.setMinimumHeight(dp(40));
-            credit.setPadding(dp(12), 0, dp(12), 0);
-            credit.setHint(PictureSources.creditFromLabel(screen.paths.get(uri)));
-            credit.setHintTextColor(theme.subtext & 0x00FFFFFF | 0xB3000000);
-            // Stored when the box lets go of the focus, or on the keyboard's Done, which is the
-            // same thing (2026-09-25: the save tick inside the box went, it was one more
-            // thing to press for what leaving the box already says). Only a change is written.
-            String[] stored = {captions.getOrDefault(uri, "")};
-            onApply(credit, () -> {
-                String typed = credit.getText().toString().trim();
-                if (!typed.equals(stored[0])) {
-                    String before = stored[0];
-                    stored[0] = typed;
-                    // Refused, the box keeps what was typed and the next time it lets go it tries
-                    // again, as the web page's box does.
-                    saveCredit(uri, typed, () -> stored[0] = before);
-                }
-            });
-            FrameLayout field = new FrameLayout(this);
-            FrameLayout.LayoutParams creditParams = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            creditParams.topMargin = dp(8);
-            field.addView(credit, creditParams);
-            TextView label = new FlushText(this);
-            label.setTextColor(theme.subtext);
-            label.setTextSize(12);
-            label.setBackgroundColor(theme.card);
-            label.setPadding(dp(4), 0, dp(4), 0);
-            FrameLayout.LayoutParams labelParams = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            labelParams.leftMargin = dp(8);
-            field.addView(label, labelParams);
-            acts.addView(field, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            ImageButton eye = iconButton(theme, R.drawable.ic_visibility, "Hide the credit");
-            boolean[] off = {creditsOff.contains(uri)};
-            Runnable paintCredit = () -> {
-                if (!saver.credit) {
-                    // Every credit is off in Ambient settings: the eye says so, crossed
-                    // out and inert, and the picture's own choice waits underneath.
-                    eye.setImageResource(R.drawable.ic_visibility_off);
-                    eye.setContentDescription("Credits are off in the Ambient settings");
-                    eye.setTooltipText("Credits are off in the Ambient settings");
-                    eye.setEnabled(false);
-                    eye.setAlpha(0.38f);
-                    label.setText("Name for the credit");
-                    return;
-                }
-                eye.setImageResource(off[0] ? R.drawable.ic_visibility_off
-                        : R.drawable.ic_visibility);
-                String says = off[0] ? "Show the credit" : "Hide the credit";
-                eye.setContentDescription(says);
-                eye.setTooltipText(says);
-                label.setText(off[0] ? "Credit hidden" : "Name for the credit");
-                credit.setEnabled(!off[0]);
-                credit.setTextColor(off[0] ? theme.subtext : theme.text);
-            };
-            paintCredit.run();
-            eye.setOnClickListener(view -> {
-                boolean hide = !off[0];
-                eye.setEnabled(false);
-                hideKeyboard(credit);
-                library.run(() -> {
-                    String refusal = library.setCreditHidden(uri, hide);
-                    library.onMain(() -> {
-                        eye.setEnabled(true);
-                        if (refusal != null) {
-                            if (!isFinishing() && !isDestroyed()) {
-                                Toast.makeText(this, PictureLibrary.capitalise(refusal),
-                                        Toast.LENGTH_LONG).show();
-                            }
-                            return;
-                        }
-                        off[0] = hide;
-                        paintCredit.run();
-                    });
-                });
-            });
-            LinearLayout.LayoutParams eyeParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-            eyeParams.topMargin = dp(4);
-            acts.addView(eye, eyeParams);
+            path.setOnClickListener(view -> showPicturePage(uri, () -> showPlaylistPage(draft)));
+            path.setMinHeight(dp(40));
+            path.setGravity(Gravity.CENTER_VERTICAL);
             ImageButton drop = iconButton(theme, R.drawable.ic_remove_circle,
-                    "Remove from the playlist");
+                    "Remove from the album");
             drop.setOnClickListener(view -> {
                 draft.items.remove(uri);
                 draft.edited = true;
@@ -14839,19 +15014,11 @@ public final class KioskActivity extends Activity {
             LinearLayout.LayoutParams dropParams = new LinearLayout.LayoutParams(dp(48), dp(48));
             dropParams.topMargin = dp(4);
             acts.addView(drop, dropParams);
-            LinearLayout.LayoutParams actsParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            actsParams.topMargin = dp(2);
-            if (narrow) {
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setPadding(0, dp(10), 0, 0);
-                actsParams.bottomMargin = dp(10);
-                entry.addView(acts, actsParams);
-            } else {
-                column.addView(acts, actsParams);
-            }
+            row.setGravity(Gravity.CENTER_VERTICAL);
             row.addView(column, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            row.addView(acts, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             list.addView(entry, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
@@ -15167,10 +15334,10 @@ public final class KioskActivity extends Activity {
         hideKeyboardIfShown();
         if (!draft.edited) {
             playlistDraft = null;
-            showScreensaverSettings();
+            showGalleryPage();
             return;
         }
-        showConfirm("Discard this playlist?",
+        showConfirm("Discard this album?",
                 draft.id == null
                         ? "It has not been saved, so nothing will be kept."
                         : "The changes you made will not be kept.",
@@ -15178,7 +15345,7 @@ public final class KioskActivity extends Activity {
                 true,
                 () -> {
                     playlistDraft = null;
-                    showScreensaverSettings();
+                    showGalleryPage();
                 },
                 () -> showPlaylistPage(draft));
     }
@@ -15237,8 +15404,8 @@ public final class KioskActivity extends Activity {
                 }
                 playlistDraft = null;
                 KioskService.publishTelemetrySoon(this);
-                Toast.makeText(this, "Playlist saved.", Toast.LENGTH_SHORT).show();
-                showScreensaverSettings();
+                Toast.makeText(this, "Album saved.", Toast.LENGTH_SHORT).show();
+                showGalleryPage();
             });
         });
     }

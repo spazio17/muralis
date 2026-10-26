@@ -287,7 +287,7 @@ final class HttpAdminServer {
         listDetailScript = script(R.raw.admin_listdetail);
         themeScript = script(R.raw.admin_theme);
         pictureScript = script(R.raw.admin_pictures);
-        playlistScript = script(R.raw.admin_playlists);
+        playlistScript = script(R.raw.admin_albums);
         menuScript = script(R.raw.admin_menu);
         fleetScript = script(R.raw.admin_fleet);
         speakersScript = script(R.raw.admin_speakers);
@@ -792,7 +792,7 @@ final class HttpAdminServer {
                 byte[] body;
                 try {
                     boolean order = method.equals("POST")
-                            && requestPath.equals("/api/playlists/order");
+                            && requestPath.equals("/api/albums/order");
                     boolean document = method.equals("POST")
                             && (requestPath.equals("/api/automations")
                                     || requestPath.equals("/api/automations/save")
@@ -1172,39 +1172,64 @@ final class HttpAdminServer {
                         refused, FleetView.of(question < 0 ? Collections.emptyMap()
                                 : parseQuery(back.substring(question + 1))))));
             }
+        } else if (path.equals("/gallery") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildGalleryPage(queryValue(query, "said"), queryValue(query, "tab"),
+                            browseTarget(query),
+                            PictureBrowser.pageSize(queryValue(query, "n")))));
+        } else if (path.equals("/picture") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildPicturePage(queryValue(query, "uri"),
+                            queryValue(query, "said"))));
+        } else if (path.equals("/api/pictures/large") && method.equals("GET")) {
+            android.graphics.Bitmap large = PictureLibrary.get(context)
+                    .preview(queryValue(query, "uri"), 1280);
+            if (large == null) {
+                writeResponse(output, 404, "text/plain", bytes("No such picture"));
+            } else {
+                java.io.ByteArrayOutputStream jpeg = new java.io.ByteArrayOutputStream();
+                large.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, jpeg);
+                large.recycle();
+                writeResponse(output, 200, "image/jpeg", jpeg.toByteArray(),
+                        Collections.singletonMap("Cache-Control", "private, max-age=600"));
+            }
+        } else if ((path.equals("/api/gallery/add") || path.equals("/api/gallery/delete"))
+                && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            answerGallerySelection(path.endsWith("/add"), form, query, output);
         } else if (path.equals("/ambient") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildScreensaverPage(null, browseTarget(query))));
-        } else if (path.equals("/playlist") && method.equals("GET")) {
+        } else if (path.equals("/album") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(buildPlaylistPage(null, queryValue(query, "id"), browseTarget(query),
                             PictureBrowser.pageSize(queryValue(query, "n")))));
-        } else if (path.equals("/api/playlists/table") && method.equals("GET")) {
+        } else if (path.equals("/api/albums/table") && method.equals("GET")) {
             // The list of playlists as a fragment, for the Ambient page's script to re-read
             // after Use, Delete or Create without the page reloading under the reader.
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(playlistTable(PictureLibrary.get(context).playlists().load())));
-        } else if (path.equals("/api/playlists/items") && method.equals("GET")) {
+        } else if (path.equals("/api/albums/items") && method.equals("GET")) {
             // What the playlist holds, as a fragment: a tick in the browser changes this list
             // too, and the page must not reload to say so.
             PictureLibrary itemLibrary = PictureLibrary.get(context);
             PlaylistDocument.Playlist edited = itemLibrary.playlists().load()
-                    .byId(queryValue(query, "playlist"));
+                    .byId(queryValue(query, "album"));
             writeResponse(output, 200, "text/html; charset=utf-8",
-                    bytes(edited == null ? "<p class=\"hint bad\">That playlist is gone.</p>"
+                    bytes(edited == null ? "<p class=\"hint bad\">That album is gone.</p>"
                             : playlistItems(edited, itemLibrary)));
         } else if (path.equals("/api/pictures/folders") && method.equals("GET")) {
             // The Folders panel as a fragment: the open mark and the upload count move with every
             // change, and the page must not reload to say so.
             writeResponse(output, 200, "text/html; charset=utf-8",
                     bytes(folderList(browseLocation(browseTarget(query)),
-                            queryValue(query, "playlist"),
+                            queryValue(query, "album"),
                             PictureBrowser.pageSize(queryValue(query, "n")))));
         } else if (path.equals("/api/pictures/content") && method.equals("GET")) {
             // The open folder as a fragment. A GET because it changes nothing, which is also what
             // lets a folder be reached by its address again.
             writeResponse(output, 200, "text/html; charset=utf-8",
-                    bytes(folderContent(browseTarget(query), queryValue(query, "playlist"),
+                    bytes(folderContent(browseTarget(query), queryValue(query, "album"),
                             PictureBrowser.pageSize(queryValue(query, "n")))));
         } else if (path.equals("/api/pictures/thumb") && method.equals("GET")) {
             serveThumbnail(queryValue(query, "uri"), output);
@@ -1241,12 +1266,12 @@ final class HttpAdminServer {
             Boolean selected = KioskCommandDispatcher.parseEnabledFlag(form.get("selected"));
             String refusal = selected == null ? "Supply a boolean selection"
                     : PictureLibrary.get(context).selectPicture(
-                            form.get("playlist"), form.get("uri"), selected);
-            answerPictureChange(query, form, refusal == null ? "Playlist updated."
+                            form.get("album"), form.get("uri"), selected);
+            answerPictureChange(query, form, refusal == null ? "Album updated."
                     : refused("Not changed", refusal), refusal == null, output);
-        } else if (path.startsWith("/api/playlists") && method.equals("POST")) {
+        } else if (path.startsWith("/api/albums") && method.equals("POST")) {
             handlePlaylistChange(path, query, parseFormBody(headers, body), output);
-        } else if (path.equals("/api/playlists") && method.equals("GET")) {
+        } else if (path.equals("/api/albums") && method.equals("GET")) {
             writeResponse(output, 200, "application/json; charset=utf-8",
                     bytes(playlistsJson()));
         } else if (path.equals("/api/command") && method.equals("POST")) {
@@ -1846,6 +1871,11 @@ final class HttpAdminServer {
                         if (problem != null) {
                             return problem;
                         }
+                    } else if (entry.getKey().equals("ambient_album")) {
+                        String problem = kioskService.setScreensaverPlaylist(entry.getValue());
+                        if (problem != null) {
+                            return "Not changed: " + problem + ".";
+                        }
                     } else if (entry.getKey().equals("dashboard_integration")) {
                         String problem = kioskService.setDashboardIntegration(entry.getValue());
                         if (problem != null) {
@@ -2426,6 +2456,8 @@ final class HttpAdminServer {
                 screensaverBody(), "Panel"});
         sections.add(new String[] {"cameras", "cameras", "Cameras",
                 Cameras.summary(KioskConfig.camerasOf(context)), camerasBody(), "Panel"});
+        sections.add(new String[] {"gallery", "folder", "Gallery", gallerySummary(context),
+                galleryBody(), "Panel"});
         sections.add(new String[] {"display", "disp", "Display", displaySummary(), displayBody(),
                 "Screen and sound"});
         sections.add(new String[] {"speaker", "audio", "Sound", speakerSummary(config),
@@ -4796,7 +4828,9 @@ final class HttpAdminServer {
         }
         html.append(clockGroup("picture", "Background picture",
                 selectField("clock-picture", "picture", "Picture", null, pictures.toString(),
-                        uploads.entries.isEmpty() ? "No pictures uploaded yet." : null)
+                        uploads.entries.isEmpty() ? "No pictures added yet." : null)
+                        + "<div class=\"actions\"><a class=\"btn text\" href=\"/gallery?tab=pictures\">"
+                        + "Manage pictures in Gallery" + glyph("next") + "</a></div>"
                         + "<label class=\"range\">Dimming <input type=\"range\" name=\"dim\""
                         + " min=\"0\" max=\"" + BitcoinClock.MAX_DIM + "\" value=\"" + options.dim
                         + "\"></label>"));
@@ -6966,9 +7000,13 @@ final class HttpAdminServer {
             }
             String problem = part.data.length > MAX_PICTURE_BYTES
                     ? "larger than " + (MAX_PICTURE_BYTES / (1024 * 1024)) + " MB"
-                    : library.saveLocal(queryValue(query, "playlist"), part.filename, part.data);
+                    : library.saveLocal(queryValue(query, "album"), part.filename, part.data);
             if (problem == null) {
                 stored++;
+            } else if (problem.startsWith(PictureLibrary.STORED_NOT_ADDED)) {
+                stored++;
+                problems.append(problems.length() > 0 ? " " : "")
+                        .append(part.filename).append(": ").append(problem).append('.');
             } else {
                 problems.append(problems.length() > 0 ? " " : "")
                         .append(part.filename).append(": ").append(problem).append('.');
@@ -7027,34 +7065,191 @@ final class HttpAdminServer {
 
 
     /**
-     * The playlists on the Ambient page: the list and nothing else.
-     *
-     * <p>Shown only for the Pictures mode. A card since 2026-09-23, with the list re-read in place by
-     * {@code admin_playlists.js} and the banner under it speaking only for a refusal: the radio
-     * moving or a row appearing is the whole answer to Use and Create; Delete is on the
-     * playlist's own page.
+     * The album Ambient plays, picked here and stored at once; the albums themselves are made
+     * and filled in the Gallery (2026-10-26). Shown only for the Pictures mode.
      */
     private String pictureLibraryBox() {
         ScreensaverPolicy.Settings saver = KioskConfig.screensaverOf(context);
         boolean shown = ScreensaverPolicy.PICTURES.equals(saver.mode);
-        PictureLibrary library = PictureLibrary.get(context);
-        // The cell around the panel is what leaves for another mode, so the options keep
-        // the right-hand column of the grid whether or not the playlists are shown.
-        StringBuilder html = new StringBuilder("<div")
-                .append(shown ? "" : " class=\"gone\"").append(" id=\"ambient-library\">")
-                .append("<section class=\"card\"><h2>Playlists</h2>");
-        // Without the permission the playlists stay: uploads need none (2026-10-05).
-        if (!library.browsesOwnStorage()) {
-            html.append(ownPicturesHint());
+        PlaylistDocument document = PictureLibrary.get(context).playlists().load();
+        PlaylistDocument.Playlist playing = document.active();
+        String current = playing == null ? "" : playing.name;
+        StringBuilder albums = new StringBuilder(selectOption("", "No album", current));
+        for (PlaylistDocument.Playlist album : document.all()) {
+            albums.append(selectOption(album.name, album.name, current));
         }
-        return html.append("<div id=\"playlist-table\">")
-                .append(playlistTable(library.playlists().load())).append("</div>")
-                .append("<p class=\"banner bad gone\" id=\"playlist-banner\" role=\"status\">")
-                .append("<span></span><button type=\"button\" class=\"dismiss\" ")
-                .append("aria-label=\"Close\">&times;</button></p>")
-                .append("</section></div>").toString();
+        // The cell around the card is what leaves for another mode, so the options keep the
+        // right-hand column of the grid whether or not the album is shown.
+        return "<div" + (shown ? "" : " class=\"gone\"") + " id=\"ambient-library\">"
+                + "<section class=\"card\"><h2>Album</h2>"
+                + selectField("ambient-album", null, "Ambient plays", "ambient_album",
+                        albums.toString(), document.size() == 0 ? "No albums yet." : null)
+                + "<div class=\"actions\"><a class=\"btn text\" href=\"/gallery\">Edit in Gallery"
+                + glyph("next") + "</a></div></section></div>";
     }
 
+
+    /** The Gallery section's line, the same on both surfaces: "24 pictures · 3 albums". */
+    static String gallerySummary(Context context) {
+        PictureLibrary library = PictureLibrary.get(context);
+        int pictures = library.uploadCount();
+        int albums = library.playlists().load().size();
+        return pictures + (pictures == 1 ? " picture · " : " pictures · ") + albums
+                + (albums == 1 ? " album" : " albums");
+    }
+
+    /**
+     * The Gallery section: the albums, each opening its page, then adding pictures and the
+     * Gallery itself.
+     */
+    private String galleryBody() {
+        PlaylistDocument document = PictureLibrary.get(context).playlists().load();
+        StringBuilder rows = new StringBuilder();
+        for (PlaylistDocument.Playlist album : document.all()) {
+            int count = album.items.size();
+            rows.append(linkRow("/album?id=" + urlEncode(album.id), "saver", album.name,
+                    count + (count == 1 ? " picture" : " pictures")
+                            + (album.active ? " · Ambient plays it" : ""), null, glyph("next")));
+        }
+        return (rows.length() == 0 ? "<p class=\"hint\">No albums yet.</p>"
+                : "<ul class=\"list\">" + rows + "</ul>")
+                + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/gallery?tab=pictures\">"
+                + glyph("plus") + "Add pictures</a><a class=\"btn text\" href=\"/gallery\">"
+                + "Open Gallery" + glyph("next") + "</a></div>";
+    }
+
+    /**
+     * The Gallery (2026-10-26): one place for the pictures, apart from what uses them. Two
+     * tabs: Albums, the named lists Ambient and the Bitcoin clock pick from, and Pictures, the
+     * folder browser with Added here (the uploads) and the panel's own folders, where pictures
+     * are added, opened, selected into an album or deleted.
+     */
+    private String buildGalleryPage(String notice, String tab, String at, int size) {
+        boolean pictures = "pictures".equals(tab);
+        PictureLibrary library = PictureLibrary.get(context);
+        StringBuilder html = new StringBuilder(pageStart("Gallery", null, settingsAt("gallery")));
+        if (notice != null && !notice.isEmpty()) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        html.append("<div class=\"segmented\" role=\"group\" aria-label=\"Gallery\">")
+                .append("<a href=\"/gallery\" role=\"button\" aria-pressed=\"").append(!pictures)
+                .append("\">").append(pictures ? "" : glyph("check")).append("Albums</a>")
+                .append("<a href=\"/gallery?tab=pictures\" role=\"button\" aria-pressed=\"")
+                .append(pictures).append("\">").append(pictures ? glyph("check") : "")
+                .append("Pictures</a></div>");
+        if (!pictures) {
+            html.append("<section class=\"card\"><div id=\"album-table\">")
+                    .append(playlistTable(library.playlists().load())).append("</div>")
+                    .append("<p class=\"banner bad gone\" id=\"album-banner\" role=\"status\">")
+                    .append("<span></span><button type=\"button\" class=\"dismiss\" ")
+                    .append("aria-label=\"Close\">&times;</button></p></section>");
+            return html.append(playlistScript).append(pageEnd()).toString();
+        }
+        html.append("<div class=\"two album gallery\">")
+                .append("<section class=\"card\" id=\"album-folders\">")
+                .append("<div class=\"cardhead\"><h2>Folders</h2>")
+                .append("<button type=\"button\" class=\"ib\" id=\"tree-toggle\" title=\"Close every "
+                        + "folder\" aria-label=\"Close every folder\">").append(glyph("unfold_less"))
+                .append("</button></div>")
+                .append("<div id=\"folder-list\">").append(folderList(browseLocation(at), "", size))
+                .append("</div>").append(uploadForm(""))
+                .append("</section>")
+                .append("<section class=\"card\" id=\"album-content\">")
+                .append("<div id=\"folder-content\">").append(folderContent(at, "", size))
+                .append("</div></section></div>");
+        return html.append(pictureScript).append(pageEnd()).toString();
+    }
+
+    /**
+     * One picture's page in the Gallery: the picture, its name for the credit and whether the
+     * credit shows, the albums it is in (and one to add it to), what uses it, and Delete for an
+     * upload, whose question names what uses it. Every form posts and comes back here.
+     */
+    private String buildPicturePage(String uri, String notice) {
+        PictureLibrary library = PictureLibrary.get(context);
+        if (!library.servable(uri)) {
+            return pageStart("Picture", null, "/gallery?tab=pictures")
+                    + "<p class=\"hint bad\">That picture is gone, or this panel may not read it.</p>"
+                    + pageEnd();
+        }
+        String label = library.displayPath(uri);
+        String name = label.substring(label.lastIndexOf('/') + 1);
+        StringBuilder html = new StringBuilder(pageStart(name, null, "/gallery?tab=pictures"));
+        if (notice != null && !notice.isEmpty()) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        PlaylistDocument document = library.playlists().load();
+        java.util.List<String> usedBy = library.usersOf(uri, document);
+        boolean off = library.hiddenCredits().contains(uri);
+        String fallback = PictureSources.creditFromLabel(label);
+        html.append("<div class=\"two picture\"><section class=\"card\">")
+                .append("<img class=\"large\" src=\"/api/pictures/large?uri=").append(urlEncode(uri))
+                .append("\" alt=\"\"></section><section class=\"card\"><h2>Credit</h2>")
+                .append("<form method=\"post\" action=\"/api/pictures/caption\">")
+                .append(hidden("name", uri)).append(hidden("back", uri))
+                .append(fieldWithId("picture-caption", "text", "caption", "Name for the credit",
+                        library.captions().getOrDefault(uri, ""),
+                        " maxlength=\"200\" placeholder=\"" + escapeHtml(fallback.isEmpty() ? " "
+                                : fallback) + "\"", null))
+                .append("<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
+                        + "</button></div></form>")
+                .append("<form method=\"post\" action=\"/api/pictures/credit\">")
+                .append(hidden("name", uri)).append(hidden("back", uri))
+                .append(hidden("shown", off ? "true" : "false"))
+                .append("<div class=\"actions\"><button class=\"text\" type=\"submit\">")
+                .append(glyph(off ? "eye" : "eye_off")).append(off ? "Show its credit"
+                        : "Hide its credit").append("</button></div></form>")
+                .append("<h2>In albums</h2>");
+        StringBuilder chips = new StringBuilder();
+        StringBuilder others = new StringBuilder();
+        for (PlaylistDocument.Playlist album : document.all()) {
+            if (album.items.contains(uri)) {
+                chips.append("<li><a class=\"rowlink plain\" href=\"/album?id=")
+                        .append(urlEncode(album.id)).append("\"><span class=\"text\"><span class=\"h\">")
+                        .append(escapeHtml(album.name)).append("</span></span></a>")
+                        .append("<span class=\"trail\"><form method=\"post\" action=\"/api/pictures/select\">")
+                        .append(hidden("uri", uri)).append(hidden("album", album.id))
+                        .append(hidden("back", uri)).append(hidden("selected", "false"))
+                        .append(iconButton("minus", "Take it out of " + album.name, ""))
+                        .append("</form></span></li>");
+            } else {
+                others.append(selectOption(album.id, album.name, ""));
+            }
+        }
+        html.append(chips.length() == 0 ? "<p class=\"hint\">In no album.</p>"
+                : "<ul class=\"list seg\">" + chips + "</ul>");
+        if (others.length() > 0) {
+            html.append("<form class=\"beside\" method=\"post\" action=\"/api/pictures/select\">")
+                    .append(hidden("uri", uri)).append(hidden("back", uri))
+                    .append(hidden("selected", "true"))
+                    .append(selectField("picture-album", "album", "Album", null, others.toString(),
+                            null))
+                    .append("<button class=\"tonal\" type=\"submit\">Add to album</button></form>");
+        }
+        html.append("<h2>Used by</h2>");
+        if (usedBy.isEmpty()) {
+            html.append("<p class=\"hint\">Nothing.</p>");
+        } else {
+            html.append("<ul class=\"list\">");
+            for (String user : usedBy) {
+                html.append("<li><span class=\"text\"><span class=\"h\">").append(escapeHtml(user))
+                        .append("</span></span></li>");
+            }
+            html.append("</ul>");
+        }
+        if (library.isUpload(uri)) {
+            html.append("<form method=\"post\" action=\"/api/pictures/delete\" class=\"actions\""
+                    + " data-native=\"1\">").append(hidden("uri", uri)).append(hidden("back", ""))
+                    .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
+                    .append(escapeHtml(deleteQuestion(name) + (usedBy.isEmpty() ? ""
+                            : " It is used by " + String.join(", ", usedBy) + ".")
+                            + " It leaves every album that holds it."))
+                    .append("\">Delete</button></form>");
+        } else {
+            html.append("<p class=\"hint\">This panel's own picture: it is never deleted here.</p>");
+        }
+        return html.append("</section></div>").append(pageEnd()).toString();
+    }
 
     private String buildPlaylistPage(String notice, String id, String at, int size) {
         PictureLibrary library = PictureLibrary.get(context);
@@ -7063,14 +7258,14 @@ final class HttpAdminServer {
         String said = notice == null || notice.isEmpty() ? ""
                 : "<p class=\"notice\">" + escapeHtml(notice) + "</p>";
         if (playlist == null) {
-            return pageStart("Picture playlist", null, "/ambient")
-                    + said + "<p class=\"hint bad\">That playlist is gone.</p>" + pageEnd();
+            return pageStart("Album", null, "/gallery")
+                    + said + "<p class=\"hint bad\">That album is gone.</p>" + pageEnd();
         }
         StringBuilder html = new StringBuilder(pageStartWith(playlistHeading(playlist),
-                "/ambient", false));
+                "/gallery", false));
         html.append(said)
-                .append("<div class=\"two playlist\">")
-                .append("<section class=\"card\" id=\"playlist-folders\">")
+                .append("<div class=\"two album\">")
+                .append("<section class=\"card\" id=\"album-folders\">")
                 .append("<div class=\"cardhead\"><h2>Folders</h2>")
                 // Closes every branch, or opens every one; the script paints which. Scripting
                 // only, like the carets: without it the tree follows the open folder instead.
@@ -7082,16 +7277,16 @@ final class HttpAdminServer {
                 .append("</div>")
                 .append(uploadForm(playlist.id))
                 .append("</section>")
-                .append("<section class=\"card\" id=\"playlist-content\">")
+                .append("<section class=\"card\" id=\"album-content\">")
                 .append("<div id=\"folder-content\">")
                 .append(folderContent(at, playlist.id, size))
                 .append("</div>")
                 .append("</section>")
-                .append("<section class=\"card\" id=\"playlist-held\">")
-                .append("<div class=\"cardhead\"><h2>In this playlist</h2>")
+                .append("<section class=\"card\" id=\"album-held\">")
+                .append("<div class=\"cardhead\"><h2>In this album</h2>")
                 .append(shuffleMark())
                 .append("</div>")
-                .append("<div id=\"playlist-items\">")
+                .append("<div id=\"album-items\">")
                 .append(playlistItems(playlist, library))
                 .append("</div>")
                 .append("</section>")
@@ -7099,13 +7294,13 @@ final class HttpAdminServer {
                 // Delete, outlined red as in every editor (the delete rules, 2026-10-01), asked
                 // first in the panel's words; it left the Ambient page's row on 2026-10-04.
                 // The answer is the Ambient page, since this one is gone.
-                .append("<form method=\"post\" action=\"/api/playlists/delete\" class=\"actions\" data-native=\"1\">")
+                .append("<form method=\"post\" action=\"/api/albums/delete\" class=\"actions\" data-native=\"1\">")
                 .append(hidden("id", playlist.id))
                 // A refusal other than gone, a failed save, is answered on this page.
-                .append(hidden("playlist", playlist.id))
+                .append(hidden("album", playlist.id))
                 .append("<button type=\"submit\" class=\"danger\" data-confirm=\"")
                 .append(escapeHtml(deleteQuestion(playlist.name) + (playlist.active
-                        ? " It is in use: Ambient will have no playlist." : "")
+                        ? " It is in use: Ambient will have no album." : "")
                         + " The pictures stay."))
                 .append("\">Delete</button></form>");
         return html.append(pageEnd()).toString();
@@ -7136,17 +7331,17 @@ final class HttpAdminServer {
      * for a browser without one.
      */
     private String playlistHeading(PlaylistDocument.Playlist playlist) {
-        return "<div class=\"titles\"><div class=\"titlerow\"><h1 id=\"playlist-name\">"
+        return "<div class=\"titles\"><div class=\"titlerow\"><h1 id=\"album-name\">"
                 + escapeHtml(playlist.name) + "</h1>"
                 + "<details class=\"rename\">"
-                + "<summary class=\"ib\" aria-label=\"Rename this playlist\" title=\"Rename\">"
+                + "<summary class=\"ib\" aria-label=\"Rename this album\" title=\"Rename\">"
                 + glyph("pencil") + "</summary>"
-                + "<form method=\"post\" action=\"/api/playlists/rename\">"
+                + "<form method=\"post\" action=\"/api/albums/rename\">"
                 + hidden("id", playlist.id)
                 // So the answer comes back as this page rather than as the Ambient page,
                 // which is the rule every form on this page follows.
-                + hidden("playlist", playlist.id)
-                + fieldWithId("rename-name", "text", "name", "Playlist name", playlist.name,
+                + hidden("album", playlist.id)
+                + fieldWithId("rename-name", "text", "name", "Album name", playlist.name,
                         " maxlength=\"" + PlaylistDocument.MAX_NAME_LENGTH + "\" required", null)
                 + "<button class=\"primary\" type=\"submit\">Save</button>"
                 + "<button type=\"button\" class=\"text cancel\">Cancel</button>"
@@ -7159,79 +7354,46 @@ final class HttpAdminServer {
 
 
     /**
-     * Everything the playlist holds, in the order Ambient shows it: the picture, the
-     * folder and the name, then the box that names it for its credit, the eye that switches its
-     * credit off or on, and the remove button, all 40 px on one line (2026-09-23 and
-     * 2026-09-25). The box has no save tick: {@code admin_pictures.js} stores it when it lets go
-     * of the focus, and Enter submits its form, which is also the path with no scripting.
+     * Everything the album holds, in the order Ambient shows it: the picture, the folder and the
+     * name, which opens the picture's page in the Gallery, and the button that takes it out of
+     * the album, deleting nothing.
      *
      * <p>The folder is prepended because this list is the one place two pictures with the same
      * name from two folders sit next to each other (2026-09-10). It is a fragment of its
      * own because a tick in the browser changes it, and the page must not reload to say so.
-     * Remove takes the picture out of this playlist and deletes nothing; it posts to the same
-     * endpoint the browser's tick does, with the selection off.
      *
      * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
      * thumbnail; {@code admin_pictures.js} does the drag and posts the whole order, and without
-     * scripting the grip is not drawn at all. No sentence explains any of it (2026-09-25:
-     * a sentence is the last resort). An empty name box shows, greyed, the words Ambient
-     * prints instead, the file's name. With every credit switched off in Ambient
-     * settings, each eye stands crossed out and inert, which says the same without a line.
+     * scripting the grip is not drawn at all.
      */
     private String playlistItems(PlaylistDocument.Playlist playlist, PictureLibrary library) {
         StringBuilder html = new StringBuilder();
         html.append("<p class=\"hint\">")
                 .append(playlist.items.size()).append(playlist.items.size() == 1
                         ? " picture" : " pictures")
-                .append(playlist.active ? ", and this is the playlist in use." : ".")
+                .append(playlist.active ? ", and this is the album in use." : ".")
                 .append("</p>");
         if (playlist.items.isEmpty()) {
             return html.append("<p class=\"hint\">Nothing picked yet. Open a folder and add its")
                     .append(" pictures.</p>").toString();
         }
-        boolean creditsShown = KioskConfig.screensaverOf(context).credit;
         boolean movable = playlist.items.size() > 1;
-        Map<String, String> captions = library.captions();
-        java.util.Set<String> creditsOff = library.hiddenCredits();
         html.append("<ul class=\"pictures held\" id=\"held-list\">");
-        int index = 0;
         for (String uri : playlist.items) {
-            String label = library.displayPath(uri);
-            String fallback = PictureSources.creditFromLabel(label);
-            boolean off = creditsOff.contains(uri);
+            // The name opens the picture's page in the Gallery, where its credit is set
+            // (2026-10-26: the credit belongs to the picture, not to one album).
             html.append("<li data-uri=\"").append(escapeHtml(uri)).append("\">")
                     .append("<span class=\"grab\">")
                     .append(movable ? "<span class=\"grip\">" + glyph("drag") + "</span>" : "")
                     .append(thumbnail(uri)).append("</span>")
-                    .append("<span class=\"name\">").append(escapeHtml(label)).append("</span>")
-                    .append("<form class=\"caption\" method=\"post\"")
-                    .append(" action=\"/api/pictures/caption\">")
-                    .append(hidden("name", uri)).append(hidden("playlist", playlist.id))
-                    .append("<div class=\"field dense").append(off ? " off" : "")
-                    .append("\"><input type=\"text\" id=\"caption-")
-                    .append(index).append("\" name=\"caption\" maxlength=\"200\" placeholder=\"")
-                    .append(fallback.isEmpty() ? " " : escapeHtml(fallback)).append("\"")
-                    .append(" value=\"").append(escapeHtml(captions.getOrDefault(uri, "")))
-                    .append("\"").append(off ? " disabled" : "").append(MACHINE_TEXT).append(">")
-                    .append("<label for=\"caption-").append(index).append("\">")
-                    .append(off ? "Credit hidden" : "Name for the credit").append("</label>")
-                    .append("</div></form>")
+                    .append("<a class=\"name\" href=\"/picture?uri=").append(urlEncode(uri))
+                    .append("\">").append(escapeHtml(library.displayPath(uri))).append("</a>")
                     .append("<span class=\"acts\">")
-                    .append("<form class=\"credit\" method=\"post\"")
-                    .append(" action=\"/api/pictures/credit\">")
-                    .append(hidden("name", uri)).append(hidden("playlist", playlist.id))
-                    .append(hidden("shown", off ? "true" : "false"))
-                    .append(creditsShown ? iconButton(off ? "eye_off" : "eye",
-                            off ? "Show the credit" : "Hide the credit", "")
-                            : iconButton("eye_off",
-                                    "Credits are off in the Ambient settings", "", true))
-                    .append("</form>")
                     .append("<form method=\"post\" action=\"/api/pictures/select\">")
-                    .append(hidden("uri", uri)).append(hidden("playlist", playlist.id))
+                    .append(hidden("uri", uri)).append(hidden("album", playlist.id))
                     .append(hidden("selected", "false"))
-                    .append(iconButton("minus", "Remove from the playlist", ""))
+                    .append(iconButton("minus", "Take it out of the album", ""))
                     .append("</form></span></li>");
-            index++;
         }
         return html.append("</ul>").toString();
     }
@@ -7250,7 +7412,7 @@ final class HttpAdminServer {
     private String uploadForm(String playlistId) {
         // The playlist rides in the action because an upload is multipart: with no scripting
         // there is no place else to put it that this server reads.
-        return "<form id=\"picture-upload\" method=\"post\" action=\"/api/pictures?playlist="
+        return "<form id=\"picture-upload\" method=\"post\" action=\"/api/pictures?album="
                 + urlEncode(playlistId) + "\" enctype=\"multipart/form-data\">"
                 + "<p class=\"hint\">Add pictures (JPEG, PNG or WebP; up to "
                 + (MAX_UPLOAD_BYTES / (1024 * 1024)) + " MB per upload)</p>"
@@ -7294,23 +7456,26 @@ final class HttpAdminServer {
      */
     private static String ownPicturesHint() {
         return "<p class=\"hint bad\">" + escapeHtml(PictureLibrary.OWN_PICTURES_NEED_PERMISSION)
-                + " Allow it on the panel's Ambient settings; Android only asks there.</p>";
+                + " Allow it on the panel, in Gallery; Android only asks there.</p>";
     }
 
     /** Why the panels cannot show pictures, as the hint both of them then carry, or null. */
     private static String browserRefusal(PictureLibrary library, String playlistId) {
-        // The playlist this page was opened for, not whichever happens to be playing: the page is
-        // per playlist since 2026-09-12, which is what removed the ambiguity the old inline
-        // browser had.
+        // The album this page was opened for, not whichever happens to be playing: the page is
+        // per album since 2026-09-12, which is what removed the ambiguity the old inline
+        // browser had. No album is the Gallery's own browser (2026-10-26).
+        if (playlistId == null || playlistId.isEmpty()) {
+            return null;
+        }
         if (library.playlists().load().byId(playlistId) == null) {
-            return "<p class=\"hint bad\">That playlist is gone.</p>";
+            return "<p class=\"hint bad\">That album is gone.</p>";
         }
         return null;
     }
 
     /**
      * The Folders panel: the folder tree, indented by depth, the open one marked, a caret on every
-     * folder with folders under it, Uploaded to Muralis first.
+     * folder with folders under it, Added here first.
      *
      * <p>A fragment of its own since 2026-09-19, when the browser's two panes became two panels;
      * {@code admin_pictures.js} fetches it from {@code /api/pictures/folders} and the open folder
@@ -7346,7 +7511,7 @@ final class HttpAdminServer {
             open.add(walk);
         }
         StringBuilder html = new StringBuilder("<ul class=\"folders\">");
-        html.append(folderLink(PictureBrowser.UPLOADS, "Uploaded to Muralis",
+        html.append(folderLink(PictureBrowser.UPLOADS, "Added here",
                 library.uploadCount(), 0, location, playlistId, size, false, false, true));
         for (PictureBrowser.Folder folder : tree) {
             boolean shown = true;
@@ -7392,14 +7557,18 @@ final class HttpAdminServer {
             // Nothing opened yet, the same first sight the panel's own page offers.
             return html.append("<p class=\"hint\">Pick a folder to begin.</p>").toString();
         }
-        PlaylistDocument.Playlist target = library.playlists().load().byId(playlistId);
-        if (target == null) {
+        // No album: the Gallery's own browser, where a picture opens its page and a tick
+        // selects it for the bar under the list (Add to album, Delete).
+        boolean gallery = playlistId == null || playlistId.isEmpty();
+        PlaylistDocument.Playlist target = gallery ? null
+                : library.playlists().load().byId(playlistId);
+        if (!gallery && target == null) {
             // Deleted from another browser between the check above and this read.
-            return html.append("<p class=\"hint bad\">That playlist is gone.</p>").toString();
+            return html.append("<p class=\"hint bad\">That album is gone.</p>").toString();
         }
         int offset = browseOffset(token);
         html.append("<p class=\"where\">")
-                .append(escapeHtml(PictureBrowser.UPLOADS.equals(location) ? "Uploaded to Muralis"
+                .append(escapeHtml(PictureBrowser.UPLOADS.equals(location) ? "Added here"
                         : location.isEmpty() ? "Internal storage" : trimSlash(location)))
                 .append("</p>");
         PictureBrowser.Page page = PictureBrowser.UPLOADS.equals(location)
@@ -7414,30 +7583,40 @@ final class HttpAdminServer {
         if (!page.entries.isEmpty()) {
             int held = 0;
             for (PictureBrowser.Entry entry : page.entries) {
-                if (target.items.contains(entry.uri)) {
+                if (!gallery && target.items.contains(entry.uri)) {
                     held++;
                 }
             }
-            html.append(selectAllRow(held, page.entries.size(), page.available));
+            html.append(gallery ? galleryAllRow(page.entries.size(), page.available)
+                    : selectAllRow(held, page.entries.size(), page.available));
             boolean tiles = PictureBrowser.VIEW_SMALL.equals(view) || PictureBrowser.VIEW_BIG.equals(view);
             html.append(tiles ? "<div class=\"tiles " + view + "\">"
                     : "<ul class=\"pictures " + view + "\">");
             for (PictureBrowser.Entry entry : page.entries) {
-                boolean selected = target.items.contains(entry.uri);
-                String pick = pickForm(entry.uri, selected, token, size, target.id);
+                boolean selected = !gallery && target.items.contains(entry.uri);
+                String pick = gallery ? galleryPick(entry)
+                        : pickForm(entry.uri, selected, token, size, target.id);
                 // Only an upload gets a bin: a file the person picked in their own storage leaves
                 // the playlist but is never removed from disk here.
                 String bin = library.isUpload(entry.uri)
                         ? "<form method=\"post\" action=\"/api/pictures/delete\" class=\"bin\">"
                                 + hidden("uri", entry.uri) + hidden("at", token)
-                                + hidden("n", String.valueOf(size)) + hidden("playlist", target.id)
+                                + hidden("n", String.valueOf(size))
+                                + hidden("album", gallery ? "" : target.id)
                                 + iconButton("trash", "Delete the file", "") + "</form>"
                         : "";
+                // In the Gallery a picture's name and thumbnail open its page.
+                String name = gallery ? "<a class=\"name\" href=\"/picture?uri="
+                        + urlEncode(entry.uri) + "\">" + escapeHtml(entry.name) + "</a>"
+                        : "<span class=\"name\">" + escapeHtml(entry.name) + "</span>";
+                String thumb = gallery ? "<a href=\"/picture?uri=" + urlEncode(entry.uri)
+                        + "\" tabindex=\"-1\">" + thumbnail(entry.uri) + "</a>"
+                        : thumbnail(entry.uri);
                 if (tiles) {
                     html.append("<div class=\"tile").append(selected ? " in" : "").append("\">")
-                            .append("<span class=\"pic\">").append(thumbnail(entry.uri))
+                            .append("<span class=\"pic\">").append(thumb)
                             .append(pick).append(bin).append("</span>")
-                            .append("<span class=\"name\">").append(escapeHtml(entry.name)).append("</span>");
+                            .append(name);
                     if (PictureBrowser.VIEW_BIG.equals(view) && !entry.details().isEmpty()) {
                         html.append("<small>").append(escapeHtml(entry.details())).append("</small>");
                     }
@@ -7445,13 +7624,13 @@ final class HttpAdminServer {
                 } else {
                     html.append("<li>").append(pick);
                     if (PictureBrowser.VIEW_DETAILS.equals(view)) {
-                        html.append(thumbnail(entry.uri))
+                        html.append(thumb)
                                 .append("<span class=\"text\"><span class=\"h\">")
-                                .append(escapeHtml(entry.name)).append("</span><span class=\"s\">")
+                                .append(gallery ? name : escapeHtml(entry.name))
+                                .append("</span><span class=\"s\">")
                                 .append(escapeHtml(entry.details())).append("</span></span>");
                     } else {
-                        html.append("<span class=\"name\">").append(escapeHtml(entry.name))
-                                .append("</span>");
+                        html.append(name);
                     }
                     if (!bin.isEmpty()) {
                         html.append("<span class=\"acts\">").append(bin).append("</span>");
@@ -7460,17 +7639,20 @@ final class HttpAdminServer {
                 }
             }
             html.append(tiles ? "</div>" : "</ul>");
+            if (gallery) {
+                html.append(gallerySelectionBar(library));
+            }
         }
         if (page.available > page.entries.size()) {
             // Previous and Next as chevrons around the count: a pager everybody has seen.
             html.append("<div class=\"pager\">")
                     .append(pageLink(Math.max(0, offset - size) + "|" + location, "prev",
-                            "Previous page", target.id, size, offset > 0))
+                            "Previous page", playlistId, size, offset > 0))
                     .append("<span>").append(offset + 1).append(" to ")
                     .append(offset + page.entries.size()).append(" of ").append(page.available)
                     .append("</span>")
                     .append(pageLink((offset + size) + "|" + location, "next", "Next page",
-                            target.id, size, page.more))
+                            playlistId, size, page.more))
                     .append("</div>");
         }
         // Show 10, 25, 50 or 100 as chips, the one in force filled, only where there is more than
@@ -7480,7 +7662,7 @@ final class HttpAdminServer {
             html.append("<div class=\"sizes\">");
             for (int choice : PictureBrowser.PAGE_SIZES) {
                 html.append("<a class=\"size").append(choice == size ? " on" : "")
-                        .append("\" href=\"/playlist?id=").append(urlEncode(target.id))
+                        .append("\" href=\"").append(browseHref(playlistId))
                         .append("&amp;at=").append(urlEncode(location))
                         .append("&amp;n=").append(choice)
                         .append("\" data-n=\"").append(choice).append("\">").append(choice)
@@ -7499,7 +7681,7 @@ final class HttpAdminServer {
         String next = PictureBrowser.nextView(view);
         return "<div class=\"cardhead\"><h2>Content</h2>"
                 + "<form method=\"post\" action=\"/api/pictures/view\" class=\"view\">"
-                + hidden("view", next) + hidden("playlist", playlistId) + hidden("at", token)
+                + hidden("view", next) + hidden("album", playlistId) + hidden("at", token)
                 + hidden("n", String.valueOf(size))
                 + iconButton(view, PictureBrowser.viewLabel(view) + ". Switch to "
                         + PictureBrowser.viewLabel(next).toLowerCase(Locale.ROOT), "selected")
@@ -7518,17 +7700,82 @@ final class HttpAdminServer {
                 + " aria-label=\"Select all on this page\"></span>"
                 + "<span class=\"text\"><span class=\"s\">Select all"
                 + (available > shown ? " on this page" : "") + " · " + held + " of "
-                + available + " in the playlist</span></span></li></ul>";
+                + available + " in the album</span></span></li></ul>";
     }
 
-    /** The check box that puts a picture in the playlist or takes it out, posted on change. */
+    /**
+     * The Gallery's selection bar: the selected pictures, one address a line, added to an album
+     * or deleted. Deleting takes uploads only; the panel's own pictures are counted as kept.
+     */
+    private void answerGallerySelection(boolean add, Map<String, String> form, String query,
+            OutputStream output) throws IOException {
+        PictureLibrary library = PictureLibrary.get(context);
+        int done = 0;
+        int kept = 0;
+        String problem = null;
+        for (String uri : PlaylistDocument.parseOrder(form.get("uris"))) {
+            String refusal = add ? library.selectPicture(form.getOrDefault("album", ""), uri, true)
+                    : library.isUpload(uri) ? library.deleteLocal(uri) : "own";
+            if (refusal == null) {
+                done++;
+            } else if ("own".equals(refusal)) {
+                kept++;
+            } else if (problem == null) {
+                problem = refusal;
+            }
+        }
+        KioskService.publishTelemetrySoon(context);
+        String said = (add ? done + (done == 1 ? " picture added." : " pictures added.")
+                : done + (done == 1 ? " picture deleted." : " pictures deleted."))
+                + (kept > 0 ? " " + kept + " of this panel's own " + (kept == 1 ? "was" : "were")
+                        + " kept: they are never deleted here." : "")
+                + (problem == null ? "" : " Not done for the rest: " + problem);
+        answerPictureChange(query, form, said, problem == null, output);
+    }
+
+    /** The Gallery's header check box: selects or clears the page for the selection bar. */
+    private static String galleryAllRow(int shown, int available) {
+        return "<ul class=\"pictures selecthead\"><li>"
+                + "<span class=\"lead\"><input type=\"checkbox\" id=\"gallery-all\""
+                + " aria-label=\"Select all on this page\"></span>"
+                + "<span class=\"text\"><span class=\"s\">Select all"
+                + (available > shown ? " on this page" : "") + "</span></span></li></ul>";
+    }
+
+    /** A picture's selection box in the Gallery: no form, the bar under the list acts on it. */
+    private static String galleryPick(PictureBrowser.Entry entry) {
+        return "<span class=\"lead\"><input type=\"checkbox\" class=\"gsel\" data-uri=\""
+                + escapeHtml(entry.uri) + "\" aria-label=\"Select " + escapeHtml(entry.name)
+                + "\"></span>";
+    }
+
+    /**
+     * The bar the Gallery shows while pictures are selected: how many, Add to album with the
+     * album to add them to, and Delete, which removes uploads and leaves the panel's own files
+     * alone. admin_pictures.js shows it and posts it; it needs scripting, as selecting does.
+     */
+    private String gallerySelectionBar(PictureLibrary library) {
+        StringBuilder albums = new StringBuilder();
+        for (PlaylistDocument.Playlist album : library.playlists().load().all()) {
+            albums.append(selectOption(album.id, album.name, ""));
+        }
+        return "<div class=\"selbar\" id=\"gallery-bar\" hidden><span id=\"gallery-count\"></span>"
+                + (albums.length() == 0 ? "<span class=\"hint\">Make an album to add them to.</span>"
+                        : "<select id=\"gallery-album\" aria-label=\"Album\">" + albums
+                                + "</select><button type=\"button\" class=\"tonal\""
+                                + " id=\"gallery-add\">Add to album</button>")
+                + "<button type=\"button\" class=\"danger\" id=\"gallery-delete\">Delete</button>"
+                + "</div>";
+    }
+
+    /** The check box that puts a picture in the album or takes it out, posted on change. */
     private static String pickForm(String uri, boolean selected, String token, int size,
             String playlistId) {
         return "<form method=\"post\" action=\"/api/pictures/select\" class=\"pick\">"
                 + hidden("uri", uri) + hidden("at", token) + hidden("n", String.valueOf(size))
-                + hidden("playlist", playlistId) + hidden("selected", String.valueOf(!selected))
+                + hidden("album", playlistId) + hidden("selected", String.valueOf(!selected))
                 + "<span class=\"lead\"><input type=\"checkbox\"" + (selected ? " checked" : "")
-                + " aria-label=\"In the playlist\"></span>"
+                + " aria-label=\"In the album\"></span>"
                 + "<noscript><button class=\"text\" type=\"submit\">"
                 + (selected ? "Remove" : "Add") + "</button></noscript></form>";
     }
@@ -7559,8 +7806,8 @@ final class HttpAdminServer {
                 + (hasChildren ? "<span class=\"caret\" role=\"button\" tabindex=\"0\" aria-label=\""
                         + (branchOpen ? "Close " : "Open ") + escapeHtml(label) + "\">"
                         + glyph("down") + "</span>" : "<span class=\"caret none\"></span>")
-                + "<a class=\"folder" + (open ? " open" : "") + "\" href=\"/playlist?id="
-                + urlEncode(playlistId) + "&amp;at=" + urlEncode(path) + "&amp;n=" + size
+                + "<a class=\"folder" + (open ? " open" : "") + "\" href=\""
+                + browseHref(playlistId) + "&amp;at=" + urlEncode(path) + "&amp;n=" + size
                 + "\" data-at=\"" + escapeHtml(path) + "\">"
                 + "<span class=\"lead\">" + glyph(glyphName) + "</span>"
                 + "<span class=\"name\">" + escapeHtml(label) + "</span>"
@@ -7572,11 +7819,20 @@ final class HttpAdminServer {
     /** Previous or Next as a chevron, carrying an offset and the page size as well as a folder. */
     private static String pageLink(String token, String glyphName, String label, String playlistId,
             int size, boolean enabled) {
-        return "<a class=\"ib pager" + (enabled ? "" : " dis") + "\" href=\"/playlist?id="
-                + urlEncode(playlistId) + "&amp;at=" + urlEncode(token) + "&amp;n=" + size
+        return "<a class=\"ib pager" + (enabled ? "" : " dis") + "\" href=\""
+                + browseHref(playlistId) + "&amp;at=" + urlEncode(token) + "&amp;n=" + size
                 + "\" data-at=\"" + escapeHtml(token) + "\" title=\"" + label + "\" aria-label=\""
                 + label + "\"" + (enabled ? "" : " aria-disabled=\"true\"") + ">" + glyph(glyphName)
                 + "</a>";
+    }
+
+    /**
+     * Where the browser lives: an album's page, or the Gallery's Pictures when it edits no album;
+     * the folder and the page size follow as more parameters.
+     */
+    private static String browseHref(String playlistId) {
+        return playlistId == null || playlistId.isEmpty() ? "/gallery?tab=pictures"
+                : "/album?id=" + urlEncode(playlistId);
     }
 
     /** "Pictures/holidays/" reads as "Pictures/holidays" in a heading, as it does on the panel. */
@@ -7609,26 +7865,26 @@ final class HttpAdminServer {
         java.util.function.Function<PlaylistDocument, String> change;
         String done;
         switch (path) {
-            case "/api/playlists/activate":
+            case "/api/albums/activate":
                 change = document -> document.activate(id);
                 // Nothing to say: the "In use" mark moving to the row is the whole answer, and a
                 // sentence on top of it was noise (2026-09-19).
                 done = null;
                 break;
-            case "/api/playlists/rename":
+            case "/api/albums/rename":
                 change = document -> document.rename(id, form.getOrDefault("name", ""), now);
-                done = "Playlist renamed.";
+                done = "Album renamed.";
                 break;
-            case "/api/playlists/delete":
+            case "/api/albums/delete":
                 change = document -> document.delete(id);
-                done = "Playlist deleted. The pictures themselves are not deleted.";
+                done = "Album deleted. The pictures themselves are not deleted.";
                 break;
-            case "/api/playlists":
+            case "/api/albums":
                 change = document -> document.create(library.playlists().newId(),
                         form.getOrDefault("name", ""), now);
-                done = "Playlist created. Open it to pick its pictures.";
+                done = "Album created. Open it to pick its pictures.";
                 break;
-            case "/api/playlists/order": {
+            case "/api/albums/order": {
                 // The whole order, one address per line, from a drag on the playlist page. A list
                 // that is not exactly the playlist's pictures is refused whole (see reorder), so a
                 // page opened before somebody else's change cannot scramble it. No order at all
@@ -7649,7 +7905,7 @@ final class HttpAdminServer {
         // its own here lost whichever edit the smart home or the panel made meanwhile.
         String refusal = library.editPlaylists(change);
         KioskService.publishTelemetrySoon(context);
-        if (path.equals("/api/playlists/delete")
+        if (path.equals("/api/albums/delete")
                 && !"1".equals(queryValue(query, "fragment"))
                 && (refusal == null || PlaylistDocument.GONE.equals(refusal))) {
             // The playlist page's own Delete, posted by the browser: sent on to the Ambient
@@ -7658,7 +7914,7 @@ final class HttpAdminServer {
             // (review, 2026-10-04). A playlist already gone is sent on too, gone it is either
             // way; any other refusal, a failed save, is answered here with its reason.
             writeResponse(output, 303, "text/plain", bytes("deleted"),
-                    Collections.singletonMap("Location", "/ambient"));
+                    Collections.singletonMap("Location", "/gallery"));
             return;
         }
         answerPictureChange(query, form,
@@ -7686,7 +7942,7 @@ final class HttpAdminServer {
         }
         java.util.Map<String, Object> answer = new java.util.LinkedHashMap<>();
         answer.put("active", active == null ? null : active.id);
-        answer.put("playlists", rows);
+        answer.put("albums", rows);
         return TinyJson.write(answer);
     }
 
@@ -7703,39 +7959,33 @@ final class HttpAdminServer {
     private String playlistTable(PlaylistDocument document) {
         StringBuilder html = new StringBuilder();
         if (document.size() == 0) {
-            html.append("<p class=\"hint\">No playlists yet.</p>");
+            html.append("<p class=\"hint\">No albums yet.</p>");
         } else {
             html.append("<ul class=\"list seg\">");
             for (PlaylistDocument.Playlist playlist : document.all()) {
                 int count = playlist.items.size();
-                // The left menu's row as the panel draws it (2026-10-04): the glyph, the
-                // name over its count, a tap opening the playlist's own page, and Use at the
-                // end, the radio that is state and control at once. Delete lives on that page.
+                // The album's cover, its name over its count, and which one Ambient plays; a
+                // tap opens the album's own page. Which album Ambient plays is chosen in
+                // Ambient (2026-10-26: Gallery keeps the pictures, the others pick from it).
+                String cover = playlist.items.isEmpty() ? "<span class=\"lead\">"
+                        + glyph("saver") + "</span>"
+                        : "<span class=\"lead cover\">" + thumbnail(playlist.items.get(0))
+                                + "</span>";
                 html.append("<li class=\"two\">")
-                        .append("<a class=\"rowlink plain\" href=\"/playlist?id=").append(urlEncode(playlist.id))
-                        .append("\"><span class=\"lead\">").append(glyph("saver")).append("</span>")
+                        .append("<a class=\"rowlink plain\" href=\"/album?id=").append(urlEncode(playlist.id))
+                        .append("\">").append(cover)
                         .append("<span class=\"text\"><span class=\"h\">").append(escapeHtml(playlist.name))
                         .append("</span><span class=\"s\">").append(count)
                         .append(count == 1 ? " picture" : " pictures")
-                        .append(playlist.active ? " · <span class=\"inuse\">in use</span>" : "")
+                        .append(playlist.active ? " · <span class=\"inuse\">Ambient plays it</span>" : "")
                         .append("</span></span></a>")
-                        .append("<span class=\"trail\">")
-                        .append("<form method=\"post\" action=\"/api/playlists/activate\" class=\"use\">")
-                        .append(hidden("id", playlist.id))
-                        .append("<input type=\"radio\" name=\"active\" value=\"")
-                        .append(escapeHtml(playlist.id)).append("\"")
-                        .append(playlist.active ? " checked" : "")
-                        .append(" aria-label=\"Use ").append(escapeHtml(playlist.name)).append("\">")
-                        .append(playlist.active ? ""
-                                : "<noscript><button class=\"text\" type=\"submit\">Use</button></noscript>")
-                        .append("</form></span></li>");
+                        .append("<span class=\"trail\">").append(glyph("next")).append("</span></li>");
             }
             html.append("</ul>");
         }
-        // Naming a playlist before picking its pictures is the panel's own order. The button sits
-        // on the box's centre line, not the label's.
-        html.append("<form class=\"beside newplaylist\" method=\"post\" action=\"/api/playlists\">")
-                .append(fieldWithId("new-playlist-name", "text", "name", "New playlist name", "",
+        // Naming an album before picking its pictures is the panel's own order.
+        html.append("<form class=\"beside newalbum\" method=\"post\" action=\"/api/albums\">")
+                .append(fieldWithId("new-album-name", "text", "name", "New album name", "",
                         " maxlength=\"" + PlaylistDocument.MAX_NAME_LENGTH + "\"", null))
                 .append("<button class=\"primary\" type=\"submit\">Create</button></form>");
         return html.toString();
@@ -7759,11 +8009,23 @@ final class HttpAdminServer {
                     bytes(TinyJson.write(answer)));
             return;
         }
-        String playlist = form.containsKey("playlist")
-                ? form.get("playlist") : queryValue(query, "playlist");
+        if (form.containsKey("back")) {
+            // A picture's own page in the Gallery: its forms come back to it, by its own
+            // address, so a reload or Back never posts again; its Delete goes to the Gallery.
+            String said = message == null ? "" : "&said=" + urlEncode(message);
+            String back = form.get("back");
+            writeResponse(output, 303, "text/plain", bytes("done"),
+                    Collections.singletonMap("Location", back.isEmpty()
+                            ? "/gallery?tab=pictures" + said
+                            : "/picture?uri=" + urlEncode(back) + said));
+            return;
+        }
+        String playlist = form.containsKey("album")
+                ? form.get("album") : queryValue(query, "album");
         writeResponse(output, ok ? 200 : 400, "text/html; charset=utf-8",
                 playlist == null || playlist.isEmpty()
-                        ? bytes(buildScreensaverPage(message, form.get("at")))
+                        ? bytes(buildGalleryPage(message, "pictures", form.get("at"),
+                                PictureBrowser.pageSize(form.get("n"))))
                         : bytes(buildPlaylistPage(message, playlist, form.get("at"),
                                 PictureBrowser.pageSize(form.get("n")))));
     }
@@ -8884,8 +9146,6 @@ final class HttpAdminServer {
                 .append("</div>");
         html.append(commandScript);
         html.append(settingScript);
-        html.append(pictureScript);
-        html.append(playlistScript);
         html.append(statsScript);
         html.append(themeScript);
         html.append("</main></body></html>");

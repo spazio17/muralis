@@ -1998,8 +1998,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
             saver.put("pictures_readable", library.browsesOwnStorage());
             PlaylistDocument playlists = library.playlists().load();
             PlaylistDocument.Playlist inUse = playlists.active();
-            saver.put("playlist", inUse == null ? org.json.JSONObject.NULL : inUse.name);
-            saver.put("playlists", playlists.size());
+            saver.put("album", inUse == null ? org.json.JSONObject.NULL : inUse.name);
+            saver.put("albums", playlists.size());
             org.json.JSONObject picture = new org.json.JSONObject();
             picture.put("title", KioskRuntimeState.screensaverPictureTitle());
             picture.put("credit", KioskRuntimeState.screensaverPictureCredit());
@@ -3323,8 +3323,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
                     known.append(known.length() == 0 ? "" : ", ").append(other.name);
                 }
                 return known.length() == 0
-                        ? "there are no playlists on this panel yet"
-                        : "no playlist called " + wanted + "; this panel has " + known;
+                        ? "there are no albums on this panel yet"
+                        : "no album called " + wanted + "; this panel has " + known;
             }
             return document.activate(named.id);
         });

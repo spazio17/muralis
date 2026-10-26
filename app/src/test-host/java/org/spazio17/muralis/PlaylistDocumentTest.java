@@ -28,24 +28,24 @@ public final class PlaylistDocumentTest {
         aBrokenShapeCostsOneRowNotTheFile();
         malformedJsonThrowsRatherThanEmptying();
         migrationCarriesTheOldSelection();
-        System.out.println("PlaylistDocumentTest passed");
+        System.out.println("AlbumDocumentTest passed");
     }
 
     private static void namesAreUniqueAndPresent() {
         PlaylistDocument document = PlaylistDocument.empty();
         expectOk(document.create("a", "Holidays", 1L));
-        expectRefused(document.create("b", "Holidays", 2L), "already a playlist");
+        expectRefused(document.create("b", "Holidays", 2L), "already an album");
         // Case and surrounding space are not a new name: "holidays" is the same wall.
-        expectRefused(document.create("b", "  holidays ", 2L), "already a playlist");
+        expectRefused(document.create("b", "  holidays ", 2L), "already an album");
         expectRefused(document.create("b", "   ", 2L), "needs a name");
         expectRefused(document.create("b", null, 2L), "needs a name");
         expectRefused(document.create("", "Family", 2L), "needs an identifier");
-        expect(document.size() == 1, "only the first playlist was created");
+        expect(document.size() == 1, "only the first album was created");
         // Renaming onto its own name is not a clash.
         expectOk(document.rename("a", "Holidays", 3L));
         expectOk(document.rename("a", "Family", 4L));
         expect("Family".equals(document.byId("a").name), "the rename took");
-        expect(document.byId("a").updatedAt == 4L, "the rename stamped the playlist");
+        expect(document.byId("a").updatedAt == 4L, "the rename stamped the album");
     }
 
     private static void onlyOnePlaylistIsEverActive() {
@@ -65,7 +65,7 @@ public final class PlaylistDocumentTest {
         PlaylistDocument document = three();
         expectOk(document.activate("b"));
         expectOk(document.delete("b"));
-        expect(document.active() == null, "deleting the active playlist left none active");
+        expect(document.active() == null, "deleting the active album left none active");
         expect(document.size() == 2, "the other two are untouched");
         expectRefused(document.delete("b"), "gone");
     }
@@ -80,7 +80,7 @@ public final class PlaylistDocumentTest {
         expect(document.byId("a").items.equals(Arrays.asList("one", "two", "three")),
                 "adding what is already there changes nothing");
         expect(document.byId("a").updatedAt == stamped,
-                "and does not stamp the playlist as changed");
+                "and does not stamp the album as changed");
         expectOk(document.add("a", Arrays.asList("", null, "four"), 30L));
         expect(document.byId("a").items.equals(Arrays.asList("one", "two", "three", "four")),
                 "empty and missing addresses are ignored, not stored");
@@ -93,9 +93,9 @@ public final class PlaylistDocumentTest {
         expectOk(document.add("b", Arrays.asList("two"), 10L));
         expectOk(document.remove("a", Arrays.asList("two", "absent"), 20L));
         expect(document.byId("a").items.equals(Arrays.asList("one", "three")),
-                "only the named picture left playlist a");
+                "only the named picture left album a");
         expect(document.byId("b").items.equals(Arrays.asList("two")),
-                "the same picture stays in playlist b: removing is not deleting");
+                "the same picture stays in album b: removing is not deleting");
     }
 
     private static void reorderTakesAWholePermutation() {
@@ -146,7 +146,7 @@ public final class PlaylistDocumentTest {
         }
         expectRefused(pictures.add("a", many, 2L), "at most");
         expect(pictures.byId("a").items.size() == PlaylistDocument.MAX_PICTURES,
-                "the playlist filled to the cap and stopped");
+                "the album filled to the cap and stopped");
     }
 
     private static void aStoredDocumentSurvivesARoundTrip() {
@@ -156,7 +156,7 @@ public final class PlaylistDocumentTest {
         // A name that would break a naive writer: quotes, a backslash, a newline, a tab.
         expectOk(document.rename("c", "He said \"go\"\n\tC:\\pictures", 20L));
         PlaylistDocument again = PlaylistDocument.parse(document.toJson());
-        expect(again.size() == 3, "every playlist came back");
+        expect(again.size() == 3, "every album came back");
         expect("b".equals(again.active().id), "the active one came back active");
         expect(again.byId("b").items.equals(Arrays.asList("one", "two")), "items kept their order");
         expect("He said \"go\"\n\tC:\\pictures".equals(again.byId("c").name),
@@ -175,7 +175,7 @@ public final class PlaylistDocumentTest {
                 + "\"not an object\""
                 + "]}";
         PlaylistDocument document = PlaylistDocument.parse(json);
-        expect(document.size() == 2, "the two usable playlists survived: " + document.size());
+        expect(document.size() == 2, "the two usable albums survived: " + document.size());
         expect(document.byName("Good") != null, "the first Good stayed");
         expect(document.byId("d") == null, "the duplicate name was dropped, not renamed");
         expect(document.byId("a").items.equals(Arrays.asList("one", "two")),
@@ -195,15 +195,15 @@ public final class PlaylistDocumentTest {
     private static void migrationCarriesTheOldSelection() {
         PlaylistDocument document = PlaylistDocument.migrate(
                 "first", "Pictures", Arrays.asList("one", "two", "three"), 7L);
-        expect(document.size() == 1, "one playlist was made");
+        expect(document.size() == 1, "one album was made");
         expect("first".equals(document.active().id), "and it is playing, as the panel already was");
         expect(document.byId("first").items.equals(Arrays.asList("one", "two", "three")),
                 "in the order the old store listed");
         // Nothing selected means no playlist at all, so the panel meets the empty state.
         expect(PlaylistDocument.migrate("first", "Pictures", new ArrayList<String>(), 7L)
-                .size() == 0, "an empty selection made no playlist");
+                .size() == 0, "an empty selection made no album");
         expect(PlaylistDocument.migrate("first", "Pictures", null, 7L).size() == 0,
-                "a missing selection made no playlist");
+                "a missing selection made no album");
     }
 
     private static PlaylistDocument three() {

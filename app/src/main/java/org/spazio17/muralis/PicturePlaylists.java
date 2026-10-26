@@ -86,9 +86,9 @@ final class PicturePlaylists {
             Log.w(TAG, "Unreadable playlists, " + (moved ? "kept as " + kept.getName()
                     : "could not be moved aside"), unreadable);
             damagedNote = moved
-                    ? "The playlists could not be read; the file was kept as " + kept.getName()
+                    ? "The albums could not be read; the file was kept as " + kept.getName()
                             + " and a fresh start was made."
-                    : "The playlists could not be read.";
+                    : "The albums could not be read.";
             damagedAt = android.os.SystemClock.elapsedRealtime();
             // The names of what was returned, as on every other path: the old key would differ
             // from the empty document's forever and make every MQTT state publish announce again.
@@ -102,18 +102,18 @@ final class PicturePlaylists {
         File file = file();
         File dir = file.getParentFile();
         if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
-            persistenceProblem = "The playlists could not be saved; check the panel's storage.";
+            persistenceProblem = "The albums could not be saved; check the panel's storage.";
             return persistenceProblem;
         }
         File partial = new File(file.getPath() + ".part");
         try (OutputStream out = new FileOutputStream(partial)) {
             out.write(document.toJson().getBytes(StandardCharsets.UTF_8));
         } catch (IOException | RuntimeException failed) {
-            persistenceProblem = "The playlists could not be saved: " + failed.getMessage();
+            persistenceProblem = "The albums could not be saved: " + failed.getMessage();
             return persistenceProblem;
         }
         if (!partial.renameTo(file)) {
-            persistenceProblem = "The playlists could not be saved; check the panel's storage.";
+            persistenceProblem = "The albums could not be saved; check the panel's storage.";
             return persistenceProblem;
         }
         persistenceProblem = null;
@@ -313,7 +313,7 @@ final class PicturePlaylists {
             return null;
         }
         StringBuilder note = new StringBuilder(lost.size() == 1
-                ? "One picture in a playlist" : lost.size() + " pictures in the playlists");
+                ? "One picture in an album" : lost.size() + " pictures in the albums");
         note.append(" could not be matched to this panel's own pictures (");
         note.append(lost.get(0));
         if (lost.size() > 1) {
@@ -353,7 +353,7 @@ final class PicturePlaylists {
             while ((read = in.read(buffer)) > 0) {
                 out.write(buffer, 0, read);
                 if (out.size() > 4 * 1024 * 1024) {
-                    throw new IOException("the playlist file is implausibly large");
+                    throw new IOException("the album file is implausibly large");
                 }
             }
             return new String(out.toByteArray(), StandardCharsets.UTF_8);

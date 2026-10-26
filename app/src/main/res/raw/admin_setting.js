@@ -90,7 +90,7 @@ function screensaverFields(){var mode=modeValue();
 if(mode===null){return;}
 var url=document.getElementById('ambient-url-field'),dim=document.getElementById('ambient-dim-field'),wake=document.getElementById('ambient-wake-field');
 var pictures=document.getElementById('ambient-pictures');
-// The library box holds the playlists, the browser and the upload, a box of its own since
+// The library box holds the albums, the browser and the upload, a box of its own since
 // 2026-09-10 that belongs to the Pictures mode.
 var library=document.getElementById('ambient-library');
 // The second panel is named after the mode it belongs to and is not there at all for Off: a
@@ -109,7 +109,7 @@ if(pictures){pictures.classList.toggle('gone',mode!=='pictures');}
 // Gone, not greyed out: a control that can never be enabled is clutter.
 if(wake){wake.classList.toggle('gone',!(mode==='url'||mode==='dim'||mode==='pictures'));}
 if(library){library.classList.toggle('gone',mode!=='pictures');
-// Without the playlists the options are the page's only panel, centred like the legal pages.
+// Without the albums the options are the page's only panel, centred like the legal pages.
 var page=document.getElementById('ambient-page');if(page){page.classList.toggle('one',library.classList.contains('gone'));}}}
 window.muralisScreensaverFields=screensaverFields;
 Array.prototype.forEach.call(document.querySelectorAll('input[name="opt-ambient_mode"]'),function(radio){
