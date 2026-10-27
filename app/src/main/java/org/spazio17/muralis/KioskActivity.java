@@ -274,6 +274,8 @@ public final class KioskActivity extends Activity {
      * the content it was drawn over.
      */
     private TextView identifyOverlay;
+    /** The touch that closed Identify is still down: its rest is swallowed. */
+    private boolean identifyTouch;
     /** Identify and the pop-up drawn in a window over App lock's app rather than in this screen. */
     private boolean identifyOverApp;
     private boolean popupOverApp;
@@ -1601,6 +1603,13 @@ public final class KioskActivity extends Activity {
     @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
         int action = event.getActionMasked();
+        if (identifyTouch && action != MotionEvent.ACTION_DOWN) {
+            // The rest of the touch that closed Identify: never the page's.
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                identifyTouch = false;
+            }
+            return true;
+        }
         if (previewTouch && action != MotionEvent.ACTION_DOWN) {
             // The rest of a touch that went down on a preview, never the page's: the lift ends
             // the preview. A cancel is the system taking the touch for its Back gesture, which
@@ -1621,6 +1630,7 @@ public final class KioskActivity extends Activity {
             // A new touch: what the last one left armed is over, a lift or a cancel it never
             // delivered included (review, 2026-10-07).
             previewTouch = false;
+            identifyTouch = false;
             tapAwayFromBox = false;
             // Screen coordinates, because cornerZoneAt compares against the content view's position
             // on screen. getX/getY are window-relative and were part of the offset that made the
@@ -1635,6 +1645,17 @@ public final class KioskActivity extends Activity {
                 // The corner targets are plain labels with no click listener, so letting the event
                 // through costs nothing.
                 return super.dispatchTouchEvent(event);
+            }
+            // Identify: a tap anywhere closes the panel's name and never reaches what is under
+            // it; a corner tap still counts for the escape combinations (the review of
+            // 2026-10-27: the tap went through to the page).
+            if (identifyOverlay != null && !identifyOverApp) {
+                endIdentify();
+                identifyTouch = true;
+                if (zone != null) {
+                    handleEscapeTap(zone, event.getEventTime());
+                }
+                return true;
             }
             // A touch proves the screen is on: a sleep that never darkened, or a wake this
             // activity was not told about, must not leave Ambient's clock blocked.
@@ -2768,29 +2789,25 @@ public final class KioskActivity extends Activity {
             card.addView(emptyState(theme, "No cameras yet",
                     "Add one in Cameras, under Panel."), matchWrapClose());
         }
-        // Checked only while the dashboard shows it: a camera kept from before is not ticked
-        // as if it were on the glass, and a tap on it shows it again.
-        checkRadioIfChanged(choices, KioskConfig.shownCamerasOf(this));
+        // The camera or group chosen for the Cameras answer, shown or not.
+        checkRadioIfChanged(choices, KioskConfig.dashboardCamerasOf(this));
         choices.setOnCheckedChangeListener((group, id) -> {
             View checked = group.findViewById(id);
             String value = checked == null ? "" : (String) checked.getTag();
-            if (value.isEmpty() || value.equals(KioskConfig.shownCamerasOf(this))) {
+            if (value.isEmpty() || value.equals(KioskConfig.dashboardCamerasOf(this))) {
                 return;
             }
-            // Chosen here, from the Dashboard choice's Cameras: stored and shown.
+            // Chosen here and stored; whether the dashboard shows the cameras is the
+            // Dashboard's own Save (2026-10-27), so Cameras becomes its draft answer.
             KioskService service = KioskService.liveService();
             String refused = service == null ? "the service is not running"
                     : service.setDashboardCameras(value);
-            if (refused == null) {
-                refused = service.setDashboardShows(KioskCommandDispatcher.DASHBOARD_CAMERAS);
-            }
             if (refused != null) {
                 Toast.makeText(this, "Not saved: " + refused + ".", Toast.LENGTH_LONG).show();
                 return;
             }
-            // An app shown before ends with the choice; the lock-task allowlist follows at once.
-            applyKioskPolicy();
-            Toast.makeText(this, value + " is the dashboard", Toast.LENGTH_SHORT).show();
+            draftDashboard(KioskCommandDispatcher.DASHBOARD_CAMERAS, integrationDraft);
+            Toast.makeText(this, "Cameras: " + value, Toast.LENGTH_SHORT).show();
         });
         card.addView(choices, matchWrapClose());
         java.util.List<View> cards = new java.util.ArrayList<>();
@@ -2898,22 +2915,22 @@ public final class KioskActivity extends Activity {
             card.addView(emptyState(theme, "No apps of your own on this panel",
                     "Install one, or show the apps that came with the device."), matchWrapClose());
         }
-        // Checked only while the dashboard shows it, as the cameras' page does.
-        checkRadioIfChanged(apps, KioskConfig.appLockOf(this));
+        // The app chosen for the App answer, shown or not, as the cameras' page does.
+        checkRadioIfChanged(apps, KioskConfig.chosenAppOf(this));
         apps.setOnCheckedChangeListener((group, id) -> {
             View checked = group.findViewById(id);
             String value = checked == null ? "" : (String) checked.getTag();
-            if (value.isEmpty() || value.equals(KioskConfig.appLockOf(this))) {
+            if (value.isEmpty() || value.equals(KioskConfig.chosenAppOf(this))) {
                 return;
             }
-            // Chosen here, from the Dashboard choice's App: stored and shown.
-            KioskConfig.edit(this).appLock(value)
-                    .dashboardShows(KioskCommandDispatcher.DASHBOARD_APP).apply();
-            // The lock-task allowlist follows the choice at once.
+            // Chosen here and stored; whether the dashboard shows the app is the Dashboard's
+            // own Save (2026-10-27), so App becomes its draft answer.
+            KioskConfig.edit(this).appLock(value).apply();
+            // A dashboard that shows the app already switches to the new one at once.
             applyKioskPolicy();
             KioskService.publishTelemetrySoon(this);
-            Toast.makeText(this, "Dashboard app: " + AppLock.labelOf(this, value),
-                    Toast.LENGTH_SHORT).show();
+            draftDashboard(KioskCommandDispatcher.DASHBOARD_APP, integrationDraft);
+            Toast.makeText(this, "App: " + AppLock.labelOf(this, value), Toast.LENGTH_SHORT).show();
         });
         card.addView(apps, matchWrapClose());
         page.addView(card, matchWrap());
@@ -4030,28 +4047,32 @@ public final class KioskActivity extends Activity {
         }
 
         LinearLayout dashboardCard = sectionBody(theme);
-        // What the dashboard shows, first and as a choice (the UI round, 2026-10-15): the web
-        // page, the address and its options below, an app (App lock), or cameras. The app and
-        // the cameras are kept when the choice moves away, so a tap on them shows the last one
-        // chosen; with none chosen yet the tap opens its page to choose one.
-        String lockedApp = KioskConfig.appLockOf(this);
-        boolean showsApp = !lockedApp.isEmpty();
-        String shownCameras = KioskConfig.shownCamerasOf(this);
-        boolean showsCameras = !shownCameras.isEmpty();
-        String shownIntegration = KioskConfig.shownIntegrationOf(this);
-        boolean showsIntegration = !shownIntegration.isEmpty();
+        // What the dashboard shows, first and as a choice: the web page and its address, an app
+        // (App lock), cameras, or an integration's own page. Picking an answer only shows it
+        // and its settings, as a draft; the Dashboard's one Save, or Open dashboard, stores the
+        // choice and the panel switches (Juri, 2026-10-27). Each answer's own pages (Page
+        // options, Choose the app, the cameras, an integration's options) store their own
+        // settings and never switch the dashboard.
+        String storedKey = KioskConfig.dashboardShowsOf(this);
+        String draftKey = dashboardDraft != null ? dashboardDraft : storedKey;
+        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(this);
+        String storedIntegration = KioskConfig.dashboardIntegrationOf(this);
+        String draftIntegration = integrationDraft != null ? integrationDraft
+                : Integrations.pageInstance(pages, storedIntegration) != null ? storedIntegration
+                : pages.isEmpty() ? "" : pages.get(0).id;
+        boolean showsApp = KioskCommandDispatcher.DASHBOARD_APP.equals(draftKey);
+        boolean showsCameras = KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(draftKey);
+        boolean showsIntegration = KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(draftKey);
+        boolean showsPage = !showsApp && !showsCameras && !showsIntegration;
+        String chosenApp = KioskConfig.chosenAppOf(this);
+        String chosenCameras = KioskConfig.dashboardCamerasOf(this);
         // Cameras, the third answer, once there is a camera or a group to show; Integration, the
         // fourth, once an integration with a page of its own is added (the Bitcoin clock).
-        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(this).isEmpty()
+        boolean offerCameras = KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(storedKey)
+                || !KioskConfig.camerasOf(this).isEmpty()
                 || !KioskConfig.cameraGroupsOf(this).isEmpty();
-        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(this);
-        boolean offerIntegration = showsIntegration || !pages.isEmpty();
-        boolean showsPage = !showsApp && !showsCameras && !showsIntegration;
-        // The fleet shares the address, not the choice, so its line shows with a web page only;
-        // first, as in every section. The section's heading names the choice.
-        if (showsPage) {
-            addSharedLine(dashboardCard, theme, "dashboard");
-        }
+        boolean offerIntegration = KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(storedKey)
+                || !pages.isEmpty();
         LinearLayout.LayoutParams showsParams = matchWrapClose();
         showsParams.topMargin = dp(8);
         java.util.List<String[]> offered = new java.util.ArrayList<>();
@@ -4064,63 +4085,72 @@ public final class KioskActivity extends Activity {
         }
         String[] offeredWords = new String[offered.size()];
         int shownIndex = 0;
-        String shownKey = KioskConfig.dashboardShowsOf(this);
         for (int index = 0; index < offered.size(); index++) {
             offeredWords[index] = offered.get(index)[1];
-            if (offered.get(index)[0].equals(shownKey)) {
+            if (offered.get(index)[0].equals(draftKey)) {
                 shownIndex = index;
             }
         }
         dashboardCard.addView(segmentedChoice(theme, offeredWords, shownIndex, index -> {
-                    String value = offered.get(index)[0];
-                    if (value.equals(KioskConfig.dashboardShowsOf(this))) {
-                        return;
-                    }
-                    KioskService service = KioskService.liveService();
-                    String refused = service == null ? "the service is not running"
-                            : service.setDashboardShows(value);
-                    if (KioskCommandDispatcher.NO_APP_CHOSEN.equals(refused)) {
-                        showAppLockPage();
-                    } else if (KioskCommandDispatcher.NO_CAMERA_CHOSEN.equals(refused)) {
-                        showCameraViewPage();
-                    } else if (refused != null) {
-                        Toast.makeText(this, "Not changed: " + refused + ".",
-                                Toast.LENGTH_LONG).show();
-                    } else {
-                        // The lock-task allowlist follows the choice at once.
-                        applyKioskPolicy();
-                        redrawThisScreen();
-                    }
-                }), showsParams);
+            draftDashboard(offered.get(index)[0], integrationDraft);
+            redrawThisScreen();
+        }), showsParams);
+        // While the draft differs from the glass, what the glass shows now.
+        if (dashboardPending()) {
+            TextView now = new FlushText(this);
+            now.setTextColor(theme.subtext);
+            now.setTextSize(13);
+            now.setText("Shows now: " + dashboardSummary(config));
+            dashboardCard.addView(now, matchWrapClose());
+        }
+        // The fleet shares the address, not the choice, so its line belongs to the web page
+        // answer, as in the web admin.
+        if (showsPage) {
+            addSharedLine(dashboardCard, theme, "dashboard");
+        }
         if (showsCameras) {
-            dashboardCard.addView(glyphRow(theme, R.drawable.ic_cameras, shownCameras,
-                    "Shown as the dashboard", null, this::showCameraViewPage, false, false),
+            dashboardCard.addView(glyphRow(theme, R.drawable.ic_cameras,
+                    chosenCameras.isEmpty() ? "No camera chosen yet" : chosenCameras,
+                    "Choose the cameras", null, this::showCameraViewPage, false, true),
                     matchWrapClose());
         }
         if (showsIntegration) {
-            // Which integration's page, one radio each, and its options.
-            RadioGroup integrationChoice = new RadioGroup(this);
+            // One row each: the radio chooses what the dashboard shows, the gear opens that
+            // integration's own options, chosen or not (Emmet's sketch, 2026-10-27).
             for (Integrations.Instance pageItem : pages) {
-                radioChoice(theme, integrationChoice, pageItem.name, pageItem.id);
+                RadioButton pick = new RadioButton(this);
+                pick.setChecked(pageItem.id.equals(draftIntegration));
+                pick.setButtonTintList(selectionTint(theme));
+                pick.setContentDescription(pageItem.name);
+                pick.setOnClickListener(view -> {
+                    draftDashboard(KioskCommandDispatcher.DASHBOARD_INTEGRATION, pageItem.id);
+                    redrawThisScreen();
+                });
+                ImageButton gear = iconButton(theme, R.drawable.ic_sensor_tune,
+                        pageItem.name + " options");
+                gear.setOnClickListener(view -> showClockOptionsPage(pageItem.id));
+                LinearLayout row = new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setMinimumHeight(dp(64));
+                row.addView(pick, new LinearLayout.LayoutParams(dp(48), dp(48)));
+                LinearLayout words = new LinearLayout(this);
+                words.setOrientation(LinearLayout.VERTICAL);
+                TextView name = new FlushText(this);
+                name.setText(pageItem.name);
+                name.setTextColor(theme.text);
+                name.setTextSize(16);
+                words.addView(name);
+                TextView look = new FlushText(this);
+                look.setText(clockLine(KioskConfig.clockOptionsOf(this, pageItem.id)));
+                look.setTextColor(theme.subtext);
+                look.setTextSize(14);
+                words.addView(look);
+                words.setOnClickListener(view -> pick.performClick());
+                row.addView(words, new LinearLayout.LayoutParams(0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                row.addView(gear);
+                dashboardCard.addView(row, matchWrapClose());
             }
-            checkRadioIfChanged(integrationChoice, shownIntegration);
-            integrationChoice.setOnCheckedChangeListener((group, checkedId) -> {
-                View checked = group.findViewById(checkedId);
-                KioskService service = KioskService.liveService();
-                if (checked == null || service == null || syncingLiveControls
-                        || checked.getTag().equals(KioskConfig.shownIntegrationOf(this))) {
-                    return;
-                }
-                String refused = service.setDashboardIntegration((String) checked.getTag());
-                if (refused != null) {
-                    Toast.makeText(this, "Not changed: " + refused + ".", Toast.LENGTH_LONG)
-                            .show();
-                }
-            });
-            dashboardCard.addView(integrationChoice, matchWrapClose());
-            Button clockMore = textButtonOnward(theme, "Clock options");
-            clockMore.setOnClickListener(view -> showClockOptionsPage(shownIntegration));
-            dashboardCard.addView(buttonRow(clockMore), matchWrap());
         }
         // The box holds what is stored and nothing else; the example is a hint. It used to be
         // prefilled with a smart-home address as real text, so a fresh panel saved and loaded
@@ -4167,11 +4197,12 @@ public final class KioskActivity extends Activity {
         if (showsApp) {
             // The app, and why it cannot run if it cannot, in the words App lock's page uses.
             TextView appLine = new FlushText(this);
-            appLine.setTextColor(theme.text);
+            appLine.setTextColor(chosenApp.isEmpty() ? theme.subtext : theme.text);
             appLine.setTextSize(16);
-            appLine.setText(KioskConfig.appLockLabelOf(this));
+            appLine.setText(chosenApp.isEmpty() ? "No app chosen yet"
+                    : KioskConfig.appLockLabelOf(this));
             dashboardCard.addView(appLine, matchWrapClose());
-            String appProblem = AppLock.problem(this, lockedApp);
+            String appProblem = chosenApp.isEmpty() ? null : AppLock.problem(this, chosenApp);
             if (appProblem != null) {
                 TextView problemLine = new FlushText(this);
                 problemLine.setTextColor(theme.bad);
@@ -4189,6 +4220,53 @@ public final class KioskActivity extends Activity {
             browserMore.setOnClickListener(view -> showBrowserOptionsPage());
             dashboardCard.addView(buttonRow(browserMore), matchWrap());
         }
+        // The Dashboard's one Save: the choice, the chosen integration and the address together;
+        // shown while something differs from what is stored. Open dashboard saves it too.
+        Button saveDashboard = primaryButton(theme, "Save");
+        TextView notSaved = new FlushText(this);
+        notSaved.setText("Not saved");
+        notSaved.setTextColor(theme.subtext);
+        notSaved.setTextSize(14);
+        LinearLayout saveRow = new LinearLayout(this);
+        saveRow.setGravity(Gravity.CENTER_VERTICAL);
+        saveRow.addView(saveDashboard);
+        LinearLayout.LayoutParams notSavedParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        notSavedParams.leftMargin = dp(16);
+        saveRow.addView(notSaved, notSavedParams);
+        String storedUrl = config.dashboardUrl;
+        Runnable paintSave = () -> saveRow.setVisibility(dashboardPending()
+                || !normalizeUrl(urlInput.getText().toString()).equals(storedUrl)
+                && !urlInput.getText().toString().trim().equals(storedUrl)
+                ? View.VISIBLE : View.GONE);
+        urlInput.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable text) {
+                paintSave.run();
+            }
+        });
+        saveDashboard.setOnClickListener(view -> {
+            hideKeyboard(urlInput);
+            String refused = saveDashboardChoice(urlInput.getText().toString());
+            if (refused != null) {
+                Toast.makeText(this, "Not saved: " + refused + ".", Toast.LENGTH_LONG).show();
+                redrawThisScreen();
+                return;
+            }
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+            applyKioskPolicy();
+            redrawThisScreen();
+        });
+        paintSave.run();
+        dashboardCard.addView(saveRow, matchWrap());
         String webViewProvider = showsApp ? null : webViewProviderSummary();
         if (webViewProvider != null) {
             // Plain subtext, deliberately not a warning: see webViewProviderSummary().
@@ -5357,6 +5435,16 @@ public final class KioskActivity extends Activity {
             // device id ride in the telemetry document, and this save used to leave the smart
             // home on the old values for up to a minute.
             KioskService.publishTelemetrySoon(this);
+            // The Dashboard's draft too: Open dashboard saves and opens (Juri, 2026-10-27).
+            if (dashboardPending()) {
+                String refused = saveDashboardChoice(null);
+                if (refused != null) {
+                    Toast.makeText(this, "Not saved: " + refused + ".", Toast.LENGTH_LONG).show();
+                    redrawThisScreen();
+                    return;
+                }
+                applyKioskPolicy();
+            }
             showDashboard(url);
         };
         // No "Configure Wi-Fi" button: Android Settings draws no navigation bar under this ROM,
@@ -5523,7 +5611,10 @@ public final class KioskActivity extends Activity {
         watchLists("fleet", page, () -> redrawInPlace(this::showFleetPage));
     }
 
-    /** The fleet's name, "3 panels, 3 online", and Say or play, Add a panel, Identify all. */
+    /**
+     * The fleet's name, "3 panels, 3 online", Add a panel and Identify all. Announce acts on
+     * panels, so it is in the selection's actions with them.
+     */
     private LinearLayout fleetHead(KioskTheme theme, java.util.Map<String, Object> list,
             java.util.List<FleetHealth.Member> health) {
         Context app = getApplicationContext();
@@ -5547,17 +5638,6 @@ public final class KioskActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER_VERTICAL);
-        if (health.size() > 1) {
-            Button say = tonalButton(theme, "Say or play");
-            say.setOnClickListener(view -> {
-                speakersMode = 0;
-                showFleetSayPage();
-            });
-            LinearLayout.LayoutParams sayParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            sayParams.rightMargin = dp(8);
-            actions.addView(say, sayParams);
-        }
         Button add = withPlus(primaryButton(theme, "Add a panel"));
         add.setOnClickListener(view -> showFleetAddPage());
         actions.addView(add, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -5713,7 +5793,10 @@ public final class KioskActivity extends Activity {
                 filter.run();
             }
         };
-        WrapRow chips = new WrapRow();
+        // One row, as the web's: one filter read left to right; where the list is narrower than
+        // the chips (beside the detail) the row scrolls sideways, as Material's chip rows do.
+        LinearLayout chips = new LinearLayout(this);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
         String[][] shows = {{"all", "All", Integer.toString(sorted.size())},
             {"healthy", "Healthy", Integer.toString(sorted.size() - unhealthy)},
             {"unhealthy", "Not healthy", Integer.toString(unhealthy)}};
@@ -5730,9 +5813,16 @@ public final class KioskActivity extends Activity {
                 applyFilter.run();
             });
             showChips.add(chip);
-            chips.addView(chip);
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            chipParams.rightMargin = chips.getChildCount() < shows.length - 1 ? dp(8) : 0;
+            chips.addView(chip, chipParams);
         }
-        tools.addView(chips, navRowParams());
+        android.widget.HorizontalScrollView chipRow =
+                new android.widget.HorizontalScrollView(this);
+        chipRow.setHorizontalScrollBarEnabled(false);
+        chipRow.addView(chips);
+        tools.addView(chipRow, navRowParams());
         EditText search = themedInput(theme, fleetSearch, false);
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         search.setTypeface(Typeface.DEFAULT);
@@ -5798,7 +5888,7 @@ public final class KioskActivity extends Activity {
         selection.addView(selectedLine, navRowParams());
         WrapRow selectionActions = new WrapRow();
         if (sorted.size() > 1) {
-            Button say = textButton(theme, "Say or play");
+            Button say = textButton(theme, "Announce");
             say.setOnClickListener(view -> {
                 speakersMode = 2;
                 speakersTicked.clear();
@@ -5883,11 +5973,34 @@ public final class KioskActivity extends Activity {
             selection.addView(fittingButtonRow(addToGroup), matchWrapClose());
         }
         nav.addView(selection, navRowParams());
+        // Select all: the selection's actions for every panel shown, Announce included.
+        CheckBox tickAll = new CheckBox(this);
+        tickAll.setButtonTintList(ColorStateList.valueOf(theme.accent));
+        tickAll.setText("Select all");
+        tickAll.setTextSize(14);
+        tickAll.setTextColor(theme.subtext);
+        tickAll.setMinHeight(dp(48));
+        tickAll.setOnClickListener(view -> {
+            boolean on = tickAll.isChecked();
+            for (CheckBox tick : ticks) {
+                if (fleetRowShown(tick)) {
+                    tick.setChecked(on);
+                }
+            }
+        });
+        LinearLayout.LayoutParams tickAllParams = navRowParams();
+        tickAllParams.leftMargin = dp(4);
+        nav.addView(tickAll, tickAllParams);
         paintSelection[0] = () -> {
             boolean any = !fleetTicked.isEmpty();
             selected.setText(fleetTicked.size() + " selected");
             selection.setVisibility(any ? View.VISIBLE : View.GONE);
             tools.setVisibility(any ? View.GONE : View.VISIBLE);
+            boolean every = any;
+            for (CheckBox tick : ticks) {
+                every &= !fleetRowShown(tick) || tick.isChecked();
+            }
+            tickAll.setChecked(every);
         };
         paintSelection[0].run();
         // The rows, the not healthy under their own head when both kinds are there.
@@ -5967,6 +6080,8 @@ public final class KioskActivity extends Activity {
             }
         });
         applyFilter.run();
+        // Select all again, now that the rows are there and filtered.
+        paintSelection[0].run();
         if (sorted.size() == 1) {
             LinearLayout next = new LinearLayout(this);
             next.setOrientation(LinearLayout.VERTICAL);
@@ -5995,6 +6110,12 @@ public final class KioskActivity extends Activity {
         }
     }
 
+    /** Whether the row a tick is in is shown by the filters (the row is the tick's grandparent). */
+    private static boolean fleetRowShown(CheckBox tick) {
+        return tick.getParent() != null && tick.getParent().getParent() instanceof View
+                && ((View) tick.getParent().getParent()).getVisibility() == View.VISIBLE;
+    }
+
     /**
      * A panel's row: its tick, its status dot, its name with its reason or status, its first
      * group, and Identify. Below 840 dp and beside the detail alike; the row itself opens it.
@@ -6014,6 +6135,9 @@ public final class KioskActivity extends Activity {
         row.setMinimumHeight(dp(64));
         CheckBox tick = new CheckBox(this);
         tick.setButtonTintList(ColorStateList.valueOf(theme.accent));
+        // A 48 dp target, as Select all's above it.
+        tick.setMinWidth(dp(48));
+        tick.setMinHeight(dp(48));
         tick.setContentDescription(member.name);
         tick.setChecked(fleetTicked.contains(spki));
         tick.setOnCheckedChangeListener((button, checked) -> {
@@ -6557,9 +6681,15 @@ public final class KioskActivity extends Activity {
             fleetSection = ids.get(0);
         }
         LinearLayout nav = wide ? navPanel(theme) : card(theme, null);
-        WrapRow scopes = new WrapRow();
+        // One row, as the Panels tab's chips: a choice read left to right, scrolled sideways
+        // when the groups do not fit.
+        LinearLayout scopes = new LinearLayout(this);
+        scopes.setOrientation(LinearLayout.HORIZONTAL);
+        android.widget.HorizontalScrollView scopeRow =
+                new android.widget.HorizontalScrollView(this);
+        scopeRow.setHorizontalScrollBarEnabled(false);
         if (wide) {
-            scopes.setPadding(dp(8), 0, dp(8), 0);
+            scopeRow.setPadding(dp(8), 0, dp(8), 0);
         }
         java.util.Map<String, String> scopeNames = new java.util.LinkedHashMap<>();
         scopeNames.put(FleetDocument.EVERYONE, FleetDocument.EVERYONE_NAME);
@@ -6571,9 +6701,13 @@ public final class KioskActivity extends Activity {
                 fleetScope = scope.getKey();
                 redrawInPlace(this::showFleetPage);
             });
-            scopes.addView(chip);
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            chipParams.rightMargin = scopes.getChildCount() < scopeNames.size() - 1 ? dp(8) : 0;
+            scopes.addView(chip, chipParams);
         }
-        nav.addView(scopes, navRowParams());
+        scopeRow.addView(scopes);
+        nav.addView(scopeRow, navRowParams());
         boolean first = true;
         for (String section : FleetDocument.SECTIONS) {
             java.util.Map<String, Object> values = FleetDocument.sectionValues(list, fleetScope,
@@ -6958,10 +7092,10 @@ public final class KioskActivity extends Activity {
         setContentView(scrollPage(theme, page));
     }
 
-    /** Say or play, a page of its own: the Speakers card, back to the Fleet page. */
+    /** Announce, a page of its own: the Speakers card, back to the Fleet page. */
     private void showFleetSayPage() {
         currentScreen = this::showFleetSayPage;
-        LinearLayout page = subPage("Say or play", this::showFleetPage);
+        LinearLayout page = subPage("Announce", this::showFleetPage);
         KioskTheme theme = currentTheme();
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(this);
         if (list == null) {
@@ -7019,7 +7153,7 @@ public final class KioskActivity extends Activity {
             java.util.Map<String, Object> list, java.util.Map<String, String> groups) {
         into.removeAllViews();
         Context app = getApplicationContext();
-        // On its own page, Say or play, which names it.
+        // On its own page, Announce, which names it.
         LinearLayout card = card(theme, null);
         into.addView(card, matchWrap());
         java.util.List<String> labels = new java.util.ArrayList<>(
@@ -7052,9 +7186,19 @@ public final class KioskActivity extends Activity {
                 ? "group:" + speakersGroup : speakersMode == 2
                 ? "panels:" + String.join(",", speakersTicked) : "all";
         Runnable[] reload = new Runnable[1];
+        java.util.Map<String, SeekBar> volumes = new java.util.HashMap<>();
         java.util.function.BiConsumer<String[], String> send = (what, to) -> {
             result.setText("Sending...");
             result.setVisibility(View.VISIBLE);
+            if ("volume".equals(what[0])) {
+                // The new volume shows on the rows at once; the panels' answers confirm it.
+                for (java.util.Map<String, Object> member : FleetSpeakers.chosen(app, to)) {
+                    SeekBar row = volumes.get(TinyJson.string(member, FleetDocument.ID, ""));
+                    if (row != null && row.isEnabled()) {
+                        row.setProgress(Integer.parseInt(what[1]));
+                    }
+                }
+            }
             new Thread(() -> {
                 org.json.JSONObject done = FleetSpeakers.act(app, to, what[0], what[1]);
                 String line = done.optString("detail", done.optString("error", ""));
@@ -7090,7 +7234,6 @@ public final class KioskActivity extends Activity {
         card.addView(all, matchWrapClose());
         card.addView(result, matchWrapClose());
         java.util.Map<String, TextView> states = new java.util.HashMap<>();
-        java.util.Map<String, SeekBar> volumes = new java.util.HashMap<>();
         java.util.Map<String, CompoundButton> switches = new java.util.HashMap<>();
         boolean first = true;
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
@@ -7159,34 +7302,39 @@ public final class KioskActivity extends Activity {
         LinearLayout.LayoutParams hintParams = matchWrap();
         hintParams.topMargin = dp(10);
         card.addView(hint, hintParams);
-        reload[0] = () -> new Thread(() -> {
-            org.json.JSONArray panels = FleetSpeakers.states(app).optJSONArray("panels");
-            mainHandler.post(() -> {
-                if (!card.isAttachedToWindow() || panels == null) {
-                    return;
-                }
-                for (int index = 0; index < panels.length(); index++) {
-                    org.json.JSONObject one = panels.optJSONObject(index);
-                    String id = one == null ? "" : one.optString("id");
-                    TextView state = states.get(id);
-                    if (state == null) {
-                        continue;
-                    }
-                    boolean reached = one.optBoolean("reached");
-                    boolean speakerOn = one.optBoolean("on");
-                    state.setText(speakerWords(one));
-                    CompoundButton on = switches.get(id);
-                    on.setEnabled(reached);
-                    on.setChecked(reached && speakerOn);
-                    SeekBar volume = volumes.get(id);
-                    volume.setEnabled(reached && speakerOn);
-                    volume.setAlpha(reached && speakerOn ? 1f : 0.38f);
-                    if (one.optInt("volume", -1) >= 0 && !volume.isPressed()) {
-                        volume.setProgress(one.optInt("volume"));
-                    }
-                }
-            });
-        }, "MuralisFleetSpeakers").start();
+        // Each panel asked on its own and drawn as it answers: one that is offline no longer
+        // holds back the others' rows for its whole timeout (2026-10-27, seconds per change).
+        reload[0] = () -> {
+            for (String asked : states.keySet()) {
+                new Thread(() -> {
+                    org.json.JSONArray panels = FleetSpeakers.states(app, asked)
+                            .optJSONArray("panels");
+                    org.json.JSONObject one = panels == null ? null : panels.optJSONObject(0);
+                    mainHandler.post(() -> {
+                        if (!card.isAttachedToWindow() || one == null) {
+                            return;
+                        }
+                        String id = one.optString("id");
+                        TextView state = states.get(id);
+                        if (state == null) {
+                            return;
+                        }
+                        boolean reached = one.optBoolean("reached");
+                        boolean speakerOn = one.optBoolean("on");
+                        state.setText(speakerWords(one));
+                        CompoundButton on = switches.get(id);
+                        on.setEnabled(reached);
+                        on.setChecked(reached && speakerOn);
+                        SeekBar volume = volumes.get(id);
+                        volume.setEnabled(reached && speakerOn);
+                        volume.setAlpha(reached && speakerOn ? 1f : 0.38f);
+                        if (one.optInt("volume", -1) >= 0 && !volume.isPressed()) {
+                            volume.setProgress(one.optInt("volume"));
+                        }
+                    });
+                }, "MuralisFleetSpeakers").start();
+            }
+        };
         reload[0].run();
     }
 
@@ -7628,11 +7776,14 @@ public final class KioskActivity extends Activity {
                     new android.graphics.drawable.InsetDrawable(mask, 0, dp(5), 0, dp(5)),
                     theme.text));
             // After the background, whose inset would otherwise become the padding.
-            segment.setPadding(dp(12), 0, dp(12), 0);
+            segment.setPadding(dp(8), 0, dp(8), 0);
             segment.setSelected(on);
             final int mine = index;
             segment.setOnClickListener(view -> onChoose.accept(mine));
-            bar.addView(segment, new LinearLayout.LayoutParams(0, dp(48), 1f));
+            // Each as wide as its words, the room left shared: equal shares cut "Integration"
+            // on a phone (review, 2026-10-27).
+            bar.addView(segment, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(48), 1f));
         }
         return bar;
     }
@@ -8471,6 +8622,106 @@ public final class KioskActivity extends Activity {
         showConfiguration(KioskConfig.load(this));
     }
 
+    /** The Dashboard choice picked but not saved; null while it is the stored one. */
+    private String dashboardDraft;
+    /** The integration picked for the dashboard but not saved; null while it is the stored one. */
+    private String integrationDraft;
+    /** The stored choice the draft started from, so a change made elsewhere meanwhile shows. */
+    private String dashboardDraftBase;
+    /** The stored integration the draft started from, for the same reason. */
+    private String integrationDraftBase;
+
+    /** Picks an answer as a draft; the draft goes away when it is what is stored. */
+    private void draftDashboard(String shows, String integration) {
+        String stored = KioskConfig.dashboardShowsOf(this);
+        if (dashboardDraftBase == null) {
+            dashboardDraftBase = stored;
+            integrationDraftBase = KioskConfig.dashboardIntegrationOf(this);
+        }
+        dashboardDraft = shows.equals(stored) ? null : shows;
+        String storedIntegration = KioskConfig.dashboardIntegrationOf(this);
+        integrationDraft = integration == null || integration.equals(storedIntegration)
+                ? null : integration;
+        if (dashboardDraft == null && integrationDraft == null) {
+            dashboardDraftBase = null;
+        }
+    }
+
+    /** Whether the Dashboard choice or its integration differs from what is stored. */
+    private boolean dashboardPending() {
+        return dashboardDraft != null || integrationDraft != null;
+    }
+
+    /** Forgets the Dashboard draft: saved, or the settings left for the dashboard. */
+    private void dropDashboardDraft() {
+        dashboardDraft = null;
+        integrationDraft = null;
+        dashboardDraftBase = null;
+        integrationDraftBase = null;
+    }
+
+    /**
+     * Stores the Dashboard: the integration picked, the address typed for a web page, then the
+     * choice, through the service as a command would, so the same checks apply. Null when
+     * stored, else why not; refused whole when the dashboard changed elsewhere since the draft
+     * began.
+     */
+    private String saveDashboardChoice(String typedUrl) {
+        KioskService service = KioskService.liveService();
+        if (service == null) {
+            return "the service is not running";
+        }
+        String stored = KioskConfig.dashboardShowsOf(this);
+        if (dashboardDraftBase != null && (!dashboardDraftBase.equals(stored)
+                || !integrationDraftBase.equals(KioskConfig.dashboardIntegrationOf(this)))) {
+            dropDashboardDraft();
+            return "the dashboard was changed elsewhere while this page was open. It now shows "
+                    + wordOf(KioskCommandDispatcher.DASHBOARD_WORDS, stored);
+        }
+        String key = dashboardDraft != null ? dashboardDraft : stored;
+        if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(key) && integrationDraft != null) {
+            String refused = service.setDashboardIntegration(integrationDraft);
+            if (refused != null) {
+                return refused;
+            }
+        }
+        if (KioskCommandDispatcher.DASHBOARD_PAGE.equals(key) && typedUrl != null) {
+            String url = normalizeUrl(typedUrl);
+            if (!url.equals(KioskConfig.load(this).dashboardUrl)) {
+                String problem = url.isEmpty() ? null
+                        : KioskCommandDispatcher.validateDashboardUrl(url);
+                if (problem != null) {
+                    return problem;
+                }
+                service.setDashboardUrl(url);
+            }
+        }
+        if (!key.equals(stored)) {
+            String refused = service.setDashboardShows(key);
+            if (KioskCommandDispatcher.NO_APP_CHOSEN.equals(refused)) {
+                return "choose the app first, under App";
+            }
+            if (KioskCommandDispatcher.NO_CAMERA_CHOSEN.equals(refused)) {
+                return "choose the cameras first, under Cameras";
+            }
+            if (refused != null) {
+                return refused;
+            }
+        }
+        dropDashboardDraft();
+        return null;
+    }
+
+    /** A Bitcoin clock's look in a few words, for its Dashboard row: "Night · 6 screens". */
+    private static String clockLine(BitcoinClock.Options options) {
+        int on = 0;
+        for (BitcoinClock.Screen screen : options.screens) {
+            on += screen.on ? 1 : 0;
+        }
+        return wordOf(BitcoinClock.LOOK_WORDS, options.look) + " · " + on
+                + (on == 1 ? " screen" : " screens");
+    }
+
     /** The Clock options page's preview, destroyed with the page. */
     private WebView clockPreview;
 
@@ -8526,7 +8777,7 @@ public final class KioskActivity extends Activity {
                     "Discard", true, leaveTo,
                     () -> showClockOptionsPage(instanceId, draft, baseline));
         };
-        LinearLayout page = subPage("Clock options", leave);
+        LinearLayout page = subPage(BitcoinClockPage.nameOf(this, instanceId) + " options", leave);
         KioskTheme theme = currentTheme();
         boolean wide = widthClass() == 2;
         Runnable redraw = () -> redrawInPlace(
@@ -13407,7 +13658,7 @@ public final class KioskActivity extends Activity {
         });
         about.addView(buttonRow(saveCaption), matchWrap());
         // The web page's words: the credit hidden or shown for this picture alone.
-        Button credit = textButton(theme, off ? "Show its credit" : "Hide its credit");
+        Button credit = textButton(theme, off ? "Show credits" : "Hide credits");
         credit.setOnClickListener(view -> library.run(() -> {
             String refusal = library.setCreditHidden(uri, !off);
             library.onMain(() -> afterPictureChange(refusal));
@@ -14369,6 +14620,7 @@ public final class KioskActivity extends Activity {
                         || size != draft.pageSize) {
                     return;
                 }
+                screen.listing = listing;
                 screen.pictures.clear();
                 paintWhere(screen);
                 paintPicturePane(screen, listing);
@@ -14793,7 +15045,14 @@ public final class KioskActivity extends Activity {
         button.setOnClickListener(v -> {
             KioskConfig.edit(this).pictureView(next).apply();
             paintViewButton(screen);
-            if (screen.draft.folder != null) {
+            // The same pictures in the new view, painted from what was read: reading the folder
+            // again blanked the pane to "Reading..." and the page jumped as if reloaded.
+            if (screen.listing != null && screen.draft.folder != null) {
+                screen.boxes.clear();
+                screen.pictures.clear();
+                paintWhere(screen);
+                paintPicturePane(screen, screen.listing);
+            } else if (screen.draft.folder != null) {
                 loadPicturePane(screen);
             }
         });
@@ -17764,6 +18023,11 @@ public final class KioskActivity extends Activity {
         captionParams.gravity = Gravity.TOP | Gravity.START;
         captionParams.leftMargin = dp(12);
         frame.addView(caption, captionParams);
+        // The caption names the box for a screen reader too (an empty box had no name).
+        if (input.getId() == View.NO_ID) {
+            input.setId(View.generateViewId());
+        }
+        caption.setLabelFor(input.getId());
         LinearLayout.LayoutParams frameParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         // 24 dp between fields on Material's grid, less the 8 dp the label already stands in.
@@ -18396,6 +18660,8 @@ public final class KioskActivity extends Activity {
     }
 
     private void showDashboard(String url) {
+        // The settings are left: a Dashboard draft not saved is dropped, as a typed address is.
+        dropDashboardDraft();
         appGoneShowing = false;
         appLockPlate = false;
         if (appLockGone()) {
@@ -19109,8 +19375,10 @@ public final class KioskActivity extends Activity {
      * The service asked for Identify (KioskService.identify): this panel's name, large and
      * centred, over whatever is on screen, for ten seconds, drawn the way the stats overlay is
      * (a child of this activity's own view tree, no overlay permission, no second window) but
-     * on the window's content so every screen gets it. Touches fall through, so the corner
-     * taps keep working under it. Nothing while this activity is not in front.
+     * on the window's content so every screen gets it. A tap anywhere closes it and is not
+     * passed on (dispatchTouchEvent); a corner tap still counts for the escape combinations.
+     * Over the app it is a window that takes the touch and closes; the corners' own windows
+     * lie above it. Nothing while this activity is not in front.
      */
     private void showIdentify() {
         // App lock: drawn in a window of its own straight over the app (AppLock.showOver).
@@ -19137,10 +19405,16 @@ public final class KioskActivity extends Activity {
             label.setShadowLayer(dp(3), 0, 0, Color.BLACK);
             int pad = dp(32);
             label.setPadding(pad, pad, pad, pad);
-            label.setClickable(false);
             label.setFocusable(false);
             if (overApp) {
-                if (!AppLock.showOver(this, label, false)) {
+                // Its own window over the app: the touch is taken there, the app never sees it.
+                label.setOnTouchListener((view, touch) -> {
+                    if (touch.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                        endIdentify();
+                    }
+                    return true;
+                });
+                if (!AppLock.showOver(this, label)) {
                     return;
                 }
             } else {
@@ -19527,7 +19801,7 @@ public final class KioskActivity extends Activity {
         FrameLayout shade = request.fullscreen ? fullscreenCameras(request)
                 : popupCard(request, theme);
         if (overApp) {
-            if (!AppLock.showOver(this, shade, true)) {
+            if (!AppLock.showOver(this, shade)) {
                 if (popupWeb != null) {
                     CameraView.close(popupWeb);
                     popupWeb = null;

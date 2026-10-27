@@ -349,9 +349,10 @@ final class AppLock {
     /**
      * A pop-up or Identify drawn straight over the app (2026-10-15: over the locked app,
      * not over Muralis's page): {@code view} in a window of its own over the whole screen,
-     * taking touches when {@code touchable} (the pop-up closes on a touch). False when refused.
+     * taking the touches on it (both close on a touch, which the app never gets). False when
+     * refused.
      */
-    static boolean showOver(Context context, View view, boolean touchable) {
+    static boolean showOver(Context context, View view) {
         WindowManager manager = context.getApplicationContext()
                 .getSystemService(WindowManager.class);
         if (manager == null || !canDrawOver(context)) {
@@ -361,17 +362,10 @@ final class AppLock {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT, overlayType(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | (touchable ? 0 : WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         wholeScreen(params);
-        if (!touchable) {
-            // Android 12 and newer drop a tap that passes through another app's overlay unless
-            // the overlay is at most 0.8 opaque, so a window that takes no touch stays at that;
-            // fully opaque, it took every tap from the app (Identify).
-            params.alpha = 0.8f;
-        }
         params.setTitle("Muralis over the app");
         if (!add(manager, view, params)) {
             return false;

@@ -998,25 +998,16 @@ final class HttpAdminServer {
                 writeResponse(output, 200, "image/svg+xml", bytes(svg),
                         java.util.Collections.singletonMap("Cache-Control", "no-store"));
             }
-        } else if (path.equals("/dashboard-shows") && method.equals("POST")) {
-            String refused = kioskService.setDashboardShows(
-                    parseFormBody(headers, body).getOrDefault("dashboard_shows", ""));
-            if (refused == null) {
-                writeResponse(output, 303, "text/plain", bytes("saved"),
-                        Collections.singletonMap("Location", settingsAt("dashboard")));
-            } else {
-                writeResponse(output, 400, "text/html; charset=utf-8", bytes(buildSettingsPage(
-                        "Not changed: " + refused + ".", "dashboard")));
-            }
         } else if (path.equals("/app-lock") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildAppLockPage(null,
                     "1".equals(queryValue(query, "system")))));
         } else if (path.equals("/app-lock") && method.equals("POST")) {
             String refused = saveAppLock(parseFormBody(headers, body));
             if (refused == null) {
-                // Back to Dashboard, which now says what the dashboard shows.
+                // Back to Dashboard with App picked as its draft: the Dashboard's Save switches.
                 writeResponse(output, 303, "text/plain", bytes("saved"),
-                        Collections.singletonMap("Location", settingsAt("dashboard")));
+                        Collections.singletonMap("Location", "/?draft=app"
+                                + settingsAt("dashboard").substring(1)));
             } else {
                 writeResponse(output, 400, "text/html; charset=utf-8",
                         bytes(buildAppLockPage(refused, false)));
@@ -1109,12 +1100,10 @@ final class HttpAdminServer {
             writeResponse(output, 200, "text/html; charset=utf-8", bytes(buildCameraViewPage(null)));
         } else if (path.equals("/camera-view") && method.equals("POST")) {
             Map<String, String> form = parseFormBody(headers, body);
-            // Chosen here, from the Dashboard choice's Cameras: stored and shown, as on the panel.
+            // Chosen here and stored, as on the panel; whether the dashboard shows the cameras
+            // is the Dashboard's own Save (2026-10-27).
             String refused = kioskService.setDashboardCameras(
                     form.getOrDefault("dashboard_cameras", ""));
-            if (refused == null) {
-                refused = kioskService.setDashboardShows(KioskCommandDispatcher.DASHBOARD_CAMERAS);
-            }
             if (refused == null && form.containsKey("camera_layout")) {
                 KioskConfig.edit(context).cameraLayout(form.get("camera_layout"),
                         form.getOrDefault("camera_big", ""),
@@ -1618,7 +1607,21 @@ final class HttpAdminServer {
                 if (stale != null) {
                     return stale;
                 }
+                String storedShows = KioskConfig.dashboardShowsOf(context);
+                if (form.containsKey("shows_baseline")
+                        && (!storedShows.equals(form.get("shows_baseline"))
+                        || !KioskConfig.dashboardIntegrationOf(context)
+                                .equals(form.getOrDefault("integration_baseline", "")))) {
+                    return "Not saved: the dashboard was changed elsewhere while this page was"
+                            + " open. It now shows " + wordOf(storedShows) + ".";
+                }
+                String shows = form.getOrDefault("dashboard_shows", storedShows);
                 String url = form.getOrDefault("dashboard_url", fresh.dashboardUrl).trim();
+                if (!KioskCommandDispatcher.DASHBOARD_PAGE.equals(shows)
+                        && url.equals(fresh.dashboardUrl)) {
+                    // Another answer saved, the address as it was: only the choice changes.
+                    return saveDashboardShows(shows, form.get("dashboard_integration"));
+                }
                 // The dispatcher's rules, not local ones: this box used to store what
                 // dashboard.url would refuse with a reason, so a schemeless address was retried
                 // every ten seconds forever, and a bad device id was stored, answered with a
@@ -1637,7 +1640,7 @@ final class HttpAdminServer {
                     // the dispatcher uses, so the two paths cannot disagree again.
                     kioskService.setDashboardUrl(url);
                 }
-                return null;
+                return saveDashboardShows(shows, form.get("dashboard_integration"));
             }
             case "certificates": {
                 String host = form.getOrDefault("host", "");
@@ -1873,11 +1876,6 @@ final class HttpAdminServer {
                         }
                     } else if (entry.getKey().equals("ambient_album")) {
                         String problem = kioskService.setScreensaverPlaylist(entry.getValue());
-                        if (problem != null) {
-                            return "Not changed: " + problem + ".";
-                        }
-                    } else if (entry.getKey().equals("dashboard_integration")) {
-                        String problem = kioskService.setDashboardIntegration(entry.getValue());
                         if (problem != null) {
                             return "Not changed: " + problem + ".";
                         }
@@ -2349,6 +2347,8 @@ final class HttpAdminServer {
         paths.put("cameras", "<path d=\"M4 7h10a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zM15 11l6-3.5v9L15 13z\"/>");
         paths.put("integrations", "<path d=\"M10 5V4a2 2 0 014 0v1h4a1 1 0 011 1v4h1a2 2 0 010 4h-1v4a1 1 0 01-1 1H6a1 1 0 01-1-1v-4h1a2 2 0 000-4H5V6a1 1 0 011-1z\"/>");
         paths.put("more", "<path d=\"M12 5h.01M12 12h.01M12 19h.01\" stroke-width=\"3\"/>");
+        // An item's own options, the panel's ic_sensor_tune.
+        paths.put("tune", "<path d=\"M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M13 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 12a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 18a2 2 0 1 0 4 0a2 2 0 1 0-4 0\"/>");
         paths.put("stats", "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>");
         // Close a dialog or a selection: Material's close.
         paths.put("close", "<path d=\"M6 6l12 12M18 6L6 18\"/>");
@@ -4665,81 +4665,138 @@ final class HttpAdminServer {
 
     // ---- the bodies, each the section's essentials in the texts the page has always had
 
+    /**
+     * The Dashboard's choice and integration from its Save, through the service as a command
+     * would; null when stored, else why not, in the section's words.
+     */
+    private String saveDashboardShows(String shows, String integration) {
+        if (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(shows) && integration != null
+                && !integration.isEmpty()) {
+            String refused = kioskService.setDashboardIntegration(integration);
+            if (refused != null) {
+                return "Not saved: " + refused + ".";
+            }
+        }
+        if (shows.equals(KioskConfig.dashboardShowsOf(context))) {
+            return null;
+        }
+        String refused = kioskService.setDashboardShows(shows);
+        if (KioskCommandDispatcher.NO_APP_CHOSEN.equals(refused)) {
+            return "Not saved: choose the app first, under App.";
+        }
+        if (KioskCommandDispatcher.NO_CAMERA_CHOSEN.equals(refused)) {
+            return "Not saved: choose the cameras first, under Cameras.";
+        }
+        return refused == null ? null : "Not saved: " + refused + ".";
+    }
+
+    private static String wordOf(String shows) {
+        for (String[] word : KioskCommandDispatcher.DASHBOARD_WORDS) {
+            if (word[0].equals(shows)) {
+                return word[1];
+            }
+        }
+        return shows;
+    }
+
     private String dashboardBody(KioskConfig config, String notice, String noticeSection) {
-        // What the dashboard shows, first and as a choice, as on the panel (the UI round,
-        // 2026-10-15): the web page, its address and its options below, an app (App lock) or
-        // cameras. The app and the cameras are kept when the choice moves away, so their
-        // segment shows the last one chosen; with none chosen yet it opens its page instead.
-        String app = KioskConfig.appLockOf(context);
-        boolean showsApp = !app.isEmpty();
-        String cameras = KioskConfig.shownCamerasOf(context);
-        boolean showsCameras = !cameras.isEmpty();
-        String integration = KioskConfig.shownIntegrationOf(context);
-        boolean showsIntegration = !integration.isEmpty();
+        // What the dashboard shows, first and as a choice, as on the panel: the web page and its
+        // address, an app, cameras, or an integration's own page. Every answer and its fields
+        // are drawn; admin_setting.js shows the picked one as a draft, and the one Save stores
+        // the choice, the integration and the address together (Juri, 2026-10-27). Without
+        // scripting all of them show and Save still posts the radio picked.
+        String stored = KioskConfig.dashboardShowsOf(context);
+        String chosenApp = KioskConfig.chosenAppOf(context);
+        String chosenCameras = KioskConfig.dashboardCamerasOf(context);
+        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(context);
+        String storedIntegration = KioskConfig.dashboardIntegrationOf(context);
+        String integration = Integrations.pageInstance(pages, storedIntegration) != null
+                ? storedIntegration : pages.isEmpty() ? "" : pages.get(0).id;
         // Cameras, the third answer, once there is a camera or a group to show; Integration, the
         // fourth, once an integration with a page of its own is added (the Bitcoin clock).
-        boolean offerCameras = showsCameras || !KioskConfig.camerasOf(context).isEmpty()
+        boolean offerCameras = KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(stored)
+                || !KioskConfig.camerasOf(context).isEmpty()
                 || !KioskConfig.cameraGroupsOf(context).isEmpty();
-        java.util.List<Integrations.Instance> pages = BitcoinClockPage.pageInstances(context);
-        boolean offerIntegration = showsIntegration || !pages.isEmpty();
-        boolean showsPage = !showsApp && !showsCameras && !showsIntegration;
-        String[][] words = KioskCommandDispatcher.DASHBOARD_WORDS;
-        // The fleet shares the address, not the choice, so its line shows with a web page only;
-        // first, as in every section. The section's heading names the choice.
-        String shows = (showsPage ? sharedLine("dashboard") : "")
-                + "<div class=\"segmented\" role=\"group\" aria-label=\"Dashboard\">"
-                + dashboardSegment(words[0], showsPage, null)
-                + dashboardSegment(words[1], showsApp,
-                        KioskConfig.chosenAppOf(context).isEmpty() ? "/app-lock" : null)
-                + (offerCameras ? dashboardSegment(words[2], showsCameras,
-                        KioskConfig.dashboardCamerasOf(context).isEmpty() ? "/camera-view" : null)
-                        : "")
-                + (offerIntegration ? dashboardSegment(words[3], showsIntegration, null) : "")
-                + "</div>";
-        if (showsIntegration) {
-            // Which integration's page, one radio each, stored as it is picked, and its options.
-            StringBuilder radios = new StringBuilder();
-            for (Integrations.Instance page : pages) {
-                radios.append(radioOf("dashboard_integration", "dashboard_integration", page.id,
-                        integration, escapeHtml(page.name)));
+        boolean offerIntegration = KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(stored)
+                || !pages.isEmpty();
+        StringBuilder answers = new StringBuilder();
+        for (String[] word : KioskCommandDispatcher.DASHBOARD_WORDS) {
+            if ((KioskCommandDispatcher.DASHBOARD_CAMERAS.equals(word[0]) && !offerCameras)
+                    || (KioskCommandDispatcher.DASHBOARD_INTEGRATION.equals(word[0])
+                            && !offerIntegration)) {
+                continue;
             }
-            return shows + choice("dashboard_integration", "Integration", radios.toString())
-                    + "<div class=\"actions\"><a class=\"btn text\" href=\"/clock-options?id="
-                    + urlEncode(integration) + "\">Clock options" + glyph("next") + "</a></div>";
+            answers.append("<label><input type=\"radio\" name=\"dashboard_shows\" value=\"")
+                    .append(word[0]).append('"').append(word[0].equals(stored) ? " checked" : "")
+                    .append('>').append(escapeHtml(word[1])).append("</label>");
         }
-        if (showsCameras) {
-            return shows + "<ul class=\"list\">" + linkRow("/camera-view", "cameras", cameras,
-                    "Shown as the dashboard", null, "") + "</ul>";
+        StringBuilder rows = new StringBuilder();
+        for (Integrations.Instance page : pages) {
+            // One row each: the radio chooses, the gear opens that integration's own options,
+            // chosen or not (Emmet's sketch, 2026-10-27).
+            BitcoinClock.Options look = KioskConfig.clockOptionsOf(context, page.id);
+            int on = 0;
+            for (BitcoinClock.Screen screen : look.screens) {
+                on += screen.on ? 1 : 0;
+            }
+            String id = escapeHtml(page.id);
+            rows.append("<li class=\"two\"><label class=\"rowlink plain\" for=\"dash-int-").append(id)
+                    .append("\"><span class=\"lead\"><input type=\"radio\" id=\"dash-int-").append(id)
+                    .append("\" name=\"dashboard_integration\" value=\"").append(id).append('"')
+                    .append(page.id.equals(integration) ? " checked" : "").append("></span>")
+                    .append("<span class=\"text\"><span class=\"h\">").append(escapeHtml(page.name))
+                    .append("</span><span class=\"s\">").append(escapeHtml(lookWord(look.look)))
+                    .append(" · ").append(on).append(on == 1 ? " screen" : " screens")
+                    .append("</span></span></label><span class=\"trail\"><a class=\"ib\" href=\"/clock-options?id=")
+                    .append(urlEncode(page.id)).append("\" title=\"").append(escapeHtml(page.name))
+                    .append(" options\" aria-label=\"").append(escapeHtml(page.name)).append(" options\">")
+                    .append(glyph("tune")).append("</a></span></li>");
         }
-        if (showsApp) {
-            String problem = AppLock.problem(context, app);
-            return shows
-                    + "<p class=\"appline\">" + escapeHtml(KioskConfig.appLockLabelOf(context))
-                    + "</p>"
-                    + (problem == null ? "" : "<p class=\"hint bad\">"
-                            + escapeHtml(Character.toUpperCase(problem.charAt(0))
-                                    + problem.substring(1)) + ".</p>")
-                    + "<div class=\"actions\"><a class=\"btn text\" href=\"/app-lock\">Choose the"
-                    + " app" + glyph("next") + "</a></div>";
-        }
-        return shows + sectionFormStart("dashboard", notice, noticeSection)
+        String problem = chosenApp.isEmpty() ? null : AppLock.problem(context, chosenApp);
+        return sectionFormStart("dashboard", notice, noticeSection)
                 // Each Save box carries the values it was rendered from, so a submit from a page
                 // that has gone stale is refused instead of reverting a newer change; see
                 // staleFormRefusal. The baseline strings here must mirror saveSettings exactly.
                 + baselineField(config.dashboardUrl)
+                + hidden("shows_baseline", stored)
+                + hidden("integration_baseline", storedIntegration)
+                + "<div class=\"segradios\" role=\"radiogroup\" aria-label=\"Dashboard\""
+                + " id=\"dashboard-answers\">" + answers + "</div>"
+                + "<p class=\"hint\" id=\"dashboard-now\" hidden>Shows now: "
+                + escapeHtml(dashboardSummary(config)) + "</p>"
+                + "<div data-answer=\"page\">" + sharedLine("dashboard")
                 + urlField("dashboard_url", "Dashboard URL", config.dashboardUrl)
-                // Two buttons on one input, the shape the tablet's Dashboard card has had since
-                // 2026-09-07: Save stores what is typed as THE dashboard; Open once shows it until
-                // the next kiosk restart and stores nothing (dashboard.open_once, never set_url). Open
-                // once is a submit button with its own formaction, so with scripting unavailable
-                // the browser still posts the box to /api/command (which reads dashboard_url for
-                // it, see handleCommand); with scripting, commandScript intercepts the click.
-                + sectionFormEnd("Save",
-                        "<button type=\"submit\" class=\"tonal\" id=\"open-once\" name=\"cmnd\" "
-                                + "value=\"dashboard.open_once\" formaction=\"/api/command\" "
-                                + "formmethod=\"post\">Open once</button>")
-                + "<div class=\"actions\"><a class=\"btn text\" href=\"/page-options\">Page options"
-                + glyph("next") + "</a></div>";
+                // Open once shows the typed address until the next kiosk restart and stores
+                // nothing (dashboard.open_once); a submit with its own formaction, so with
+                // scripting unavailable the browser still posts the box to /api/command.
+                + "<div class=\"actions\"><button type=\"submit\" class=\"tonal\" id=\"open-once\""
+                + " name=\"cmnd\" value=\"dashboard.open_once\" formaction=\"/api/command\""
+                + " formmethod=\"post\">Open once</button><a class=\"btn text\" href=\"/page-options\">"
+                + "Page options" + glyph("next") + "</a></div></div>"
+                + "<div data-answer=\"app\"><p class=\"appline\">"
+                + escapeHtml(chosenApp.isEmpty() ? "No app chosen yet"
+                        : KioskConfig.appLockLabelOf(context)) + "</p>"
+                + (problem == null ? "" : "<p class=\"hint bad\">"
+                        + escapeHtml(Character.toUpperCase(problem.charAt(0))
+                                + problem.substring(1)) + ".</p>")
+                + "<div class=\"actions\"><a class=\"btn text\" href=\"/app-lock\">Choose the app"
+                + glyph("next") + "</a></div></div>"
+                + "<div data-answer=\"cameras\"><ul class=\"list\">" + linkRow("/camera-view",
+                        "cameras", chosenCameras.isEmpty() ? "No camera chosen yet" : chosenCameras,
+                        "Choose the cameras", null, glyph("next")) + "</ul></div>"
+                + "<div data-answer=\"integration\"><ul class=\"list\">" + rows + "</ul></div>"
+                + "<div class=\"actions\" id=\"dashboard-save\"><button class=\"primary\""
+                + " type=\"submit\">Save</button><span class=\"hint\" id=\"dashboard-unsaved\""
+                + " hidden>Not saved</span></div></form>";
+    }
+
+    private static String lookWord(String look) {
+        for (String[] row : BitcoinClock.LOOK_WORDS) {
+            if (row[0].equals(look)) {
+                return row[1];
+            }
+        }
+        return look;
     }
 
     /** The added Bitcoin clock for {@code id}, its instance id; the first when none is named. */
@@ -4766,7 +4823,8 @@ final class HttpAdminServer {
      * without it the form still saves, the order as it was.
      */
     private String buildClockOptionsPage(String id, String notice) {
-        StringBuilder html = new StringBuilder(pageStart("Clock options", null,
+        StringBuilder html = new StringBuilder(pageStart(id == null ? "Clock options"
+                : BitcoinClockPage.nameOf(context, id) + " options", null,
                 settingsAt("dashboard")));
         if (id == null) {
             return html.append("<p class=\"hint\">Add the Bitcoin clock in Integrations first.</p>")
@@ -4953,21 +5011,6 @@ final class HttpAdminServer {
     }
 
     /**
-     * One segment of the Dashboard choice: a form that switches to {@code word}'s key, or, while
-     * nothing is chosen for it yet, a link to {@code choose}, the page that chooses it.
-     */
-    private static String dashboardSegment(String[] word, boolean on, String choose) {
-        String label = (on ? glyph("check") : "") + escapeHtml(word[1]);
-        if (choose != null) {
-            return "<a href=\"" + choose + "\" role=\"button\" aria-pressed=\"" + on + "\">"
-                    + label + "</a>";
-        }
-        return "<form method=\"post\" action=\"/dashboard-shows\"><input type=\"hidden\""
-                + " name=\"dashboard_shows\" value=\"" + word[0] + "\"><button type=\"submit\""
-                + " aria-pressed=\"" + on + "\">" + label + "</button></form>";
-    }
-
-    /**
      * Page options, a page of its own as on the panel (the UI round, 2026-10-15; inline in
      * the Dashboard box until then): the browser options and the trusted certificates, each
      * form posting back here.
@@ -5052,8 +5095,7 @@ final class HttpAdminServer {
             return "Not saved: " + chosen + " opens Android's settings, a home screen or the"
                     + " Play Store, which would hand the panel's whole device to anyone.";
         }
-        KioskConfig.edit(context).appLock(chosen)
-                .dashboardShows(KioskCommandDispatcher.DASHBOARD_APP).apply();
+        KioskConfig.edit(context).appLock(chosen).apply();
         KioskService.appLockChanged();
         KioskService.publishTelemetrySoon(context);
         return null;
@@ -7197,8 +7239,8 @@ final class HttpAdminServer {
                 .append(hidden("name", uri)).append(hidden("back", uri))
                 .append(hidden("shown", off ? "true" : "false"))
                 .append("<div class=\"actions\"><button class=\"text\" type=\"submit\">")
-                .append(glyph(off ? "eye" : "eye_off")).append(off ? "Show its credit"
-                        : "Hide its credit").append("</button></div></form>")
+                .append(glyph(off ? "eye" : "eye_off")).append(off ? "Show credits"
+                        : "Hide credits").append("</button></div></form>")
                 .append("<h2>In albums</h2>");
         StringBuilder chips = new StringBuilder();
         StringBuilder others = new StringBuilder();
@@ -8102,8 +8144,10 @@ final class HttpAdminServer {
         for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
             String id = TinyJson.string(member, FleetDocument.ID, "");
             String name = TinyJson.string(member, FleetDocument.NAME, id);
+            java.util.List<String> in = FleetDocument.memberGroups(list, member);
             rows.append("<li class=\"two speaker\" data-id=\"").append(escapeHtml(id))
-                    .append("\"><label class=\"tick\" hidden><input type=\"checkbox\""
+                    .append("\" data-groups=\"|").append(escapeHtml(String.join("|", in)))
+                    .append("|\"><label class=\"tick\" hidden><input type=\"checkbox\""
                             + " data-tick aria-label=\"").append(escapeHtml(name))
                     .append("\"></label><span class=\"lead\">").append(glyph("audio"))
                     .append("</span><span class=\"text\"><span class=\"h\">")
@@ -8209,7 +8253,7 @@ final class HttpAdminServer {
 
     /**
      * The Fleet page (redesigned 2026-10-25 from the agreed sketch): the fleet's name and how
-     * many panels are online, Say or play, Add a panel and Identify all at the top, then three
+     * many panels are online, Add a panel and Identify all at the top, then three
      * tabs. Panels lists every panel, the not healthy first with their reason, and opens one at
      * the right with its picture, health, groups, network speaker, Identify and Remove. Groups
      * makes and removes groups. Shared settings shows what the whole fleet or a group shares,
@@ -8245,14 +8289,11 @@ final class HttpAdminServer {
             html.append("<p class=\"notice\">").append(escapeHtml(FleetServer.proLine(context)))
                     .append("</p>");
         }
-        // The head: how many are online, and the three actions every tab offers.
+        // The head: how many are online, and the two actions every tab offers. Announce acts on
+        // panels, so it is in the selection bar with them.
         html.append("<div class=\"fleethead\"><p id=\"fleet-counts\" class=\"counts\"")
                 .append(fleetLists(key)).append(">").append(fleetCounts(health.size(), online))
                 .append("</p><div class=\"fleetactions\">");
-        if (health.size() > 1) {
-            html.append("<a class=\"btn tonal\" href=\"#say-or-play\" data-dialog=\"say-or-play\">")
-                    .append(glyph("audio")).append("Say or play</a>");
-        }
         html.append("<a class=\"btn primary\" href=\"#add-panel\" data-dialog=\"add-panel\">")
                 .append(glyph("plus")).append("Add a panel</a>")
                 .append("<button type=\"button\" class=\"ib\" data-identify=\"all\""
@@ -8388,27 +8429,34 @@ final class HttpAdminServer {
                 + "<button type=\"button\" data-view=\"list\" aria-pressed=\"true\">List</button>"
                 + "<button type=\"button\" data-view=\"pictures\" aria-pressed=\"false\">Pictures"
                 + "</button></div></div></div>");
-        // Ticking rows swaps the tools for what can be done to all of them.
+        // Ticking rows swaps the tools for what can be done to all of them: how many and Close on
+        // the first line, then Announce, Identify, the group to add them to with Add to group
+        // (kept together), and Remove.
         nav.append("<div class=\"selbar\" id=\"fleet-selbar\" hidden><span id=\"fleet-selcount\">"
-                + "</span><div class=\"actions tight\">");
+                + "</span><button type=\"button\" class=\"ib\" data-sel=\"close\""
+                + " aria-label=\"Close\" title=\"Close\">").append(glyph("close"))
+                .append("</button><div class=\"actions tight\">");
         if (sorted.size() > 1) {
-            nav.append("<button type=\"button\" class=\"text\" data-sel=\"say\">Say or play"
+            nav.append("<button type=\"button\" class=\"text\" data-sel=\"say\">Announce"
                     + "</button>");
         }
+        nav.append("<button type=\"button\" class=\"text\" data-sel=\"identify\">Identify"
+                + "</button>");
         if (!groups.isEmpty()) {
-            nav.append("<select id=\"fleet-sel-group\" aria-label=\"Group to add them to\">");
+            nav.append("<span class=\"togroup\"><select id=\"fleet-sel-group\""
+                    + " aria-label=\"Group to add them to\">");
             for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
                 nav.append("<option value=\"").append(escapeHtml(group.getKey())).append("\">")
                         .append(escapeHtml(group.getValue())).append("</option>");
             }
             nav.append("</select><button type=\"button\" class=\"text\" data-sel=\"group\">Add to"
-                    + " group</button>");
+                    + " group</button></span>");
         }
-        nav.append("<button type=\"button\" class=\"text\" data-sel=\"identify\">Identify</button>"
-                + "<button type=\"button\" class=\"text danger\" data-sel=\"remove\">Remove</button>"
-                + "<button type=\"button\" class=\"ib\" data-sel=\"close\" aria-label=\"Close\""
-                + " title=\"Close\">").append(glyph("close")).append("</button></div>"
-                + "<p class=\"hint\" id=\"fleet-sel-result\" hidden></p></div>");
+        nav.append("<button type=\"button\" class=\"text danger\" data-sel=\"remove\">Remove"
+                + "</button></div><p class=\"hint\" id=\"fleet-sel-result\" hidden></p></div>");
+        // Select all: the selection bar's actions for every panel shown, Announce included.
+        nav.append("<label class=\"selall\"><input type=\"checkbox\" id=\"fleet-tick-all\">"
+                + "Select all</label>");
         nav.append("<div id=\"fleet-rows\"").append(fleetLists(key)).append(">");
         StringBuilder bad = new StringBuilder();
         StringBuilder good = new StringBuilder();
@@ -8920,8 +8968,9 @@ final class HttpAdminServer {
 
     /**
      * The two dialogs of the head: Add a panel (by its code, or an invitation QR for a new
-     * tablet) and Say or play (the Speakers card). Without scripting a dialog opens as a
-     * section of the page through its address (#add-panel), as a link to it does.
+     * tablet) and Announce (the Speakers card), opened from the selection bar. Without
+     * scripting a dialog opens as a section of the page through its address (#add-panel), as a
+     * link to it does.
      */
     private String fleetDialogs(java.util.Map<String, Object> list) {
         // The form's own first line repeats the dialog's title here: left out.
@@ -8939,9 +8988,11 @@ final class HttpAdminServer {
                 + "<div data-way-pane=\"code\">" + byCode + "</div>"
                 + "<div data-way-pane=\"invite\">" + inviteBlock() + "</div></dialog>"
                 + (FleetDocument.members(list).size() > 1
-                        ? "<dialog id=\"say-or-play\" class=\"sheet\" aria-label=\"Say or play\">"
+                        ? "<dialog id=\"announce\" class=\"sheet\" aria-label=\"Announce\">"
                                 + speakersCard(list, FleetDocument.groups(list))
-                                        .replaceFirst("<h2>Speakers</h2>", "<h2>Say or play</h2>"
+                                        .replaceFirst("<h2>Speakers</h2>", "<h2>Announce</h2>")
+                                        // Close at the end of the head, after the count.
+                                        .replaceFirst("(id=\"speakers-count\"></span>)", "$1"
                                                 + "<a class=\"ib\" href=\"#\" data-close"
                                                 + " aria-label=\"Close\" title=\"Close\">"
                                                 + java.util.regex.Matcher.quoteReplacement(

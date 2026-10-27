@@ -77,6 +77,14 @@ catch(ignored){}})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
 }
 
+// Only the Content panel, in the view now in force, for the view button.
+function reloadContent(){
+var q='?album='+encodeURIComponent(album)+(at===null?'':'&at='+encodeURIComponent(at))+'&n='+n;
+return fetch('/api/pictures/content'+q,{credentials:'same-origin'}).then(function(r){return r.text();})
+.then(function(html){content.innerHTML=html;markSome();paintBar();})
+.catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
+}
+
 // Which branches of the folder tree are open, kept here and painted over every fragment the
 // server sends: the server opens the top of the volume and the way down to the open folder, this
 // starts from that once and then the reader's carets decide (2026-09-23). A folder's parent
@@ -375,6 +383,8 @@ if(!window.confirm('Delete '+name+'?\n\n'+(named?name:'It')+' will be deleted. I
 post(form).then(function(r){
 if(form.closest&&form.closest('details.rename')){renamed(form,r.ok,r.message);return;}
 say(r.message,r.ok);
+// A new view changes the Content panel alone: the folders and the album stay as they are.
+if(form.classList.contains('view')){return reloadContent();}
 return reload();})
 .catch(function(){say('The panel did not answer. It may be rebooting or off the network.',false);});
 });
