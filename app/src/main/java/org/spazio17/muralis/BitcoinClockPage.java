@@ -49,7 +49,12 @@ final class BitcoinClockPage {
                     .replace("/*FONTS*/", fontFace(context, "clock-antonio", R.raw.clock_antonio)
                             + fontFace(context, "clock-oswald", R.raw.clock_oswald)
                             + fontFace(context, "clock-label", R.raw.clock_oswald)
-                            + fontFace(context, "clock-mono", R.raw.clock_azeret_mono));
+                            + fontFace(context, "clock-mono", R.raw.clock_azeret_mono)
+                            // The styles' own: Flip's cards, Nixie's letters, Digital's segments.
+                            + fontFace(context, "clock-flip", R.raw.clock_roboto_condensed)
+                            + fontFace(context, "clock-thin", R.raw.clock_antonio_thin)
+                            + fontFace(context, "clock-seg7", R.raw.clock_dseg7)
+                            + fontFace(context, "clock-seg14", R.raw.clock_dseg14));
             template = page;
         }
         return page.replace("/*STATE_URL*/", jsText(stateUrl))

@@ -4734,9 +4734,9 @@ final class HttpAdminServer {
         for (Integrations.Instance page : pages) {
             // One row each: the radio chooses, the gear opens that integration's own options,
             // chosen or not (Emmet's sketch, 2026-10-27).
-            BitcoinClock.Options look = KioskConfig.clockOptionsOf(context, page.id);
+            BitcoinClock.Options clock = KioskConfig.clockOptionsOf(context, page.id);
             int on = 0;
-            for (BitcoinClock.Screen screen : look.screens) {
+            for (BitcoinClock.Screen screen : clock.screens) {
                 on += screen.on ? 1 : 0;
             }
             String id = escapeHtml(page.id);
@@ -4745,7 +4745,7 @@ final class HttpAdminServer {
                     .append("\" name=\"dashboard_integration\" value=\"").append(id).append('"')
                     .append(page.id.equals(integration) ? " checked" : "").append("></span>")
                     .append("<span class=\"text\"><span class=\"h\">").append(escapeHtml(page.name))
-                    .append("</span><span class=\"s\">").append(escapeHtml(lookWord(look.look)))
+                    .append("</span><span class=\"s\">").append(escapeHtml(styleWord(clock.style)))
                     .append(" · ").append(on).append(on == 1 ? " screen" : " screens")
                     .append("</span></span></label><span class=\"trail\"><a class=\"ib\" href=\"/clock-options?id=")
                     .append(urlEncode(page.id)).append("\" title=\"").append(escapeHtml(page.name))
@@ -4790,13 +4790,13 @@ final class HttpAdminServer {
                 + " hidden>Not saved</span></div></form>";
     }
 
-    private static String lookWord(String look) {
-        for (String[] row : BitcoinClock.LOOK_WORDS) {
-            if (row[0].equals(look)) {
+    private static String styleWord(String style) {
+        for (String[] row : BitcoinClock.STYLE_WORDS) {
+            if (row[0].equals(style)) {
                 return row[1];
             }
         }
-        return look;
+        return style;
     }
 
     /** The added Bitcoin clock for {@code id}, its instance id; the first when none is named. */
@@ -4807,12 +4807,6 @@ final class HttpAdminServer {
         }
         return Integrations.pageInstance(pages, id);
     }
-
-    /** The swatches each colour offers, the panel's: background, text, accent. */
-    private static final String[][] CLOCK_SWATCHES = {
-            {"17,18,20", "245,245,240", "22,34,60", "40,28,20"},
-            {"242,242,242", "20,20,20", "247,147,26"},
-            {"247,147,26", "224,67,0", "0,90,255", "0,200,0"}};
 
     /**
      * Clock options, as on the panel and laid out as page editors are (decided 2026-10-26): the
@@ -4853,29 +4847,44 @@ final class HttpAdminServer {
                 + " class=\"clock-options\">")
                 .append(hidden("id", id)).append(hidden("baseline", options.toJson()))
                 .append("<div class=\"clock-groups\">");
-        // Look, with its colours.
-        StringBuilder looks = new StringBuilder();
-        for (String[] look : BitcoinClock.LOOK_WORDS) {
-            BitcoinClock.Options colours = BitcoinClock.withLook(options, look[0]);
-            looks.append("<label><input type=\"radio\" name=\"look\" value=\"")
-                    .append(look[0]).append("\" data-colours=\"").append(colours.background)
+        // Style, with its four colours under the names that style gives them; each style
+        // carries its own default colours and names for admin_clock.js to fill in on a switch.
+        StringBuilder styles = new StringBuilder();
+        for (String[] style : BitcoinClock.STYLE_WORDS) {
+            BitcoinClock.Options colours = BitcoinClock.withStyle(options, style[0]);
+            styles.append("<label><input type=\"radio\" name=\"style\" value=\"")
+                    .append(style[0]).append("\" data-colours=\"").append(colours.background)
                     .append('|').append(colours.cells).append('|').append(colours.text)
-                    .append('|').append(colours.accent)
-                    .append("\"").append(look[0].equals(options.look) ? " checked" : "")
-                    .append('>').append(escapeHtml(look[1])).append("</label>");
+                    .append('|').append(colours.accent).append("\" data-words=\"")
+                    .append(String.join("|", BitcoinClock.colourWords(style[0])))
+                    .append("\" data-font=\"").append(BitcoinClock.usesFont(style[0]))
+                    .append("\"").append(style[0].equals(options.style) ? " checked" : "")
+                    .append('>').append(escapeHtml(style[1])).append("</label>");
         }
-        html.append(clockGroup("look", "Look", "<div class=\"segradios\""
-                + " role=\"radiogroup\" aria-label=\"Look\">" + looks + "</div>"
-                + clockColour("background", "Background", CLOCK_SWATCHES[0], options.background)
-                + clockColour("text", "Text", CLOCK_SWATCHES[1], options.text)
-                + clockColour("accent", "Accent", CLOCK_SWATCHES[2], options.accent)));
-        html.append(clockGroup("digits", "Digits",
-                clockRadios("font", "Digits", BitcoinClock.FONT_WORDS, options.font)));
+        String[] words = BitcoinClock.colourWords(options.style);
+        html.append(clockGroup("style", "Style", "<div class=\"segradios\""
+                + " role=\"radiogroup\" aria-label=\"Style\">" + styles + "</div>"
+                + clockColour("background", words[0], BitcoinClock.SWATCHES[0],
+                        options.background)
+                + clockColour("cells", words[1], BitcoinClock.SWATCHES[1], options.cells)
+                + clockColour("text", words[2], BitcoinClock.SWATCHES[2], options.text)
+                // Nixie's Lamp only while it has a label to sit by (admin_clock.js follows).
+                + "<div data-colour-block=\"accent\""
+                + (BitcoinClock.usesAccent(options.style, options.label) ? "" : " hidden") + ">"
+                + clockColour("accent", words[3], BitcoinClock.SWATCHES[3], options.accent)
+                + "</div>"));
+        // The digits' font, for the styles that draw them in it.
+        html.append(clockGroup("digits", "Font",
+                clockRadios("font", "Font", BitcoinClock.FONT_WORDS, options.font))
+                .replaceFirst("<details ", BitcoinClock.usesFont(options.style) ? "<details "
+                        : "<details hidden "));
         html.append(clockGroup("layout", "Layout", "<p class=\"label\">Size</p>"
                 + clockRadios("size", "Size", BitcoinClock.SIZE_WORDS, options.size)
                 + "<p class=\"label\">Position</p>"
                 + clockRadios("position", "Position", BitcoinClock.POSITION_WORDS,
                         options.position)
+                + "<p class=\"label\">Label</p>"
+                + clockRadios("label", "Label", BitcoinClock.LABEL_WORDS, options.label)
                 + "<p class=\"label\">Date and time</p>"
                 + clockRadios("strip", "Date and time", BitcoinClock.STRIP_WORDS, options.strip)));
         // A picture behind the clock: one of the uploads, darkened.
@@ -4940,8 +4949,8 @@ final class HttpAdminServer {
     /** One colour of the clock: its swatches, which fill the box, and the r,g,b box. */
     private static String clockColour(String name, String label, String[] swatches,
             String value) {
-        StringBuilder html = new StringBuilder("<p class=\"label\">" + escapeHtml(label)
-                + "</p><div class=\"swatches\">");
+        StringBuilder html = new StringBuilder("<p class=\"label\" data-colour-label=\"" + name
+                + "\">" + escapeHtml(label) + "</p><div class=\"swatches\">");
         for (String swatch : swatches) {
             html.append("<button type=\"button\" class=\"swatch").append(swatch.equals(value)
                     ? " on" : "").append("\" data-swatch=\"").append(name).append("\" data-rgb=\"")
@@ -4979,8 +4988,8 @@ final class HttpAdminServer {
                     + " the current ones";
         }
         Map<String, String> fields = new java.util.HashMap<>();
-        for (String key : new String[] {"look", "background", "text", "accent", "font",
-                "picture", "dim", "size", "position", "strip", "seconds"}) {
+        for (String key : new String[] {"style", "background", "cells", "text", "accent", "font",
+                "picture", "dim", "size", "position", "label", "strip", "seconds"}) {
             if (form.containsKey(key)) {
                 fields.put(key, form.get(key));
             }

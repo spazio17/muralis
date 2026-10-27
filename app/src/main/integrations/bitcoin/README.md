@@ -3,8 +3,9 @@
 A clock of the Bitcoin network as the panel's dashboard: Dashboard › Integration shows its own
 full-screen page, a label cell and six digit cells, with the screens in rotation (block height,
 price, sats per unit, fee, halving, time, and the halving date, market cap and supply) and a
-flash when a new block arrives. Clock options set the look, the colours, the digits' font, a
-background picture, the size and place of the row, a date strip, the screens and their order.
+flash when a new block arrives. Clock options set the style (Cells, Flip, Digital, Nixie or
+Minimal), its colours, the digits' font, a background picture, the size and place of the row, a
+date strip, the screens and their order.
 
 The data comes from mempool.space or your own mempool server. The values are sensors of the
 panel too: the automations act on them ("when the fast fee falls below 5 sat/vB, show a

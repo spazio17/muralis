@@ -3,10 +3,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitcoin clock</title>
 <!-- The Bitcoin clock's page: one label cell and six digit cells, the screens in rotation, a flash
-     on a new block. The same page is the dashboard on the panel and the preview in the web admin
-     and on the panel's Clock options; BitcoinClockPage fills in the fonts and where the state is
-     read. Drawn after the open-source block clocks (seven e-paper cells, a two-word label), our
-     own drawing: no device frame, no logo. -->
+     on a new block, in one of five styles (2026-10-27): Cells, after the open-source block clocks
+     (seven e-paper cells, a two-word label); Flip, split-flap cards whose changed digits flip;
+     Digital, seven segments with the unlit ones faint; Nixie, thin glowing digits in glass tubes;
+     Minimal, the number alone under a small label. The same page is the dashboard on the panel
+     and the preview in the web admin and on the panel's Clock options; BitcoinClockPage fills in
+     the fonts and where the state is read. Our own drawing: no device frame, no logo. -->
 <style>
 /*FONTS*/
 html,body{margin:0;height:100%;overflow:hidden}
@@ -34,7 +36,94 @@ font-size:calc(var(--ch) * .16)}
 body.portrait .label .one{border-bottom:0;border-right:max(1px,calc(var(--ch) * .012)) solid
 currentColor;padding:0 .6em 0 0;margin:0}
 #digits{display:contents}
-.flash .cell{background:var(--accent);color:var(--cells)}
+/* Flip, after real split-flap counters (Twemco, Fliqlo): one card per digit, the digit set once
+   over the whole card and centred on the hinge, so each half shows its part; a dark gap with a
+   pin at each end, the top half lighter, a shadow under the hinge. A change drops the old top as
+   a flap, then the new bottom lands over the old one. The label is two word flaps. */
+.style-flip{--tile:var(--cells)}
+.flash.style-flip{--tile:var(--accent)}
+.style-flip #row{align-items:center}
+.card,.word{position:relative;flex:none;perspective:calc(var(--ch) * 4)}
+.card{width:var(--cw);height:var(--ch)}
+.half,.flip-flap{position:absolute;left:0;right:0;height:calc(50% - var(--hinge) / 2);overflow:hidden;
+background:var(--tile);transition:background .3s}
+.top,.flip-flap.front{top:0;border-radius:calc(var(--cw) * .07) calc(var(--cw) * .07) 2px 2px;
+background-image:linear-gradient(rgba(255,255,255,.035),rgba(0,0,0,.02))}
+.bottom,.flip-flap.back{bottom:0;border-radius:2px 2px calc(var(--cw) * .07) calc(var(--cw) * .07);
+background-image:linear-gradient(rgba(0,0,0,.07),rgba(0,0,0,.2))}
+.half span,.flip-flap span{position:absolute;left:0;right:0;height:var(--ch);display:flex;
+align-items:center;justify-content:center;font-family:'clock-flip',sans-serif;font-weight:700;
+font-size:calc(var(--ch) * .98);line-height:1;padding-top:calc(var(--ch) * .02);box-sizing:border-box;
+letter-spacing:-.01em}
+.flash.style-flip .half span,.flash.style-flip .flip-flap span{color:var(--cells)}
+.top span,.flip-flap.front span{top:0}
+.bottom span,.flip-flap.back span{bottom:0}
+.bottom::after{content:'';position:absolute;left:0;right:0;top:0;height:16%;
+background:linear-gradient(rgba(0,0,0,.45),transparent)}
+.card::before,.card::after,.word::before,.word::after{content:'';position:absolute;
+top:calc(50% - var(--hinge));width:max(3px,calc(var(--cw) * .04));height:calc(var(--hinge) * 2);
+background:rgba(255,255,255,.22);border-radius:1px;z-index:3}
+.card::before,.word::before{left:-2px}.card::after,.word::after{right:-2px}
+.flip-flap{z-index:2;backface-visibility:hidden}
+.flip-flap.front{transform-origin:50% 100%}
+.flip-flap.back{transform-origin:50% 0;transform:rotateX(90deg)}
+.card.go .flip-flap.front{animation:fall .16s cubic-bezier(.55,0,1,.45) forwards}
+.card.go .flip-flap.back{animation:land .22s .16s cubic-bezier(.2,.8,.3,1.25) forwards}
+@keyframes fall{from{transform:rotateX(0);filter:brightness(1)}to{transform:rotateX(-90deg);filter:brightness(.5)}}
+@keyframes land{from{transform:rotateX(90deg)}to{transform:rotateX(0)}}
+.group{flex:none;width:calc(var(--cw) * .35)}
+.words{display:flex;flex-direction:column;justify-content:center;gap:calc(var(--ch) * .045)}
+.word{--wh:calc(var(--ch) * .4775);width:calc(var(--cw) * 1.62);height:var(--wh)}
+/* The word's halves and its flaps alike: a flap set as a digit card's would carry a giant letter. */
+.word .half span,.word .flip-flap span{height:var(--wh);font-size:calc(var(--wh) * .56);letter-spacing:.06em;
+text-transform:uppercase}
+/* Upright, the label is the line above and the cards or tubes stay in one row. */
+body.portrait.style-flip #row,body.portrait.style-nixie #row{flex-direction:row}
+.word .bottom::after{height:22%}
+/* Digital: the lit digit over a faint 8, its other segments. */
+.style-digital .digit{display:grid;place-items:center}
+.ghost,.lit{grid-area:1/1}
+.style-digital .cell{background:none}
+.style-digital .digit{font-family:'clock-seg7','clock-seg14',monospace;font-size:calc(var(--ch) * .6);font-weight:400}
+.style-digital .ghost{color:var(--cells)}
+.style-digital .lit{text-shadow:0 0 .06em,0 0 .18em}
+/* Nixie, after IN-14 tubes: wire digits drawn as glowing strokes, the other cathodes stacked
+   behind, the hexagonal mesh anode in front, the glass with its getter and pins. The label is
+   printed on the base plate as nixie clocks do; its small neon lamp lights on a new block. */
+.style-nixie #row{align-items:flex-end;gap:calc(var(--cw) * .03);padding:0 calc(var(--cw) * .2)
+calc(var(--ch) * .06);border-radius:calc(var(--cw) * .1);
+background:linear-gradient(transparent 82%,rgba(255,255,255,.035) 82%,rgba(255,255,255,.015))}
+.tube{width:var(--cw);height:var(--ch);flex:none}
+.tube svg{display:block;width:100%;height:100%}
+.plate{width:calc(var(--cw) * 1.5);height:var(--ch);display:flex;flex-direction:column;
+justify-content:center;align-items:center;gap:calc(var(--ch) * .06);padding-bottom:calc(var(--ch) * .1);
+box-sizing:border-box;flex:none;font-weight:600;font-size:calc(var(--ch) * .075);letter-spacing:.22em;
+line-height:1.3;text-transform:uppercase;text-align:center;color:rgba(232,216,200,.75)}
+.plate .unit{text-transform:none}
+.plate svg{width:1.4em;height:1.4em}
+.plate .rule{width:60%;height:1px;background:currentColor;opacity:.45;margin:.2em auto}
+.lamp{width:calc(var(--ch) * .055);height:calc(var(--ch) * .055);border-radius:50%;
+background:radial-gradient(circle at 45% 40%,#4a2a1a,#1d120c 70%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.flash .lamp{background:var(--accent);box-shadow:0 0 .4em .15em var(--accent),0 0 1.2em .4em var(--accent)}
+/* Minimal: no cells, the label small in its own colour over the number. */
+.style-minimal #row{flex-direction:column;align-items:center;gap:calc(var(--ch) * .06)}
+/* The label as a line above or below the row instead of its first tile, or not at all; Minimal
+   always sets it as a line, in its own colour. */
+#caption{font-weight:600;font-size:calc(var(--ch) * .13);letter-spacing:.2em;line-height:1;
+text-transform:uppercase;display:flex;align-items:center;gap:.5em;margin:calc(var(--ch) * .08) 0}
+#caption .unit{text-transform:none}#caption svg{width:1em;height:1em}
+#caption.top{order:-1}#caption.bottom{order:1}#caption.off{display:none}
+.style-minimal #caption{color:var(--cells)}
+.style-minimal .num{font-family:var(--digits);font-size:calc(var(--ch) * .9);line-height:1;font-weight:700;white-space:nowrap}
+.style-minimal .num .dash{display:inline-block;width:3em;height:.06em;vertical-align:middle}
+/* A changed digit fades in, the styles without cards. */
+.fresh .lit,.fresh.num{animation:fresh .4s ease-out}
+.tube.fresh .wire{animation:fresh .08s ease-out}
+@keyframes fresh{from{opacity:.15}}
+/* The flash: the cards take the accent colour, Digital's and Minimal's digits light in it; Flip's
+   cards and Nixie's lamp are above. */
+.flash.style-cells .cell{background:var(--accent);color:var(--cells)}
+.flash.style-digital .lit,.flash .num{color:var(--accent)}
 .dash{width:45%;height:6%;background:currentColor;opacity:.45;border-radius:2px}
 #strip{position:fixed;left:0;right:0;display:flex;justify-content:space-between;
 padding:2.5vh 4vw;font-size:4vh;opacity:.85}
@@ -46,7 +135,28 @@ gap:.4em}
 <body>
 <div id="picture" hidden></div>
 <div id="strip" class="off"><span id="date"></span><span id="clock"></span></div>
-<div id="stage"><div id="row"></div></div>
+<div id="stage"><div id="caption" class="off"></div><div id="row"></div></div>
+<!-- Nixie's glow, mesh, glass and getter, shared by every tube. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<filter id="glow" x="-60%" y="-30%" width="220%" height="160%">
+<feGaussianBlur in="SourceGraphic" stdDeviation="1" result="b1"/>
+<feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b2"/>
+<feGaussianBlur in="SourceGraphic" stdDeviation="8" result="b3"/>
+<feMerge><feMergeNode in="b3"/><feMergeNode in="b3"/><feMergeNode in="b2"/><feMergeNode in="b2"/>
+<feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<pattern id="hex" width="6" height="10.392" patternUnits="userSpaceOnUse"><path d="M0 0 L3 1.732
+L3 5.196 L0 6.928 M3 5.196 L6 6.928 M3 1.732 L6 0 M0 6.928 L0 10.392 M6 6.928 L6 10.392" fill="none"
+stroke="#9a8a7c" stroke-width=".35"/></pattern>
+<linearGradient id="glassL" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/>
+<stop offset=".12" stop-color="#fff" stop-opacity=".22"/><stop offset=".2" stop-color="#fff"
+stop-opacity=".02"/><stop offset=".82" stop-color="#fff" stop-opacity="0"/><stop offset=".9"
+stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="getter" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2c2a2a"
+stop-opacity=".95"/><stop offset=".6" stop-color="#4b4646" stop-opacity=".55"/><stop offset="1"
+stop-color="#4b4646" stop-opacity="0"/></linearGradient>
+<radialGradient id="warm" cx=".5" cy=".55" r=".5"><stop offset="0" style="stop-color:var(--text)"
+stop-opacity=".22"/><stop offset="1" style="stop-color:var(--text)" stop-opacity="0"/></radialGradient>
+</defs></svg>
 <div id="age"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
 stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 16L16 8"/></svg><span></span></div>
 <script>
@@ -59,7 +169,8 @@ var SIZES={s:.48,m:.64,l:.8,full:.96};
 var CROSSED='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
 +' stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 16L16 8"/></svg>';
 var state=null,options=null,override=null,index=0,shownAt=0,flashUntil=0;
-var lastHeight=null,lastPollAt=0,paused=false,forced=null;
+var lastHeight=null,lastPollAt=0,paused=false,forced=null,drawn='',shown=[],shownWords=null;
+var STYLES=['cells','flip','digital','nixie','minimal'];
 function o(){return override||options;}
 function rgb(v){return 'rgb('+v+')';}
 function val(id){var v=state&&state.entry&&state.entry.values?state.entry.values[id]:null;
@@ -97,18 +208,34 @@ case 'time':return [pad2(now.getDate()),MONTHS[now.getMonth()],pad2(now.getHours
 return null;}
 function onScreens(){return (o().screens||[]).filter(function(s){return s.on;})
 .map(function(s){return s.key;});}
-function layout(){var opt=o(),portrait=innerHeight>innerWidth*1.1,share=SIZES[opt.size]||.96;
-document.body.classList.toggle('portrait',portrait);
-var root=document.documentElement.style,gap,cw,ch;
-if(portrait){cw=innerWidth*share/6.4;gap=cw*.07;ch=Math.min(cw*1.9,innerHeight*.5);}
-else{cw=innerWidth*share/7.45;gap=cw*.075;ch=Math.min(cw*2.1,innerHeight*.8);}
+// Where the label goes: its own first tile, a line above or below the row, or nowhere. Minimal
+// has no tiles, and Flip's word flaps and Nixie's base plate do not fit a portrait row, so there
+// the first tile is the line above.
+function portrait(){return innerHeight>innerWidth*1.1;}
+function labelAt(){var at=o().label||'tile',st=o().style;
+return at==='tile'&&(st==='minimal'||(portrait()&&(st==='flip'||st==='nixie')))?'top':at;}
+// Each style's tile, height to width, and how many tile widths a row takes with and without its
+// label tile: Flip's cards are 1 wide to 1.43 high with a gap after the thousands, Nixie's tubes
+// are 1 to 2.56 behind a base plate.
+var SHAPES={flip:[1.43,8.75,7.05],nixie:[2.56,7.9,6.4]};
+function layout(){var opt=o(),upright=portrait(),share=SIZES[opt.size]||.96;
+var tile=labelAt()==='tile',line=labelAt()==='top'||labelAt()==='bottom',shape=SHAPES[opt.style];
+document.body.classList.toggle('portrait',upright);
+var root=document.documentElement.style,gap,cw,ch,room=innerHeight*(line?.62:.8);
+if(shape){cw=innerWidth*share/(upright?shape[2]:(tile?shape[1]:shape[2]));gap=cw*.075;ch=cw*shape[0];
+if(ch>room){ch=room;cw=ch/shape[0];}}
+else if(upright){cw=innerWidth*share/6.4;gap=cw*.07;ch=Math.min(cw*1.9,innerHeight*.5);}
+else{cw=innerWidth*share/(tile?7.45:6.4);gap=cw*.075;ch=Math.min(cw*2.1,room);}
 root.setProperty('--cw',cw+'px');root.setProperty('--ch',ch+'px');root.setProperty('--gap',gap+'px');
+root.setProperty('--hinge',Math.max(2,ch*.023)+'px');
 var stage=document.getElementById('stage');stage.className=opt.position;
 stage.style.padding=(innerHeight*.06)+'px 0';}
 function paint(){var opt=o();if(!opt){return;}var root=document.documentElement.style;
 root.setProperty('--bg',rgb(opt.background));root.setProperty('--cells',rgb(opt.cells));
 root.setProperty('--text',rgb(opt.text));root.setProperty('--accent',rgb(opt.accent));
 root.setProperty('--digits',FONTS[opt.font]||FONTS.antonio);root.setProperty('--dim',opt.dim/100);
+var style=STYLES.indexOf(opt.style)>=0?opt.style:'cells';
+STYLES.forEach(function(x){document.body.classList.toggle('style-'+x,x===style);});
 var pic=document.getElementById('picture'),src=opt.picture&&PICTURE_URL?PICTURE_URL
 +(PICTURE_URL.indexOf('?')<0?'?':'&')+'p='+encodeURIComponent(opt.picture):'';
 pic.hidden=!src;if(src&&pic.dataset.src!==src){pic.dataset.src=src;
@@ -128,7 +255,7 @@ var keys=onScreens();if(!keys.length){return null;}
 for(var tries=0;tries<keys.length;tries++){var k=keys[(index+tries)%keys.length],s=screen(k);
 if(s){index=(index+tries)%keys.length;return s;}}return null;}
 function draw(){var row=document.getElementById('row'),s=current(),age=document.getElementById('age');
-var label,digits;
+var label,digits,style=STYLES.indexOf(o().style)>=0?o().style:'cells';
 if(s){label='<span class="one">'+s[0]+'</span><span'+(s[3]?' class="unit"':'')+'>'+s[1]+'</span>';
 digits=s[2];}
 else{var first=onScreens()[0]||'height';label=CROSSED+'<span>'+(screenWord(first))+'</span>';digits=null;}
@@ -138,12 +265,112 @@ if(!ok){var line=state&&state.entry?(state.entry.enabled?(state.age_s!=null?'No 
 +Math.max(1,Math.round(state.age_s/60))+' min':state.entry.status):'Bitcoin clock is off')
 :'Waiting for the panel';age.lastChild.textContent=line;}
 age.style.display=ok?'none':'flex';
-var html='<div class="cell label">'+label+'</div><div id="digits">';
-var chars=digits==null?[]:Array.from(digits);
-for(var i=0;i<6;i++){var ch=chars.length-6+i>=0?chars[chars.length-6+i]:'';
-html+='<div class="cell digit">'+(digits==null?'<span class="dash"></span>':(ch===' '?'':ch))+'</div>';}
-row.innerHTML=html+'</div>';
-document.body.classList.toggle('flash',Date.now()<flashUntil);}
+document.body.classList.toggle('flash',Date.now()<flashUntil);
+var chars=[],dash='<span class="dash"></span>';
+for(var i=0;i<6;i++){var all=digits==null?[]:Array.from(digits);
+chars.push(digits==null?null:(all.length-6+i>=0?all[all.length-6+i]:''));}
+var at=labelAt(),html=at==='tile'?'<div class="cell label">'+label+'</div>':'';
+if(style==='minimal'){
+// The number whole, its thousands apart by a thin space when it is all digits.
+var text=digits==null?null:/^\d{4,}$/.test(digits)?digits.replace(/\B(?=(\d{3})+$)/g,' '):digits;
+html+='<div class="num">'+(text==null?dash:text)+'</div>';}
+else if(style==='flip'){
+var words=s?[s[0],s[1]]:[screenWord(onScreens()[0]||'height'),'-'];
+html=at==='tile'?'<div class="words">'+word(words[0])+word(words[1])+'</div>':'';
+// Thousands apart, as flip counters group them, when the value is a whole number.
+var grouped=digits!=null&&/^\d{4,}$/.test(digits);
+for(i=0;i<6;i++){html+=(grouped&&i===3?'<div class="group"></div>':'')
++card(chars[i]==null?'-':chars[i]===' '?'':chars[i]);}}
+else if(style==='nixie'){html=at==='tile'?'<div class="plate"><div class="lamp"></div><div>'
++(s?'<span>'+s[0]+'</span><div class="rule"></div><span'+(s[3]?' class="unit"':'')+'>'+s[1]
++'</span>':label)+'</div></div>':'';
+var glow=o().text;
+for(i=0;i<6;i++){html+='<div class="tube">'+tube(spun(chars[i],i),glow)+'</div>';}}
+else{html+='<div id="digits">';
+for(i=0;i<6;i++){var ch=chars[i],inner=ch==null?dash:(ch===' '?'':ch);
+// Digital: the faint 8 in every digit's place, an empty one too; a letter or a dot has none.
+if(style==='digital'){inner='<span class="ghost">'+(ch!=null&&(ch===''||ch===' '||/\d/.test(ch))?'8':'')
++'</span><span class="lit">'+inner+'</span>';}
+html+='<div class="cell digit">'+inner+'</div>';}
+html+='</div>';}
+// Drawn again only when something changed, so a flip or a fade runs to its end.
+var caption=document.getElementById('caption'),line=at==='top'||at==='bottom'?label:'';
+var key=style+'|'+at+'|'+line+'|'+html;if(key===drawn){return;}
+var was=drawn.split('|')[0]===style?shown:[],wasWords=shownWords;drawn=key;row.innerHTML=html;
+caption.className=at==='tile'?'off':at;
+caption.innerHTML=(style==='nixie'&&line?'<div class="lamp"></div>':'')+line;
+if(style==='minimal'){var num=row.querySelector('.num');num.style.fontSize='';
+var room=innerWidth*(SIZES[o().size]||.96);if(num.scrollWidth>room){
+num.style.fontSize=(parseFloat(getComputedStyle(num).fontSize)*room/num.scrollWidth)+'px';}
+if(was.length&&was.join('')!==chars.join('')){num.classList.add('fresh');}}
+else{var cells=row.querySelectorAll(style==='flip'?'.card':style==='nixie'?'.tube':'.digit');
+for(i=0;i<6;i++){if(!was.length||was[i]===chars[i]||chars[i]==null){continue;}
+if(style==='flip'&&was[i]!=null){flipCard(cells[i],was[i]===' '?'':was[i],chars[i]===' '?'':chars[i],
+70+(5-i)*35);}
+else if(style!=='cells'&&style!=='flip'){cells[i].classList.add('fresh');}}}
+// The word flaps flip first when the screen changes, as on a departure board.
+if(style==='flip'&&wasWords&&was.length){var flaps=row.querySelectorAll('.word');
+for(i=0;i<flaps.length;i++){if(wasWords[i]!==words[i]){flipCard(flaps[i],wasWords[i],words[i],i*35);}}}
+shownWords=style==='flip'&&at==='tile'?words:null;shown=chars;}
+// Flip: one half of a card or a word flap, the text set over the whole card.
+function half(where,text){return '<div class="half '+where+'"><span>'+text+'</span></div>';}
+function card(text){return '<div class="card">'+half('top',text)+half('bottom',text)+'</div>';}
+function word(text){return '<div class="word">'+half('top',text)+half('bottom',text)+'</div>';}
+// A changed card flips as a real one: it shows the old digit until its turn (the delay: the
+// words first, then the digits right to left, 35 ms apart), then the new top is set behind a flap
+// of the old top, which falls; the flap's back, the new bottom, lands over the old bottom, which
+// takes the new digit when it is covered.
+function flipCard(c,from,to,delay){var top=c.querySelector('.top span'),bottom=c.querySelector('.bottom span');
+top.textContent=from;bottom.textContent=from;
+setTimeout(function(){top.textContent=to;
+c.insertAdjacentHTML('beforeend','<div class="flip-flap front"><span></span></div>'
++'<div class="flip-flap back"><span></span></div>');
+var flaps=c.querySelectorAll('.flip-flap span');flaps[0].textContent=from;flaps[1].textContent=to;
+c.classList.add('go');setTimeout(function(){bottom.textContent=to;
+Array.prototype.forEach.call(c.querySelectorAll('.flip-flap'),function(f){f.remove();});
+c.classList.remove('go');},420);},delay);}
+// Nixie: IN-14 numerals as single wire paths in a 40 by 70 box; the 5 is the 2 turned over top to
+// bottom and the 9 the 6 turned round, as the IN-14 makes them. All ten cathodes are stacked in
+// every tube, front to back, each a hair smaller, offset and dimmer.
+var WIRE={0:'M20 5C35 5 36 22 36 35S35 65 20 65S4 48 4 35S5 5 20 5Z',1:'M13 14L22 5V65',
+2:'M6 17C6 8 12 4 20 4S34 9 34 18C34 33 6 46 5 65H35',
+3:'M6 11C10 5 15 4 20 4C29 4 33 10 33 17C33 26 26 32 16 32C28 32 35 39 35 49C35 59 28 66 19 66C12 66 7 63 4 58',
+4:'M28 65V5L4 46H37',6:'M31 9C27 5 24 4 20 4C9 4 5 18 5 38C5 56 11 66 20 66C29 66 35 59 35 49C35 39 29 32 20 32C12 32 6 38 5 46',
+7:'M5 5H35L15 65',8:'M20 33C10 33 7 26 7 19C7 10 12 4 20 4S33 10 33 19C33 26 30 33 20 33ZM20 33C9 33 5 41 5 50C5 59 11 66 20 66S35 59 35 50C35 41 31 33 20 33Z'};
+WIRE[5]=WIRE[2];WIRE[9]=WIRE[6];
+var TURNED={5:'matrix(1 0 0 -1 0 70)',9:'rotate(180 20 35)'},STACK='1627504983';
+function wire(d,attrs){return '<path d="'+WIRE[d]+'"'+(TURNED[d]?' transform="'+TURNED[d]+'"':'')+' '+attrs+'/>';}
+// The glow colour lightened towards white for the hot wire and its core.
+function mix(rgb,share){return 'rgb('+rgb.split(',').map(function(c){
+return Math.round(+c+(255-c)*share);}).join(',')+')';}
+function tube(ch,glow){var lit=ch!=null&&ch!==''&&ch!==' ',s='<svg viewBox="0 0 84 215" aria-hidden="true">'
++'<rect x="12" y="182" width="60" height="14" rx="3" fill="#141110"/><g stroke="#8d8a86" stroke-width="1.2">';
+for(var p=0;p<7;p++){s+='<line x1="'+(18+p*8)+'" y1="196" x2="'+(18+p*8)+'" y2="207"/>';}
+s+='</g><path d="M8 184V44C8 22 23 8 42 8S76 22 76 44V184Z" style="fill:var(--cells)" fill-opacity=".85"'
++' stroke="#fff" stroke-opacity=".1"/><path d="M10 44C10 24 24 10 42 10S74 24 74 44V58H10Z" fill="url(#getter)"/>';
+if(lit){s+='<ellipse cx="42" cy="110" rx="34" ry="60" fill="url(#warm)"/>';}
+s+='<g stroke="#5b5650" stroke-width=".8"><line x1="14" y1="60" x2="14" y2="182"/><line x1="70" y1="60" x2="70" y2="182"/></g>'
++'<g transform="translate(18 66) scale(1.2)" fill="none" stroke-linecap="round" stroke-linejoin="round">';
+for(var k=0;k<10;k++){var z=k/9;s+='<g transform="translate('+(20+(k%2?.4:-.4)*z)+' 35) scale('+(1-z*.035)
++') translate(-20 -35)">'+wire(STACK[k],'stroke="#6e6259" stroke-opacity="'+(.42-z*.2).toFixed(2)+'" stroke-width="1"')+'</g>';}
+s+='<circle cx="42" cy="66" r="1.3" fill="#6e6259" fill-opacity=".4"/>';
+if(lit){var bloom='rgb('+glow+')',hot=mix(glow,.45),core=mix(glow,.85);
+s+='<g class="wire" filter="url(#glow)">';
+if(WIRE[ch]){s+=wire(ch,'stroke="'+bloom+'" stroke-width="2.6"')+wire(ch,'stroke="'+hot+'" stroke-width="1.4"')
++wire(ch,'stroke="'+core+'" stroke-width=".55"');}
+else if(ch==='.'){s+='<circle cx="42" cy="66" r="1.8" fill="'+hot+'"/>';}
+// A letter has no cathode of its own: drawn in the thin face, in the wire's colour.
+else{s+='<text x="20" y="64" text-anchor="middle" font-family="clock-thin" font-weight="200" font-size="78" fill="'
++hot+'" stroke="'+bloom+'" stroke-width=".6">'+ch+'</text>';}
+s+='</g>';}
+return s+'</g><rect x="12" y="56" width="60" height="122" fill="url(#hex)" opacity="'+(lit?.55:.35)+'"/>'
++'<path d="M8 184V44C8 22 23 8 42 8S76 22 76 44V184Z" fill="url(#glassL)"/></svg>';}
+// A new block runs each tube through its cathodes once, left to right, then settles, as nixie
+// clocks do against cathode poisoning; nothing moves at rest.
+var spin=0,spinTimer=null;
+function spun(ch,i){return spin>0&&ch!=null&&/\d/.test(ch)&&spin<=10+i*2?String((spin+i*3)%10):ch;}
+function startSpin(){clearInterval(spinTimer);spin=1;spinTimer=setInterval(function(){spin++;
+if(spin>22){clearInterval(spinTimer);spin=0;}drawn='';draw();},45);}
 function screenWord(key){return {height:'Height',price:'Price',sats:'Sats',fee:'Fee',
 halving:'Halving',halving_date:'Halving',market_cap:'Mcap',supply:'Supply',time:'Time'}[key]||'';}
 function next(step){forced=null;var keys=onScreens();if(!keys.length){return;}
@@ -152,7 +379,8 @@ index=(index+step+keys.length)%keys.length;
 for(var t=0;t<keys.length&&!screen(keys[index]);t++){index=(index+(step<0?-1:1)+keys.length)%keys.length;}
 shownAt=Date.now();draw();}
 function flash(){forced=null;var keys=onScreens();var h=keys.indexOf('height');if(h>=0){index=h;}
-flashUntil=Date.now()+3000;shownAt=Date.now();draw();setTimeout(draw,3050);}
+flashUntil=Date.now()+3000;shownAt=Date.now();draw();setTimeout(draw,3050);
+if(o().style==='nixie'){startSpin();}}
 function tick(){var opt=o();if(!opt||paused){return;}
 if(Date.now()-shownAt>=opt.seconds*1000){next(1);}else{draw();}
 paintClock();}
@@ -182,7 +410,8 @@ shownAt=Date.now();draw();}
 if(data.paused!=null){var was=paused;paused=!!data.paused;if(was&&!paused){poll();}}}
 window.addEventListener('message',function(e){if(e.origin===location.origin){command(e.data);}});
 window.clockPreview=command;
-addEventListener('resize',function(){layout();draw();});
+// Drawn again after a resize even though nothing in it changed: Minimal fits its number anew.
+addEventListener('resize',function(){layout();drawn='';draw();});
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'){poll();}});
 poll();setInterval(poll,PREVIEW?5000:2000);setInterval(tick,1000);
 if(!PREVIEW){setInterval(shift,60000);}
