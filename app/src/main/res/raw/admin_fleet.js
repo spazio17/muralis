@@ -1,7 +1,8 @@
-// The Fleet page (redesigned 2026-10-25). Its head opens two dialogs, Add a panel and Say or
-// play; without scripting each opens as a section of the page through its address. On Panels:
-// the chips, the search and the group menu filter the list in place (the chip is kept in the
-// address); List or Pictures; ticking rows shows what can be done to all of them; a panel opened
+// The Fleet page (redesigned 2026-10-25). Its head opens Add a panel, a dialog that opens as a
+// section of the page through its address without scripting. On Panels: the chips, the search
+// and the group menu filter the list in place (the chip is kept in the address); List or
+// Pictures; ticking rows, or Select all, shows what can be done to all of them, Announce (a
+// dialog) included; a panel opened
 // at the right asks for its picture and its network speaker once, never with the page, since
 // each is a call to that panel. Group chips and the share switches apply at once. The list, the
 // counts and a panel's health are drawn again by admin_stats.js when the fleet's key moves; the
@@ -18,7 +19,7 @@ function soon(){if(window.muralisPollSoon){window.muralisPollSoon();}}
 // Dialogs.
 function openDialog(id){var d=document.getElementById(id);if(!d||!d.showModal){return false;}
 if(!d.open){d.showModal();}
-if(id==='say-or-play'&&window.muralisSpeakersLoad){window.muralisSpeakersLoad();}
+if(id==='announce'&&window.muralisSpeakersLoad){window.muralisSpeakersLoad();}
 return true;}
 document.addEventListener('click',function(e){
 var opener=e.target.closest('[data-dialog]');
@@ -150,9 +151,13 @@ tell(pane?pane.querySelector('[data-identified]'):null,notice?notice.textContent
 // The selection: what can be done to all the ticked panels.
 var bar=document.getElementById('fleet-selbar'),tools=document.getElementById('fleet-tools');
 function ticked(){return all('li.fleetrow:not([hidden]) input[data-tick]:checked');}
+var tickAll=document.getElementById('fleet-tick-all');
 function selection(){if(!bar){return;}var n=ticked().length;
 bar.hidden=n===0;if(tools){tools.hidden=n>0;}
-document.getElementById('fleet-selcount').textContent=n+' selected';}
+document.getElementById('fleet-selcount').textContent=n+' selected';
+if(tickAll){var shown=all('li.fleetrow:not([hidden]) input[data-tick]').length;tickAll.checked=n>0&&n===shown;tickAll.indeterminate=n>0&&n<shown;}}
+if(tickAll){tickAll.addEventListener('change',function(){var on=tickAll.checked;
+all('li.fleetrow:not([hidden]) input[data-tick]').forEach(function(c){c.checked=on;});selection();});}
 document.addEventListener('change',function(e){if(e.target.matches('input[data-tick]')){selection();}});
 function clear(){all('input[data-tick]').forEach(function(c){c.checked=false;});selection();}
 function say(text){tell(document.getElementById('fleet-sel-result'),text);}
@@ -164,7 +169,7 @@ if(what==='close'){clear();return;}
 if(what==='identify'){Promise.all(ids.map(function(id){return identify(id,null);})).then(function(done){
 var missed=done.filter(function(ok){return !ok;}).length;
 say(missed?'Identify reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
-if(what==='say'){if(!openDialog('say-or-play')){return;}
+if(what==='say'){if(!openDialog('announce')){return;}
 var choose=document.querySelector('#speakers .segmented [data-target=panels]');if(choose){choose.click();}
 all('#speakers-list li.speaker').forEach(function(li){var t=li.querySelector('[data-tick]');if(t){t.checked=ids.indexOf(li.getAttribute('data-id'))>=0;}});return;}
 if(what==='group'){var group=document.getElementById('fleet-sel-group').value;

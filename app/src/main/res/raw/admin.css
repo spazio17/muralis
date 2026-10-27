@@ -12,6 +12,9 @@ panel ever spans the screen: content lives in a centred column of at most 1016 p
 bar shares, so the title sits over the list's left edge and the readings over the panel's
 right edge (2026-09-23).
 */
+/* Hidden is hidden, whatever display a rule gives the element: a rule that set one kept a
+   hidden thing on screen (the Fleet page's pictures back on List, 2026-10-27). */
+[hidden]{display:none!important}
 :root{color-scheme:light dark;
 --card:color-mix(in srgb,var(--surface) 40%,var(--base));--card-high:var(--surface);
 --outline:var(--border);--outline-variant:color-mix(in srgb,var(--border) 55%,var(--base));
@@ -95,7 +98,9 @@ html.js .overflow .m3menu button:hover,html.js .overflow .m3menu button:focus-vi
 /* A Save that scripting replaces with storing on change (the panel's name) is for the no-script
    page alone. */
 html.js .actions.nojs{display:none}
-.field select option{background:var(--card);color:var(--text)}
+/* Every select's open list in the page's colours: Firefox draws it white with the select's own
+   light text otherwise. */
+select option{background:var(--card);color:var(--text)}
 /* ---- buttons: filled for a card's one main action, tonal for the second, outlined for a command
    that acts now and stores nothing, text for navigation, and a 40 px icon button for anything
    repeated in a row. Red only for Delete: outlined in an editor's row, filled on the confirm
@@ -193,13 +198,13 @@ ul.list li form.use{display:inline-flex;align-items:center;margin:0}
 /* The Fleet box's membership and Join code: the panel's Join screen, centred, the
    QR dark on white with its quiet zone in both themes, the digits large and evenly spaced. */
 .fleet-member{margin-top:16px}.fleet-member>p{margin:0}.fleet-member>.actions{margin-top:12px}
-.fleet-join{text-align:center;margin-top:16px}.fleet-member [hidden],.fleet-invite [hidden]{display:none}
+.fleet-join{text-align:center;margin-top:16px}
 .fleet-join img{display:block;margin:0 auto;width:240px;height:240px;image-rendering:pixelated;border-radius:8px}
 .join-code{font-size:34px;line-height:44px;font-variant-numeric:tabular-nums;margin:12px 0 0}
 .fleet-join .actions{justify-content:center;margin-top:16px}
 /* The Fleet page's picture of a panel's screen: at most 160 px high, its own shape. */
 .fleet-shot{margin-top:8px}.fleet-shot img{display:block;max-height:160px;max-width:100%;width:auto;border-radius:8px;background:var(--surface-alt)}
-.fleet-shot img[hidden],.fleet-shot p[hidden],#fleet-identify-all[hidden]{display:none}.fleet-shot p.hint{white-space:pre-line}#fleet-identify-all{white-space:pre-line}
+.fleet-shot p.hint{white-space:pre-line}#fleet-identify-all{white-space:pre-line}
 ul.list li:last-child{border-bottom:0}
 ul.list li.two{min-height:72px}
 .lead{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;color:var(--subtext)}
@@ -549,7 +554,6 @@ html:root .ld .nav ul.list li.on:hover{background:var(--secondary-container)}
 .ld .detail .pageswitch{display:none}
 .ld .detail .pagename{display:inline}.ld .detail .switchname{display:none}
 .ld .detail>.pane>section.card:first-child,.ld .detail>.pane>form:not(.card)>.field:first-of-type{margin-top:0}
-.pane[hidden]{display:none}
 }
 ul.list li:has(>a.rowlink):hover{background:color-mix(in srgb,var(--text) 6%,transparent);border-radius:12px}
 details.older{margin-top:8px}details.older>summary{cursor:pointer;color:var(--accent);font-weight:500;padding:12px 0;list-style:none}details.older>summary::-webkit-details-marker{display:none}
@@ -561,7 +565,6 @@ dialog.qr-full::backdrop{background:#fff}
 .qr-full-box{display:grid;justify-items:center;align-content:center;gap:8px;height:100%;padding:64px 16px 16px;box-sizing:border-box}
 .qr-full-box img{width:min(92vw,calc(92vh - 144px),12cm);height:auto;aspect-ratio:1;background:#fff;cursor:default}
 .qr-full-left{margin:0;font-size:.875rem;color:rgba(0,0,0,.6);text-align:center}
-.qr-full-left[hidden]{display:none}
 dialog.qr-full .qr-full-close{position:absolute;top:8px;inset-inline-start:8px;min-height:48px;color:rgba(0,0,0,.87);background:transparent;border-color:transparent}
 dialog.qr-full .qr-full-close svg{color:rgba(0,0,0,.87)}
 /* The Cameras page's left list: the groups under a head of their own, 24 px below the cameras. */
@@ -577,7 +580,6 @@ label.slider.small input[type=range]::-webkit-slider-thumb{height:24px;margin-to
 label.slider.small input[type=range]::-moz-range-track{height:6px;border-radius:3px}
 label.slider.small input[type=range]::-moz-range-progress{height:6px;border-radius:3px}
 li.speaker label.tick{display:flex;align-items:center}
-li.speaker label.tick[hidden]{display:none}
 /* The Fleet page (2026-10-25): the head with its counts and actions, three tabs, the health
    chips, search and group menu, the selection bar, rows with a dot, the panel's health chips,
    its network speaker, and the two dialogs; without scripting a dialog opens in place through
@@ -593,18 +595,35 @@ a.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on
 .tabs a[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent)}
 .tabs a:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
-a.fchip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 16px;border:1px solid var(--outline);border-radius:8px;color:var(--subtext);font-size:14px;font-weight:500;text-decoration:none}
+/* The health chips and the Shared settings' groups on one row: one choice, read left to right.
+   Narrower than they need the row scrolls sideways, as Material's chip rows do, never wraps. */
+.fleettools .chips,.ld .nav>.chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.fleettools a.fchip,.ld .nav>.chips a.fchip{flex:none;padding:0 12px}
+a.fchip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 16px;white-space:nowrap;border:1px solid var(--outline);border-radius:8px;color:var(--subtext);font-size:14px;font-weight:500;text-decoration:none}
 a.fchip[aria-current=true]{border-color:transparent;background:var(--secondary-container);color:var(--on-secondary-container)}
 a.fchip:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}
 .fleettools{display:flex;flex-direction:column;gap:12px;padding:8px 12px 12px}
-.fleettools[hidden],.selbar[hidden]{display:none}
+/* Below 600 px the tools take the list's full width, so the chips fit on one row at 360 px. */
+@media (max-width:599px){.fleettools{padding:8px 0 12px}}
 .fleetfind{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .fleetfind input[type=search],.fleetfind select{flex:1 1 160px;min-width:0;height:40px;padding:0 12px;border:1px solid var(--outline);border-radius:20px;background:transparent;color:var(--text);font:inherit}
 .fleetfind .segmented{margin:0;flex:1 1 160px;max-width:none}
 html:not(.js) .fleetfind{display:none}
+/* The round selects (the group menus, the album to add to) as the outlined field's: no browser
+   arrow, the same chevron 12 px in from the edge. */
+.fleetfind select,.selbar select{appearance:none;-webkit-appearance:none;padding:0 44px 0 16px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center/24px}
+.fleetfind input[type=search]{padding:0 16px}
+/* Select all, above the rows: its box under the rows' boxes. */
+.selall{display:flex;align-items:center;min-height:48px;margin:0 0 0 16px;font-size:14px;color:var(--subtext);cursor:pointer}
+@media (min-width:840px){.ld .nav .selall{margin-left:12px}}
+.selall input{margin:0 15px}
+html:not(.js) .selall{display:none}
 .selbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:8px 12px;background:var(--secondary-container);color:var(--on-secondary-container);border-radius:12px;margin:0 4px 8px}
 .selbar #fleet-selcount{font-weight:500;flex:1 1 auto}
-.selbar select{height:40px;border-radius:20px;border:1px solid var(--outline);background:transparent;color:inherit;font:inherit;padding:0 8px}
+.selbar>.actions{flex-basis:100%;margin:0}
+.togroup{display:inline-flex;align-items:center;gap:8px}
+#announce .cardhead .count{margin-left:auto}
+.selbar select{height:40px;border-radius:20px;border:1px solid var(--outline);color:inherit;font:inherit}
 .ld .nav p.label{margin:16px 12px 4px;font-size:12px;font-weight:500;color:var(--subtext)}
 li.fleetrow{flex-wrap:wrap}
 li.fleetrow label.tick{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:48px;cursor:pointer}
@@ -612,8 +631,10 @@ li.fleetrow .groups{font-size:12px;color:var(--subtext);white-space:nowrap}
 li.fleetrow .trail{display:flex;align-items:center;gap:4px}
 .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--subtext)}
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.off{background:var(--outline)}
+/* A row's picture shows in Pictures alone, once it has come: back on List it goes (2026-10-27),
+   and one still asked for or refused never shows as a broken image. */
+img.rowshot{display:none}
 #fleet-rows.pictures img.rowshot{display:block;flex-basis:100%;max-height:120px;max-width:100%;margin:4px 0 8px 48px;border-radius:8px}
-img.rowshot[hidden]{display:none}
 .firstrun{padding:8px 12px 12px}.firstrun h3{margin:8px 0 4px;font-size:16px}
 .fleetpanel .label{margin:20px 0 6px;font-size:12px;font-weight:500;color:var(--subtext)}
 .fleetpanel .shotbar{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
@@ -624,7 +645,6 @@ img.rowshot[hidden]{display:none}
 .groupchips .chips label.fchip{margin:0}
 .pspeaker{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .pspeaker .s{flex:1 1 120px;color:var(--subtext)}
-.fleetpanel [data-identified][hidden]{display:none}
 li.group .chips{margin-top:6px}
 .rchip{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:6px;background:var(--surface-alt);font-size:12px}
 li.group .trail{display:flex;align-items:center;gap:0}
@@ -639,9 +659,8 @@ dialog.sheet>[data-way-pane]{margin-bottom:24px}
 dialog.sheet>.card{margin:0;box-shadow:none}
 dialog.sheet .cardhead .ib{margin-right:-12px}
 dialog.sheet:target{display:block;position:static;margin:16px auto;width:auto;max-width:640px}
-@media (max-width:599px){.fleetactions .btn.tonal{padding:0 12px}}
 .ld .nav>.chips{margin:4px 4px 12px}
-.camera-picture{margin-top:12px}.camera-picture img{display:block;max-width:100%;max-height:240px;width:auto;border-radius:8px;background:var(--surface-alt)}.camera-picture img[hidden],.camera-picture p[hidden]{display:none}.camera-picture .shotbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
+.camera-picture{margin-top:12px}.camera-picture img{display:block;max-width:100%;max-height:240px;width:auto;border-radius:8px;background:var(--surface-alt)}.camera-picture .shotbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px}
 details.brands{margin:4px 0 12px}details.brands summary{cursor:pointer;color:var(--accent);min-height:48px;display:flex;align-items:center}details.brands dt{font-weight:500;margin-top:8px}details.brands dd{margin:0;color:var(--subtext);font-size:13px;overflow-wrap:anywhere}
 /* Clock options: the preview in the panel's shape, the swatches, the screens' rows. */
 .clock-preview{width:100%;max-height:70vh;border-radius:12px;overflow:hidden;background:#000}
@@ -685,3 +704,6 @@ details.clock-group>summary .s{color:var(--subtext);font-size:14px}
 img.large{display:block;max-width:100%;height:auto;max-height:70vh;margin:0 auto;border-radius:12px}
 .selbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px;margin-top:12px;background:var(--card-high,var(--card));border-radius:16px}
 .selbar select{min-height:40px}
+/* A row whose whole width picks its radio: the Dashboard's integrations. */
+ul.list li label.rowlink{display:flex;align-items:center;gap:12px;flex:1;min-width:0;cursor:pointer;color:var(--text)}
+.segradios label:has(input:checked)::before{content:'\2713';margin-right:6px}

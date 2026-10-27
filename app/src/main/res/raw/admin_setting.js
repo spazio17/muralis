@@ -122,3 +122,42 @@ document.addEventListener('change',function(event){var input=event.target;
 if(!input||input.type!=='file'||!input.dataset||!input.dataset.chosen){return;}
 var chosen=document.getElementById(input.dataset.chosen);
 if(chosen){chosen.textContent=input.files&&input.files.length?input.files[0].name:'No file chosen';}});
+// The Dashboard choice as a draft (2026-10-27): picking an answer shows its fields only, the line
+// "Shows now" and "Not saved" say the glass differs, and the one Save stores the choice, the
+// integration and the address together. Coming back from Choose the app (?draft=app) picks it.
+(function(){
+var box=document.getElementById('dashboard-answers');
+if(!box){return;}
+var form=box.closest('form'),now=document.getElementById('dashboard-now'),
+    unsaved=document.getElementById('dashboard-unsaved');
+var stored=(form.querySelector('input[name=shows_baseline]')||{}).value;
+var start={};
+function picked(name){var el=form.querySelector('input[name='+name+']:checked');return el?el.value:'';}
+function typedUrl(){var el=form.querySelector('input[name=dashboard_url]');return el?el.value.trim():'';}
+var wanted=/[?&]draft=([a-z]+)/.exec(location.search);
+if(wanted){var el=form.querySelector('input[name=dashboard_shows][value="'+wanted[1]+'"]');if(el){el.checked=true;}}
+start={shows:stored,integration:'',url:''};
+var first=form.querySelector('input[name=dashboard_integration]:checked');start.integration=first?first.getAttribute('value'):'';
+var urlBox=form.querySelector('input[name=dashboard_url]');start.url=urlBox?urlBox.defaultValue.trim():'';
+function dirty(){return picked('dashboard_shows')!==start.shows
+||(picked('dashboard_shows')==='integration'&&picked('dashboard_integration')!==start.integration)
+||typedUrl()!==start.url;}
+function paint(){var shows=picked('dashboard_shows');
+Array.prototype.forEach.call(form.querySelectorAll('[data-answer]'),function(part){part.hidden=part.dataset.answer!==shows;});
+if(now){now.hidden=shows===stored;}
+var pending=dirty();if(unsaved){unsaved.hidden=!pending;}
+// Save shows the moment the Dashboard has a change to store, for the whole Dashboard.
+var save=document.getElementById('dashboard-save');if(save){save.hidden=!pending;}}
+form.addEventListener('change',paint);form.addEventListener('input',paint);
+// Open once posts this form too and saves nothing, so only Save lets the page go unasked.
+var saving=false;form.addEventListener('submit',function(e){saving=!(e.submitter&&e.submitter.id==='open-once');});
+window.addEventListener('beforeunload',function(e){if(!saving&&dirty()){e.preventDefault();e.returnValue='';}});
+// 3. What the glass shows follows the poll: a change made elsewhere moves "Shows now".
+window.muralisDashboardShows=function(shows){if(!shows||shows===stored){return;}
+stored=shows;start.shows=shows;
+// The form's own starting point too, so Save does not refuse what the line already says.
+var base=form.querySelector('input[name=shows_baseline]');if(base){base.value=shows;}
+var word=form.querySelector('input[name=dashboard_shows][value="'+shows+'"]');
+if(now&&word){now.textContent='Shows now: '+word.parentNode.textContent;}paint();};
+paint();
+})();

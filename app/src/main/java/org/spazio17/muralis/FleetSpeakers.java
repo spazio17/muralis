@@ -85,27 +85,9 @@ final class FleetSpeakers {
      * on 2 panels." or "Said on 1 of 2: kitchen was not reached."
      */
     static JSONObject act(Context context, String target, String action, String value) {
-        Map<String, Object> document = KioskConfig.fleetDocumentOf(context);
-        List<Map<String, Object>> chosen = new ArrayList<>();
-        List<Map<String, Object>> members = FleetDocument.members(document);
-        if (target.equals("all")) {
-            chosen.addAll(members);
-        } else if (target.startsWith("group:")) {
-            String group = target.substring("group:".length());
-            for (Map<String, Object> member : members) {
-                if (FleetDocument.memberGroups(document, member).contains(group)) {
-                    chosen.add(member);
-                }
-            }
-        } else if (target.startsWith("panels:")) {
-            List<String> ids = java.util.Arrays.asList(
-                    target.substring("panels:".length()).split(","));
-            for (Map<String, Object> member : members) {
-                if (ids.contains(TinyJson.string(member, FleetDocument.ID, ""))) {
-                    chosen.add(member);
-                }
-            }
-        }
+        List<Map<String, Object>> members = FleetDocument.members(
+                KioskConfig.fleetDocumentOf(context));
+        List<Map<String, Object>> chosen = chosen(context, target);
         try {
             if (!java.util.Arrays.asList("say", "play", "stop", "volume", "switch")
                     .contains(action)) {
@@ -159,6 +141,35 @@ final class FleetSpeakers {
         } catch (JSONException impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    /**
+     * The panels {@code target} names: {@code all}, {@code group:<id>} or
+     * {@code panels:<id>,<id>}; empty for anything else.
+     */
+    static List<Map<String, Object>> chosen(Context context, String target) {
+        Map<String, Object> document = KioskConfig.fleetDocumentOf(context);
+        List<Map<String, Object>> members = FleetDocument.members(document);
+        List<Map<String, Object>> chosen = new ArrayList<>();
+        if (target.equals("all")) {
+            chosen.addAll(members);
+        } else if (target.startsWith("group:")) {
+            String group = target.substring("group:".length());
+            for (Map<String, Object> member : members) {
+                if (FleetDocument.memberGroups(document, member).contains(group)) {
+                    chosen.add(member);
+                }
+            }
+        } else if (target.startsWith("panels:")) {
+            List<String> ids = java.util.Arrays.asList(
+                    target.substring("panels:".length()).split(","));
+            for (Map<String, Object> member : members) {
+                if (ids.contains(TinyJson.string(member, FleetDocument.ID, ""))) {
+                    chosen.add(member);
+                }
+            }
+        }
+        return chosen;
     }
 
     private static String verb(String action, String value) {

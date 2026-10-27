@@ -68,6 +68,7 @@ if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting 
 fleetJoinPost('/api/fleet/leave');});}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};
+if(window.muralisDashboardShows){window.muralisDashboardShows(cfg.dashboard_shows);}
 // The same eight rows, in the same order, as the tablet's own overlay; see
 // SystemStats.formatOverlayHtml. Padded labels so the values line up in the <pre>.
 var lines=[];
