@@ -8712,24 +8712,18 @@ public final class KioskActivity extends Activity {
         return null;
     }
 
-    /** A Bitcoin clock's look in a few words, for its Dashboard row: "Night · 6 screens". */
+    /** A Bitcoin clock's style in a few words, for its Dashboard row: "Flip · 6 screens". */
     private static String clockLine(BitcoinClock.Options options) {
         int on = 0;
         for (BitcoinClock.Screen screen : options.screens) {
             on += screen.on ? 1 : 0;
         }
-        return wordOf(BitcoinClock.LOOK_WORDS, options.look) + " · " + on
+        return wordOf(BitcoinClock.STYLE_WORDS, options.style) + " · " + on
                 + (on == 1 ? " screen" : " screens");
     }
 
     /** The Clock options page's preview, destroyed with the page. */
     private WebView clockPreview;
-
-    /** The swatches each colour offers on Clock options, as r,g,b, before its own box. */
-    private static final String[][] CLOCK_SWATCHES = {
-            {"17,18,20", "245,245,240", "22,34,60", "40,28,20"},
-            {"242,242,242", "20,20,20", "247,147,26"},
-            {"247,147,26", "224,67,0", "0,90,255", "0,200,0"}};
 
     /** The Clock options group that is open; one at a time, kept across a redraw. */
     private String clockOpenGroup = "";
@@ -8913,34 +8907,46 @@ public final class KioskActivity extends Activity {
             groups.addView(body, matchWrapClose());
         };
 
-        // Look: a start for the colours, then the colours themselves.
-        LinearLayout look = new LinearLayout(this);
-        look.setOrientation(LinearLayout.VERTICAL);
-        look.addView(clockSegments(theme, BitcoinClock.LOOK_WORDS, draft.look, key -> {
-            BitcoinClock.Options next = BitcoinClock.withLook(draft, key);
+        // Style: the kind of clock, which starts from its own colours, then those four colours
+        // under the names that style gives them.
+        String[][] swatches = BitcoinClock.SWATCHES;
+        LinearLayout style = new LinearLayout(this);
+        style.setOrientation(LinearLayout.VERTICAL);
+        style.addView(clockSegments(theme, BitcoinClock.STYLE_WORDS, draft.style, key -> {
+            BitcoinClock.Options next = BitcoinClock.withStyle(draft, key);
             redrawInPlace(() -> showClockOptionsPage(instanceId, next, baseline));
         }), matchWrapClose());
-        addClockColour(look, theme, "Background", CLOCK_SWATCHES[0], draft.background, rgb -> {
+        String[] colourWords = BitcoinClock.colourWords(draft.style);
+        addClockColour(style, theme, colourWords[0], swatches[0], draft.background, rgb -> {
             draft.background = rgb;
             changed.run();
         });
-        addClockColour(look, theme, "Text", CLOCK_SWATCHES[1], draft.text, rgb -> {
+        addClockColour(style, theme, colourWords[1], swatches[1], draft.cells, rgb -> {
+            draft.cells = rgb;
+            changed.run();
+        });
+        addClockColour(style, theme, colourWords[2], swatches[2], draft.text, rgb -> {
             draft.text = rgb;
             changed.run();
         });
-        addClockColour(look, theme, "Accent", CLOCK_SWATCHES[2], draft.accent, rgb -> {
-            draft.accent = rgb;
-            changed.run();
-        });
-        group.accept(new String[] {"look", "Look"}, look);
+        if (BitcoinClock.usesAccent(draft.style, draft.label)) {
+            addClockColour(style, theme, colourWords[3], swatches[3], draft.accent, rgb -> {
+                draft.accent = rgb;
+                changed.run();
+            });
+        }
+        group.accept(new String[] {"style", "Style"}, style);
 
-        LinearLayout digits = new LinearLayout(this);
-        digits.setOrientation(LinearLayout.VERTICAL);
-        digits.addView(clockSegments(theme, BitcoinClock.FONT_WORDS, draft.font, key -> {
-            draft.font = key;
-            changed.run();
-        }), matchWrapClose());
-        group.accept(new String[] {"digits", "Digits"}, digits);
+        // The digits' font, for the styles that draw them in it.
+        if (BitcoinClock.usesFont(draft.style)) {
+            LinearLayout digits = new LinearLayout(this);
+            digits.setOrientation(LinearLayout.VERTICAL);
+            digits.addView(clockSegments(theme, BitcoinClock.FONT_WORDS, draft.font, key -> {
+                draft.font = key;
+                changed.run();
+            }), matchWrapClose());
+            group.accept(new String[] {"digits", "Font"}, digits);
+        }
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -8953,6 +8959,17 @@ public final class KioskActivity extends Activity {
         layout.addView(clockSegments(theme, BitcoinClock.POSITION_WORDS, draft.position, key -> {
             draft.position = key;
             changed.run();
+        }), matchWrapClose());
+        layout.addView(fieldCaption(theme, "Label"), matchWrapClose());
+        layout.addView(clockSegments(theme, BitcoinClock.LABEL_WORDS, draft.label, key -> {
+            boolean lamp = BitcoinClock.usesAccent(draft.style, draft.label);
+            draft.label = key;
+            if (lamp != BitcoinClock.usesAccent(draft.style, key)) {
+                // Nixie's Lamp colour comes or goes with its label.
+                redraw.run();
+            } else {
+                changed.run();
+            }
         }), matchWrapClose());
         layout.addView(fieldCaption(theme, "Date and time"), matchWrapClose());
         layout.addView(clockSegments(theme, BitcoinClock.STRIP_WORDS, draft.strip, key -> {
@@ -9180,11 +9197,12 @@ public final class KioskActivity extends Activity {
     /** What a closed group of Clock options says on its line. */
     private static String clockGroupValue(String key, BitcoinClock.Options options) {
         switch (key) {
-            case "look": {
-                BitcoinClock.Options look = BitcoinClock.withLook(options, options.look);
-                boolean own = look == null || !look.background.equals(options.background)
-                        || !look.text.equals(options.text) || !look.accent.equals(options.accent);
-                return wordOf(BitcoinClock.LOOK_WORDS, options.look)
+            case "style": {
+                BitcoinClock.Options style = BitcoinClock.withStyle(options, options.style);
+                boolean own = style == null || !style.background.equals(options.background)
+                        || !style.cells.equals(options.cells) || !style.text.equals(options.text)
+                        || !style.accent.equals(options.accent);
+                return wordOf(BitcoinClock.STYLE_WORDS, options.style)
                         + (own ? " · own colours" : "");
             }
             case "digits":
@@ -9192,6 +9210,7 @@ public final class KioskActivity extends Activity {
             case "layout":
                 return wordOf(BitcoinClock.SIZE_WORDS, options.size) + " · "
                         + wordOf(BitcoinClock.POSITION_WORDS, options.position).toLowerCase()
+                        + " · " + labelLine(options.label)
                         + " · " + ("off".equals(options.strip) ? "no date" : "date at the "
                         + wordOf(BitcoinClock.STRIP_WORDS, options.strip).toLowerCase());
             case "picture":
@@ -9206,6 +9225,16 @@ public final class KioskActivity extends Activity {
             }
             default:
                 return options.seconds + " s · flash " + (options.flash ? "on" : "off");
+        }
+    }
+
+    /** Where the clock's label goes, in the words of a closed Layout group. */
+    private static String labelLine(String label) {
+        switch (label) {
+            case "off": return "no label";
+            case "top": return "label at the top";
+            case "bottom": return "label at the bottom";
+            default: return "label first";
         }
     }
 
@@ -9263,9 +9292,10 @@ public final class KioskActivity extends Activity {
                 }
             }
         });
-        row.addView(box, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f));
+        // The box under the swatches, as on the web: beside five of them it was too narrow
+        // for 255,255,255 on a phone.
         card.addView(row, matchWrapClose());
+        card.addView(box, matchWrapClose());
     }
 
     /**
@@ -17214,8 +17244,8 @@ public final class KioskActivity extends Activity {
                         {"ZXing", "QR codes (Apache 2.0)"},
                         {"Android robot", context.getString(R.string.android_robot_attribution)},
                         {"Icons", "After Material Symbols by Google (Apache 2.0)"},
-                        {"Bitcoin clock fonts", "Antonio, Oswald and Azeret Mono (SIL Open Font"
-                                + " License 1.1)"}},
+                        {"Bitcoin clock fonts", "Antonio, Oswald, Azeret Mono, Roboto Condensed"
+                                + " and DSEG (SIL Open Font License 1.1)"}},
         };
     }
 

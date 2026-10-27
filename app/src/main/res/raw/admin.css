@@ -693,6 +693,8 @@ details.clock-group[open]>summary svg{transform:rotate(180deg)}
 details.clock-group>summary .text{flex:1;display:flex;flex-direction:column}
 details.clock-group>summary .s{color:var(--subtext);font-size:14px}
 .clock-body{padding:0 16px 16px}
+/* The clock's segments as wide as their words, so "First tile" stays on one line at 390 px. */
+.clock-body .segradios label{flex:1 1 auto;white-space:nowrap}
 .clock-save{display:flex;align-items:center;gap:16px;padding:12px 0 0}
 .clock-screens li button.text{flex:1;text-align:left;justify-content:flex-start}
 @media (max-width:839px){.clock-editor{grid-template-columns:minmax(0,1fr);gap:8px}

@@ -5,17 +5,17 @@
 package org.spazio17.muralis;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * The Bitcoin clock's options: how its full-screen page looks when the dashboard shows the
- * integration (the fourth Dashboard choice, 2026-10-26). A look to start from, the background,
- * the text and accent colours, the digit font, the size and place of the row of cells, a date
- * and time strip, which screens rotate and in what order, how long each stays, and the flash on a
- * new block. Stored per integration as one JSON object; pure, so reading and checking it are
+ * integration (the fourth Dashboard choice, 2026-10-26). Its style (cells, flip cards, seven
+ * segments, nixie tubes or plain numerals, 2026-10-27), the style's four colours, the font, the
+ * size and place of the row of cells, where the label goes (the first tile, above or below the
+ * row, or nowhere), a date and time strip, which screens rotate and in what
+ * order, how long each stays, and the flash on a new block. Stored per integration as one JSON object; pure, so reading and checking it are
  * host-tested. The page itself is res/raw/bitcoin_clock.html.
  */
 final class BitcoinClock {
@@ -29,25 +29,47 @@ final class BitcoinClock {
             {"halving_date", "Halving date"}, {"market_cap", "Market cap"}, {"supply", "Supply"}};
     private static final int ON_BY_DEFAULT = 6;
 
-    static final String[][] LOOK_WORDS = {
-            {"night", "Night"}, {"paper", "Paper"}, {"orange", "Orange"}};
+    static final String[][] STYLE_WORDS = {
+            {"cells", "Cells"}, {"flip", "Flip"}, {"digital", "Digital"}, {"nixie", "Nixie"},
+            {"minimal", "Minimal"}};
     static final String[][] FONT_WORDS = {
             {"antonio", "Antonio"}, {"oswald", "Oswald"}, {"azeret_mono", "Azeret Mono"}};
     static final String[][] SIZE_WORDS = {
             {"s", "S"}, {"m", "M"}, {"l", "L"}, {"full", "Full"}};
     static final String[][] POSITION_WORDS = {
             {"top", "Top"}, {"middle", "Middle"}, {"bottom", "Bottom"}};
+    /** Where the label naming the value goes: its own first tile, above or below the row, or off. */
+    static final String[][] LABEL_WORDS = {
+            {"tile", "First tile"}, {"top", "Top"}, {"bottom", "Bottom"}, {"off", "Off"}};
     static final String[][] STRIP_WORDS = {
             {"off", "Off"}, {"top", "Top"}, {"bottom", "Bottom"}};
 
-    /** Each look's background, cells, text and accent, as r,g,b. */
-    private static final Map<String, String[]> LOOKS = new LinkedHashMap<>();
+    /**
+     * Each style's default background, cells, text and accent, as r,g,b. Every style has the
+     * same four colours under its own names ({@link #colourWords}): the cells are a flip card,
+     * the unlit segments, a tube's glass or the label; the text is the digits, the lit segments
+     * or the glow; the accent is the flash on a new block.
+     */
+    private static final Map<String, String[]> STYLES = new LinkedHashMap<>();
 
     static {
-        LOOKS.put("night", new String[] {"17,18,20", "34,35,38", "242,242,242", "247,147,26"});
-        LOOKS.put("paper", new String[] {"245,245,240", "255,255,255", "20,20,20", "224,67,0"});
-        LOOKS.put("orange", new String[] {"247,147,26", "255,170,70", "20,20,20", "255,255,255"});
+        STYLES.put("cells", new String[] {"17,18,20", "34,35,38", "242,242,242", "247,147,26"});
+        STYLES.put("flip", new String[] {"17,18,20", "30,30,32", "241,239,232", "247,147,26"});
+        STYLES.put("digital", new String[] {"10,10,10", "40,12,10", "255,59,48", "247,147,26"});
+        STYLES.put("nixie", new String[] {"6,5,4", "15,11,9", "255,84,24", "255,106,30"});
+        STYLES.put("minimal", new String[] {"0,0,0", "154,160,166", "255,255,255", "247,147,26"});
     }
+
+    /**
+     * The swatches each colour offers on Clock options, as r,g,b, before its own box: the
+     * background, the cells (or cards, unlit segments, glass, label), the digits, the flash (or
+     * Nixie's lamp).
+     */
+    static final String[][] SWATCHES = {
+            {"17,18,20", "0,0,0", "245,245,240", "22,34,60", "40,28,20"},
+            {"34,35,38", "255,255,255", "40,12,10", "15,11,9", "154,160,166"},
+            {"242,242,242", "20,20,20", "255,59,48", "255,84,24", "0,220,120"},
+            {"247,147,26", "224,67,0", "0,90,255", "0,200,0", "255,106,30"}};
 
     static final int MIN_SECONDS = 5;
     static final int MAX_SECONDS = 3600;
@@ -69,11 +91,11 @@ final class BitcoinClock {
 
     /** The options as stored; every field is checked, so the page can trust them. */
     static final class Options {
-        String look = "night";
-        String background = LOOKS.get("night")[0];
-        String cells = LOOKS.get("night")[1];
-        String text = LOOKS.get("night")[2];
-        String accent = LOOKS.get("night")[3];
+        String style = "cells";
+        String background = STYLES.get("cells")[0];
+        String cells = STYLES.get("cells")[1];
+        String text = STYLES.get("cells")[2];
+        String accent = STYLES.get("cells")[3];
         /** How dark the background picture is made, 0 to {@link #MAX_DIM} percent. */
         int dim = 50;
         /** An uploaded picture behind the clock, its address; empty for the colour alone. */
@@ -81,6 +103,7 @@ final class BitcoinClock {
         String font = "antonio";
         String size = "full";
         String position = "middle";
+        String label = "tile";
         String strip = "off";
         int seconds = 30;
         boolean flash = true;
@@ -92,7 +115,7 @@ final class BitcoinClock {
 
         String toJson() {
             Map<String, Object> out = new LinkedHashMap<>();
-            out.put("look", look);
+            out.put("style", style);
             out.put("background", background);
             out.put("cells", cells);
             out.put("text", text);
@@ -102,6 +125,7 @@ final class BitcoinClock {
             out.put("font", font);
             out.put("size", size);
             out.put("position", position);
+            out.put("label", label);
             out.put("strip", strip);
             out.put("seconds", seconds);
             out.put("flash", flash);
@@ -144,7 +168,7 @@ final class BitcoinClock {
         } catch (IllegalArgumentException unreadable) {
             return options;
         }
-        options.look = word(in.get("look"), LOOK_WORDS, options.look);
+        options.style = word(in.get("style"), STYLE_WORDS, options.style);
         options.background = colour(in.get("background"), options.background);
         options.cells = colour(in.get("cells"), options.cells);
         options.text = colour(in.get("text"), options.text);
@@ -155,6 +179,7 @@ final class BitcoinClock {
         options.font = word(in.get("font"), FONT_WORDS, options.font);
         options.size = word(in.get("size"), SIZE_WORDS, options.size);
         options.position = word(in.get("position"), POSITION_WORDS, options.position);
+        options.label = word(in.get("label"), LABEL_WORDS, options.label);
         options.strip = word(in.get("strip"), STRIP_WORDS, options.strip);
         options.seconds = number(in.get("seconds"), MIN_SECONDS, MAX_SECONDS, options.seconds);
         options.flash = in.get("flash") instanceof Boolean ? (Boolean) in.get("flash")
@@ -186,19 +211,49 @@ final class BitcoinClock {
         return options;
     }
 
-    /** A look's colours over the options, the picture kept; null when the look is unknown. */
-    static Options withLook(Options options, String look) {
-        String[] colours = LOOKS.get(look);
+    /**
+     * A style with its own default colours over the options, the rest kept; null when the style
+     * is unknown. A style change always starts from its defaults (Juri, 2026-10-27).
+     */
+    static Options withStyle(Options options, String style) {
+        String[] colours = STYLES.get(style);
         if (colours == null) {
             return null;
         }
         Options next = options.copy();
-        next.look = look;
+        next.style = style;
         next.background = colours[0];
         next.cells = colours[1];
         next.text = colours[2];
         next.accent = colours[3];
         return next;
+    }
+
+    /** The names a style gives its four colours: background, cells, text and accent. */
+    static String[] colourWords(String style) {
+        switch (style) {
+            case "flip": return new String[] {"Background", "Cards", "Digits", "Flash"};
+            case "digital": return new String[] {"Background", "Unlit", "Lit", "Flash"};
+            case "nixie": return new String[] {"Background", "Glass", "Glow", "Lamp"};
+            case "minimal": return new String[] {"Background", "Label", "Digits", "Flash"};
+            default: return new String[] {"Background", "Cells", "Digits", "Flash"};
+        }
+    }
+
+    /**
+     * Whether the fourth colour shows anywhere: Nixie's is the lamp beside its label, so with the
+     * label off it has nothing to light.
+     */
+    static boolean usesAccent(String style, String label) {
+        return !("nixie".equals(style) && "off".equals(label));
+    }
+
+    /**
+     * Whether the style draws its digits in the chosen font; Flip, Digital and Nixie bring their
+     * own, as the real objects do.
+     */
+    static boolean usesFont(String style) {
+        return "cells".equals(style) || "minimal".equals(style);
     }
 
     /**
@@ -221,8 +276,9 @@ final class BitcoinClock {
         if (dim != null && !inRange(dim, 0, MAX_DIM)) {
             return "dimming must be 0 to " + MAX_DIM + " percent";
         }
-        String[][][] tables = {LOOK_WORDS, FONT_WORDS, SIZE_WORDS, POSITION_WORDS, STRIP_WORDS};
-        String[] keys = {"look", "font", "size", "position", "strip"};
+        String[][][] tables = {STYLE_WORDS, FONT_WORDS, SIZE_WORDS, POSITION_WORDS, LABEL_WORDS,
+            STRIP_WORDS};
+        String[] keys = {"style", "font", "size", "position", "label", "strip"};
         for (int index = 0; index < keys.length; index++) {
             String value = form.get(keys[index]);
             if (value != null && keyOf(value, tables[index]) == null) {
@@ -242,17 +298,17 @@ final class BitcoinClock {
 
     /**
      * The options with a form's fields over them, the form already checked by {@link #problem}.
-     * A look sets the four colours first, and colours sent beside it win, so a person can start
-     * from a look and change one colour in the same save.
+     * A new style sets its four default colours first, and colours sent changed beside it win,
+     * so a person can switch the style and change one colour in the same save.
      */
     static Options apply(Options stored, Map<String, String> form) {
         Options next = stored.copy();
-        String look = form.get("look");
-        if (look != null && !look.equals(stored.look)) {
-            next = withLook(next, look);
+        String style = form.get("style");
+        if (style != null && !style.equals(stored.style)) {
+            next = withStyle(next, style);
         }
-        // A colour the form sends unchanged leaves the look's colour in place, so a form that
-        // always carries its four boxes can still switch the look.
+        // A colour the form sends unchanged leaves the style's colour in place, so a form that
+        // always carries its four boxes can still switch the style.
         next.background = changed(form.get("background"), stored.background, next.background);
         next.cells = changed(form.get("cells"), stored.cells, next.cells);
         next.text = changed(form.get("text"), stored.text, next.text);
@@ -266,6 +322,7 @@ final class BitcoinClock {
         next.font = form.getOrDefault("font", next.font);
         next.size = form.getOrDefault("size", next.size);
         next.position = form.getOrDefault("position", next.position);
+        next.label = form.getOrDefault("label", next.label);
         next.strip = form.getOrDefault("strip", next.strip);
         if (form.containsKey("seconds")) {
             next.seconds = Integer.parseInt(form.get("seconds").trim());
@@ -314,22 +371,18 @@ final class BitcoinClock {
         return order.toString();
     }
 
-    /** The form's colour when it differs from the stored one, else what the look set. */
-    private static String changed(String sent, String stored, String fromLook) {
+    /** The form's colour when it differs from the stored one, else what the style set. */
+    private static String changed(String sent, String stored, String fromStyle) {
         if (sent == null) {
-            return fromLook;
+            return fromStyle;
         }
         String colour = StatusLight.formatColor(StatusLight.parseColor(sent));
-        return colour.equals(stored) ? fromLook : colour;
+        return colour.equals(stored) ? fromStyle : colour;
     }
 
     static String screenName(String key) {
         String name = keyWord(key, SCREEN_WORDS);
         return name == null ? key : name;
-    }
-
-    static List<String> lookKeys() {
-        return Collections.unmodifiableList(new ArrayList<>(LOOKS.keySet()));
     }
 
     /** A picture's address as the library keeps it: short, one line, nothing to escape. */
