@@ -37,12 +37,12 @@ final class SettingsTransfer {
     /** The secrets a file may carry when the person asks for them. */
     static final String[] SECRETS = {"mqtt_username", "mqtt_password", "http_admin_password",
             "browser_user", "browser_password", "escape_pin_hash", "camera_logins",
-            "integration_secrets"};
+            "integration_secrets", "alert_ntfy_token", "alert_chat_url"};
 
     private static Map<String, Character> keys() {
         Map<String, Character> keys = new LinkedHashMap<>();
         for (String key : new String[] {"dashboard_url", "mqtt_host", "browser_user_agent",
-                "ambient_url", "alert_mqtt_topic", "alert_webhook_url",
+                "ambient_url", "alert_mqtt_topic", "alert_webhook_url", "alert_ntfy_url",
                 "orientation", "display_off_method", "ambient_mode",
                 "ambient_on_wake", "ambient_transition", "ambient_picture_fit",
                 "ambient_credit_corner", "settings_sequence", "launcher_sequence",
@@ -57,14 +57,16 @@ final class SettingsTransfer {
             keys.put(key, 'i');
         }
         for (String key : new String[] {"alert_offline_minutes", "alert_battery_below",
-                "alert_temperature_above"}) {
+                "alert_temperature_above", "alert_storage_below_mb"}) {
             keys.put(key, 'l');
         }
         for (String key : new String[] {"stats_overlay", "browser_dark", "browser_page_camera",
                 "browser_page_microphone", "status_light_on", "volume_buttons_disabled", "camera_names",
                 "ambient_shuffle", "ambient_one_per_start", "ambient_credit",
                 "web_admin_enabled", "alert_page_error", "alert_combination_used",
-                "alert_pin_lockout", "mqtt_tls", "network_speaker"}) {
+                "alert_pin_lockout", "alert_back_online", "alert_update_available",
+                "alert_shared_refused", "alert_quiet_display_off", "mqtt_tls",
+                "network_speaker"}) {
             keys.put(key, 'b');
         }
         return java.util.Collections.unmodifiableMap(keys);

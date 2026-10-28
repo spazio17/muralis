@@ -147,6 +147,8 @@ final class SettingsImport {
         KioskService.reloadConfiguration(context);
         KioskService.settingsImported(context);
         KioskService.publishTelemetrySoon(context);
+        // What the All panels page shows of this panel (System stats among it) within seconds.
+        FleetServer.heartbeatSoon(context, "settings imported");
         return refused;
     }
 

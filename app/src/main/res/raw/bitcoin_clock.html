@@ -131,9 +131,14 @@ padding:2.5vh 4vw;font-size:4vh;opacity:.85}
 #age{position:fixed;right:4vw;bottom:3vh;font-size:2.4vh;opacity:.7;display:none;align-items:center;
 gap:.4em}
 #age svg{width:1.2em;height:1.2em}
+/* The background picture's credit, small in a corner, out of the date's way. */
+#credit{position:fixed;left:4vw;bottom:3vh;max-width:60vw;font-size:2.2vh;color:var(--text);
+opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#credit.up{top:3vh;bottom:auto}
 </style></head>
 <body>
 <div id="picture" hidden></div>
+<div id="credit" hidden></div>
 <div id="strip" class="off"><span id="date"></span><span id="clock"></span></div>
 <div id="stage"><div id="caption" class="off"></div><div id="row"></div></div>
 <!-- Nixie's glow, mesh, glass and getter, shared by every tube. -->
@@ -172,6 +177,19 @@ var state=null,options=null,override=null,index=0,shownAt=0,flashUntil=0;
 var lastHeight=null,lastPollAt=0,paused=false,forced=null,drawn='',shown=[],shownWords=null;
 var STYLES=['cells','flip','digital','nixie','minimal'];
 function o(){return override||options;}
+// The album behind the clock: the next picture with each next screen, its credit in a corner.
+// An album chosen in the preview and not saved yet shows its first picture, without a credit.
+var picIndex=0;
+function paintPicture(){var opt=o();if(!opt){return;}
+var saved=state&&state.options&&state.options.album===opt.album?state.pictures||[]:null;
+var count=!opt.album?0:saved?saved.length:1,at=count?picIndex%count:0;
+var src=count&&PICTURE_URL?PICTURE_URL+(PICTURE_URL.indexOf('?')<0?'?':'&')+'a='
++encodeURIComponent(opt.album)+'&i='+at:'';
+var pic=document.getElementById('picture'),credit=document.getElementById('credit');
+pic.hidden=!src;if(src&&pic.dataset.src!==src){pic.dataset.src=src;
+pic.style.backgroundImage='url("'+src+'")';}
+var line=src&&saved?saved[at]||'':'';credit.textContent=line;credit.hidden=!line;
+credit.className=opt.strip==='bottom'?'up':'';}
 function rgb(v){return 'rgb('+v+')';}
 function val(id){var v=state&&state.entry&&state.entry.values?state.entry.values[id]:null;
 return v&&v.available&&typeof v.value==='number'?v.value:null;}
@@ -236,10 +254,7 @@ root.setProperty('--text',rgb(opt.text));root.setProperty('--accent',rgb(opt.acc
 root.setProperty('--digits',FONTS[opt.font]||FONTS.antonio);root.setProperty('--dim',opt.dim/100);
 var style=STYLES.indexOf(opt.style)>=0?opt.style:'cells';
 STYLES.forEach(function(x){document.body.classList.toggle('style-'+x,x===style);});
-var pic=document.getElementById('picture'),src=opt.picture&&PICTURE_URL?PICTURE_URL
-+(PICTURE_URL.indexOf('?')<0?'?':'&')+'p='+encodeURIComponent(opt.picture):'';
-pic.hidden=!src;if(src&&pic.dataset.src!==src){pic.dataset.src=src;
-pic.style.backgroundImage='url("'+src+'")';}
+paintPicture();
 document.getElementById('strip').className=opt.strip;
 var now=new Date();document.getElementById('date').textContent=['Sun','Mon','Tue','Wed','Thu',
 'Fri','Sat'][now.getDay()]+' '+now.getDate()+' '+MONTHS[now.getMonth()].charAt(0)
@@ -382,7 +397,7 @@ function flash(){forced=null;var keys=onScreens();var h=keys.indexOf('height');i
 flashUntil=Date.now()+3000;shownAt=Date.now();draw();setTimeout(draw,3050);
 if(o().style==='nixie'){startSpin();}}
 function tick(){var opt=o();if(!opt||paused){return;}
-if(Date.now()-shownAt>=opt.seconds*1000){next(1);}else{draw();}
+if(Date.now()-shownAt>=opt.seconds*1000){picIndex++;paintPicture();next(1);}else{draw();}
 paintClock();}
 function paintClock(){var now=new Date();document.getElementById('clock').textContent=
 pad2(now.getHours())+':'+pad2(now.getMinutes());}

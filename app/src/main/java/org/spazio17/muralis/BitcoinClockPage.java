@@ -63,19 +63,27 @@ final class BitcoinClockPage {
     }
 
     /**
-     * What the page reads every few seconds: the stored options, and the integration as the
-     * status document has it without its settings, with how long ago it last answered.
+     * What the page reads every few seconds: the stored options; the credit line of each
+     * picture of the album behind the clock, in order ("" for none), which also says how many
+     * there are; and the integration as the status document has it without its settings, with
+     * how long ago it last answered.
      */
     static String state(Context context, String instanceId) {
         JSONObject state = new JSONObject();
         try {
             BitcoinClock.Options options = KioskConfig.clockOptionsOf(context, instanceId);
-            // A picture deleted since it was chosen is no picture: the colour shows, as the
-            // options' menu then says None.
-            if (!options.picture.isEmpty() && !pictureExists(context, options.picture)) {
-                options.picture = "";
+            java.util.List<PictureSources.Picture> pictures = album(context, options.album);
+            // An album deleted or emptied since it was chosen is no picture: the colour shows.
+            if (pictures.isEmpty()) {
+                options.album = "";
             }
             state.put("options", new JSONObject(options.toJson()));
+            JSONArray credits = new JSONArray();
+            for (PictureSources.Picture picture : pictures) {
+                String line = picture.creditLine();
+                credits.put(line == null ? "" : line);
+            }
+            state.put("pictures", credits);
             JSONArray block = IntegrationRunner.withoutSettings(KioskRuntimeState.integrations());
             for (int index = 0; index < block.length(); index++) {
                 JSONObject entry = block.optJSONObject(index);
@@ -94,17 +102,42 @@ final class BitcoinClockPage {
         return state.toString();
     }
 
+    /** The album last listed, and when: the page asks every two seconds, an album is a query. */
+    private static String listedAlbum = "";
+    private static long listedAtMs;
+    private static java.util.List<PictureSources.Picture> listed = new java.util.ArrayList<>();
+
+    /** The pictures of album {@code id}, listed again at most every half minute; empty for none. */
+    private static synchronized java.util.List<PictureSources.Picture> album(Context context,
+            String id) {
+        if (id.isEmpty()) {
+            return new java.util.ArrayList<>();
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (!id.equals(listedAlbum) || now - listedAtMs > 30_000L) {
+            listed = PictureLibrary.get(context).album(id);
+            listedAlbum = id;
+            listedAtMs = now;
+        }
+        return listed;
+    }
+
     /**
-     * An uploaded picture as a JPEG for the background, or null when {@code address} is not one
-     * of the uploads or cannot be read. Uploads only: the page names it, so it must never reach
-     * another file. Worker thread only.
+     * Picture {@code index} of album {@code id} as a JPEG for the background, or null when there
+     * is no such picture or it cannot be read. Only a picture of an album, and one the panel may
+     * show (PictureLibrary.preview): the page names it, so it must never reach another file.
+     * Worker thread only.
      */
-    static byte[] picture(Context context, String address) {
-        if (address == null || !BitcoinClock.isPictureAddress(address)) {
+    static byte[] picture(Context context, String id, String index) {
+        if (id == null || index == null || !index.matches("\\d{1,4}")) {
             return null;
         }
-        Bitmap bitmap = PictureLibrary.get(context).decodeUpload(address, PICTURE_MAX_PX,
-                PICTURE_MAX_PX);
+        java.util.List<PictureSources.Picture> pictures = album(context, id);
+        int at = Integer.parseInt(index);
+        if (at >= pictures.size()) {
+            return null;
+        }
+        Bitmap bitmap = PictureLibrary.get(context).preview(pictures.get(at).url, PICTURE_MAX_PX);
         if (bitmap == null) {
             return null;
         }
@@ -112,15 +145,6 @@ final class BitcoinClockPage {
         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, jpeg);
         bitmap.recycle();
         return jpeg.toByteArray();
-    }
-
-    /** Whether {@code address} is one of the uploads and still there. */
-    static boolean pictureExists(Context context, String address) {
-        if (!PictureLibrary.get(context).isUpload(address)) {
-            return false;
-        }
-        String path = android.net.Uri.parse(address).getPath();
-        return path != null && new java.io.File(path).isFile();
     }
 
     /** The added integrations with a page, the choices under the dashboard's fourth answer. */

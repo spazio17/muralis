@@ -11,6 +11,11 @@
 (function(){
 var DEADLINE=8000;
 function all(selector,root){return Array.prototype.slice.call((root||document).querySelectorAll(selector));}
+// A shared field that applies to some choices of a menu (the dashboard's app, cameras or
+// integration, Ambient's options by mode) shows while the menu holds one of them; the
+// server renders the first state.
+document.addEventListener('change',function(e){var m=e.target;if(!m.matches('select[name]')||!m.form){return;}
+all('[data-when-key="'+m.name+'"]',m.form).forEach(function(box){box.hidden=box.getAttribute('data-when').split(' ').indexOf(m.value)<0;});});
 function post(url,body){return fetch(url,{method:'POST',credentials:'same-origin',
 headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:body});}
 function enc(pairs){return Object.keys(pairs).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(pairs[k]);}).join('&');}
@@ -164,8 +169,9 @@ tell(pane?pane.querySelector('[data-identified]'):null,notice?notice.textContent
 .catch(function(){all('input[data-at-once]',form).forEach(function(c){c.checked=c.defaultChecked;});});});
 
 // The list's header row, the selection bar in one: the box and the count with nothing ticked;
-// with ticks Close, "2 selected", Announce and Reload, on the ticked panels. data-when says
-// which parts show in which state, and the row turns tinted while panels are ticked.
+// with ticks Close, "2 selected", Announce, Reload and a menu with the rest of a panel's own
+// menu, on the ticked panels. data-when says which parts show in which state, and the row
+// turns tinted while panels are ticked.
 var bar=document.getElementById('fleet-selbar');
 function ticked(){return all('li.fleetrow:not([hidden]) input[data-tick]:checked');}
 function shownBoxes(){return all('li.fleetrow:not([hidden]) input[data-tick]');}
@@ -180,14 +186,40 @@ shownBoxes().forEach(function(c){c.checked=on;});selection();});}
 document.addEventListener('change',function(e){if(e.target.matches('input[data-tick]')){selection();}});
 function clear(){all('input[data-tick]').forEach(function(c){c.checked=false;});selection();}
 function say(text){tell(document.getElementById('fleet-sel-result'),text);}
+// The bar's menu opens under its button and closes on a choice, a click elsewhere or Escape.
+var selMenu=document.getElementById('fleet-sel-menu');
+var selMore=selMenu?selMenu.parentNode.querySelector('[aria-controls="fleet-sel-menu"]'):null;
+function closeSelMenu(back){if(!selMenu||!selMenu.classList.contains('open')){return;}
+selMenu.classList.remove('open');selMore.setAttribute('aria-expanded','false');if(back){selMore.focus();}}
+if(selMore){all('button',selMenu).forEach(function(b){b.setAttribute('role','menuitem');});
+selMore.addEventListener('click',function(e){e.stopPropagation();
+if(selMenu.classList.contains('open')){closeSelMenu(true);return;}
+// System stats says what a choice does: Hide when every ticked panel shows them, else Show.
+var stats=selMenu.querySelector('[data-sel^="stats_"]');if(stats){var shown=ticked().every(function(c){return c.closest('li').getAttribute('data-stats')==='1';});
+stats.setAttribute('data-sel',shown?'stats_off':'stats_on');stats.lastChild.textContent=shown?'Hide system stats':'Show system stats';}
+selMenu.classList.add('open');selMore.setAttribute('aria-expanded','true');selMenu.querySelector('button').focus();});
+selMenu.addEventListener('keydown',function(e){var list=all('button',selMenu),at=list.indexOf(document.activeElement);
+if(e.key==='ArrowDown'){e.preventDefault();list[(at+1)%list.length].focus();}
+else if(e.key==='ArrowUp'){e.preventDefault();list[(at+list.length-1)%list.length].focus();}
+else if(e.key==='Escape'){e.preventDefault();closeSelMenu(true);}
+else if(e.key==='Tab'){closeSelMenu(false);}});
+document.addEventListener('click',function(e){if(!selMenu.contains(e.target)){closeSelMenu(false);}});}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-sel]');if(!b){return;}
 var what=b.getAttribute('data-sel'),boxes=ticked();
 var ids=boxes.map(function(c){return c.closest('li').getAttribute('data-id');});
 if(what==='close'){clear();return;}
-if(what==='reload'){Promise.all(ids.map(function(id){return post('/api/fleet/panel',enc({panel:id,action:'reload'}))
-.then(function(r){return r.ok;}).catch(function(){return false;});})).then(function(done){
+if(what!=='say'){closeSelMenu(false);
+var words={reload:'Reload',dashboard:'Open dashboard',settings:'Open settings',display_on:'Display on',
+display_off:'Display off',stats_on:'Show system stats',stats_off:'Hide system stats',
+restart:'Restart app',reboot:'Reboot'}[what];
+if(what==='reboot'&&!window.confirm('Reboot '+(ids.length===1?'1 panel':ids.length+' panels')+'?\n\nEach device starts again and shows the dashboard after a minute or two.')){return;}
+Promise.all(ids.map(function(id,at){return post('/api/fleet/panel',enc({panel:id,action:what}))
+.then(function(r){
+// System stats switched: the row says so at once, before the next check-in redraws the list.
+if(r.ok&&what.indexOf('stats_')===0){boxes[at].closest('li').setAttribute('data-stats',what==='stats_on'?'1':'0');}
+return r.ok;}).catch(function(){return false;});})).then(function(done){
 var missed=done.filter(function(ok){return !ok;}).length;
-say(missed?'Reload reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
+say(missed?words+' reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
 // Announce: only what to say or play and the volume, for the ticked panels; the dialog keeps
 // its list of panels out of sight, ticked to match.
 if(what==='say'){if(!openDialog('announce')){return;}

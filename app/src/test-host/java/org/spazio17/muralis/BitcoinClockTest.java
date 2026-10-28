@@ -50,9 +50,9 @@ public final class BitcoinClockTest {
         form.put("size", "m");
         form.put("style", "digital");
         require(BitcoinClock.problem(form) == null, "a good form refused");
-        form.put("picture", "file:///x\"y.jpg");
-        require(BitcoinClock.problem(form) != null, "a picture address with a quote was taken");
-        form.remove("picture");
+        form.put("album", "x\"y");
+        require(BitcoinClock.problem(form) != null, "an album id with a quote was taken");
+        form.remove("album");
 
         BitcoinClock.Options next = BitcoinClock.apply(defaults, form);
         require(next.style.equals("digital") && next.background.equals("10,10,10")

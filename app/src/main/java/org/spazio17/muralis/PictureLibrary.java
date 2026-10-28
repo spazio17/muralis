@@ -280,18 +280,6 @@ final class PictureLibrary {
         }
     }
 
-    /**
-     * One of the uploads scaled to fit, or null when {@code url} is not an upload or cannot be
-     * read: the Bitcoin clock's background, which names its picture itself and so must never
-     * reach anything else. Worker thread only.
-     */
-    Bitmap decodeUpload(String url, int maxWidth, int maxHeight) {
-        if (!isUpload(url)) {
-            return null;
-        }
-        return decode(new Picture(url, "", ""), maxWidth, maxHeight, false);
-    }
-
     private InputStream openPicture(Picture picture) throws IOException {
         if (isUpload(picture.url)) {
             return new FileInputStream(Uri.parse(picture.url).getPath());
@@ -398,7 +386,7 @@ final class PictureLibrary {
 
     /**
      * What uses a picture, in words, for its page and its delete question on both surfaces:
-     * Ambient through the album it plays, and a Bitcoin clock whose background it is.
+     * Ambient through the album it plays, and a Bitcoin clock through the album behind it.
      */
     java.util.List<String> usersOf(String uri, PlaylistDocument document) {
         java.util.List<String> users = new java.util.ArrayList<>();
@@ -407,8 +395,10 @@ final class PictureLibrary {
             users.add("Ambient, through " + active.name);
         }
         for (Integrations.Instance clock : BitcoinClockPage.pageInstances(app)) {
-            if (uri.equals(KioskConfig.clockOptionsOf(app, clock.id).picture)) {
-                users.add(clock.name);
+            PlaylistDocument.Playlist behind =
+                    document.byId(KioskConfig.clockOptionsOf(app, clock.id).album);
+            if (behind != null && behind.items.contains(uri)) {
+                users.add(clock.name + ", through " + behind.name);
             }
         }
         return users;
@@ -493,8 +483,20 @@ final class PictureLibrary {
      */
     List<Picture> listLocal() {
         ensurePlaylist();
+        return listOf(playlists.load().active());
+    }
+
+    /**
+     * The pictures of the album {@code id}, in order, as Ambient lists its own: the Bitcoin
+     * clock's background. Empty for an album that is gone.
+     */
+    List<Picture> album(String id) {
+        ensurePlaylist();
+        return listOf(playlists.load().byId(id));
+    }
+
+    private List<Picture> listOf(PlaylistDocument.Playlist active) {
         List<Picture> pictures = new ArrayList<>();
-        PlaylistDocument.Playlist active = playlists.load().active();
         if (active == null) {
             return pictures;
         }

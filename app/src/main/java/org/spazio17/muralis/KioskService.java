@@ -221,6 +221,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
     /** When the fleet's heartbeat last went out, and from which address; see telemetryTask. */
     private long lastFleetHeartbeatMs;
     private String lastFleetHeartbeatAddress = "";
+    /** Whether the page was failing at the last heartbeat, so a change is told at once. */
+    private boolean lastFleetHeartbeatPageError;
 
     private final Runnable stateEchoTask = new Runnable() {
         @Override
@@ -253,16 +255,21 @@ public final class KioskService extends Service implements KioskCommandDispatche
             // stops it judging before the activity queued behind the service has been created.
             ensureDashboardOnScreen("periodic check");
             // The fleet's heartbeat: every few minutes, and at once when this panel's
-            // address changed, which is also how a network that came back is noticed.
+            // address changed, which is also how a network that came back is noticed, or when
+            // its page failed or loads again, so the All panels page says so within a minute.
             SystemStats.RuntimeFacts facts = KioskRuntimeState.lastFacts();
             String address = facts == null ? "" : facts.ipAddress;
+            boolean pageError = facts != null && SystemStats.pageErrorIsCurrent(facts);
             long now = android.os.SystemClock.elapsedRealtime();
             if (!address.isEmpty() && (!address.equals(lastFleetHeartbeatAddress)
+                    || pageError != lastFleetHeartbeatPageError
                     || now - lastFleetHeartbeatMs >= FleetServer.HEARTBEAT_INTERVAL_MS)) {
-                String why = address.equals(lastFleetHeartbeatAddress) ? "periodic"
-                        : "address changed";
+                String why = !address.equals(lastFleetHeartbeatAddress) ? "address changed"
+                        : pageError != lastFleetHeartbeatPageError ? "page error changed"
+                        : "periodic";
                 lastFleetHeartbeatMs = now;
                 lastFleetHeartbeatAddress = address;
+                lastFleetHeartbeatPageError = pageError;
                 FleetServer.heartbeatSoon(KioskService.this, why);
             }
             FleetServer.syncProfileSoon(KioskService.this, "periodic");
@@ -274,11 +281,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
 
     /** The alerts' state, touched on the telemetry thread only; see FleetAlerts. */
     private final FleetAlerts fleetAlerts = new FleetAlerts();
-    private static final String ALERT_CHANNEL_ID = "fleet_alerts";
-    private static final String ALERT_NOTIFICATION_TAG = "fleet-alert";
     private static final int WEBHOOK_TIMEOUT_MS = 8_000;
-    /** A web address that fails is logged once, then silently until it answers again. */
-    private boolean webhookFailureLogged;
+    /** How many alerts this panel keeps for the Alerts tab's Lately, and hands its peers. */
+    static final int RECENT_ALERTS = 10;
+    /** The alerts this panel said lately, newest first, in memory; see {@link #recentAlerts}. */
+    private static final java.util.ArrayDeque<org.json.JSONObject> RECENT =
+            new java.util.ArrayDeque<>();
 
     /** An alert setting changed on a surface: the others follow by the next publish. */
     static void alertsChanged(Context context) {
@@ -318,6 +326,19 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (sample != null) {
             facts.temperatureC = sample.cpuTemperatureC;
         }
+        facts.storageFreeMb = new android.os.StatFs(android.os.Environment.getDataDirectory()
+                .getPath()).getAvailableBytes() / (1024 * 1024);
+        facts.displayOff = displayIsOff(this);
+        StringBuilder refused = new StringBuilder();
+        for (String section : FleetDocument.SECTIONS) {
+            if (!KioskRuntimeState.fleetProfileRefused(section).isEmpty()) {
+                refused.append(refused.length() == 0 ? "" : ", ")
+                        .append(FleetDocument.sectionLabel(section));
+            }
+        }
+        facts.refused = refused.toString();
+        String newest = FleetHealth.newest(FleetServer.healthMembers(this));
+        facts.updateTo = FleetHealth.older(BuildConfig.VERSION_NAME, newest) ? newest : "";
         // A gap of several rounds means this panel slept or stalled: it listens afresh from now,
         // and no peer counts as unheard for longer than that, so a panel back from sleep or
         // maintenance never says the whole fleet is offline in one go (2026-10-15).
@@ -332,9 +353,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
         for (int i = 0; i < known.length(); i++) {
             org.json.JSONObject peer = known.optJSONObject(i);
             if (peer != null) {
+                org.json.JSONObject health = peer.optJSONObject("health");
                 peers.add(new FleetAlerts.Peer(peer.optString("id"), peer.optString("name"),
                         peer.optLong("seen_ago_ms", -1) < 0 ? -1
-                                : Math.min(peer.optLong("seen_ago_ms", -1), listening)));
+                                : Math.min(peer.optLong("seen_ago_ms", -1), listening),
+                        health != null && health.optBoolean("display_off")));
             }
         }
         deliverAlerts(fleetAlerts.judge(settings, facts, KioskConfig.deviceIdOf(this),
@@ -368,16 +391,12 @@ public final class KioskService extends Service implements KioskCommandDispatche
     }
 
     private void forgetFleetAlerts() {
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        for (String key : fleetAlerts.activeKeys()) {
-            manager.cancel(ALERT_NOTIFICATION_TAG, key.hashCode());
-        }
         fleetAlerts.reset();
     }
 
     /**
-     * Each alert to all three destinations, when set: a notification on this panel (one per
-     * kind and panel, cleared on "off"), a publish to the MQTT topic, a POST to the web address.
+     * Each alert to every channel set, on a thread of its own so a slow address never holds the
+     * telemetry; what took it is kept for Lately. Nothing shows on this panel's screen.
      */
     private void deliverAlerts(java.util.List<FleetAlerts.Alert> alerts) {
         if (alerts.isEmpty()) {
@@ -386,48 +405,140 @@ public final class KioskService extends Service implements KioskCommandDispatche
         FleetAlerts.Settings settings = KioskConfig.alertsOf(this);
         String fleet = KioskConfig.fleetNameOf(this);
         for (FleetAlerts.Alert alert : alerts) {
-            String json = FleetAlerts.json(fleet, alert, java.time.Instant.now().toString());
-            Log.i(TAG, "Fleet alert: " + json);
-            notifyAlert(alert);
-            MqttController mqtt = mqttController;
-            if (!settings.mqttTopic.isEmpty()) {
-                if (mqtt == null || !mqtt.publishAlert(settings.mqttTopic, json)) {
-                    Log.w(TAG, "Fleet alert not published: MQTT is not connected");
-                }
+            Log.i(TAG, "Fleet alert: " + alert.kind + " " + (alert.on ? "on" : "off") + " for "
+                    + alert.panelName);
+        }
+        new Thread(() -> {
+            for (FleetAlerts.Alert alert : alerts) {
+                remember(alert, sendAlert(this, settings, fleet, alert));
             }
-            if (!settings.webhookUrl.isEmpty()) {
-                new Thread(() -> postAlert(settings.webhookUrl, json), "MuralisAlertPost").start();
+        }, "MuralisAlertSend").start();
+    }
+
+    /** Whether this panel's display is off now: asleep, or darkened by Display off. */
+    static boolean displayIsOff(Context context) {
+        PowerManager power = context.getSystemService(PowerManager.class);
+        return KioskConfig.visualOffBootCount(context) >= 0
+                || (power != null && !power.isInteractive());
+    }
+
+    /**
+     * The alert to ntfy, the chat, the MQTT topic and the web address, each when set, one after
+     * the other with a deadline and no retry: one line for each, what took the alert or what
+     * answered instead.
+     */
+    static java.util.List<String> sendAlert(Context context, FleetAlerts.Settings settings,
+            String fleet, FleetAlerts.Alert alert) {
+        java.util.List<String> told = new java.util.ArrayList<>();
+        if (!settings.ntfyUrl.isEmpty()) {
+            told.add(answer("ntfy", post(FleetAlerts.ntfyServer(settings.ntfyUrl),
+                    FleetAlerts.ntfyBody(settings.ntfyUrl, fleet, alert), settings.ntfyToken)));
+        }
+        String kind = settings.chatUrl.isEmpty() ? null : FleetAlerts.chatKind(settings.chatUrl);
+        if (kind != null) {
+            told.add(answer(kind, post(settings.chatUrl, FleetAlerts.chatBody(kind, fleet, alert),
+                    "")));
+        }
+        if (!settings.mqttTopic.isEmpty()) {
+            KioskService service = liveService();
+            MqttController mqtt = service == null ? null : service.mqttController;
+            told.add(mqtt != null && mqtt.publishAlert(settings.mqttTopic, FleetAlerts.json(fleet,
+                    alert, java.time.Instant.now().toString())) ? "MQTT"
+                    : "MQTT not connected");
+        }
+        if (!settings.webhookUrl.isEmpty()) {
+            told.add(answer("Web address", post(settings.webhookUrl, FleetAlerts.json(fleet,
+                    alert, java.time.Instant.now().toString()), "")));
+        }
+        if (!told.isEmpty()) {
+            Log.i(TAG, "Fleet alert told: " + String.join(", ", told));
+        }
+        return told;
+    }
+
+    /** "ntfy" when it took the alert, else what it answered or that it was not reached. */
+    private static String answer(String where, int status) {
+        return status >= 200 && status < 300 ? where : status < 0 ? where + " not reached"
+                : where + " answered " + status;
+    }
+
+    /** One JSON POST with the alerts' deadline; the status, or -1 when not reached. */
+    private static int post(String url, String json, String bearer) {
+        java.net.HttpURLConnection connection = null;
+        try {
+            connection = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            connection.setConnectTimeout(WEBHOOK_TIMEOUT_MS);
+            connection.setReadTimeout(WEBHOOK_TIMEOUT_MS);
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            if (!bearer.isEmpty()) {
+                connection.setRequestProperty("Authorization", "Bearer " + bearer);
+            }
+            byte[] body = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (java.io.OutputStream out = connection.getOutputStream()) {
+                out.write(body);
+            }
+            return connection.getResponseCode();
+        } catch (java.io.IOException | RuntimeException failed) {
+            return -1;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
             }
         }
     }
 
-    private void notifyAlert(FleetAlerts.Alert alert) {
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        int id = alert.key().hashCode();
-        if (!alert.on) {
-            manager.cancel(ALERT_NOTIFICATION_TAG, id);
-            return;
+    /** One alert said, kept for Lately: what, for which panel, when, and what took it. */
+    private static void remember(FleetAlerts.Alert alert, java.util.List<String> told) {
+        try {
+            org.json.JSONObject entry = new org.json.JSONObject()
+                    .put("title", FleetAlerts.title(alert))
+                    .put("detail", FleetAlerts.detailOf(alert))
+                    .put("at", System.currentTimeMillis())
+                    .put("told", new org.json.JSONArray(told));
+            synchronized (RECENT) {
+                RECENT.addFirst(entry);
+                while (RECENT.size() > RECENT_ALERTS) {
+                    RECENT.removeLast();
+                }
+            }
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
         }
-        if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
-                android.Manifest.permission.POST_NOTIFICATIONS)
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            // Without the grant the notification is skipped; the other two destinations go.
-            return;
+    }
+
+    /** The alerts this panel said lately, newest first, as its health hands them on. */
+    static org.json.JSONArray recentAlerts() {
+        synchronized (RECENT) {
+            return new org.json.JSONArray(RECENT);
         }
-        PendingIntent openKiosk = PendingIntent.getActivity(this, 0,
-                new Intent(this, KioskActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder builder = new Notification.Builder(this, ALERT_CHANNEL_ID)
-                .setContentTitle(FleetAlerts.title(alert))
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentIntent(openKiosk)
-                .setAutoCancel(true)
-                .setCategory(Notification.CATEGORY_STATUS);
-        if (alert.detail != null && !alert.detail.isEmpty()) {
-            builder.setContentText(alert.detail);
+    }
+
+    /**
+     * "Send a test alert" for the destinations {@code values} share (the Alerts form's scope),
+     * from this panel: one sentence saying where it went. Run off the main thread.
+     */
+    static String testAlert(Context context, java.util.Map<String, Object> values) {
+        FleetAlerts.Settings settings = new FleetAlerts.Settings();
+        settings.ntfyUrl = FleetProfile.shown(values.get("alert_ntfy_url"));
+        settings.ntfyToken = FleetProfile.shown(values.get("alert_ntfy_token"));
+        settings.chatUrl = FleetProfile.shown(values.get("alert_chat_url"));
+        settings.mqttTopic = FleetProfile.shown(values.get("alert_mqtt_topic"));
+        settings.webhookUrl = FleetProfile.shown(values.get("alert_webhook_url"));
+        String fleet = KioskConfig.fleetNameOf(context);
+        String id = KioskConfig.deviceIdOf(context);
+        java.util.Map<String, Object> self = FleetDocument.memberByKey(
+                KioskConfig.fleetDocumentOf(context), KioskRuntimeState.fleetKey());
+        java.util.List<String> told = sendAlert(context, settings, fleet, new FleetAlerts.Alert(
+                FleetAlerts.TEST, id, self == null ? id : TinyJson.string(self,
+                        FleetDocument.NAME, id), true, ""));
+        if (told.isEmpty()) {
+            return "No address to send to: set ntfy, a chat, an MQTT topic or a web address,"
+                    + " then Save.";
         }
-        manager.notify(ALERT_NOTIFICATION_TAG, id, builder.build());
+        return "Test sent: " + String.join(", ", told) + ".";
     }
 
     private static String refusalOf(KioskCommandDispatcher.Result result) {
@@ -460,40 +571,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
         } catch (java.io.IOException | RuntimeException failed) {
             Log.w(TAG, "Automation \"" + rule + "\": the address could not be reached: "
                     + failed.getMessage());
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-    }
-
-    /** One POST of the alert, with a deadline and no retry; a failure is logged once. */
-    private void postAlert(String url, String json) {
-        java.net.HttpURLConnection connection = null;
-        try {
-            connection = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-            connection.setConnectTimeout(WEBHOOK_TIMEOUT_MS);
-            connection.setReadTimeout(WEBHOOK_TIMEOUT_MS);
-            connection.setRequestMethod("POST");
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            byte[] body = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            connection.setFixedLengthStreamingMode(body.length);
-            try (java.io.OutputStream out = connection.getOutputStream()) {
-                out.write(body);
-            }
-            int status = connection.getResponseCode();
-            if (status >= 200 && status < 300) {
-                webhookFailureLogged = false;
-            } else if (!webhookFailureLogged) {
-                webhookFailureLogged = true;
-                Log.w(TAG, "The alert web address answered " + status);
-            }
-        } catch (java.io.IOException | RuntimeException failed) {
-            if (!webhookFailureLogged) {
-                webhookFailureLogged = true;
-                Log.w(TAG, "The alert web address could not be reached: " + failed.getMessage());
-            }
         } finally {
             if (connection != null) {
                 connection.disconnect();
@@ -920,9 +997,6 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 NotificationManager.IMPORTANCE_MIN);
         channel.setShowBadge(false);
         manager.createNotificationChannel(channel);
-        // The fleet's alerts: their own channel, so a person can mute them apart.
-        manager.createNotificationChannel(new NotificationChannel(ALERT_CHANNEL_ID,
-                "Fleet alerts", NotificationManager.IMPORTANCE_DEFAULT));
     }
 
     /**
@@ -1942,6 +2016,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 applied.put("alert_pin_lockout", config.alerts.pinLockout);
                 applied.put("alert_mqtt_topic", config.alerts.mqttTopic);
                 applied.put("alert_webhook_url", config.alerts.webhookUrl);
+                applied.put("alert_back_online", config.alerts.backOnline);
+                applied.put("alert_storage_below_mb", config.alerts.storageBelowMb);
+                applied.put("alert_update_available", config.alerts.updateAvailable);
+                applied.put("alert_shared_refused", config.alerts.sharedRefused);
+                applied.put("alert_quiet_display_off", config.alerts.quietDisplayOff);
+                applied.put("alert_ntfy_url", config.alerts.ntfyUrl);
+                // The secrets themselves never: only whether one is set.
+                applied.put("alert_ntfy_token_set", !config.alerts.ntfyToken.isEmpty());
+                applied.put("alert_chat_url_set", !config.alerts.chatUrl.isEmpty());
                 applied.put("http_tls", KioskRuntimeState.httpAdminSecure());
                 applied.put("http_certificate_sha256", KioskRuntimeState.httpAdminFingerprint());
                 applied.put("http_certificate", KioskRuntimeState.httpAdminCertificate());
@@ -3501,6 +3584,16 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 new Thread(() -> callAddress(rule.name, address), "MuralisRuleCall").start();
                 break;
             }
+            case "alert":
+                // To the channels the fleet's alerts use, never quieted: a person's own rule.
+                if (!KioskConfig.alertsOf(this).anyChannel()) {
+                    problem = "no alert channel is set in All panels, Alerts";
+                } else {
+                    deliverAlerts(java.util.Collections.singletonList(new FleetAlerts.Alert(
+                            FleetAlerts.AUTOMATION, KioskConfig.deviceIdOf(this),
+                            fleetPanelName(), true, step.argument)));
+                }
+                break;
             default: problem = "no action is called " + step.action;
         }
         if (problem != null) {
@@ -4068,6 +4161,8 @@ public final class KioskService extends Service implements KioskCommandDispatche
         if (applied != null) {
             applied.remove("fleet_join");
             applied.remove("alert_webhook_url");
+            // On ntfy.sh without a token the topic's name is the only key.
+            applied.remove("alert_ntfy_url");
         }
         String shown;
         try {
