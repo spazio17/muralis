@@ -590,7 +590,9 @@ li.speaker label.tick{display:flex;align-items:center}
 a.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .btn svg,.fleetactions svg,.ib svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .ib svg{width:24px;height:24px}
-.tabs{display:flex;gap:0;margin:8px 0 16px;border-bottom:1px solid var(--outline-variant,var(--outline))}
+/* Five tabs do not fit a phone: the row scrolls sideways on its own, never the page. */
+.tabs{display:flex;gap:0;margin:8px 0 16px;border-bottom:1px solid var(--outline-variant,var(--outline));overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.tabs a{flex:none}
 .tabs a{flex:0 0 auto;padding:14px 16px 12px;color:var(--subtext);font-size:14px;line-height:20px;font-weight:500;text-decoration:none;border-bottom:3px solid transparent}
 .tabs a[aria-current=page]{color:var(--accent);border-bottom-color:var(--accent)}
 .tabs a:hover{background:color-mix(in srgb,var(--text) 8%,transparent)}

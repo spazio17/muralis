@@ -16,6 +16,16 @@ headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'applicatio
 function enc(pairs){return Object.keys(pairs).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(pairs[k]);}).join('&');}
 function soon(){if(window.muralisPollSoon){window.muralisPollSoon();}}
 
+// This panel's own place on the page: Follow the shared settings stores at once, the switch
+// going back when refused; Leave (asked first through data-confirm) then returns to the
+// panel's own section.
+document.addEventListener('change',function(e){var f=e.target;if(!f.matches('[data-follow]')){return;}
+fetch('/api/setting',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+body:'section=behaviour&fleet_follows='+(f.checked?'1':'0')}).then(function(r){if(!r.ok){f.checked=!f.checked;}})
+.catch(function(){f.checked=!f.checked;});});
+document.addEventListener('click',function(e){var b=e.target.closest('[data-leave]');if(!b){return;}
+fetch('/api/fleet/leave',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded','Accept':'application/json'},body:''})
+.then(function(){location.href=b.getAttribute('data-leave');});});
 // Dialogs.
 function openDialog(id){var d=document.getElementById(id);if(!d||!d.showModal){return false;}
 if(!d.open){d.showModal();}
@@ -45,7 +55,9 @@ var on=(show==='all'||li.getAttribute('data-health')===show)
 &&(!text||li.getAttribute('data-name').indexOf(text)>=0)
 &&(!group||li.getAttribute('data-groups').indexOf('|'+group+'|')>=0);
 li.hidden=!on;});
-if(pictures){all('li.fleetrow:not([hidden])').forEach(rowPicture);}}
+if(pictures){all('li.fleetrow:not([hidden])').forEach(rowPicture);}
+// The bar's count follows the filter.
+selection();}
 document.addEventListener('click',function(e){var chip=e.target.closest('#fleet-tools .fchip');if(!chip){return;}
 e.preventDefault();show=chip.getAttribute('data-show');
 if(history.replaceState){var q=new URLSearchParams(location.search);if(show==='all'){q.delete('show');}else{q.set('show',show);}
@@ -110,19 +122,19 @@ var body=e.target.hasAttribute('data-switch')?enc({target:target,action:'switch'
 :enc({target:target,action:'volume',value:e.target.value});
 post('/api/fleet/speaker',body).then(function(){setTimeout(function(){speakerLoad(el);},800);});});
 
-// Identify one panel or all; the answer under the panel, or under the head for all.
+// Identify one panel; the answer under it.
 function tell(line,text){if(!line){return;}line.textContent=text;line.hidden=!text;
 if(line.timer){clearTimeout(line.timer);}
 if(text){line.timer=setTimeout(function(){if(line.textContent===text){line.textContent='';line.hidden=true;}},8000);}}
 function identify(id,line){return post('/api/fleet/identify',enc({panel:id}))
 .then(function(r){return r.text();}).then(function(text){var parsed={};try{parsed=JSON.parse(text);}catch(ignored){}
-if(parsed.status==='accepted'){tell(line,id==='all'?parsed.detail:'');return true;}
+if(parsed.status==='accepted'){tell(line,'');return true;}
 tell(line,'Not done: '+(parsed.detail||'the panel refused it')+'.');return false;})
 .catch(function(){tell(line,'The panel did not answer. It may be rebooting or off the network.');return false;});}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-identify]');if(!b){return;}
 var id=b.getAttribute('data-identify');
 var pane=document.querySelector('.fleetpanel[data-panel="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]');
-var line=id==='all'?document.getElementById('fleet-identify-all'):pane?pane.querySelector('[data-identified]'):null;
+var line=pane?pane.querySelector('[data-identified]'):null;
 b.disabled=true;identify(id,line).then(function(){b.disabled=false;});});
 
 // A panel's settings opened, or Muralis left there for its home screen, said under it.
@@ -148,13 +160,16 @@ var notice=page.content.querySelector('.notice');var pane=form.closest('.fleetpa
 tell(pane?pane.querySelector('[data-identified]'):null,notice?notice.textContent:'Not done.');});})
 .catch(function(){all('input[data-at-once]',form).forEach(function(c){c.checked=c.defaultChecked;});});});
 
-// The selection: what can be done to all the ticked panels.
-var bar=document.getElementById('fleet-selbar'),tools=document.getElementById('fleet-tools');
+// The action bar, always there: it acts on the ticked panels, or on every panel shown when none
+// is ticked, and its first words say which; Close and Remove only with ticks.
+var bar=document.getElementById('fleet-selbar');
 function ticked(){return all('li.fleetrow:not([hidden]) input[data-tick]:checked');}
+function shownBoxes(){return all('li.fleetrow:not([hidden]) input[data-tick]');}
 var tickAll=document.getElementById('fleet-tick-all');
-function selection(){if(!bar){return;}var n=ticked().length;
-bar.hidden=n===0;if(tools){tools.hidden=n>0;}
-document.getElementById('fleet-selcount').textContent=n+' selected';
+function selection(){if(!bar){return;}var n=ticked().length,count=shownBoxes().length;
+// "All" only while every panel shows; a filter names how many it leaves.
+document.getElementById('fleet-selcount').textContent=n?n+' selected':count===1?'1 panel':(count===all('li.fleetrow').length?'All ':'')+count+' panels';
+bar.querySelector('[data-sel=close]').hidden=!n;bar.querySelector('[data-sel=remove]').hidden=!n;
 if(tickAll){var shown=all('li.fleetrow:not([hidden]) input[data-tick]').length;tickAll.checked=n>0&&n===shown;tickAll.indeterminate=n>0&&n<shown;}}
 if(tickAll){tickAll.addEventListener('change',function(){var on=tickAll.checked;
 all('li.fleetrow:not([hidden]) input[data-tick]').forEach(function(c){c.checked=on;});selection();});}
@@ -163,15 +178,25 @@ function clear(){all('input[data-tick]').forEach(function(c){c.checked=false;});
 function say(text){tell(document.getElementById('fleet-sel-result'),text);}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-sel]');if(!b){return;}
 var what=b.getAttribute('data-sel'),boxes=ticked();
+// Nothing ticked: every panel shown, except for Remove, which never acts on all.
+if(!boxes.length&&what!=='remove'){boxes=shownBoxes();}
 var ids=boxes.map(function(c){return c.closest('li').getAttribute('data-id');});
 var keys=boxes.filter(function(c){return !c.hasAttribute('data-self');}).map(function(c){return c.value;});
 if(what==='close'){clear();return;}
 if(what==='identify'){Promise.all(ids.map(function(id){return identify(id,null);})).then(function(done){
 var missed=done.filter(function(ok){return !ok;}).length;
 say(missed?'Identify reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
+if(what==='reload'){Promise.all(ids.map(function(id){return post('/api/fleet/panel',enc({panel:id,action:'reload'}))
+.then(function(r){return r.ok;}).catch(function(){return false;});})).then(function(done){
+var missed=done.filter(function(ok){return !ok;}).length;
+say(missed?'Reload page reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
+// Announce: only what to say or play and the volume, for the panels the bar names; the dialog
+// keeps its list of panels out of sight, ticked to match.
 if(what==='say'){if(!openDialog('announce')){return;}
-var choose=document.querySelector('#speakers .segmented [data-target=panels]');if(choose){choose.click();}
-all('#speakers-list li.speaker').forEach(function(li){var t=li.querySelector('[data-tick]');if(t){t.checked=ids.indexOf(li.getAttribute('data-id'))>=0;}});return;}
+all('#speakers-list li.speaker').forEach(function(li){var t=li.querySelector('[data-tick]');if(t){t.checked=ids.indexOf(li.getAttribute('data-id'))>=0;}});
+var head=document.querySelector('#announce h2');
+if(head){head.textContent='Announce to '+(ids.length>1&&ids.length===all('li.fleetrow').length?'all ':'')+(ids.length===1?'1 panel':ids.length+' panels');}
+return;}
 if(what==='group'){var group=document.getElementById('fleet-sel-group').value;
 post('/fleet',enc({what:'add_to_group',group:group,panels:boxes.map(function(c){return c.value;}).join(','),'return':'/fleet'}))
 .then(function(r){if(r.ok){clear();soon();}else{say('Not done: the panels were not added to the group.');}});return;}

@@ -413,7 +413,7 @@ final class FleetProfile {
         }
         if (!notApplied.isEmpty()) {
             line += " Not applied here: " + String.join(", ", notApplied)
-                    + " (see the Fleet section).";
+                    + " (see All panels).";
         }
         return line;
     }

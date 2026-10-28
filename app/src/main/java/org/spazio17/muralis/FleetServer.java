@@ -1301,7 +1301,7 @@ final class FleetServer {
                 return;
             default:
                 respond(output, 410, error("no join code is open on this panel; open one in its"
-                        + " Fleet section"));
+                        + " All panels section"));
         }
     }
 
@@ -3190,9 +3190,9 @@ final class FleetServer {
     }
 
     /**
-     * {@code POST /fleet/panel} from a member, {"action": "dashboard", "settings" or
-     * "home_screen"}: this panel's dashboard or settings opened, or Muralis left for the home
-     * screen, as the Fleet page asks.
+     * {@code POST /fleet/panel} from a member, {"action": "dashboard", "settings", "home_screen"
+     * or "reload"}: this panel's dashboard or settings opened, Muralis left for the home screen,
+     * or the page loaded again, as the All panels page asks.
      */
     private void panelAction(byte[] body, OutputStream output) throws IOException {
         String action;
@@ -3202,8 +3202,8 @@ final class FleetServer {
             respond(output, 400, error("the body must be a JSON object"));
             return;
         }
-        if (!SETTINGS.equals(action) && !HOME_SCREEN.equals(action) && !DASHBOARD.equals(action)) {
-            respond(output, 400, error("action must be dashboard, settings or home_screen"));
+        if (!isPanelAction(action)) {
+            respond(output, 400, error(PANEL_ACTION_RULE));
             return;
         }
         String problem = ownPanelAction(action);
@@ -3222,6 +3222,15 @@ final class FleetServer {
     static final String SETTINGS = "settings";
     static final String HOME_SCREEN = "home_screen";
     static final String DASHBOARD = "dashboard";
+    /** The page loaded again, the All panels page's Reload page (dashboard.reload). */
+    static final String RELOAD = "reload";
+    static final String PANEL_ACTION_RULE =
+            "action must be dashboard, settings, home_screen or reload";
+
+    static boolean isPanelAction(String action) {
+        return SETTINGS.equals(action) || HOME_SCREEN.equals(action) || DASHBOARD.equals(action)
+                || RELOAD.equals(action);
+    }
 
     private static String ownPanelAction(String action) {
         KioskService service = KioskService.liveService();
@@ -3230,6 +3239,10 @@ final class FleetServer {
         }
         if (DASHBOARD.equals(action)) {
             return service.openDashboard();
+        }
+        if (RELOAD.equals(action)) {
+            service.kioskReload();
+            return null;
         }
         return SETTINGS.equals(action) ? service.openSettings() : service.leaveForHomeScreen();
     }
