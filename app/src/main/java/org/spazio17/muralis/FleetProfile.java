@@ -564,8 +564,8 @@ final class FleetProfile {
                         "Temperature above (°C, 0 off)", "number"));
                 fields.add(new Field("alert_combination_used", "Combination used", "switch"));
                 fields.add(new Field("alert_pin_lockout", "PIN locked out", "switch"));
-                fields.add(new Field("alert_mqtt_topic", "Also to an MQTT topic", "text"));
-                fields.add(new Field("alert_webhook_url", "Also to a web address (POST)", "url"));
+                fields.add(new Field("alert_mqtt_topic", "MQTT topic", "text"));
+                fields.add(new Field("alert_webhook_url", "Web address", "url"));
                 break;
             default:
                 break;

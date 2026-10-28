@@ -397,36 +397,6 @@ final class FleetDocument {
     }
 
     /**
-     * The next document with the members of key hashes {@code spkis} also in {@code group},
-     * their other groups kept: the Fleet page's Add to group for several panels, one version.
-     */
-    static Map<String, Object> withMembersInGroup(Map<String, Object> held, String author,
-            List<String> spkis, String group, String updated) {
-        Map<String, Object> next = bumped(held, author, updated);
-        List<Object> members = new ArrayList<>();
-        for (Map<String, Object> member : members(held)) {
-            if (spkis.contains(TinyJson.string(member, SPKI, ""))) {
-                List<String> groups = memberGroups(member);
-                if (!groups.contains(group)) {
-                    member = new LinkedHashMap<>(member);
-                    List<Object> own = new ArrayList<>();
-                    for (String one : groups) {
-                        if (!EVERYONE.equals(one)) {
-                            own.add(one);
-                        }
-                    }
-                    own.add(group);
-                    member.put("groups", own);
-                    member.put(AT, version(next));
-                }
-            }
-            members.add(member);
-        }
-        next.put("members", members);
-        return next;
-    }
-
-    /**
      * The next document without the member of key hash {@code spki}, its key revoked by this
      * version: a panel that left, or one removed from the Fleet page. A key revoked so can join
      * again later; its new entry's {@code since} is past the revocation.

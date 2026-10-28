@@ -624,11 +624,15 @@ html:not(.js) .fleetfind{display:none}
 .ld .nav p.label{margin:16px 12px 4px;font-size:12px;font-weight:500;color:var(--subtext)}
 li.fleetrow{flex-wrap:wrap}
 li.fleetrow label.tick{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:48px;cursor:pointer}
-li.fleetrow .groups{font-size:12px;color:var(--subtext);white-space:nowrap}
 li.fleetrow .trail{display:flex;align-items:center;gap:4px}
+/* Manage mode: across the top of another panel's pages, whose they are and the way back. */
+.managebar{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px 4px 16px;background:var(--secondary-container);color:var(--on-secondary-container);font-size:14px}
+.managebar form{margin:0}
 /* The list's header row, the selection bar in one (2026-10-28): the box or Close, the count,
    the actions and a menu; tinted while panels are ticked, as Material's contextual bar. */
-.listhead{display:flex;align-items:center;gap:4px;min-height:56px;padding:0 4px;margin:0 0 4px;border-radius:12px}
+/* 12 px in, so the header's box stands over the rows' boxes. */
+.listhead{display:flex;align-items:center;gap:4px;min-height:56px;padding:0 4px 0 12px;margin:0 0 4px;border-radius:12px}
+@media (max-width:599px){.listhead{padding-left:16px}}
 .listhead>label.tick{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:48px;cursor:pointer}
 .listhead #fleet-selcount{flex:0 0 auto;margin-right:auto;font-weight:500;padding-left:4px;white-space:nowrap}
 .listhead .ib{width:40px;min-width:40px;height:40px}
@@ -638,7 +642,8 @@ html.js .listhead .m3menu button.danger{color:var(--bad)}
 html:not(.js) .listhead{display:none}
 /* The name gets the row's room (2026-10-28): the status dot in a narrow lead, the name cut with
    an ellipsis rather than broken mid-word. */
-li.fleetrow .lead{width:20px}
+/* The dot close to the box: the box's own 48 px target already leaves room. */
+li.fleetrow .lead{width:12px;margin-left:-12px}
 li.fleetrow .rowlink{min-width:0}
 li.fleetrow .text{min-width:0}
 li.fleetrow .text .h,li.fleetrow .text .s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

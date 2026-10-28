@@ -112,6 +112,11 @@ public final class KioskService extends Service implements KioskCommandDispatche
      */
     private volatile MqttController mqttController;
     private volatile HttpAdminServer httpAdminServer;
+
+    /** The web admin while it runs, for a request relayed by another panel; null when off. */
+    HttpAdminServer webAdmin() {
+        return httpAdminServer;
+    }
     /** The member endpoint; null until the fleet key can be read. */
     private volatile FleetServer fleetServer;
     /** The DLNA speaker while it is switched on and its port could be had; null otherwise. */

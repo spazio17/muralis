@@ -111,10 +111,11 @@ fetch('/api/fleet/settings?panel='+encodeURIComponent(id),{credentials:'same-ori
 .then(function(r){return r.json();}).then(function(j){var sections=j.sections;
 if(!sections){notReached('Not reached: '+(j.detail||'the panel did not answer')+'.');return;}
 var rows='';SECTIONS.forEach(function(key){var one=sections[key];if(!one){return;}
-var href=one.from?'/fleet?tab=shared&scope='+encodeURIComponent(one.from)+'&section='+key
-:'/fleet/panel-settings?panel='+encodeURIComponent(id)+'&section='+key;
-rows+='<li class="two"><a class="rowlink plain" href="'+esc(href)+'"><span class="text"><span class="h">'+esc(one.label)
-+'</span><span class="s">'+esc(one.from_words)+' · '+esc(one.summary)+'</span></span></a></li>';});
+// A quick view (Juri, 2026-10-28): a shared section opens where it is shared; the rest is
+// changed with Manage, in that panel's own pages.
+var text='<span class="text"><span class="h">'+esc(one.label)+'</span><span class="s">'+esc(one.from_words)+' · '+esc(one.summary)+'</span></span>';
+rows+=one.from?'<li class="two"><a class="rowlink plain" href="'+esc('/fleet?tab=shared&scope='+encodeURIComponent(one.from)+'&section='+key)+'">'+text+'</a></li>'
+:'<li class="two">'+text+'</li>';});
 box.innerHTML='<ul class="list seg">'+rows+'</ul>';})
 .catch(function(){notReached('Not reached: the panel did not answer.');});}
 all('.ld .detail>.pane').forEach(function(pane){
@@ -162,9 +163,9 @@ var notice=page.content.querySelector('.notice');var pane=form.closest('.fleetpa
 tell(pane?pane.querySelector('[data-identified]'):null,notice?notice.textContent:'Not done.');});})
 .catch(function(){all('input[data-at-once]',form).forEach(function(c){c.checked=c.defaultChecked;});});});
 
-// The list's header row, the selection bar in one: with nothing ticked it acts on every panel
-// shown, with ticks on those; data-when says which of its parts show in which state, and the
-// header turns tinted while panels are ticked.
+// The list's header row, the selection bar in one: the box and the count with nothing ticked;
+// with ticks Close, "2 selected", Announce and Reload, on the ticked panels. data-when says
+// which parts show in which state, and the row turns tinted while panels are ticked.
 var bar=document.getElementById('fleet-selbar');
 function ticked(){return all('li.fleetrow:not([hidden]) input[data-tick]:checked');}
 function shownBoxes(){return all('li.fleetrow:not([hidden]) input[data-tick]');}
@@ -173,56 +174,25 @@ function selection(){if(!bar){return;}var n=ticked().length,count=shownBoxes().l
 document.getElementById('fleet-selcount').textContent=n?n+' selected':count===1?'1 panel':count+' panels';
 bar.classList.toggle('selecting',n>0);
 all('[data-when]',bar).forEach(function(el){el.hidden=el.getAttribute('data-when')===(n?'none':'ticked');});
-var toGroup=bar.querySelector('[data-sel=group-dialog]');if(toGroup){toGroup.textContent=toGroup.getAttribute(n?'data-ticked':'data-none');}
 if(tickAll){tickAll.checked=n>0&&n===count;tickAll.indeterminate=n>0&&n<count;}}
 if(tickAll){tickAll.addEventListener('change',function(){var on=tickAll.checked;
 shownBoxes().forEach(function(c){c.checked=on;});selection();});}
 document.addEventListener('change',function(e){if(e.target.matches('input[data-tick]')){selection();}});
 function clear(){all('input[data-tick]').forEach(function(c){c.checked=false;});selection();}
 function say(text){tell(document.getElementById('fleet-sel-result'),text);}
-// The header's menu: opens under its button, closes on a choice, a click elsewhere or Escape.
-var more=document.getElementById('fleet-more'),moreMenu=document.getElementById('fleet-more-menu');
-function closeMore(){if(moreMenu&&moreMenu.classList.contains('open')){moreMenu.classList.remove('open');more.setAttribute('aria-expanded','false');}}
-if(more&&moreMenu){all('button',moreMenu).forEach(function(b){b.setAttribute('role','menuitem');});
-more.addEventListener('click',function(e){e.stopPropagation();if(moreMenu.classList.contains('open')){closeMore();return;}
-moreMenu.classList.add('open');more.setAttribute('aria-expanded','true');var first=moreMenu.querySelector('button:not([hidden])');if(first){first.focus();}});
-document.addEventListener('click',function(e){if(!moreMenu.contains(e.target)){closeMore();}});
-moreMenu.addEventListener('keydown',function(e){if(e.key==='Escape'){closeMore();more.focus();}});}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-sel]');if(!b){return;}
-closeMore();
 var what=b.getAttribute('data-sel'),boxes=ticked();
-// Nothing ticked: every panel shown, except for Remove, which never acts on all.
-if(!boxes.length&&what!=='remove'){boxes=shownBoxes();}
 var ids=boxes.map(function(c){return c.closest('li').getAttribute('data-id');});
-var keys=boxes.filter(function(c){return !c.hasAttribute('data-self');}).map(function(c){return c.value;});
-var whom=(ticked().length||ids.length===1?'':'all ')+(ids.length===1?'1 panel':ids.length+' panels');
 if(what==='close'){clear();return;}
-if(what==='identify'){Promise.all(ids.map(function(id){return identify(id,null);})).then(function(done){
-var missed=done.filter(function(ok){return !ok;}).length;
-say(missed?'Identify reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
 if(what==='reload'){Promise.all(ids.map(function(id){return post('/api/fleet/panel',enc({panel:id,action:'reload'}))
 .then(function(r){return r.ok;}).catch(function(){return false;});})).then(function(done){
 var missed=done.filter(function(ok){return !ok;}).length;
 say(missed?'Reload reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
-// Announce: only what to say or play and the volume, for the panels the header names; the
-// dialog keeps its list of panels out of sight, ticked to match.
+// Announce: only what to say or play and the volume, for the ticked panels; the dialog keeps
+// its list of panels out of sight, ticked to match.
 if(what==='say'){if(!openDialog('announce')){return;}
 all('#speakers-list li.speaker').forEach(function(li){var t=li.querySelector('[data-tick]');if(t){t.checked=ids.indexOf(li.getAttribute('data-id'))>=0;}});
-var head=document.querySelector('#announce h2');if(head){head.textContent='Announce to '+whom;}
-return;}
-// Add to a group: a short dialog with the groups; Add sends the panels the header names.
-if(what==='group-dialog'){var title=document.getElementById('fleet-group-title');
-if(title){title.textContent='Add '+whom+' to';}openDialog('fleet-group-dialog');return;}
-if(what==='group'){var picked=document.querySelector('#fleet-group-dialog input[name=fleet-group]:checked');
-var dialog=document.getElementById('fleet-group-dialog');if(dialog&&dialog.close){dialog.close();}
-if(!picked){return;}
-post('/fleet',enc({what:'add_to_group',group:picked.value,panels:boxes.map(function(c){return c.value;}).join(','),'return':'/fleet'}))
-.then(function(r){if(r.ok){clear();soon();}else{say('Not done: the panels were not added to the group.');}});return;}
-if(what==='remove'){var skipped=boxes.length-keys.length;
-if(!keys.length){say('This panel leaves with Leave the fleet, in the panel details, not with Remove.');return;}
-if(!window.confirm('Remove '+(keys.length===1?'1 panel':keys.length+' panels')+' from the fleet?\n\nThe fleet\'s list on every panel drops '+(keys.length===1?'the panel':'the panels')+', and '+(keys.length===1?'the key is':'the keys are')+' no longer trusted. Joining again takes a new code.'+(skipped?'\n\nThis panel is not removed: use Leave the fleet.':''))){return;}
-post('/fleet',enc({what:'remove_panels',panels:keys.join(','),'return':'/fleet'}))
-.then(function(r){if(r.ok){location.href='/fleet';}else{say('Not done: the panels were not removed.');}});}});
+var head=document.querySelector('#announce h2');if(head){head.textContent='Announce to '+(ids.length===1?'1 panel':ids.length+' panels');}}});
 
 // After admin_stats.js draws a region again: the filters, the pictures and the selection bar.
 document.addEventListener('muralis-lists',function(){apply();selection();});
