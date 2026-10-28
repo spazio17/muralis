@@ -87,6 +87,9 @@ final class FleetProfile {
                 values.put("instances", Integrations.storeInstances(
                         IntegrationSettings.sharedPart(KioskConfig.integrationsOf(context))));
                 values.put("integration_secrets", IntegrationSettings.sharedSecrets(context));
+                // Integrations offered: the kinds the Add lists leave out, the same on every panel.
+                values.put("hidden_kinds", Integrations.storeHidden(
+                        KioskConfig.hiddenKindsOf(context)));
                 break;
             case "alerts":
                 values.put("alert_offline_minutes", config.alerts.offlineMinutes);
@@ -227,6 +230,10 @@ final class FleetProfile {
             case "integrations":
                 refused.addAll(IntegrationSettings.applyShared(context,
                         text(values, "instances"), text(values, "integration_secrets")));
+                if (values.containsKey("hidden_kinds")) {
+                    KioskConfig.storeHiddenKinds(context,
+                            Integrations.parseHidden(text(values, "hidden_kinds")));
+                }
                 break;
             case "alerts":
                 for (Field field : fields(section)) {

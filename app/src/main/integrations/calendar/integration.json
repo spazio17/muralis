@@ -3,5 +3,6 @@
   "class": "CalendarLinkIntegration",
   "name": "Calendar from a link",
   "kind": "cloud",
+  "audience": "both",
   "codeowners": ["@Nihvel"]
 }

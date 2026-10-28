@@ -3,5 +3,6 @@
   "class": "WeatherIntegration",
   "name": "Weather",
   "kind": "cloud",
+  "audience": "both",
   "codeowners": ["@Nihvel"]
 }

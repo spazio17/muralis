@@ -23,7 +23,9 @@ account gets only what the app carries).
 A folder holds:
 
 - `integration.json`: `id` (the folder's name, lowercase letters and digits), `class`, `name`,
-  `kind` (`local` or `cloud`) and `codeowners` (the GitHub names that look after it);
+  `kind` (`local` or `cloud`), `audience` (`home`, `business` or `both`: who it is for, which
+  groups it under Integrations offered) and `codeowners` (the GitHub names that look
+  after it);
 - the class, a public `Integrations.Source` with a public `DEFINITION` (settings, values, interval
   and floor), in package `org.spazio17.muralis.integrations`. It uses only the engine
   (`Integrations`, `TinyJson`), `java.util` and a few plain classes: the engine asks the service

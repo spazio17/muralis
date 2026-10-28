@@ -137,6 +137,17 @@ public final class IntegrationsTest {
         require(stored.whens.get(0).match.equals("04A3"), "a stored NFC rule lost its tag");
 
         instances();
+        // Integrations offered: the audience from integration.json, the unticked kinds stored.
+        require(Integrations.audienceOf("bitcoin").equals("home")
+                && Integrations.audienceOf("weather").equals("both")
+                && Integrations.audienceOf("nosuch").equals("both"), "the audiences");
+        require(Integrations.storeHidden(java.util.Arrays.asList("weather", "nosuch", "bitcoin"))
+                .equals("bitcoin,weather"), "unknown kinds stored as unticked");
+        java.util.Set<String> hidden = Integrations.parseHidden("bitcoin, nosuch,");
+        require(hidden.size() == 1 && hidden.contains("bitcoin"), "the stored kinds: " + hidden);
+        require(!Integrations.offered(Integrations.DEFINITIONS.get("bitcoin"), hidden)
+                && Integrations.offered(Integrations.DEFINITIONS.get("weather"), hidden),
+                "an unticked kind still offered");
         System.out.println("IntegrationsTest passed");
     }
 

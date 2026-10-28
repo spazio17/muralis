@@ -48,6 +48,11 @@ final class IntegrationSettings {
         if (blocked != null) {
             return new Saved(blocked, null);
         }
+        boolean adding = instanceId == null || instanceId.isEmpty();
+        if (adding && KioskConfig.hiddenKindsOf(context).contains(definitionId)) {
+            return new Saved(definition.name + " is not offered here: tick it under Integrations"
+                    + " offered first", null);
+        }
         String trimmed = name == null ? "" : name.trim();
         String nameProblem = Integrations.checkName(trimmed);
         if (nameProblem != null) {
@@ -455,6 +460,22 @@ final class IntegrationSettings {
         boolean today = at.toLocalDate().equals(java.time.LocalDate.now());
         return at.format(java.time.format.DateTimeFormatter.ofPattern(today ? "HH:mm"
                 : "EEE d MMM HH:mm", java.util.Locale.ENGLISH));
+    }
+
+    /**
+     * Stores which kinds the Add lists offer, given the ones ticked: every other kind that could
+     * be offered is unticked. Integrations already added keep running. Goes to the fleet when it
+     * shares the integrations.
+     */
+    static void setOffered(Context context, Set<String> ticked) {
+        List<String> hidden = new java.util.ArrayList<>();
+        for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+            if (Integrations.offerable(definition) && !ticked.contains(definition.id)) {
+                hidden.add(definition.id);
+            }
+        }
+        KioskConfig.storeHiddenKinds(context, hidden);
+        KioskService.publishTelemetrySoon(context);
     }
 
     /** Why this panel's edition cannot run the definition, or null. */

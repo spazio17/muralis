@@ -34,7 +34,8 @@ on purpose.
   any web admin: joining by a one-time code, shared settings, groups, alerts and an invitation QR
   for a new tablet. No server.
 - **Integrations.** Data from other services as sensors for the automations and MQTT,
-  one folder each under `app/src/main/integrations/`, compiled in and never downloaded.
+  one folder each under `app/src/main/integrations/`, compiled in and never downloaded; a panel
+  or fleet ticks which kinds its Add lists offer.
 - **Free and Pro.** Everything one panel does is free, with no device limit. Muralis Pro, bought
   once through Google Play, is the fleet.
 

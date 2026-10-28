@@ -6360,7 +6360,8 @@ final class HttpAdminServer {
                 continue;
             }
             rows.append(linkRow("/integrations?id=" + urlEncode("i:" + entry.optString("id")),
-                    "integrations", entry.optString("name"), integrationLine(entry), null,
+                    "integrations", entry.optString("name"),
+                    integrationLine(entry, KioskConfig.hiddenKindsOf(context)), null,
                     integrationSwitch(entry.optString("id"), entry.optString("name"),
                             entry.optBoolean("enabled"), "-home")));
         }
@@ -6374,6 +6375,14 @@ final class HttpAdminServer {
     }
 
     /** A row's line: Off, the problem, or the first value in words. */
+    private static String integrationLine(org.json.JSONObject entry,
+            java.util.Set<String> hidden) {
+        // A kind unticked under Integrations offered keeps running and says so first, where
+        // the line's end is cut on a narrow row.
+        String state = integrationLine(entry);
+        return hidden.contains(entry.optString("definition")) ? "Not offered · " + state : state;
+    }
+
     private static String integrationLine(org.json.JSONObject entry) {
         // One short state, the same on both surfaces: Off, the problem, or the first value.
         if (!entry.optBoolean("enabled")) {
@@ -6435,20 +6444,23 @@ final class HttpAdminServer {
                 status.put(entry.optString("id"), entry);
             }
         }
-        String chosen = integrationItemOrFirst(selected, instances);
+        java.util.Set<String> hidden = KioskConfig.hiddenKindsOf(context);
+        String chosen = integrationItemOrFirst(selected, instances, hidden);
         StringBuilder rows = new StringBuilder();
         for (Integrations.Instance instance : instances) {
             String id = "i:" + instance.id;
             org.json.JSONObject entry = status.get(instance.id);
+            String line = entry == null ? (hidden.contains(instance.definition) ? "Not offered"
+                    : "") : integrationLine(entry, hidden);
             rows.append(navRow(linkRow("/integration?id=" + urlEncode(id), "integrations",
-                    instance.name, entry == null ? "" : integrationLine(entry), null,
+                    instance.name, line, null,
                     integrationSwitch(instance.id, instance.name, instance.enabled, "")),
                     id, id.equals(chosen)));
         }
         StringBuilder offered = new StringBuilder();
         for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
-            if ("business".equals(definition.edition)) {
-                // Business does not exist yet: nothing of it is offered.
+            if (!Integrations.offered(definition, hidden)) {
+                // Business does not exist yet, and an unticked kind is not offered.
                 continue;
             }
             String id = "d:" + definition.id;
@@ -6465,7 +6477,10 @@ final class HttpAdminServer {
                 + (rows.length() == 0 ? "<p class=\"hint\">No integrations yet.</p>"
                         : "<ul class=\"list seg\">" + rows + "</ul>")
                 // Under the list, as every Add; the kinds are its pane at the right.
-                + (instances.size() >= Integrations.MAX_INSTANCES ? ""
+                + (instances.size() >= Integrations.MAX_INSTANCES
+                        // Full, no Add list: Integrations offered is still reachable.
+                        ? "<div class=\"actions\"><a class=\"btn text\" href=\"/integration?id=offered\""
+                                + " data-pane=\"offered\">Integrations offered" + glyph("next") + "</a></div>"
                         : "<div class=\"actions\"><a class=\"btn tonal\" href=\"/integration?id=add\""
                                 + " data-pane=\"add\">" + glyph("plus") + "Add an integration</a></div>")
                 + "</section>";
@@ -6478,9 +6493,16 @@ final class HttpAdminServer {
         }
         if (instances.size() < Integrations.MAX_INSTANCES) {
             detail.append(pane("add", chosen, "<section class=\"card\"><h2>Add an integration"
-                    + "</h2><ul class=\"list\">" + offered + "</ul></section>"));
+                    + "</h2>" + (offered.length() == 0 ? "<p class=\"hint\">None is offered.</p>"
+                            : "<ul class=\"list\">" + offered + "</ul>")
+                    // Which kinds this list shows, at its foot (decided 2026-10-27).
+                    + "<ul class=\"list\">" + linkRow("/integration?id=offered", "tune",
+                            "Integrations offered", offeredLine(hidden), null, glyph("next"))
+                            .replace("<a class=\"rowlink plain\"",
+                                    "<a data-pane=\"offered\" class=\"rowlink plain\"")
+                    + "</ul></section>"));
             for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
-                if ("business".equals(definition.edition)) {
+                if (!Integrations.offered(definition, hidden)) {
                     continue;
                 }
                 String id = "d:" + definition.id;
@@ -6488,8 +6510,10 @@ final class HttpAdminServer {
                         id.equals(chosen) ? typed : null)));
             }
         }
+        detail.append(pane("offered", chosen, offeredForm(hidden)));
         boolean fresh = chosen.startsWith("d:");
-        return pageStart(!detailPage ? "Integrations" : chosen.equals("add")
+        return pageStart(!detailPage ? "Integrations" : chosen.equals("offered")
+                        ? "Integrations offered" : chosen.equals("add")
                         ? "Add an integration" : fresh ? "New integration" : "Edit integration",
                 null, detailPage ? "/integrations" : settingsAt("integrations"))
                 + (notice == null ? "" : "<p class=\"notice\">" + escapeHtml(notice) + "</p>")
@@ -6498,13 +6522,60 @@ final class HttpAdminServer {
                 + pageEnd();
     }
 
+    /** "4 of 5 offered": the line of Integrations offered at the foot of the Add list. */
+    private static String offeredLine(java.util.Set<String> hidden) {
+        int all = 0;
+        int shown = 0;
+        for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+            if (Integrations.offerable(definition)) {
+                all++;
+                shown += hidden.contains(definition.id) ? 0 : 1;
+            }
+        }
+        return shown + " of " + all + " offered";
+    }
+
+    /**
+     * Integrations offered: a switch per kind, grouped by who it is for, saying which kinds the
+     * Add lists show; with the fleet sharing the integrations, on every panel. Added ones keep
+     * running. The baseline refuses a save over a change made elsewhere meanwhile.
+     */
+    private static String offeredForm(java.util.Set<String> hidden) {
+        StringBuilder groups = new StringBuilder();
+        for (String[] audience : Integrations.AUDIENCE_WORDS) {
+            StringBuilder switches = new StringBuilder();
+            for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+                if (Integrations.offerable(definition)
+                        && audience[0].equals(Integrations.audienceOf(definition.id))) {
+                    switches.append(switchRow("offer-" + definition.id, definition.name,
+                            " name=\"offer_" + definition.id + "\" value=\"1\"",
+                            !hidden.contains(definition.id)));
+                }
+            }
+            if (switches.length() > 0) {
+                groups.append("<p class=\"label\">").append(escapeHtml(audience[1]))
+                        .append("</p><div class=\"switches\">").append(switches).append("</div>");
+            }
+        }
+        return "<form method=\"post\" action=\"/integrations\" class=\"card\"><h2>Integrations"
+                + " offered</h2><p class=\"hint\">What Add an integration lists. Added ones keep"
+                + " running.</p>" + hidden("what", "offered")
+                + hidden("baseline", Integrations.storeHidden(hidden)) + groups
+                + "<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save</button>"
+                + "</div></form>";
+    }
+
     /** The item to show: the one asked for when it exists, else the first added, else the first offered. */
     private static String integrationItemOrFirst(String item,
-            java.util.List<Integrations.Instance> instances) {
+            java.util.List<Integrations.Instance> instances, java.util.Set<String> hidden) {
         boolean room = instances.size() < Integrations.MAX_INSTANCES;
+        if ("offered".equals(item)) {
+            return item;
+        }
         if (item != null) {
             if (room && (item.equals("add") || item.startsWith("d:")
-                    && Integrations.DEFINITIONS.containsKey(item.substring(2)))) {
+                    && Integrations.DEFINITIONS.containsKey(item.substring(2))
+                    && !hidden.contains(item.substring(2)))) {
                 return item;
             }
             for (Integrations.Instance instance : instances) {
@@ -6682,6 +6753,26 @@ final class HttpAdminServer {
                 refused = notice.startsWith("Not ");
                 keep = form;
                 break;
+            case "offered": {
+                if (!Integrations.storeHidden(KioskConfig.hiddenKindsOf(context))
+                        .equals(form.getOrDefault("baseline", ""))) {
+                    notice = "Not saved: Integrations offered was changed elsewhere after this"
+                            + " page loaded. The page now shows the current choice.";
+                    refused = true;
+                } else {
+                    java.util.Set<String> ticked = new java.util.HashSet<>();
+                    for (String key : form.keySet()) {
+                        if (key.startsWith("offer_")) {
+                            ticked.add(key.substring("offer_".length()));
+                        }
+                    }
+                    IntegrationSettings.setOffered(context, ticked);
+                    notice = "Saved.";
+                    refused = false;
+                }
+                item = "offered";
+                break;
+            }
             case "remove": {
                 String problem = IntegrationSettings.remove(context, id);
                 refused = problem != null;

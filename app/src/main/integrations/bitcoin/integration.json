@@ -3,5 +3,6 @@
   "class": "BitcoinIntegration",
   "name": "Bitcoin",
   "kind": "cloud",
+  "audience": "home",
   "codeowners": ["@Nihvel"]
 }

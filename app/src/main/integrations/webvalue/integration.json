@@ -3,5 +3,6 @@
   "class": "WebValueIntegration",
   "name": "Value from a web address",
   "kind": "local",
+  "audience": "both",
   "codeowners": ["@Nihvel"]
 }

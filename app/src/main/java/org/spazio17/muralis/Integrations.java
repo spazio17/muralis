@@ -657,6 +657,58 @@ public final class Integrations {
         return Collections.unmodifiableMap(byId);
     }
 
+    /**
+     * The groups of the "Integrations offered" list, by audience (integration.json): who a kind
+     * is for. It sets nothing by itself; a person ticks what the panels offer.
+     */
+    static final String[][] AUDIENCE_WORDS = {
+            {"both", "For home and business"}, {"home", "For home"}, {"business", "For business"}};
+
+    /** Who a kind is for: "home", "business" or "both"; "both" for one the build does not know. */
+    static String audienceOf(String definitionId) {
+        for (String[] row : IntegrationRegistry.AUDIENCES) {
+            if (row[0].equals(definitionId)) {
+                return row[1];
+            }
+        }
+        return "both";
+    }
+
+    /** Whether a kind can be offered at all: the Business edition does not exist yet. */
+    static boolean offerable(Definition definition) {
+        return !"business".equals(definition.edition);
+    }
+
+    /** Whether a kind shows in the Add list: offerable and not unticked under Integrations offered. */
+    static boolean offered(Definition definition, java.util.Set<String> hidden) {
+        return offerable(definition) && !hidden.contains(definition.id);
+    }
+
+    /**
+     * The unticked kinds as stored: the ids of kinds this build has, sorted, separated by commas,
+     * so a kind added by a later version is offered until someone unticks it.
+     */
+    static String storeHidden(java.util.Collection<String> hidden) {
+        java.util.TreeSet<String> known = new java.util.TreeSet<>();
+        for (String id : hidden) {
+            if (DEFINITIONS.containsKey(id)) {
+                known.add(id);
+            }
+        }
+        return String.join(",", known);
+    }
+
+    /** The stored unticked kinds, those this build does not know dropped. */
+    static java.util.Set<String> parseHidden(String stored) {
+        java.util.Set<String> hidden = new java.util.TreeSet<>();
+        for (String id : (stored == null ? "" : stored).split(",")) {
+            if (DEFINITIONS.containsKey(id.trim())) {
+                hidden.add(id.trim());
+            }
+        }
+        return hidden;
+    }
+
     /** The events a rule can wait for on a value of this type. */
     static List<Automations.Event> events(ValueSpec spec) {
         switch (spec.type) {

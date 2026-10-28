@@ -3,5 +3,6 @@
   "class": "UptimeKumaIntegration",
   "name": "Uptime Kuma",
   "kind": "local",
+  "audience": "both",
   "codeowners": ["@Nihvel"]
 }

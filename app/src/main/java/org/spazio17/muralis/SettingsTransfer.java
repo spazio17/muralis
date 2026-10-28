@@ -46,7 +46,7 @@ final class SettingsTransfer {
                 "orientation", "display_off_method", "ambient_mode",
                 "ambient_on_wake", "ambient_transition", "ambient_picture_fit",
                 "ambient_credit_corner", "settings_sequence", "launcher_sequence",
-                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "dashboard_integration", "dashboard_shows", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock", "integrations"}) {
+                "automations", "beacon_names", "cameras", "camera_groups", "dashboard_cameras", "dashboard_integration", "dashboard_shows", "camera_layout", "camera_big", "certificate_pins", "mqtt_tls_pin", "app_lock", "integrations", "integrations_hidden"}) {
             keys.put(key, 's');
         }
         for (String key : new String[] {"mqtt_port", "http_port", "fleet_port",

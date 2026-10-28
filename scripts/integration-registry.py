@@ -19,7 +19,7 @@ import sys
 
 ID_SHAPE = re.compile(r"^[a-z][a-z0-9]{1,15}$")
 CLASS_SHAPE = re.compile(r"^[A-Z][A-Za-z0-9]{2,60}Integration$")
-REQUIRED = ("id", "class", "name", "codeowners", "kind")
+REQUIRED = ("id", "class", "name", "codeowners", "kind", "audience")
 PACKAGE = "org.spazio17.muralis.integrations"
 # What an integration may name of the platform: collections, text, the engine. Anything else
 # (the network or files directly, reflection, threads, processes, Android) goes through the
@@ -92,6 +92,8 @@ def read(folder, path):
         fail(folder + ": no " + data["class"] + ".java in the folder")
     if data["kind"] not in ("local", "cloud"):
         fail(folder + ": kind must be local or cloud")
+    if data["audience"] not in ("home", "business", "both"):
+        fail(folder + ": audience must be home, business or both")
     if not isinstance(data["codeowners"], list) or not data["codeowners"]:
         fail(folder + ": codeowners must list at least one GitHub name")
     if not os.path.isfile(os.path.join(path, "README.md")):
@@ -168,6 +170,13 @@ def main():
         "    static final String[] IDS = {",
     ]
     lines += ['            "%s",' % entry["id"] for entry in entries]
+    lines += [
+        "    };",
+        "",
+        "    /** Who each is for, by id: home, business or both (integration.json's audience). */",
+        "    static final String[][] AUDIENCES = {",
+    ]
+    lines += ['            {"%s", "%s"},' % (entry["id"], entry["audience"]) for entry in entries]
     lines += ["    };", "}", ""]
     with open(os.path.join(target, "IntegrationRegistry.java"), "w", encoding="utf-8") as out:
         out.write("\n".join(lines))

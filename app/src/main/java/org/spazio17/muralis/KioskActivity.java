@@ -3014,6 +3014,14 @@ public final class KioskActivity extends Activity {
     }
 
     /** A row's line: Off, the problem, or the first value in words. */
+    private static String integrationLine(org.json.JSONObject entry,
+            java.util.Set<String> hidden) {
+        // A kind unticked under Integrations offered keeps running and says so first, where
+        // the line's end is cut on a narrow row.
+        String state = integrationLine(entry);
+        return hidden.contains(entry.optString("definition")) ? "Not offered · " + state : state;
+    }
+
     private static String integrationLine(org.json.JSONObject entry) {
         // One short state, the same on both surfaces: Off, the problem, or the first value.
         if (!entry.optBoolean("enabled")) {
@@ -3077,7 +3085,7 @@ public final class KioskActivity extends Activity {
         String chosen = null;
         if (wide) {
             chosen = integrationItemOrFirst(select != null ? select : selectedIntegrationItem,
-                    instances);
+                    instances, KioskConfig.hiddenKindsOf(this));
             selectedIntegrationItem = chosen;
         }
         java.util.Map<String, org.json.JSONObject> status = integrationStatus();
@@ -3095,16 +3103,22 @@ public final class KioskActivity extends Activity {
             }
             list.addView(none, matchWrap());
         }
+        java.util.Set<String> hidden = KioskConfig.hiddenKindsOf(this);
         for (Integrations.Instance instance : instances) {
             org.json.JSONObject entry = status.get(instance.id);
+            String line = entry == null ? (hidden.contains(instance.definition) ? "Not offered"
+                    : "") : integrationLine(entry, hidden);
             addIntegrationRow(list, theme, wide, "i:" + instance.id, instance.name,
-                    entry == null ? "" : integrationLine(entry), instance == instances.get(0),
+                    line, instance == instances.get(0),
                     chosen, integrationSwitch(theme, instance.id, instance.name, instance.enabled));
         }
         // Under the list, as every Add; the kinds are its pane at the right, or its page.
-        if (instances.size() < Integrations.MAX_INSTANCES) {
-            Button add = withPlus(tonalButton(theme, "Add an integration"));
-            add.setOnClickListener(view -> openIntegrationItem(wide, "add"));
+        {
+            boolean room = instances.size() < Integrations.MAX_INSTANCES;
+            // Full, no Add list: Integrations offered is still reachable.
+            Button add = room ? withPlus(tonalButton(theme, "Add an integration"))
+                    : textButtonOnward(theme, "Integrations offered");
+            add.setOnClickListener(view -> openIntegrationItem(wide, room ? "add" : "offered"));
             LinearLayout addRow = buttonRow(add);
             if (wide) {
                 addRow.setPadding(dp(12), dp(8), dp(12), dp(4));
@@ -3185,11 +3199,15 @@ public final class KioskActivity extends Activity {
 
     /** The item to show: the one asked for when it exists, else the first added, else the first kind. */
     private static String integrationItemOrFirst(String item,
-            java.util.List<Integrations.Instance> instances) {
+            java.util.List<Integrations.Instance> instances, java.util.Set<String> hidden) {
         boolean room = instances.size() < Integrations.MAX_INSTANCES;
+        if ("offered".equals(item)) {
+            return item;
+        }
         if (item != null) {
             if (room && (item.equals("add") || item.startsWith("d:")
-                    && Integrations.DEFINITIONS.containsKey(item.substring(2)))) {
+                    && Integrations.DEFINITIONS.containsKey(item.substring(2))
+                    && !hidden.contains(item.substring(2)))) {
                 return item;
             }
             for (Integrations.Instance instance : instances) {
@@ -3201,15 +3219,85 @@ public final class KioskActivity extends Activity {
         return instances.isEmpty() ? "add" : "i:" + instances.get(0).id;
     }
 
+    /** "4 of 5 offered": the line of Integrations offered at the foot of the Add list. */
+    private static String offeredLine(java.util.Set<String> hidden) {
+        int all = 0;
+        int shown = 0;
+        for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+            if (Integrations.offerable(definition)) {
+                all++;
+                shown += hidden.contains(definition.id) ? 0 : 1;
+            }
+        }
+        return shown + " of " + all + " offered";
+    }
+
+    /**
+     * Integrations offered, the web's: a switch per kind, grouped by who it is for, saying which
+     * kinds the Add lists show; with the fleet sharing the integrations, on every panel. Added
+     * ones keep running. Save is refused over a change made elsewhere meanwhile.
+     */
+    private LinearLayout offeredBox(KioskTheme theme, boolean wide) {
+        LinearLayout card = card(theme, "Integrations offered");
+        java.util.Set<String> stored = KioskConfig.hiddenKindsOf(this);
+        String baseline = Integrations.storeHidden(stored);
+        TextView hint = new FlushText(this);
+        hint.setText("What Add an integration lists. Added ones keep running.");
+        hint.setTextColor(theme.subtext);
+        hint.setTextSize(14);
+        card.addView(hint, matchWrapClose());
+        java.util.Map<String, CompoundButton> switches = new java.util.LinkedHashMap<>();
+        for (String[] audience : Integrations.AUDIENCE_WORDS) {
+            boolean head = false;
+            for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
+                if (!Integrations.offerable(definition)
+                        || !audience[0].equals(Integrations.audienceOf(definition.id))) {
+                    continue;
+                }
+                if (!head) {
+                    card.addView(fieldCaption(theme, audience[1]), matchWrapClose());
+                    head = true;
+                }
+                CompoundButton on = themedSwitch(theme, definition.name,
+                        !stored.contains(definition.id));
+                switches.put(definition.id, on);
+                card.addView(on, matchWrapClose());
+            }
+        }
+        Button save = primaryButton(theme, "Save");
+        save.setOnClickListener(view -> {
+            if (!Integrations.storeHidden(KioskConfig.hiddenKindsOf(this)).equals(baseline)) {
+                Toast.makeText(this, "Not saved: Integrations offered was changed elsewhere"
+                        + " while this page was open. Showing the current choice.",
+                        Toast.LENGTH_LONG).show();
+                afterIntegrationChange(wide, "offered");
+                return;
+            }
+            java.util.Set<String> ticked = new java.util.HashSet<>();
+            for (java.util.Map.Entry<String, CompoundButton> one : switches.entrySet()) {
+                if (one.getValue().isChecked()) {
+                    ticked.add(one.getKey());
+                }
+            }
+            IntegrationSettings.setOffered(this, ticked);
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+            afterIntegrationChange(wide, "offered");
+        });
+        card.addView(buttonRow(save), matchWrapClose());
+        return card;
+    }
+
     /** Below 840 dp, an integration's box as a page of its own, back to the list. */
     private void showIntegrationItemPage(String select) {
         if (widthClass() == 2) {
             showIntegrationsPage(select);
             return;
         }
-        String item = integrationItemOrFirst(select, KioskConfig.integrationsOf(this));
+        String item = integrationItemOrFirst(select, KioskConfig.integrationsOf(this),
+                KioskConfig.hiddenKindsOf(this));
         currentScreen = () -> showIntegrationItemPage(item);
-        LinearLayout page = subPage(item.equals("add") ? "Add an integration"
+        LinearLayout page = subPage(item.equals("offered") ? "Integrations offered"
+                : item.equals("add") ? "Add an integration"
                 : item.startsWith("d:") ? "New integration" : "Edit integration",
                 () -> showIntegrationsPage(null));
         KioskTheme theme = currentTheme();
@@ -3238,10 +3326,11 @@ public final class KioskActivity extends Activity {
         if (item.equals("add")) {
             // The kinds this version offers, each opening its box to add one.
             LinearLayout card = card(theme, "Add an integration");
+            java.util.Set<String> hidden = KioskConfig.hiddenKindsOf(this);
             boolean first = true;
             for (Integrations.Definition definition : Integrations.DEFINITIONS.values()) {
-                if ("business".equals(definition.edition)) {
-                    // Business does not exist yet: nothing of it is offered.
+                if (!Integrations.offered(definition, hidden)) {
+                    // Business does not exist yet, and an unticked kind is not offered.
                     continue;
                 }
                 String kind = "d:" + definition.id;
@@ -3250,7 +3339,19 @@ public final class KioskActivity extends Activity {
                         () -> openIntegrationItem(wide, kind), false), first);
                 first = false;
             }
+            // Which kinds this list shows, at its foot (decided 2026-10-27), set apart from
+            // the kinds as on the web.
+            if (!first) {
+                card.addView(new View(this), new LinearLayout.LayoutParams(1, dp(16)));
+                first = true;
+            }
+            addListRow(card, theme, glyphRow(theme, R.drawable.ic_sensor_tune,
+                    "Integrations offered", offeredLine(hidden), null,
+                    () -> openIntegrationItem(wide, "offered"), false), first);
             return card;
+        }
+        if (item.equals("offered")) {
+            return offeredBox(theme, wide);
         }
         Integrations.Instance instance = null;
         Integrations.Definition definition;
@@ -5015,7 +5116,7 @@ public final class KioskActivity extends Activity {
             }
             String item = "i:" + entry.optString("id");
             addListRow(integrationsCard, theme, glyphRow(theme, R.drawable.ic_integrations,
-                    entry.optString("name"), integrationLine(entry),
+                    entry.optString("name"), integrationLine(entry, KioskConfig.hiddenKindsOf(this)),
                     integrationSwitch(theme, entry.optString("id"), entry.optString("name"),
                             entry.optBoolean("enabled")),
                     () -> showIntegrationsPage(item), false, false),

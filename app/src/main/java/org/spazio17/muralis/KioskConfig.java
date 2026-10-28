@@ -1232,6 +1232,21 @@ final class KioskConfig {
                 .apply();
     }
 
+    private static final String INTEGRATIONS_HIDDEN = "integrations_hidden";
+
+    /** The kinds unticked under Integrations offered: the Add lists leave them out. */
+    static java.util.Set<String> hiddenKindsOf(Context context) {
+        return Integrations.parseHidden(storageContext(context)
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(INTEGRATIONS_HIDDEN, ""));
+    }
+
+    static void storeHiddenKinds(Context context, java.util.Collection<String> hidden) {
+        storageContext(context).getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(INTEGRATIONS_HIDDEN, Integrations.storeHidden(hidden))
+                .apply();
+    }
+
     /** The stored automations; the shipped default until something is stored. */
     static java.util.List<Automations.Rule> automationsOf(Context context) {
         return Automations.parse(storageContext(context)

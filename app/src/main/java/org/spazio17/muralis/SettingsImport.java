@@ -161,6 +161,8 @@ final class SettingsImport {
                 return CertificatePins.format(CertificatePins.parse((String) value));
             case "integrations":
                 return Integrations.storeInstances(Integrations.parseInstances((String) value));
+            case "integrations_hidden":
+                return Integrations.storeHidden(Integrations.parseHidden((String) value));
 
             default:
                 if (key.startsWith("clock_options_")) {

@@ -1909,8 +1909,10 @@ public final class KioskService extends Service implements KioskCommandDispatche
                 java.util.Map<String, String> beaconLines = beacons == null
                         ? java.util.Collections.<String, String>emptyMap() : beacons.lines();
                 lists.put("beacons", Beacons.listKey(beaconLines.keySet()));
+                // The unticked kinds too: a change under Integrations offered redraws the Add list.
                 String integrationsKey = IntegrationRunner.listKey(
-                        KioskRuntimeState.integrations());
+                        KioskRuntimeState.integrations()) + "|"
+                        + Integrations.storeHidden(KioskConfig.hiddenKindsOf(this));
                 lists.put("integrations_home", integrationsKey);
                 lists.put("integrations_page", integrationsKey);
                 // The Fleet page: the panels' health, counts and groups (FleetHealth.listKey).
