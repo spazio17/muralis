@@ -1019,7 +1019,7 @@ final class HttpAdminServer {
                     Collections.singletonMap("Location", "/fleet?tab=alerts"));
         } else if (path.equals("/alerts") && method.equals("POST")) {
             Map<String, String> form = parseFormBody(headers, body);
-            String refused = saveAlerts(form);
+            String refused = saveShared(form, "alerts");
             FleetView alerts = FleetView.of(Collections.singletonMap("tab", "alerts"));
             alerts.scope = form.getOrDefault("scope", FleetDocument.EVERYONE);
             // Saved, a fresh page that says so, so a reload does not post again.
@@ -1029,6 +1029,25 @@ final class HttpAdminServer {
             } else {
                 writeResponse(output, 400, "text/html; charset=utf-8",
                         bytes(buildFleetPage(refused, alerts)));
+            }
+        } else if (path.equals("/fleet/shared") && method.equals("POST")) {
+            // A shared section's values, edited in place for the scope that shares them (part
+            // C, 2026-10-28), as the alerts are.
+            Map<String, String> form = parseFormBody(headers, body);
+            String section = form.getOrDefault("section", "");
+            String refused = java.util.Arrays.asList(FleetDocument.SECTIONS).contains(section)
+                    && !section.equals("integrations") ? saveShared(form, section)
+                    : "Not saved: no such shared section.";
+            FleetView shared = FleetView.of(Collections.singletonMap("tab",
+                    section.equals("alerts") ? "alerts" : "shared"));
+            shared.scope = form.getOrDefault("scope", FleetDocument.EVERYONE);
+            shared.section = section;
+            if (refused == null) {
+                writeResponse(output, 303, "text/plain", bytes("saved"),
+                        Collections.singletonMap("Location", shared.address() + "&saved=1"));
+            } else {
+                writeResponse(output, 400, "text/html; charset=utf-8",
+                        bytes(buildFleetPage(refused, shared)));
             }
         } else if (path.equals("/page-options") && method.equals("GET")) {
             writeResponse(output, 200, "text/html; charset=utf-8",
@@ -2565,6 +2584,11 @@ final class HttpAdminServer {
      * bar's subtitle, the uptime is in the stats readout.
      */
     private String dashboardSummary(KioskConfig config) {
+        return dashboardSummary(context, config);
+    }
+
+    /** What the dashboard shows, in a line: the app, the cameras, the integration or the host. */
+    static String dashboardSummary(Context context, KioskConfig config) {
         // An app or cameras instead of the page say so, as the Dashboard choice does.
         if (!KioskConfig.appLockOf(context).isEmpty()) {
             return "App: " + KioskConfig.appLockLabelOf(context);
@@ -6044,6 +6068,11 @@ final class HttpAdminServer {
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */
     private static final String BLANK_KEEPS = "Blank keeps the current one.";
+    /** Where an alert is said, on both surfaces: what the topic and the web address are for. */
+    static final String ALERTS_WHERE = "An alert shows as a notification on the panel that"
+            + " raises the alert. Alerts can also go to an MQTT topic, for a smart home or a"
+            + " monitoring system, and to a web address as a POST, for a chat or a ticketing"
+            + " tool; an empty box skips that destination.";
 
     /** The Network speaker section's line: off, on with its port, or why it is not on. */
     private static String speakerSummary(KioskConfig config) {
@@ -8186,10 +8215,10 @@ final class HttpAdminServer {
                 + " id=\"speakers-volume\" min=\"0\" max=\"100\" value=\"50\"></label>"
                 + "<p class=\"hint\" id=\"speakers-result\" hidden></p>"
                 + "<ul class=\"list seg\" id=\"speakers-list\" hidden>" + rows + "</ul>"
-                + "<p class=\"hint\">Only a panel with its network speaker on takes Say, Play and"
-                + " the volume; Stop all reaches every panel. A panel that is not reached does not"
-                + " play it later. Each panel's network speaker is switched in its own place on"
-                + " this page.</p></div>";
+                + "<p class=\"hint\">Only a panel with the network speaker on takes Say, Play and"
+                + " the volume; Stop all reaches every panel. A panel not reached does not play"
+                + " the sound later. Each panel's network speaker is switched in Settings, under"
+                + " Sound.</p></div>";
     }
 
     /**
@@ -8433,37 +8462,44 @@ final class HttpAdminServer {
                 + "<button type=\"button\" data-view=\"list\" aria-pressed=\"true\">List</button>"
                 + "<button type=\"button\" data-view=\"pictures\" aria-pressed=\"false\">Pictures"
                 + "</button></div></div></div>");
-        // One action bar, always there (the sketch of 2026-10-27): its first words say whom it
-        // acts on, every panel shown or the ticked ones, then Announce, Identify, Reload page,
-        // the group to add them to with Add to group (kept together), and Remove, which needs a
-        // tick and never acts on all. Close clears the ticks.
-        nav.append("<div class=\"selbar\" id=\"fleet-selbar\"><span id=\"fleet-selcount\">")
-                .append(sorted.size() == 1 ? "1 panel" : "All " + sorted.size() + " panels")
-                .append("</span><button type=\"button\" class=\"ib\" data-sel=\"close\""
-                + " aria-label=\"Close\" title=\"Close\" hidden>").append(glyph("close"))
-                .append("</button><div class=\"actions tight\">");
-        if (sorted.size() > 1) {
-            nav.append("<button type=\"button\" class=\"text\" data-sel=\"say\">Announce"
-                    + "</button>");
-        }
-        nav.append("<button type=\"button\" class=\"text\" data-sel=\"identify\">Identify"
-                + "</button><button type=\"button\" class=\"text\" data-sel=\"reload\">Reload"
-                + " page</button>");
+        // The list's header row, the selection bar in one (Juri's choice of 2026-10-28 on the
+        // sketch after Gmail, Drive and Material's contextual app bar): with nothing ticked the
+        // box that ticks every panel shown, how many there are, Identify all and a menu with
+        // Announce to all, Reload every page and Add all to a group; with ticks Close, "2
+        // selected", Announce, Identify, Reload and the menu with Add to a group and Remove,
+        // which needs a tick and never acts on all. admin_fleet.js switches between the two.
+        nav.append("<div class=\"listhead\" id=\"fleet-selbar\"><label class=\"tick\""
+                + " data-when=\"none\"><input type=\"checkbox\" id=\"fleet-tick-all\""
+                + " aria-label=\"Tick every panel shown\"></label><button type=\"button\""
+                + " class=\"ib\" data-sel=\"close\" data-when=\"ticked\" aria-label=\"Clear"
+                + " the ticks\" title=\"Clear the ticks\" hidden>").append(glyph("close"))
+                .append("</button><span id=\"fleet-selcount\">")
+                .append(sorted.size() == 1 ? "1 panel" : sorted.size() + " panels")
+                // With ticks the actions are glyphs named on hover and for screen readers: the
+                // list's column is narrow beside the chosen panel.
+                .append("</span><button type=\"button\" class=\"text\" data-sel=\"identify\""
+                        + " data-when=\"none\">Identify all</button><button type=\"button\""
+                        + " class=\"ib\" data-sel=\"say\" data-when=\"ticked\" hidden"
+                        + " title=\"Announce\" aria-label=\"Announce\">").append(glyph("audio"))
+                .append("</button><button type=\"button\" class=\"ib\" data-sel=\"identify\""
+                        + " data-when=\"ticked\" hidden title=\"Identify\" aria-label=\"Identify\">")
+                .append(glyph("panel")).append("</button><button type=\"button\" class=\"ib\""
+                        + " data-sel=\"reload\" data-when=\"ticked\" hidden title=\"Reload\""
+                        + " aria-label=\"Reload\">").append(glyph("reload")).append("</button>"
+                        + "<div class=\"overflow\"><button type=\"button\" class=\"ib\""
+                        + " id=\"fleet-more\" aria-haspopup=\"menu\" aria-expanded=\"false\""
+                        + " aria-controls=\"fleet-more-menu\" title=\"More\" aria-label=\"More\">")
+                .append(glyph("more")).append("</button><div class=\"m3menu\" id=\"fleet-more-menu\""
+                        + " role=\"menu\"><button type=\"button\" data-sel=\"say\""
+                        + " data-when=\"none\">Announce to all…</button><button type=\"button\""
+                        + " data-sel=\"reload\" data-when=\"none\">Reload every page</button>");
         if (!groups.isEmpty()) {
-            nav.append("<span class=\"togroup\"><select id=\"fleet-sel-group\""
-                    + " aria-label=\"Group to add them to\">");
-            for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
-                nav.append("<option value=\"").append(escapeHtml(group.getKey())).append("\">")
-                        .append(escapeHtml(group.getValue())).append("</option>");
-            }
-            nav.append("</select><button type=\"button\" class=\"text\" data-sel=\"group\">Add to"
-                    + " group</button></span>");
+            nav.append("<button type=\"button\" data-sel=\"group-dialog\" data-none=\"Add all to"
+                    + " a group…\" data-ticked=\"Add to a group…\">Add all to a group…</button>");
         }
-        nav.append("<button type=\"button\" class=\"text danger\" data-sel=\"remove\" hidden>"
-                + "Remove</button></div><p class=\"hint\" id=\"fleet-sel-result\" hidden></p></div>");
-        // Select all: ticks every panel shown, for Remove or to keep a choice while filtering.
-        nav.append("<label class=\"selall\"><input type=\"checkbox\" id=\"fleet-tick-all\">"
-                + "Select all</label>");
+        nav.append("<button type=\"button\" class=\"danger\" data-sel=\"remove\""
+                + " data-when=\"ticked\" hidden>Remove from the fleet</button></div></div>"
+                + "<p class=\"hint\" id=\"fleet-sel-result\" hidden></p></div>");
         nav.append("<div id=\"fleet-rows\"").append(fleetLists(key)).append(">");
         StringBuilder bad = new StringBuilder();
         StringBuilder good = new StringBuilder();
@@ -8579,7 +8615,7 @@ final class HttpAdminServer {
         }
         // Its own settings, asked of that panel when it is opened (admin_fleet.js), each section
         // with where its values come from; one opens its own page, changed there.
-        html.append("<p class=\"label\">Its settings</p><div class=\"psettings\" data-panel=\"")
+        html.append("<p class=\"label\">Settings</p><div class=\"psettings\" data-panel=\"")
                 .append(id).append("\"><p class=\"hint\">Asking the panel...</p></div>");
         if (member.self) {
             // What this panel follows, here with its groups since 2026-10-28 (its own section
@@ -8588,14 +8624,6 @@ final class HttpAdminServer {
                     "Follow the fleet's shared settings", " data-follow",
                     FleetDocument.followsFleet(entry))).append("</div>");
         }
-        // The network speaker's state is asked of that panel when it is opened.
-        html.append("<p class=\"label\">Network speaker</p><div class=\"pspeaker\" data-panel=\"")
-                .append(id).append("\"><span class=\"s\" data-state>Asking the panel...</span>"
-                        + "<label class=\"slider small\"><span class=\"sr\">Volume of ")
-                .append(name).append("</span><input type=\"range\" min=\"0\" max=\"100\""
-                        + " value=\"0\" data-volume disabled></label><input type=\"checkbox\""
-                        + " class=\"sw\" data-switch disabled aria-label=\"Network speaker of ")
-                .append(name).append("\"></div>");
         html.append("<div class=\"actions\"><button type=\"button\" class=\"text\" data-identify=\"")
                 .append(id).append("\">Identify</button>")
                 // That panel's settings, or Muralis left there, without its corner taps.
@@ -8613,8 +8641,8 @@ final class HttpAdminServer {
                     .append(escapeHtml(settingsAt("fleet"))).append("\" data-confirm=\"")
                     // The panel's question, in the same words.
                     .append(escapeHtml("Leave the fleet " + KioskConfig.fleetNameOf(context)
-                            + "?\n\nThis panel stops trusting the fleet's panels and keeps its"
-                            + " own settings. It can join again with a new code."))
+                            + "?\n\nThis panel stops trusting the fleet's panels and keeps the"
+                            + " current settings. Joining again takes a new code."))
                     .append("\">Leave the fleet</button>");
         } else {
             // For a panel that cannot leave by itself; one that is reachable is told.
@@ -8739,18 +8767,9 @@ final class HttpAdminServer {
         return html.toString();
     }
 
-    /** The settings section a shared section is changed in on this panel, or null. */
-    private static String settingsBoxOf(String section) {
-        switch (section) {
-            case "web_admin": return "webadmin";
-            case "alerts": return null;
-            default: return section;
-        }
-    }
-
     /**
-     * The Shared settings tab: the scope as chips, then one row per section with what it shares,
-     * Alerts among them and History last; at the right the chosen one (list-detail).
+     * The Shared settings tab: the scope as chips, then one row per section with what it shares;
+     * at the right the chosen one, edited in place for the scope, with who has it (list-detail).
      */
     private String fleetSharedTab(java.util.Map<String, Object> list, FleetView view, String key) {
         java.util.Map<String, String> groups = FleetDocument.groups(list);
@@ -8867,37 +8886,59 @@ final class HttpAdminServer {
             return html.append(values == null ? "" : fleetAlertsForm(scope, values))
                     .append("</section>").toString();
         }
-        if (values != null) {
-            html.append("<dl class=\"values\">");
-            for (FleetProfile.Field field : FleetProfile.fields(section)) {
-                if (field.type.equals("password") || !values.containsKey(field.key)) {
-                    continue;
-                }
-                Object value = values.get(field.key);
-                String text = field.type.equals("switch") ? (Boolean.TRUE.equals(value) ? "On" : "Off")
-                        : FleetProfile.shown(value);
-                if (field.options != null) {
-                    for (int i = 0; i + 1 < field.options.length; i += 2) {
-                        if (field.options[i].equals(text)) {
-                            text = field.options[i + 1];
-                        }
-                    }
-                }
-                html.append("<dt>").append(escapeHtml(field.label)).append("</dt><dd>")
-                        .append(escapeHtml(text.isEmpty() ? "None" : text)).append("</dd>");
-            }
-            if (section.equals("integrations")) {
-                html.append("<dt>Integrations</dt><dd>")
-                        .append(escapeHtml(FleetProfile.summary(section, values))).append("</dd>");
-            }
-            html.append("</dl>");
+        if (values != null && section.equals("integrations")) {
+            // The list is changed on the Integrations page of the panel that shares it.
+            html.append("<dl class=\"values\"><dt>Integrations</dt><dd>")
+                    .append(escapeHtml(FleetProfile.summary(section, values))).append("</dd></dl>");
+        } else if (values != null) {
+            // Edited in place for the scope (the sketch of 2026-10-27): no "change on this
+            // panel", which changed one panel only.
+            String scopeName = FleetDocument.EVERYONE.equals(scope) ? "the whole fleet"
+                    : FleetDocument.groupName(list, scope);
+            html.append("<form method=\"post\" action=\"/fleet/shared\">")
+                    .append(hidden("scope", scope)).append(hidden("section", section))
+                    .append(profileFields("shared-" + section, section, values))
+                    .append("<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save for ")
+                    .append(escapeHtml(scopeName)).append("</button></div></form>");
         }
-        String box = settingsBoxOf(section);
-        if (box != null) {
-            html.append("<div class=\"actions\"><a class=\"btn text\" href=\"").append(settingsAt(box))
-                    .append("\">Change on this panel").append(glyph("next")).append("</a></div>");
+        if (values != null) {
+            html.append(sharedWho(list, scope, section));
         }
         return html.append("</section>").toString();
+    }
+
+    /**
+     * Who has a shared section (part C, 2026-10-28): each panel that takes it from this scope,
+     * and whether it applied it, is waiting for it, or refused it and why.
+     */
+    private String sharedWho(java.util.Map<String, Object> list, String scope, String section) {
+        Long stamp = FleetDocument.sharedBy(list, section).get(scope);
+        java.util.Map<String, java.util.Map<String, Object>> entries = new java.util.HashMap<>();
+        for (java.util.Map<String, Object> entry : FleetDocument.members(list)) {
+            entries.put(TinyJson.string(entry, FleetDocument.ID, ""), entry);
+        }
+        StringBuilder rows = new StringBuilder();
+        for (FleetHealth.Member member : FleetServer.healthMembers(context)) {
+            java.util.Map<String, Object> entry = entries.get(member.id);
+            if (entry == null || !scope.equals(FleetDocument.sourceGroup(list, entry, section))) {
+                continue;
+            }
+            String state = FleetHealth.sharedState(member, section, stamp == null ? 0 : stamp);
+            rows.append("<li class=\"two\"><span class=\"lead\"><span class=\"dot ")
+                    .append(FleetHealth.APPLIED.equals(state) ? "ok" : FleetHealth.REFUSED
+                            .equals(state) ? "warn" : "off").append("\"></span></span><span"
+                            + " class=\"text\"><span class=\"h\">").append(escapeHtml(member.name))
+                    .append("</span><span class=\"s\">").append(escapeHtml(FleetHealth
+                            .sharedStateWords(member, section, stamp == null ? 0 : stamp)))
+                    .append("</span></span></li>");
+        }
+        String in = FleetDocument.EVERYONE.equals(scope) ? "the whole fleet"
+                : FleetDocument.groupName(list, scope);
+        return "<p class=\"label\">On the panels of " + escapeHtml(in) + "</p>"
+                + (rows.length() == 0 ? "<p class=\"hint\">No panel takes this setting from here.</p>"
+                        : "<ul class=\"list\">" + rows + "</ul>")
+                + "<p class=\"hint\">A saved shared setting reaches every panel automatically; a"
+                + " panel that was offline catches up when back online.</p>";
     }
 
     /**
@@ -8906,6 +8947,7 @@ final class HttpAdminServer {
      */
     private String fleetAlertsForm(String scope, java.util.Map<String, Object> values) {
         return "<form method=\"post\" action=\"/alerts\">" + hidden("scope", scope)
+                + "<p class=\"hint\">" + escapeHtml(ALERTS_WHERE) + "</p>"
                 + profileFields("alerts-alerts", "alerts", values)
                 + "<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
                 + "</button></div></form>";
@@ -8929,7 +8971,7 @@ final class HttpAdminServer {
                 }
                 String from = one.optString("from", "");
                 one.put("label", FleetDocument.sectionLabel(section));
-                one.put("from_words", from.isEmpty() ? "Its own"
+                one.put("from_words", from.isEmpty() ? "Not shared"
                         : FleetDocument.EVERYONE.equals(from) ? "Whole fleet"
                         : FleetDocument.groupName(list, from));
             }
@@ -8968,8 +9010,8 @@ final class HttpAdminServer {
                 ? null : answer.optJSONObject("sections").optJSONObject(section);
         if (one == null) {
             return html.append("<div class=\"card\"><p>").append(escapeHtml(name))
-                    .append(" did not answer: is it on, on this network, with Muralis"
-                            + " open?</p></div>").append(pageEnd()).toString();
+                    .append(" did not answer: check that the panel is on, on this network,"
+                            + " with Muralis open.</p></div>").append(pageEnd()).toString();
         }
         String from = one.optString("from", "");
         if (!from.isEmpty()) {
@@ -8977,8 +9019,8 @@ final class HttpAdminServer {
             String in = FleetDocument.EVERYONE.equals(from) ? "the whole fleet"
                     : FleetDocument.groupName(KioskConfig.fleetDocumentOf(context), from);
             return html.append("<div class=\"card\"><p>Shared in ").append(escapeHtml(in))
-                    .append(": change it for ").append(FleetDocument.EVERYONE.equals(from)
-                            ? "the whole fleet" : "the group").append(", or stop sharing it.</p>"
+                    .append(": change the setting for ").append(FleetDocument.EVERYONE.equals(from)
+                            ? "the whole fleet" : "the group").append(", or stop sharing.</p>"
                             + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/fleet?tab="
                             + "shared&amp;scope=").append(scope).append("&amp;section=")
                     .append(escapeHtml(section)).append("\">Shared settings")
@@ -9068,23 +9110,24 @@ final class HttpAdminServer {
         StringBuilder html = new StringBuilder("<section class=\"card\"><h2>History</h2>");
         java.util.List<FleetServer.HistoryEntry> history = FleetServer.history(context);
         if (history.isEmpty()) {
-            html.append("<p class=\"hint\">No versions kept yet.</p>");
+            html.append("<p class=\"hint\">No changes kept yet.</p>");
         }
         int shownCount = 0;
         html.append("<ul class=\"list seg\">");
         for (FleetServer.HistoryEntry entry : history) {
             if (shownCount++ == FleetServer.HISTORY_SHOWN) {
-                html.append("</ul><details class=\"older\"><summary>Older versions</summary>"
+                html.append("</ul><details class=\"older\"><summary>Older changes</summary>"
                         + "<ul class=\"list seg\">");
             }
-            html.append("<li class=\"two\"><span class=\"text\"><span class=\"h\">Version ")
-                    .append(entry.version).append(entry.held ? ", held now" : "").append("</span>"
-                            + "<span class=\"s wrap\">").append(escapeHtml(entry.author)).append(", ")
-                    .append(escapeHtml(FleetServer.readableTime(entry.updated))).append(". ")
-                    .append(entry.changes.isEmpty()
-                            ? "No change to the fleet's name, panels, groups or shared settings."
-                            : escapeHtml(capitalized(String.join("; ", entry.changes))) + ".")
-                    .append("</span></span>");
+            // What changed, who and when; the version number is the fleet's own bookkeeping
+            // and says nothing a person can act on (Juri, 2026-10-28).
+            html.append("<li class=\"two\"><span class=\"text\"><span class=\"h wrap\">")
+                    .append(entry.changes.isEmpty() ? "No change to the fleet's name, panels,"
+                            + " groups or shared settings"
+                            : escapeHtml(capitalized(String.join("; ", entry.changes))))
+                    .append("</span><span class=\"s\">").append(escapeHtml(entry.author))
+                    .append(", ").append(escapeHtml(FleetServer.readableTime(entry.updated)))
+                    .append(entry.held ? " · now" : "").append("</span></span>");
             // Restore brings back a version's name, groups and shared settings, never its
             // panels: a version that only changed panels has nothing to restore.
             boolean panelsOnly = !entry.changes.isEmpty();
@@ -9097,12 +9140,12 @@ final class HttpAdminServer {
                         .append(hidden("what", "restore"))
                         .append(hidden("version", Long.toString(entry.version)))
                         .append(hidden("return", back.address()))
-                        .append("<button class=\"ib\" type=\"submit\" aria-label=\"Restore version ")
-                        .append(entry.version).append(" as new\" title=\"Restore as new\""
-                                + " data-confirm=\"").append(escapeHtml("Restore version "
-                                + entry.version + " as new?\n\nIts fleet name, groups and shared"
-                                + " settings are written as a new version for every panel; the"
-                                + " panels of the fleet stay as they are now."))
+                        .append("<button class=\"ib\" type=\"submit\" aria-label=\"Restore\""
+                                + " title=\"Restore\""
+                                + " data-confirm=\"").append(escapeHtml("Restore the fleet settings of "
+                                + FleetServer.readableTime(entry.updated) + "?\n\nThe fleet name,"
+                                + " groups and shared settings are set again for every panel; the"
+                                + " list of panels stays unchanged."))
                         .append("\">").append(glyph("reload")).append("</button></form></span>");
             }
             html.append("</li>");
@@ -9112,8 +9155,8 @@ final class HttpAdminServer {
             html.append("</details>");
         }
         html.append("<p class=\"hint\">The last ").append(KioskConfig.FLEET_HISTORY_SIZE)
-                .append(" versions. Restore as new brings back a version's name, groups and shared"
-                        + " settings; the panels stay.</p></section>");
+                .append(" changes. Restore sets the fleet name, groups and shared settings back"
+                        + " to that moment; the list of panels stays.</p></section>");
         return html.toString();
     }
 
@@ -9124,6 +9167,26 @@ final class HttpAdminServer {
      * link to it does.
      */
     private String fleetDialogs(java.util.Map<String, Object> list) {
+        // Add to a group: a short list of the groups, not a menu field inside the bar.
+        StringBuilder choices = new StringBuilder();
+        boolean firstGroup = true;
+        for (java.util.Map.Entry<String, String> group : FleetDocument.groups(list).entrySet()) {
+            choices.append("<label class=\"radio\"><input type=\"radio\" name=\"fleet-group\""
+                    + " value=\"").append(escapeHtml(group.getKey())).append('"')
+                    .append(firstGroup ? " checked" : "").append("><span>")
+                    .append(escapeHtml(group.getValue())).append("</span></label>");
+            firstGroup = false;
+        }
+        String groupDialog = choices.length() == 0 ? "" : "<dialog id=\"fleet-group-dialog\""
+                + " class=\"sheet\" aria-label=\"Add to a group\"><div class=\"card\"><h2"
+                + " id=\"fleet-group-title\">Add to a group</h2>" + choices
+                + "<div class=\"actions\"><button type=\"button\" class=\"text\" data-close>"
+                + "Cancel</button><button type=\"button\" class=\"primary\" data-sel=\"group\">"
+                + "Add</button></div></div></dialog>";
+        return groupDialog + fleetDialogsBody(list);
+    }
+
+    private String fleetDialogsBody(java.util.Map<String, Object> list) {
         // The form's own first line repeats the dialog's title here: left out.
         String byCode = addByCodeForm(null, null).replaceFirst("^<p class=\"hint\">[^<]*</p>", "")
                 .replaceFirst("(<form[^>]*>)",
@@ -9151,17 +9214,19 @@ final class HttpAdminServer {
                                 + "</dialog>" : "");
     }
 
-    /** What the Alerts pane posts: the values, shared with the scope the form names. */
-    private String saveAlerts(Map<String, String> form) {
+    /**
+     * What a shared section's form posts (the alerts' and every other section's): the values,
+     * shared with the scope the form names; empty passwords keep the shared ones.
+     */
+    private String saveShared(Map<String, String> form, String section) {
         if (!FleetServer.proStatus(context).pro) {
-            return "Not changed: the fleet's alerts are Muralis Pro. " + FleetServer.proLine(context);
+            return "Not changed: the All panels page is Muralis Pro. " + FleetServer.proLine(context);
         }
-        String section = "alerts";
         java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
         String asked = form.getOrDefault("scope", "");
         String scope = list != null && (FleetDocument.EVERYONE.equals(asked)
                 || FleetDocument.groups(list).containsKey(asked)) ? asked
-                : FleetProfile.alertsScope(list);
+                : section.equals("alerts") ? FleetProfile.alertsScope(list) : FleetDocument.EVERYONE;
         java.util.Map<String, Object> shared = list == null ? null
                 : FleetDocument.sectionValues(list, scope, section);
         String[] problem = new String[1];

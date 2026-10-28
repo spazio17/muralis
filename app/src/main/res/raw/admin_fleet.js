@@ -91,13 +91,12 @@ all('#fleet-tools [data-view]').forEach(function(o){o.setAttribute('aria-pressed
 var rows=document.getElementById('fleet-rows');if(rows){rows.classList.toggle('pictures',pictures);}
 apply();});});
 
-// A panel opened at the right: its picture and its speaker, once each time it is opened.
+// A panel opened at the right: its picture and its settings, once each time it is opened.
 // Only a panel on screen is asked: a phone shows the list alone, and its panes are not seen.
 function opened(pane){if(!pane||pane.hidden||pane.dataset.asked||pane.offsetParent===null){return;}
 pane.dataset.asked='1';
 var box=pane.querySelector('.fleet-shot');
 if(box){shoot(box.querySelector('img'),box.querySelector('p'),box.getAttribute('data-panel'),box.querySelector('[data-taken]'));}
-var speaker=pane.querySelector('.pspeaker');if(speaker){speakerLoad(speaker);}
 var own=pane.querySelector('.psettings');if(own){settingsLoad(own);}}
 // Its settings: each section of that panel with its summary and where it comes from; its own
 // opens a page that changes it on that panel, a shared one the scope that shares it.
@@ -115,7 +114,7 @@ var rows='';SECTIONS.forEach(function(key){var one=sections[key];if(!one){return
 var href=one.from?'/fleet?tab=shared&scope='+encodeURIComponent(one.from)+'&section='+key
 :'/fleet/panel-settings?panel='+encodeURIComponent(id)+'&section='+key;
 rows+='<li class="two"><a class="rowlink plain" href="'+esc(href)+'"><span class="text"><span class="h">'+esc(one.label)
-+'</span><span class="s">'+esc(one.summary)+' · '+esc(one.from_words)+'</span></span></a></li>';});
++'</span><span class="s">'+esc(one.from_words)+' · '+esc(one.summary)+'</span></span></a></li>';});
 box.innerHTML='<ul class="list seg">'+rows+'</ul>';})
 .catch(function(){notReached('Not reached: the panel did not answer.');});}
 all('.ld .detail>.pane').forEach(function(pane){
@@ -124,23 +123,6 @@ if(window.MutationObserver){new MutationObserver(function(){if(pane.hidden){dele
 .observe(pane,{attributes:true,attributeFilter:['hidden']});}});
 document.addEventListener('click',function(e){var b=e.target.closest('[data-shot]');if(!b){return;}
 var box=b.closest('.fleet-shot');shoot(box.querySelector('img'),box.querySelector('p'),b.getAttribute('data-shot'),box.querySelector('[data-taken]'));});
-
-// A panel's network speaker: its state, switch and volume, for that panel alone.
-function speakerPaint(el,p){var state=el.querySelector('[data-state]'),vol=el.querySelector('[data-volume]'),sw=el.querySelector('[data-switch]');
-if(!p){state.textContent='Not reached';vol.disabled=true;sw.disabled=true;return;}
-if(p.too_old){state.textContent='Its Muralis is too old for this';vol.disabled=true;sw.disabled=true;return;}
-if(!p.reached){state.textContent='Not reached';vol.disabled=true;sw.disabled=true;return;}
-state.textContent=!p.on?'Speaker off':p.playing?'Playing':'Idle';
-sw.disabled=false;sw.checked=!!p.on;vol.disabled=!p.on;if(p.volume>=0&&document.activeElement!==vol){vol.value=p.volume;}}
-function speakerLoad(el){var id=el.getAttribute('data-panel');
-fetch('/api/fleet/speaker?panel='+encodeURIComponent(id),{credentials:'same-origin',cache:'no-store'})
-.then(function(r){return r.json();}).then(function(j){speakerPaint(el,(j.panels||[])[0]);})
-.catch(function(){speakerPaint(el,null);});}
-document.addEventListener('change',function(e){var el=e.target.closest('.pspeaker');if(!el){return;}
-var id=el.getAttribute('data-panel'),target='panels:'+id;
-var body=e.target.hasAttribute('data-switch')?enc({target:target,action:'switch',value:e.target.checked?'on':'off'})
-:enc({target:target,action:'volume',value:e.target.value});
-post('/api/fleet/speaker',body).then(function(){setTimeout(function(){speakerLoad(el);},800);});});
 
 // Identify one panel; the answer under it.
 function tell(line,text){if(!line){return;}line.textContent=text;line.hidden=!text;
@@ -180,28 +162,40 @@ var notice=page.content.querySelector('.notice');var pane=form.closest('.fleetpa
 tell(pane?pane.querySelector('[data-identified]'):null,notice?notice.textContent:'Not done.');});})
 .catch(function(){all('input[data-at-once]',form).forEach(function(c){c.checked=c.defaultChecked;});});});
 
-// The action bar, always there: it acts on the ticked panels, or on every panel shown when none
-// is ticked, and its first words say which; Close and Remove only with ticks.
+// The list's header row, the selection bar in one: with nothing ticked it acts on every panel
+// shown, with ticks on those; data-when says which of its parts show in which state, and the
+// header turns tinted while panels are ticked.
 var bar=document.getElementById('fleet-selbar');
 function ticked(){return all('li.fleetrow:not([hidden]) input[data-tick]:checked');}
 function shownBoxes(){return all('li.fleetrow:not([hidden]) input[data-tick]');}
 var tickAll=document.getElementById('fleet-tick-all');
 function selection(){if(!bar){return;}var n=ticked().length,count=shownBoxes().length;
-// "All" only while every panel shows; a filter names how many it leaves.
-document.getElementById('fleet-selcount').textContent=n?n+' selected':count===1?'1 panel':(count===all('li.fleetrow').length?'All ':'')+count+' panels';
-bar.querySelector('[data-sel=close]').hidden=!n;bar.querySelector('[data-sel=remove]').hidden=!n;
-if(tickAll){var shown=all('li.fleetrow:not([hidden]) input[data-tick]').length;tickAll.checked=n>0&&n===shown;tickAll.indeterminate=n>0&&n<shown;}}
+document.getElementById('fleet-selcount').textContent=n?n+' selected':count===1?'1 panel':count+' panels';
+bar.classList.toggle('selecting',n>0);
+all('[data-when]',bar).forEach(function(el){el.hidden=el.getAttribute('data-when')===(n?'none':'ticked');});
+var toGroup=bar.querySelector('[data-sel=group-dialog]');if(toGroup){toGroup.textContent=toGroup.getAttribute(n?'data-ticked':'data-none');}
+if(tickAll){tickAll.checked=n>0&&n===count;tickAll.indeterminate=n>0&&n<count;}}
 if(tickAll){tickAll.addEventListener('change',function(){var on=tickAll.checked;
-all('li.fleetrow:not([hidden]) input[data-tick]').forEach(function(c){c.checked=on;});selection();});}
+shownBoxes().forEach(function(c){c.checked=on;});selection();});}
 document.addEventListener('change',function(e){if(e.target.matches('input[data-tick]')){selection();}});
 function clear(){all('input[data-tick]').forEach(function(c){c.checked=false;});selection();}
 function say(text){tell(document.getElementById('fleet-sel-result'),text);}
+// The header's menu: opens under its button, closes on a choice, a click elsewhere or Escape.
+var more=document.getElementById('fleet-more'),moreMenu=document.getElementById('fleet-more-menu');
+function closeMore(){if(moreMenu&&moreMenu.classList.contains('open')){moreMenu.classList.remove('open');more.setAttribute('aria-expanded','false');}}
+if(more&&moreMenu){all('button',moreMenu).forEach(function(b){b.setAttribute('role','menuitem');});
+more.addEventListener('click',function(e){e.stopPropagation();if(moreMenu.classList.contains('open')){closeMore();return;}
+moreMenu.classList.add('open');more.setAttribute('aria-expanded','true');var first=moreMenu.querySelector('button:not([hidden])');if(first){first.focus();}});
+document.addEventListener('click',function(e){if(!moreMenu.contains(e.target)){closeMore();}});
+moreMenu.addEventListener('keydown',function(e){if(e.key==='Escape'){closeMore();more.focus();}});}
 document.addEventListener('click',function(e){var b=e.target.closest('[data-sel]');if(!b){return;}
+closeMore();
 var what=b.getAttribute('data-sel'),boxes=ticked();
 // Nothing ticked: every panel shown, except for Remove, which never acts on all.
 if(!boxes.length&&what!=='remove'){boxes=shownBoxes();}
 var ids=boxes.map(function(c){return c.closest('li').getAttribute('data-id');});
 var keys=boxes.filter(function(c){return !c.hasAttribute('data-self');}).map(function(c){return c.value;});
+var whom=(ticked().length||ids.length===1?'':'all ')+(ids.length===1?'1 panel':ids.length+' panels');
 if(what==='close'){clear();return;}
 if(what==='identify'){Promise.all(ids.map(function(id){return identify(id,null);})).then(function(done){
 var missed=done.filter(function(ok){return !ok;}).length;
@@ -209,20 +203,24 @@ say(missed?'Identify reached '+(done.length-missed)+' of '+done.length+' panels.
 if(what==='reload'){Promise.all(ids.map(function(id){return post('/api/fleet/panel',enc({panel:id,action:'reload'}))
 .then(function(r){return r.ok;}).catch(function(){return false;});})).then(function(done){
 var missed=done.filter(function(ok){return !ok;}).length;
-say(missed?'Reload page reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
-// Announce: only what to say or play and the volume, for the panels the bar names; the dialog
-// keeps its list of panels out of sight, ticked to match.
+say(missed?'Reload reached '+(done.length-missed)+' of '+done.length+' panels.':'');});return;}
+// Announce: only what to say or play and the volume, for the panels the header names; the
+// dialog keeps its list of panels out of sight, ticked to match.
 if(what==='say'){if(!openDialog('announce')){return;}
 all('#speakers-list li.speaker').forEach(function(li){var t=li.querySelector('[data-tick]');if(t){t.checked=ids.indexOf(li.getAttribute('data-id'))>=0;}});
-var head=document.querySelector('#announce h2');
-if(head){head.textContent='Announce to '+(ids.length>1&&ids.length===all('li.fleetrow').length?'all ':'')+(ids.length===1?'1 panel':ids.length+' panels');}
+var head=document.querySelector('#announce h2');if(head){head.textContent='Announce to '+whom;}
 return;}
-if(what==='group'){var group=document.getElementById('fleet-sel-group').value;
-post('/fleet',enc({what:'add_to_group',group:group,panels:boxes.map(function(c){return c.value;}).join(','),'return':'/fleet'}))
+// Add to a group: a short dialog with the groups; Add sends the panels the header names.
+if(what==='group-dialog'){var title=document.getElementById('fleet-group-title');
+if(title){title.textContent='Add '+whom+' to';}openDialog('fleet-group-dialog');return;}
+if(what==='group'){var picked=document.querySelector('#fleet-group-dialog input[name=fleet-group]:checked');
+var dialog=document.getElementById('fleet-group-dialog');if(dialog&&dialog.close){dialog.close();}
+if(!picked){return;}
+post('/fleet',enc({what:'add_to_group',group:picked.value,panels:boxes.map(function(c){return c.value;}).join(','),'return':'/fleet'}))
 .then(function(r){if(r.ok){clear();soon();}else{say('Not done: the panels were not added to the group.');}});return;}
 if(what==='remove'){var skipped=boxes.length-keys.length;
-if(!keys.length){say('This panel leaves with Leave, in its settings, not with Remove.');return;}
-if(!window.confirm('Remove '+(keys.length===1?'1 panel':keys.length+' panels')+'?\n\nThey are taken off the fleet\'s list on every panel and their keys are no longer trusted. They can join again with a new code.'+(skipped?'\n\nThis panel is not removed: it leaves with Leave.':''))){return;}
+if(!keys.length){say('This panel leaves with Leave the fleet, in the panel details, not with Remove.');return;}
+if(!window.confirm('Remove '+(keys.length===1?'1 panel':keys.length+' panels')+' from the fleet?\n\nThe fleet\'s list on every panel drops '+(keys.length===1?'the panel':'the panels')+', and '+(keys.length===1?'the key is':'the keys are')+' no longer trusted. Joining again takes a new code.'+(skipped?'\n\nThis panel is not removed: use Leave the fleet.':''))){return;}
 post('/fleet',enc({what:'remove_panels',panels:keys.join(','),'return':'/fleet'}))
 .then(function(r){if(r.ok){location.href='/fleet';}else{say('Not done: the panels were not removed.');}});}});
 

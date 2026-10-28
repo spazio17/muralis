@@ -616,14 +616,9 @@ html:not(.js) .fleetfind{display:none}
 .fleetfind select,.selbar select{appearance:none;-webkit-appearance:none;padding:0 44px 0 16px;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center/24px}
 .fleetfind input[type=search]{padding:0 16px}
 /* Select all, above the rows: its box under the rows' boxes. */
-.selall{display:flex;align-items:center;min-height:48px;margin:0 0 0 16px;font-size:14px;color:var(--subtext);cursor:pointer}
-@media (min-width:840px){.ld .nav .selall{margin-left:12px}}
-.selall input{margin:0 15px}
-html:not(.js) .selall{display:none}
 .selbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:8px 12px;background:var(--secondary-container);color:var(--on-secondary-container);border-radius:12px;margin:0 4px 8px}
 .selbar #fleet-selcount{font-weight:500;flex:1 1 auto}
 .selbar>.actions{flex-basis:100%;margin:0}
-.togroup{display:inline-flex;align-items:center;gap:8px}
 #announce .cardhead .count{margin-left:auto}
 .selbar select{height:40px;border-radius:20px;border:1px solid var(--outline);color:inherit;font:inherit}
 .ld .nav p.label{margin:16px 12px 4px;font-size:12px;font-weight:500;color:var(--subtext)}
@@ -631,6 +626,24 @@ li.fleetrow{flex-wrap:wrap}
 li.fleetrow label.tick{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:48px;cursor:pointer}
 li.fleetrow .groups{font-size:12px;color:var(--subtext);white-space:nowrap}
 li.fleetrow .trail{display:flex;align-items:center;gap:4px}
+/* The list's header row, the selection bar in one (2026-10-28): the box or Close, the count,
+   the actions and a menu; tinted while panels are ticked, as Material's contextual bar. */
+.listhead{display:flex;align-items:center;gap:4px;min-height:56px;padding:0 4px;margin:0 0 4px;border-radius:12px}
+.listhead>label.tick{display:flex;align-items:center;justify-content:center;min-width:48px;min-height:48px;cursor:pointer}
+.listhead #fleet-selcount{flex:0 0 auto;margin-right:auto;font-weight:500;padding-left:4px;white-space:nowrap}
+.listhead .ib{width:40px;min-width:40px;height:40px}
+.listhead.selecting{background:var(--secondary-container);color:var(--on-secondary-container)}
+.listhead>button.text{padding:0 8px}
+html.js .listhead .m3menu button.danger{color:var(--bad)}
+html:not(.js) .listhead{display:none}
+/* The name gets the row's room (2026-10-28): the status dot in a narrow lead, the name cut with
+   an ellipsis rather than broken mid-word. */
+li.fleetrow .lead{width:20px}
+li.fleetrow .rowlink{min-width:0}
+li.fleetrow .text{min-width:0}
+li.fleetrow .text .h,li.fleetrow .text .s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The scope chips stand apart from the card under them. */
+.chips.scopes{margin:0 0 12px}
 .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--subtext)}
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.off{background:var(--outline)}
 /* A row's picture shows in Pictures alone, once it has come: back on List it goes (2026-10-27),
@@ -645,8 +658,6 @@ img.rowshot{display:none}
 .hchip svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .hchip.bad{background:var(--error-container);color:var(--on-error-container)}
 .groupchips .chips label.fchip{margin:0}
-.pspeaker{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.pspeaker .s{flex:1 1 120px;color:var(--subtext)}
 li.group .chips{margin-top:6px}
 .rchip{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:6px;background:var(--surface-alt);font-size:12px}
 li.group .trail{display:flex;align-items:center;gap:0}

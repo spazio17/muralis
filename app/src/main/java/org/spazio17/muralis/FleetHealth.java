@@ -50,6 +50,41 @@ final class FleetHealth {
         /** 0 or above when not known (a reading is always negative). */
         int wifiRssiDbm;
         String android = "";
+        /** The version of the fleet's list it holds, -1 when not known (part C, 2026-10-28). */
+        long listVersion = -1;
+        /** The shared sections it refused, by section, with why, as it reported them. */
+        java.util.Map<String, String> refused = new java.util.HashMap<>();
+    }
+
+    static final String APPLIED = "applied";
+    static final String WAITING = "waiting";
+    static final String REFUSED = "refused";
+
+    /**
+     * Whether {@code member} has a shared section that was stamped at list version
+     * {@code stamp}: refused (it said why), waiting (it holds an older list, or none it told), or
+     * applied. This panel itself is never waiting: it holds what it shows.
+     */
+    static String sharedState(Member member, String section, long stamp) {
+        if (member.refused.containsKey(section)) {
+            return REFUSED;
+        }
+        if (!member.self && (member.listVersion < 0 || member.listVersion < stamp)) {
+            return WAITING;
+        }
+        return APPLIED;
+    }
+
+    /** The state in a person's words, the same on both surfaces. */
+    static String sharedStateWords(Member member, String section, long stamp) {
+        switch (sharedState(member, section, stamp)) {
+            case REFUSED:
+                return "Refused: " + member.refused.get(section);
+            case WAITING:
+                return member.online ? "Waiting for the panel" : "Waiting: catches up when back";
+            default:
+                return "Applied";
+        }
     }
 
     /**

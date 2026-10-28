@@ -2404,7 +2404,19 @@ final class FleetServer {
             JSONObject health = new JSONObject()
                     .put("app_version", BuildConfig.VERSION_NAME)
                     .put("android", android.os.Build.VERSION.RELEASE)
-                    .put("device_owner", KioskService.isDeviceOwner(context));
+                    .put("device_owner", KioskService.isDeviceOwner(context))
+                    // What it holds and what of it it refused, for the managing panel to say
+                    // who has the shared settings (part C, 2026-10-28).
+                    .put("list_version", FleetDocument.version(KioskConfig.fleetDocumentOf(
+                            context)));
+            JSONObject refused = new JSONObject();
+            for (String section : FleetDocument.SECTIONS) {
+                java.util.List<String> why = KioskRuntimeState.fleetProfileRefused(section);
+                if (!why.isEmpty()) {
+                    refused.put(section, String.join("; ", why));
+                }
+            }
+            health.put("refused", refused);
             if (facts != null) {
                 health.put("battery_percent", facts.batteryPercent)
                         .put("charging", facts.charging)
@@ -2566,6 +2578,14 @@ final class FleetServer {
                 member.batteryPercent = health.optInt("battery_percent", -1);
                 member.charging = health.optBoolean("charging");
                 member.wifiRssiDbm = health.optInt("wifi_rssi_dbm", 0);
+                member.listVersion = health.optLong("list_version", -1);
+                JSONObject refused = health.optJSONObject("refused");
+                if (refused != null) {
+                    for (java.util.Iterator<String> keys = refused.keys(); keys.hasNext(); ) {
+                        String section = keys.next();
+                        member.refused.put(section, refused.optString(section));
+                    }
+                }
             }
             members.add(member);
         }
@@ -2725,23 +2745,22 @@ final class FleetServer {
             }
         }
         if (old == null) {
-            return "version " + version + " is not in this panel's history";
+            return "that change is no longer in this panel's history";
         }
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
         if (held == null) {
             return "this panel holds no fleet list yet";
         }
         if (version == FleetDocument.version(held)) {
-            return "version " + version + " is the one held now";
+            return "nothing to restore: the fleet is already like that";
         }
         java.util.Map<String, Object> restored = old;
         return writeList(context, null, null, (identity, list) -> FleetDocument.restored(restored,
                 list, KioskConfig.deviceIdOf(context), java.time.Instant.now().toString()),
-                "Restored version " + version + " as a new one");
+                "Restored the earlier fleet settings");
     }
 
-    /** One version of the history as both surfaces show it. */
-    /** How many versions the history shows before "Older versions". */
+    /** How many changes the history shows before "Older changes". */
     static final int HISTORY_SHOWN = 5;
 
     /**
@@ -3274,7 +3293,7 @@ final class FleetServer {
                     "/fleet/panel", new JSONObject().put("action", action));
             // An older Muralis has no such route.
             return reply.status == 200 ? null : reply.status == 404
-                    ? "its Muralis is too old for this" : reply.reason();
+                    ? "the panel runs an older Muralis without this" : reply.reason();
         } catch (IOException | RuntimeException | JSONException failed) {
             Log.d(TAG, "Panel action not answered by key " + FleetTls.shortForm(spki) + ": "
                     + failed.getMessage());
@@ -3307,7 +3326,18 @@ final class FleetServer {
         try {
             for (String section : OWN_SECTIONS) {
                 java.util.Map<String, Object> values = FleetProfile.read(context, section);
-                String summary = FleetProfile.summary(section, values);
+                // The dashboard as it shows, an app, cameras or an integration included, not
+                // only the web page the section carries.
+                String summary = "dashboard".equals(section)
+                        ? HttpAdminServer.dashboardSummary(context, KioskConfig.load(context))
+                        : FleetProfile.summary(section, values);
+                // The section carries the web page; one that shows something else says so, so
+                // "Whole fleet" is never read as the fleet sharing the clock or the app.
+                if ("dashboard".equals(section) && (!KioskConfig.appLockOf(context).isEmpty()
+                        || !KioskConfig.shownCamerasOf(context).isEmpty()
+                        || !KioskConfig.shownIntegrationOf(context).isEmpty())) {
+                    summary += ", not the web page";
+                }
                 JSONObject shown = new JSONObject();
                 for (FleetProfile.Field field : FleetProfile.fields(section)) {
                     Object value = values.get(field.key);
@@ -3344,9 +3374,9 @@ final class FleetServer {
                 : FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey());
         String from = me == null ? null : FleetDocument.sourceGroup(list, me, section);
         if (from != null) {
-            return "it is shared in " + (FleetDocument.EVERYONE.equals(from)
+            return "shared in " + (FleetDocument.EVERYONE.equals(from)
                     ? "the whole fleet" : "the group " + FleetDocument.groupName(list, from))
-                    + ": change it there";
+                    + ": change the setting there";
         }
         java.util.Map<String, Object> values = new java.util.LinkedHashMap<>(
                 FleetProfile.read(context, section));
@@ -3425,7 +3455,7 @@ final class FleetServer {
                     "/fleet/settings", new JSONObject().put("section", section)
                             .put("values", new JSONObject(TinyJson.write(values))));
             return reply.status == 200 ? null : reply.status == 404
-                    ? "its Muralis is too old for this" : reply.reason();
+                    ? "the panel runs an older Muralis without this" : reply.reason();
         } catch (IOException | RuntimeException | JSONException failed) {
             Log.d(TAG, "Settings change not answered by key " + FleetTls.shortForm(spki) + ": "
                     + failed.getMessage());
