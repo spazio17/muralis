@@ -666,6 +666,11 @@ img.rowshot{display:none}
 li.group .chips{margin-top:6px}
 .rchip{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:6px;background:var(--surface-alt);font-size:12px}
 li.group .trail{display:flex;align-items:center;gap:0}
+#group-list .grab{cursor:grab;touch-action:none}
+#group-list .grab svg{stroke-width:3.5}
+#group-list li.dragging{position:relative;z-index:2;box-shadow:0 6px 16px rgba(0,0,0,.28)}
+#group-list li.dragging .grab{cursor:grabbing}
+#group-list li.shifting{transition:transform .12s ease-out}
 li.group .trail form{margin:0}
 dl.values{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin:12px 0}
 dl.values dt{color:var(--subtext)}dl.values dd{margin:0;overflow-wrap:anywhere}

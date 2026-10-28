@@ -2671,6 +2671,30 @@ final class FleetServer {
                 java.time.Instant.now().toString()), "Made the group " + name.trim());
     }
 
+    /**
+     * Moves group {@code id} to place {@code to}, 0 the highest (it wins over the groups below
+     * for a panel in several), by an arrow or a drag; null when done, else why not.
+     */
+    static String moveGroup(Context context, String id, int to) {
+        java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);
+        if (held == null) {
+            return "this panel holds no fleet list yet";
+        }
+        java.util.List<String> order = new java.util.ArrayList<>(
+                FleetDocument.groups(held).keySet());
+        int at = order.indexOf(id);
+        if (at < 0) {
+            return "no such group";
+        }
+        if (to < 0 || to >= order.size() || to == at) {
+            return null;
+        }
+        order.add(to, order.remove(at));
+        return writeList(context, null, null, (identity, list) -> FleetDocument.withGroupOrder(list,
+                KioskConfig.deviceIdOf(context), order, java.time.Instant.now().toString()),
+                "Moved the group " + FleetDocument.groupName(held, id) + " to place " + (to + 1));
+    }
+
     /** A group removed for good, what it shared with it. */
     static String removeGroup(Context context, String id) {
         java.util.Map<String, Object> held = KioskConfig.fleetDocumentOf(context);

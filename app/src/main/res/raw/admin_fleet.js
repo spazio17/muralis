@@ -7,7 +7,7 @@
 // each is a call to that panel. Group chips and the share switches apply at once. The list, the
 // counts and a panel's health are drawn again by admin_stats.js when the fleet's key moves; the
 // filters are applied again after that. Every click is handled here by delegation, so a region
-// drawn again needs nothing bound anew.
+// drawn again needs nothing bound anew. On Groups a group is dragged to a new place.
 (function(){
 var DEADLINE=8000;
 function all(selector,root){return Array.prototype.slice.call((root||document).querySelectorAll(selector));}
@@ -193,6 +193,49 @@ say(missed?'Reload reached '+(done.length-missed)+' of '+done.length+' panels.':
 if(what==='say'){if(!openDialog('announce')){return;}
 all('#speakers-list li.speaker').forEach(function(li){var t=li.querySelector('[data-tick]');if(t){t.checked=ids.indexOf(li.getAttribute('data-id'))>=0;}});
 var head=document.querySelector('#announce h2');if(head){head.textContent='Announce to '+(ids.length===1?'1 panel':ids.length+' panels');}}});
+
+// The Groups tab: a group is dragged by its grip to a new place, the higher one winning, with
+// the neighbours sliding aside as in an album (admin_pictures.js). Nothing moves until the drop,
+// which submits the row's own arrow form with the place it landed on, so the page comes back
+// drawn from the new order. A list drawn again during the drag leaves the drop with nothing to do.
+var gdrag=null;
+function groupRows(list){return Array.prototype.slice.call(list.children);}
+function placeGroup(){var d=gdrag,dy=d.lastY+window.scrollY-d.startY,h=d.heights[d.from],last=d.items.length-1;
+// Held inside the list, as on the panel, so the row cannot cover the heading or the field below.
+d.li.style.transform='translateY('+Math.max(d.tops[0]-d.tops[d.from],Math.min(d.tops[last]+d.heights[last]-h-d.tops[d.from],dy))+'px)';
+var centre=d.tops[d.from]+h/2+dy,to=d.from,i;
+for(i=d.from+1;i<d.items.length;i++){if(centre>d.tops[i]+d.heights[i]/2){to=i;}}
+for(i=d.from-1;i>=0;i--){if(centre<d.tops[i]+d.heights[i]/2){to=i;}}
+d.to=to;
+d.items.forEach(function(li,k){if(li===d.li){return;}
+var shift=k>d.from&&k<=to?-h:k<d.from&&k>=to?h:0;li.style.transform=shift?'translateY('+shift+'px)':'';});}
+document.addEventListener('pointerdown',function(e){
+var grab=e.target.closest?e.target.closest('#group-list .grab'):null;
+if(!grab||e.button>0){return;}
+e.preventDefault();
+var li=grab.closest('li'),items=groupRows(li.parentNode);
+gdrag={li:li,items:items,from:items.indexOf(li),to:items.indexOf(li),pointer:e.pointerId,
+startY:e.clientY+window.scrollY,lastY:e.clientY,moved:false,
+tops:items.map(function(x){return x.getBoundingClientRect().top+window.scrollY;}),
+heights:items.map(function(x){return x.getBoundingClientRect().height;})};
+try{grab.setPointerCapture(e.pointerId);}catch(ignored){}});
+document.addEventListener('pointermove',function(e){var d=gdrag;
+if(!d||e.pointerId!==d.pointer){return;}
+d.lastY=e.clientY;
+if(!d.moved){if(Math.abs(e.clientY+window.scrollY-d.startY)<4){return;}
+d.moved=true;d.li.classList.add('dragging');
+d.items.forEach(function(li){if(li!==d.li){li.classList.add('shifting');}});}
+placeGroup();});
+function endGroupDrag(e,cancelled){var d=gdrag;
+if(!d||e.pointerId!==d.pointer){return;}
+gdrag=null;
+d.items.forEach(function(li){li.classList.remove('dragging','shifting');li.style.transform='';});
+if(cancelled||!d.moved||d.to===d.from||!d.li.isConnected){return;}
+var form=d.li.querySelector('input[name="what"][value="move_group"]');
+form=form&&form.form;if(!form){return;}
+form.querySelector('input[name="to"]').value=String(d.to);form.submit();}
+document.addEventListener('pointerup',function(e){endGroupDrag(e,false);});
+document.addEventListener('pointercancel',function(e){endGroupDrag(e,true);});
 
 // After admin_stats.js draws a region again: the filters, the pictures and the selection bar.
 document.addEventListener('muralis-lists',function(){apply();selection();});
