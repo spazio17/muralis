@@ -97,7 +97,27 @@ function opened(pane){if(!pane||pane.hidden||pane.dataset.asked||pane.offsetPare
 pane.dataset.asked='1';
 var box=pane.querySelector('.fleet-shot');
 if(box){shoot(box.querySelector('img'),box.querySelector('p'),box.getAttribute('data-panel'),box.querySelector('[data-taken]'));}
-var speaker=pane.querySelector('.pspeaker');if(speaker){speakerLoad(speaker);}}
+var speaker=pane.querySelector('.pspeaker');if(speaker){speakerLoad(speaker);}
+var own=pane.querySelector('.psettings');if(own){settingsLoad(own);}}
+// Its settings: each section of that panel with its summary and where it comes from; its own
+// opens a page that changes it on that panel, a shared one the scope that shares it.
+var SECTIONS=['dashboard','ambient','display','speaker','mqtt','web_admin'];
+function esc(t){var d=document.createElement('span');d.textContent=t==null?'':String(t);return d.innerHTML;}
+// Asked once more after a moment when not reached: the picture and the speaker are asked of the
+// same panel as it opens, and a busy panel can miss one of three calls at once.
+function settingsLoad(box,again){var id=box.getAttribute('data-panel');
+function notReached(text){if(!again){setTimeout(function(){settingsLoad(box,true);},2000);return;}
+box.innerHTML='<p class="hint">'+esc(text)+'</p>';}
+fetch('/api/fleet/settings?panel='+encodeURIComponent(id),{credentials:'same-origin',cache:'no-store'})
+.then(function(r){return r.json();}).then(function(j){var sections=j.sections;
+if(!sections){notReached('Not reached: '+(j.detail||'the panel did not answer')+'.');return;}
+var rows='';SECTIONS.forEach(function(key){var one=sections[key];if(!one){return;}
+var href=one.from?'/fleet?tab=shared&scope='+encodeURIComponent(one.from)+'&section='+key
+:'/fleet/panel-settings?panel='+encodeURIComponent(id)+'&section='+key;
+rows+='<li class="two"><a class="rowlink plain" href="'+esc(href)+'"><span class="text"><span class="h">'+esc(one.label)
++'</span><span class="s">'+esc(one.summary)+' · '+esc(one.from_words)+'</span></span></a></li>';});
+box.innerHTML='<ul class="list seg">'+rows+'</ul>';})
+.catch(function(){notReached('Not reached: the panel did not answer.');});}
 all('.ld .detail>.pane').forEach(function(pane){
 opened(pane);
 if(window.MutationObserver){new MutationObserver(function(){if(pane.hidden){delete pane.dataset.asked;}else{opened(pane);}})

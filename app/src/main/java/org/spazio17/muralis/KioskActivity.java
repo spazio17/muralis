@@ -6255,6 +6255,129 @@ public final class KioskActivity extends Activity {
     }
 
     /** Below 840 dp, one panel as a page of its own, back to the list. */
+    /**
+     * A panel's own section, read from that panel and changed there: its fields, Save on that
+     * panel; back to the All panels page. The web's /fleet/panel-settings.
+     */
+    private void showFleetPanelSettingsPage(String id, String section) {
+        java.util.Map<String, Object> entry = FleetServer.memberById(this, id);
+        if (entry == null || !FleetServer.proStatus(this).pro) {
+            showFleetPage();
+            return;
+        }
+        currentScreen = () -> showFleetPanelSettingsPage(id, section);
+        String name = TinyJson.string(entry, FleetDocument.NAME, id);
+        LinearLayout page = subPage(FleetDocument.sectionLabel(section) + " on " + name,
+                this::showFleetPage);
+        KioskTheme theme = currentTheme();
+        LinearLayout card = card(theme, null);
+        TextView asking = new FlushText(this);
+        asking.setText("Asking the panel...");
+        asking.setTextColor(theme.subtext);
+        card.addView(asking, matchWrapClose());
+        page.addView(paneOf(card), matchWrap());
+        setContentView(scrollPage(theme, page));
+        Context app = getApplicationContext();
+        new Thread(() -> {
+            org.json.JSONObject answer = FleetServer.settingsOf(app, entry);
+            mainHandler.post(() -> {
+                if (!card.isAttachedToWindow()) {
+                    return;
+                }
+                org.json.JSONObject one = answer == null || answer.optJSONObject("sections")
+                        == null ? null : answer.optJSONObject("sections").optJSONObject(section);
+                if (one == null || !one.optString("from", "").isEmpty()) {
+                    asking.setText(one == null ? name + " did not answer: is it on, on this"
+                            + " network, with Muralis open?" : "Shared with it: change it in"
+                            + " Shared settings, or stop sharing it.");
+                    return;
+                }
+                card.removeView(asking);
+                fillPanelSettings(card, theme, entry, section, one.optJSONObject("values"));
+            });
+        }, "MuralisFleetSettings").start();
+    }
+
+    /** The section's fields over the values that panel sent, and Save on that panel. */
+    private void fillPanelSettings(LinearLayout card, KioskTheme theme,
+            java.util.Map<String, Object> entry, String section, org.json.JSONObject values) {
+        Context app = getApplicationContext();
+        String name = TinyJson.string(entry, FleetDocument.NAME, "");
+        java.util.Map<String, java.util.function.Supplier<String>> read =
+                new java.util.LinkedHashMap<>();
+        java.util.Set<String> switches = new java.util.HashSet<>();
+        for (FleetProfile.Field field : FleetProfile.fields(section)) {
+            Object value = values.opt(field.key);
+            String text = value == null || value == org.json.JSONObject.NULL ? ""
+                    : value instanceof Number ? String.valueOf(((Number) value).longValue())
+                    : String.valueOf(value);
+            switch (field.type) {
+                case "switch": {
+                    CompoundButton on = themedSwitch(theme, field.label,
+                            Boolean.TRUE.equals(value));
+                    card.addView(on, matchWrapClose());
+                    read.put(field.key, () -> on.isChecked() ? "1" : "");
+                    switches.add(field.key);
+                    break;
+                }
+                case "select": {
+                    MenuField menu = new MenuField(card, theme, field.label);
+                    for (int i = 0; i + 1 < field.options.length; i += 2) {
+                        menu.add(field.options[i + 1], field.options[i]);
+                    }
+                    menu.select(text);
+                    read.put(field.key, menu::value);
+                    break;
+                }
+                default: {
+                    boolean secret = "password".equals(field.type);
+                    // A password box renders empty: empty keeps the stored one.
+                    EditText box = themedInput(theme, secret ? "" : text, secret);
+                    if ("number".equals(field.type)) {
+                        box.setInputType(InputType.TYPE_CLASS_NUMBER);
+                    } else if (!secret) {
+                        box.setInputType(InputType.TYPE_CLASS_TEXT
+                                | InputType.TYPE_TEXT_VARIATION_URI
+                                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+                    }
+                    if (secret && values.optBoolean(field.key + "_set")) {
+                        box.setHint("Blank keeps the current one");
+                    }
+                    addField(card, theme, field.label, box);
+                    read.put(field.key, () -> box.getText().toString());
+                }
+            }
+        }
+        Button save = primaryButton(theme, "Save on " + name);
+        save.setOnClickListener(view -> {
+            java.util.Map<String, String> form = new java.util.HashMap<>();
+            for (java.util.Map.Entry<String, java.util.function.Supplier<String>> one
+                    : read.entrySet()) {
+                // A switch sends only when on, as a web form does; a box always, so it can be
+                // emptied (a password box empty keeps the stored one, FleetServer.changeSettingsHere).
+                String typed = one.getValue().get();
+                if (!typed.isEmpty() || !switches.contains(one.getKey())) {
+                    form.put(one.getKey(), typed);
+                }
+            }
+            String[] problem = new String[1];
+            java.util.Map<String, Object> asked = FleetProfile.fromForm(section, form,
+                    new java.util.LinkedHashMap<>(), problem);
+            if (asked == null) {
+                Toast.makeText(this, "Not saved: " + problem[0] + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            hideKeyboardIfShown();
+            new Thread(() -> {
+                String refused = FleetServer.changeSettingsOn(app, entry, section, asked);
+                mainHandler.post(() -> Toast.makeText(app, refused == null ? "Saved on " + name
+                        : "Not saved: " + refused + ".", refused == null ? Toast.LENGTH_SHORT
+                        : Toast.LENGTH_LONG).show());
+            }, "MuralisFleetSettings").start();
+        });
+        card.addView(buttonRow(save), matchWrapClose());
+    }
+
     private void showFleetPanelPage(String id) {
         if (widthClass() == 2) {
             fleetPanel = id;
@@ -6378,6 +6501,61 @@ public final class KioskActivity extends Activity {
             }
             box.addView(groupChips, navRowParams());
         }
+        // Its own settings, asked of that panel off the main thread, each section with where its
+        // values come from; its own opens a page that changes it there, a shared one the scope
+        // that shares it (part B, 2026-10-28).
+        box.addView(fieldCaption(theme, "Its settings"), fleetLabelParams());
+        LinearLayout ownSettings = new LinearLayout(this);
+        ownSettings.setOrientation(LinearLayout.VERTICAL);
+        TextView asking = new FlushText(this);
+        asking.setText("Asking the panel...");
+        asking.setTextColor(theme.subtext);
+        asking.setTextSize(14);
+        ownSettings.addView(asking, matchWrapClose());
+        box.addView(ownSettings, matchWrapClose());
+        new Thread(() -> {
+            org.json.JSONObject answer = FleetServer.settingsOf(app, entry);
+            mainHandler.post(() -> {
+                if (!ownSettings.isAttachedToWindow()) {
+                    return;
+                }
+                ownSettings.removeAllViews();
+                org.json.JSONObject sections = answer == null ? null
+                        : answer.optJSONObject("sections");
+                if (sections == null) {
+                    asking.setText("Not reached: the panel did not answer.");
+                    ownSettings.addView(asking, matchWrapClose());
+                    return;
+                }
+                boolean first = true;
+                for (String section : FleetServer.OWN_SECTIONS) {
+                    org.json.JSONObject one = sections.optJSONObject(section);
+                    if (one == null) {
+                        continue;
+                    }
+                    String from = one.optString("from", "");
+                    String words = from.isEmpty() ? "Its own"
+                            : FleetDocument.EVERYONE.equals(from) ? "Whole fleet"
+                            : FleetDocument.groupName(list, from);
+                    Runnable open = () -> {
+                        if (from.isEmpty()) {
+                            showFleetPanelSettingsPage(TinyJson.string(entry, FleetDocument.ID,
+                                    ""), section);
+                        } else {
+                            fleetOpenPage = "";
+                            fleetTab = "shared";
+                            fleetScope = from;
+                            fleetSection = section;
+                            showFleetPage();
+                        }
+                    };
+                    addListRow(ownSettings, theme, glyphRow(theme, R.drawable.ic_sensor_tune,
+                            FleetDocument.sectionLabel(section), one.optString("summary")
+                                    + " · " + words, null, open, false), first);
+                    first = false;
+                }
+            });
+        }, "MuralisFleetSettings").start();
         box.addView(fieldCaption(theme, "Network speaker"), fleetLabelParams());
         LinearLayout speaker = new LinearLayout(this);
         speaker.setOrientation(LinearLayout.HORIZONTAL);

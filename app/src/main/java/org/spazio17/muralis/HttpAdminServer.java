@@ -1361,6 +1361,27 @@ final class HttpAdminServer {
             writeResponse(output, problem == null ? 200 : 409, "application/json",
                     bytes(problem == null ? "{\"status\":\"accepted\",\"detail\":\"\"}"
                             : rejectedJson(problem)));
+        } else if (path.equals("/api/fleet/settings") && method.equals("GET")) {
+            // A panel's own settings for the All panels page: each section's summary and where
+            // it comes from, with the group's name (part B, 2026-10-28).
+            java.util.Map<String, Object> member = FleetServer.memberById(context,
+                    queryValue(query, "panel"));
+            org.json.JSONObject answer = member == null ? null
+                    : FleetServer.settingsOf(context, member);
+            writeResponse(output, answer == null ? 409 : 200, "application/json",
+                    bytes(answer == null ? rejectedJson(member == null
+                            ? "no such panel is in this fleet" : "the panel did not answer")
+                            : namedSettings(answer).toString()));
+        } else if (path.equals("/fleet/panel-settings") && method.equals("GET")) {
+            writeResponse(output, 200, "text/html; charset=utf-8",
+                    bytes(buildPanelSettingsPage(queryValue(query, "panel"),
+                            queryValue(query, "section"), null)));
+        } else if (path.equals("/fleet/panel-settings") && method.equals("POST")) {
+            Map<String, String> form = parseFormBody(headers, body);
+            String refused = savePanelSettings(form);
+            writeResponse(output, refused == null ? 200 : 400, "text/html; charset=utf-8",
+                    bytes(buildPanelSettingsPage(form.get("panel"), form.get("section"),
+                            refused == null ? "Saved." : "Not saved: " + refused + ".")));
         } else if (path.equals("/api/fleet/identify") && method.equals("POST")) {
             Map<String, String> form = new java.util.HashMap<>(parseQuery(query));
             form.putAll(parseFormBody(headers, body));
@@ -8556,6 +8577,10 @@ final class HttpAdminServer {
             html.append("</div><div class=\"actions nojs\"><button class=\"tonal\""
                     + " type=\"submit\">Save groups</button></div></form>");
         }
+        // Its own settings, asked of that panel when it is opened (admin_fleet.js), each section
+        // with where its values come from; one opens its own page, changed there.
+        html.append("<p class=\"label\">Its settings</p><div class=\"psettings\" data-panel=\"")
+                .append(id).append("\"><p class=\"hint\">Asking the panel...</p></div>");
         if (member.self) {
             // What this panel follows, here with its groups since 2026-10-28 (its own section
             // keeps only Join, the port and the way in).
@@ -8880,17 +8905,132 @@ final class HttpAdminServer {
      * are raised only while they are shared.
      */
     private String fleetAlertsForm(String scope, java.util.Map<String, Object> values) {
-        String section = "alerts";
-        StringBuilder html = new StringBuilder("<form method=\"post\" action=\"/alerts\">")
-                .append(hidden("scope", scope)).append("<div class=\"switches\">");
+        return "<form method=\"post\" action=\"/alerts\">" + hidden("scope", scope)
+                + profileFields("alerts-alerts", "alerts", values)
+                + "<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
+                + "</button></div></form>";
+    }
+
+    /**
+     * A panel's own settings as settingsHere answers them, each section with its words and where
+     * its values come from in words: its own, the whole fleet, or the group by name.
+     */
+    private org.json.JSONObject namedSettings(org.json.JSONObject answer) {
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        org.json.JSONObject sections = answer.optJSONObject("sections");
+        if (sections == null) {
+            return answer;
+        }
+        try {
+            for (String section : FleetServer.OWN_SECTIONS) {
+                org.json.JSONObject one = sections.optJSONObject(section);
+                if (one == null) {
+                    continue;
+                }
+                String from = one.optString("from", "");
+                one.put("label", FleetDocument.sectionLabel(section));
+                one.put("from_words", from.isEmpty() ? "Its own"
+                        : FleetDocument.EVERYONE.equals(from) ? "Whole fleet"
+                        : FleetDocument.groupName(list, from));
+            }
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        return answer;
+    }
+
+    /**
+     * A panel's own section, read from that panel and changed there: the section's fields, Save
+     * on that panel. A section the fleet or a group shares with it is changed where it is
+     * shared, so the page says so and leads there instead.
+     */
+    private String buildPanelSettingsPage(String panel, String section, String notice) {
+        java.util.Map<String, Object> member = FleetServer.memberById(context,
+                panel == null ? "" : panel);
+        String back = "/fleet?panel=" + urlEncode(panel == null ? "" : panel);
+        if (!FleetServer.proStatus(context).pro || member == null
+                || !FleetServer.isOwnSection(section)) {
+            return pageStart("All panels", null, "/fleet") + "<div class=\"card\"><p>"
+                    + (member == null || !FleetServer.isOwnSection(section)
+                            ? "No such panel or section in this fleet."
+                            : "The All panels page is Muralis Pro. "
+                                    + escapeHtml(FleetServer.proLine(context)))
+                    + "</p></div>" + pageEnd();
+        }
+        String name = TinyJson.string(member, FleetDocument.NAME, panel);
+        String label = FleetDocument.sectionLabel(section);
+        StringBuilder html = new StringBuilder(pageStart(label + " on " + name, null, back));
+        if (notice != null) {
+            html.append("<p class=\"notice\">").append(escapeHtml(notice)).append("</p>");
+        }
+        org.json.JSONObject answer = FleetServer.settingsOf(context, member);
+        org.json.JSONObject one = answer == null || answer.optJSONObject("sections") == null
+                ? null : answer.optJSONObject("sections").optJSONObject(section);
+        if (one == null) {
+            return html.append("<div class=\"card\"><p>").append(escapeHtml(name))
+                    .append(" did not answer: is it on, on this network, with Muralis"
+                            + " open?</p></div>").append(pageEnd()).toString();
+        }
+        String from = one.optString("from", "");
+        if (!from.isEmpty()) {
+            String scope = escapeHtml(urlEncode(from));
+            String in = FleetDocument.EVERYONE.equals(from) ? "the whole fleet"
+                    : FleetDocument.groupName(KioskConfig.fleetDocumentOf(context), from);
+            return html.append("<div class=\"card\"><p>Shared in ").append(escapeHtml(in))
+                    .append(": change it for ").append(FleetDocument.EVERYONE.equals(from)
+                            ? "the whole fleet" : "the group").append(", or stop sharing it.</p>"
+                            + "<div class=\"actions\"><a class=\"btn tonal\" href=\"/fleet?tab="
+                            + "shared&amp;scope=").append(scope).append("&amp;section=")
+                    .append(escapeHtml(section)).append("\">Shared settings")
+                    .append(glyph("next")).append("</a></div></div>").append(pageEnd())
+                    .toString();
+        }
+        java.util.Map<String, Object> values = TinyJson.object(TinyJson.parse(
+                one.optJSONObject("values").toString()));
+        html.append("<section class=\"card\"><form method=\"post\" action=\"/fleet/panel-settings\">")
+                .append(hidden("panel", panel)).append(hidden("section", section))
+                .append(profileFields("panel-" + section, section, values))
+                .append("<div class=\"actions\"><button class=\"primary\" type=\"submit\">Save on ")
+                .append(escapeHtml(name)).append("</button></div></form></section>");
+        return html.append(pageEnd()).toString();
+    }
+
+    /** What the panel settings page posts: the section changed on that panel, or why not. */
+    private String savePanelSettings(Map<String, String> form) {
+        if (!FleetServer.proStatus(context).pro) {
+            return "the All panels page is Muralis Pro. " + FleetServer.proLine(context);
+        }
+        String section = form.getOrDefault("section", "");
+        java.util.Map<String, Object> member = FleetServer.memberById(context,
+                form.getOrDefault("panel", ""));
+        if (member == null || !FleetServer.isOwnSection(section)) {
+            return "no such panel or section in this fleet";
+        }
+        String[] problem = new String[1];
+        // Over nothing: only the fields posted go, and an empty password keeps the stored one.
+        java.util.Map<String, Object> values = FleetProfile.fromForm(section, form,
+                new java.util.LinkedHashMap<>(), problem);
+        if (values == null) {
+            return problem[0];
+        }
+        return FleetServer.changeSettingsOn(context, member, section, values);
+    }
+
+    /**
+     * A shared section's fields as a form's inputs, from FleetProfile.fields: switches, menus,
+     * boxes, and password boxes that render empty (empty keeps the stored one).
+     */
+    private static String profileFields(String prefix, String section,
+            java.util.Map<String, Object> values) {
+        StringBuilder html = new StringBuilder("<div class=\"switches\">");
         for (FleetProfile.Field field : FleetProfile.fields(section)) {
             Object value = values.get(field.key);
             String text = FleetProfile.shown(value);
+            String id = prefix + "-" + field.key;
             switch (field.type) {
                 case "switch":
-                    html.append(switchRow("alerts-" + section + "-" + field.key,
-                            field.label, " name=\"" + field.key + "\" value=\"1\"",
-                            Boolean.TRUE.equals(value)));
+                    html.append(switchRow(id, field.label, " name=\"" + field.key
+                            + "\" value=\"1\"", Boolean.TRUE.equals(value)));
                     break;
                 case "select": {
                     StringBuilder choices = new StringBuilder();
@@ -8898,27 +9038,23 @@ final class HttpAdminServer {
                         choices.append(selectOption(field.options[i], field.options[i + 1],
                                 text));
                     }
-                    html.append("</div>").append(selectField("alerts-" + section + "-"
-                            + field.key, field.key, field.label, null, choices.toString(),
-                            null)).append("<div class=\"switches\">");
+                    html.append("</div>").append(selectField(id, field.key, field.label, null,
+                            choices.toString(), null)).append("<div class=\"switches\">");
                     break;
                 }
                 case "password":
-                    html.append("</div>").append(fieldWithId("alerts-" + section + "-"
-                            + field.key, "password", field.key, field.label, "", "",
-                            text.isEmpty() ? "None shared." : BLANK_KEEPS))
+                    html.append("</div>").append(fieldWithId(id, "password", field.key,
+                            field.label, "", "", Boolean.TRUE.equals(values.get(field.key + "_set"))
+                                    || !text.isEmpty() ? BLANK_KEEPS : "None set."))
                             .append("<div class=\"switches\">");
                     break;
                 default:
-                    html.append("</div>").append(fieldWithId("alerts-" + section + "-"
-                            + field.key, "number".equals(field.type) ? "number" : "text",
-                            field.key, field.label, text, "", null))
+                    html.append("</div>").append(fieldWithId(id, "number".equals(field.type)
+                            ? "number" : "text", field.key, field.label, text, "", null))
                             .append("<div class=\"switches\">");
             }
         }
-        html.append("</div><div class=\"actions\"><button class=\"primary\" type=\"submit\">Save"
-                + "</button></div></form>");
-        return html.toString();
+        return html.append("</div>").toString();
     }
 
     /**

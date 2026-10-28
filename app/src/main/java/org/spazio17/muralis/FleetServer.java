@@ -1104,6 +1104,14 @@ final class FleetServer {
                 } else {
                     respond(output, 405, error("only POST"));
                 }
+            } else if ("/fleet/settings".equals(parts[1])) {
+                if ("GET".equals(parts[0])) {
+                    respond(output, 200, settingsHere(context));
+                } else if ("POST".equals(parts[0])) {
+                    changeSettingsAsked(body, output);
+                } else {
+                    respond(output, 405, error("only GET or POST"));
+                }
             } else if ("/fleet/values".equals(parts[1])) {
                 if ("POST".equals(parts[0])) {
                     takeValues(caller, body, output);
@@ -3269,6 +3277,157 @@ final class FleetServer {
                     ? "its Muralis is too old for this" : reply.reason();
         } catch (IOException | RuntimeException | JSONException failed) {
             Log.d(TAG, "Panel action not answered by key " + FleetTls.shortForm(spki) + ": "
+                    + failed.getMessage());
+            return "the panel did not answer";
+        }
+    }
+
+    /**
+     * The sections a panel's own settings are shown and changed in from any panel's All panels
+     * page (part B of the redesign, 2026-10-28): what the fleet can share, apart from the
+     * integrations, whose list has its own page, and the alerts, which are the fleet's.
+     */
+    static final String[] OWN_SECTIONS = {"dashboard", "ambient", "display", "speaker", "mqtt",
+            "web_admin"};
+
+    static boolean isOwnSection(String section) {
+        return java.util.Arrays.asList(OWN_SECTIONS).contains(section);
+    }
+
+    /**
+     * This panel's settings by section, as the All panels page shows them: each section's
+     * values, a password never (empty, with "_set" saying whether one is stored), its summary
+     * and where it comes from ("" its own, else the group's id or the whole fleet's).
+     */
+    static JSONObject settingsHere(Context context) {
+        JSONObject sections = new JSONObject();
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        java.util.Map<String, Object> me = list == null ? null
+                : FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey());
+        try {
+            for (String section : OWN_SECTIONS) {
+                java.util.Map<String, Object> values = FleetProfile.read(context, section);
+                String summary = FleetProfile.summary(section, values);
+                JSONObject shown = new JSONObject();
+                for (FleetProfile.Field field : FleetProfile.fields(section)) {
+                    Object value = values.get(field.key);
+                    if ("password".equals(field.type)) {
+                        shown.put(field.key + "_set", !FleetProfile.shown(value).isEmpty());
+                        shown.put(field.key, "");
+                    } else {
+                        shown.put(field.key, value == null ? JSONObject.NULL : value);
+                    }
+                }
+                String from = me == null ? null : FleetDocument.sourceGroup(list, me, section);
+                sections.put(section, new JSONObject().put("values", shown)
+                        .put("summary", summary).put("from", from == null ? "" : from));
+            }
+            return new JSONObject().put("sections", sections);
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /**
+     * Changes one of this panel's own sections as another panel's All panels page asks, through
+     * the checks a person's change takes (FleetProfile.apply); fields left out, and an empty
+     * password, keep what is stored. Null when done, else why not. A section the fleet or a
+     * group shares with this panel is changed there, never here, or the next sync would undo it.
+     */
+    static String changeSettingsHere(Context context, String section,
+            java.util.Map<String, Object> asked) {
+        if (!isOwnSection(section)) {
+            return "section must be one of " + String.join(", ", OWN_SECTIONS);
+        }
+        java.util.Map<String, Object> list = KioskConfig.fleetDocumentOf(context);
+        java.util.Map<String, Object> me = list == null ? null
+                : FleetDocument.memberByKey(list, KioskRuntimeState.fleetKey());
+        String from = me == null ? null : FleetDocument.sourceGroup(list, me, section);
+        if (from != null) {
+            return "it is shared in " + (FleetDocument.EVERYONE.equals(from)
+                    ? "the whole fleet" : "the group " + FleetDocument.groupName(list, from))
+                    + ": change it there";
+        }
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>(
+                FleetProfile.read(context, section));
+        for (FleetProfile.Field field : FleetProfile.fields(section)) {
+            Object value = asked.get(field.key);
+            if (value == null || ("password".equals(field.type)
+                    && FleetProfile.shown(value).isEmpty())) {
+                continue;
+            }
+            values.put(field.key, value);
+        }
+        java.util.List<String> refused = FleetProfile.apply(context, section, values);
+        return refused.isEmpty() ? null : String.join("; ", refused);
+    }
+
+    /** {@code POST /fleet/settings} with {"section", "values"}: see changeSettingsHere. */
+    private void changeSettingsAsked(byte[] body, OutputStream output) throws IOException {
+        String section;
+        java.util.Map<String, Object> values;
+        try {
+            JSONObject asked = new JSONObject(new String(body, StandardCharsets.UTF_8));
+            section = asked.optString("section", "");
+            JSONObject given = asked.optJSONObject("values");
+            values = given == null ? new java.util.HashMap<>()
+                    : TinyJson.object(TinyJson.parse(given.toString()));
+        } catch (JSONException | IllegalArgumentException malformed) {
+            respond(output, 400, error("the body must be a JSON object with a section and values"));
+            return;
+        }
+        String problem = changeSettingsHere(context, section, values);
+        if (problem != null) {
+            respond(output, 409, error(problem));
+            return;
+        }
+        try {
+            respond(output, 200, new JSONObject().put("status", "accepted"));
+        } catch (JSONException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /** {@code member}'s own settings (settingsHere), here or over the member endpoint; null when not reached. */
+    static JSONObject settingsOf(Context context, java.util.Map<String, Object> member) {
+        if (isSelf(context, member)) {
+            return settingsHere(context);
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return null;
+        }
+        try {
+            Reply reply = call(context, address, portOf(member, spki), spki, "GET",
+                    "/fleet/settings", null);
+            return reply.status == 200 ? reply.body : null;
+        } catch (IOException | RuntimeException failed) {
+            Log.d(TAG, "Settings not answered by key " + FleetTls.shortForm(spki) + ": "
+                    + failed.getMessage());
+            return null;
+        }
+    }
+
+    /** Changes {@code member}'s own section, here or over the member endpoint; null when done. */
+    static String changeSettingsOn(Context context, java.util.Map<String, Object> member, String section,
+            java.util.Map<String, Object> values) {
+        if (isSelf(context, member)) {
+            return changeSettingsHere(context, section, values);
+        }
+        String spki = TinyJson.string(member, FleetDocument.SPKI, "");
+        String address = addressOf(member, spki);
+        if (address.isEmpty()) {
+            return "the panel did not answer";
+        }
+        try {
+            Reply reply = call(context, address, portOf(member, spki), spki, "POST",
+                    "/fleet/settings", new JSONObject().put("section", section)
+                            .put("values", new JSONObject(TinyJson.write(values))));
+            return reply.status == 200 ? null : reply.status == 404
+                    ? "its Muralis is too old for this" : reply.reason();
+        } catch (IOException | RuntimeException | JSONException failed) {
+            Log.d(TAG, "Settings change not answered by key " + FleetTls.shortForm(spki) + ": "
                     + failed.getMessage());
             return "the panel did not answer";
         }
