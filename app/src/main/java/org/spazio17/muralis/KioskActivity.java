@@ -949,6 +949,9 @@ public final class KioskActivity extends Activity {
                                 + "front"));
     }
 
+    /** What the dashboard shows changed while the activity was not in front. */
+    private boolean dashboardChangedAway;
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -962,6 +965,13 @@ public final class KioskActivity extends Activity {
         }
         inFront = true;
         KioskRuntimeState.publishActivityInFront(true);
+        if (dashboardChangedAway) {
+            dashboardChangedAway = false;
+            if (!configurationVisible) {
+                applyKioskPolicy();
+                showDashboard(KioskConfig.load(this).dashboardUrl);
+            }
+        }
         // App lock: Muralis is back in front, over the app or because the app went away.
         if (AppLock.appUp || AppLock.opening) {
             // Muralis called forward on purpose (a pop-up, Identify, Ambient, the dark, a
@@ -4730,6 +4740,14 @@ public final class KioskActivity extends Activity {
             film.setTextColor(theme.subtext);
         }
         displayCard.addView(displayOffInput, matchWrapClose());
+        if (KioskService.isDeviceOwner(this)) {
+            // What Automatic means and where the time is set, as the web's box says it.
+            TextView displayOffMeaning = new FlushText(this);
+            displayOffMeaning.setTextSize(13);
+            displayOffMeaning.setTextColor(theme.subtext);
+            displayOffMeaning.setText(HttpAdminServer.DISPLAY_OFF_MEANING);
+            displayCard.addView(displayOffMeaning, matchWrapClose());
+        }
 
         TextView displayOffNote = new FlushText(this);
         displayOffNote.setTextSize(12);
@@ -15997,6 +16015,9 @@ public final class KioskActivity extends Activity {
         });
         input.setOnEditorActionListener((view, actionId, event) -> {
             hideKeyboard(view);
+            // Done applies too, as leaving the box does: the keyboard's key closed it and the
+            // value waited for a tap elsewhere (QA, 2026-10-29).
+            view.clearFocus();
             return true;
         });
     }
@@ -16325,6 +16346,22 @@ public final class KioskActivity extends Activity {
         hint.setTextSize(13);
         hint.setText("A web page can also be set from a computer, in the web admin.");
         page.addView(hint, matchWrap());
+        // The two combinations once more, and where a PIN is added: the first run ended with
+        // neither, and a person could not tell whether a PIN would be asked (QA, 2026-10-29).
+        KioskConfig stored = KioskConfig.load(this);
+        if (stored.touchscreen) {
+            TextView wayOut = new FlushText(this);
+            wayOut.setTextColor(theme.subtext);
+            wayOut.setTextSize(13);
+            wayOut.setText("Settings: "
+                    + EscapeSequence.describe(EscapeSequence.parse(stored.settingsSequence))
+                    + ". Home screen: "
+                    + EscapeSequence.describe(EscapeSequence.parse(stored.launcherSequence))
+                    + ". A PIN for both is added in Settings, Way out.");
+            LinearLayout.LayoutParams wayOutParams = matchWrap();
+            wayOutParams.topMargin = dp(8);
+            page.addView(wayOut, wayOutParams);
+        }
         setContentView(scrollPage(theme, page));
     }
 
@@ -20609,6 +20646,10 @@ public final class KioskActivity extends Activity {
                 // comes forward and its resume applies the choice; in front, at once.
                 if (AppLock.appUp) {
                     AppLock.bringMuralisForward(this);
+                } else if (!inFront && !configurationVisible) {
+                    // Changed while the panel sleeps: drawn when it is in front again, or the
+                    // old view stayed after the wake (QA, 2026-10-29).
+                    dashboardChangedAway = true;
                 } else if (inFront && configurationVisible) {
                     // The Dashboard choice and the menu's line follow the change.
                     redrawSettingsSoon();
