@@ -6513,6 +6513,15 @@ public final class KioskActivity extends Activity {
         return chip;
     }
 
+    /** Group {@code id} moved to place {@code to} by an arrow or a drag, then drawn again. */
+    private void moveGroupTo(Context app, String id, int to) {
+        fleetWork(app, () -> {
+            String refused = FleetServer.moveGroup(app, id, to);
+            mainHandler.post(() -> redrawInPlace(this::showFleetPage));
+            return refused;
+        });
+    }
+
     /** The Groups tab: each group with its panels, its shared settings and Remove; New group. */
     private LinearLayout fleetGroupsCard(KioskTheme theme, java.util.Map<String, Object> list) {
         Context app = getApplicationContext();
@@ -6528,10 +6537,17 @@ public final class KioskActivity extends Activity {
             none.setText("No groups yet.");
             card.addView(none, matchWrapClose());
         }
+        // The rows in a list of their own, which is what a drag moves a row along.
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        card.addView(rows, matchWrap());
         boolean first = true;
+        int place = 0;
         for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
             String id = group.getKey();
             String name = group.getValue();
+            int at = place;
+            place++;
             WrapRow names = new WrapRow();
             int members = 0;
             for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
@@ -6543,6 +6559,17 @@ public final class KioskActivity extends Activity {
             }
             LinearLayout trailing = new LinearLayout(this);
             trailing.setOrientation(LinearLayout.HORIZONTAL);
+            // The order, highest first: for a panel in several groups, the higher group's
+            // shared settings win (2026-10-28).
+            for (boolean up : new boolean[] {true, false}) {
+                ImageButton move = iconButton(theme, up ? R.drawable.ic_arrow_up
+                        : R.drawable.ic_arrow_down, "Move " + name + (up ? " up" : " down"));
+                boolean can = up ? place > 1 : place < groups.size();
+                move.setEnabled(can);
+                move.setAlpha(can ? 1f : 0.38f);
+                move.setOnClickListener(view -> moveGroupTo(app, id, up ? at - 1 : at + 1));
+                trailing.addView(move, new LinearLayout.LayoutParams(dp(40), dp(40)));
+            }
             ImageButton shared = iconButton(theme, R.drawable.ic_sensor_tune,
                     "Shared settings of " + name);
             shared.setOnClickListener(view -> {
@@ -6550,7 +6577,7 @@ public final class KioskActivity extends Activity {
                 fleetScope = id;
                 showFleetPage();
             });
-            trailing.addView(shared);
+            trailing.addView(shared, new LinearLayout.LayoutParams(dp(40), dp(40)));
             ImageButton remove = iconButton(theme, R.drawable.ic_trash, "Remove " + name);
             remove.setOnClickListener(view -> confirmRemove("Remove the group " + name + "?",
                     "What it shares is shared no more; the panels in it keep their settings.",
@@ -6559,15 +6586,47 @@ public final class KioskActivity extends Activity {
                         mainHandler.post(() -> redrawInPlace(this::showFleetPage));
                         return refused;
                     })));
-            trailing.addView(remove);
-            LinearLayout row = glyphRow(theme, R.drawable.ic_fleet, name,
-                    members == 1 ? "1 panel" : members + " panels", trailing, null, false, false);
+            trailing.addView(remove, new LinearLayout.LayoutParams(dp(40), dp(40)));
+            LinearLayout row = glyphRow(theme, groups.size() > 1 ? R.drawable.ic_drag_indicator
+                    : R.drawable.ic_fleet, name, members == 1 ? "1 panel" : members + " panels",
+                    trailing, null, false, false);
+            View grip = row.getChildAt(0);
             if (names.getChildCount() > 0) {
-                ((LinearLayout) row.getChildAt(1)).addView(names, matchWrap());
-                row.setPadding(row.getPaddingLeft(), dp(8), row.getPaddingRight(), dp(8));
+                // The panels' names under the row at its full width, so the group's name keeps
+                // the room beside the buttons (review, 2026-10-28).
+                LinearLayout whole = new LinearLayout(this);
+                whole.setOrientation(LinearLayout.VERTICAL);
+                whole.addView(row, matchWrap());
+                // A margin, not padding: WrapRow lays its chips out from its own edge.
+                LinearLayout.LayoutParams namesParams = matchWrap();
+                namesParams.leftMargin = dp(56);
+                namesParams.rightMargin = dp(8);
+                namesParams.bottomMargin = dp(8);
+                whole.addView(names, namesParams);
+                row = whole;
             }
-            addListRow(card, theme, row, first);
+            if (groups.size() > 1) {
+                // With more than one group the leading glyph is a grip: a group is dragged by it
+                // to a new place, as on the web, in a 40 dp target around the same 24 dp glyph.
+                // The arrows do the same for a screen reader.
+                LinearLayout.LayoutParams gripParams = new LinearLayout.LayoutParams(dp(40),
+                        dp(40));
+                gripParams.leftMargin = -dp(8);
+                gripParams.rightMargin = dp(8);
+                grip.setPadding(dp(8), dp(8), dp(8), dp(8));
+                grip.setLayoutParams(gripParams);
+                grip.setOnTouchListener(new RowDrag(theme, rows, row,
+                        to -> moveGroupTo(app, id, to)));
+            }
+            addListRow(rows, theme, row, first);
             first = false;
+        }
+        if (groups.size() > 1) {
+            TextView order = new FlushText(this);
+            order.setTextSize(13);
+            order.setTextColor(theme.subtext);
+            order.setText(HttpAdminServer.GROUP_ORDER);
+            card.addView(order, matchWrapClose());
         }
         EditText newGroup = themedInput(theme, "", false);
         newGroup.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -6894,7 +6953,12 @@ public final class KioskActivity extends Activity {
             Object value = values.get(field.key);
             String text = FleetProfile.shown(value);
             if (field.key.equals("alert_mqtt_topic")) {
-                card.addView(fieldCaption(theme, HttpAdminServer.ALERTS_ALSO), fleetLabelParams());
+                // The same size as the line over the alerts, "Shared with every panel of …".
+                TextView also = new FlushText(this);
+                also.setTextSize(13);
+                also.setTextColor(theme.subtext);
+                also.setText(HttpAdminServer.ALERTS_ALSO);
+                card.addView(also, fleetLabelParams());
             }
             switch (field.type) {
                 case "switch": {
@@ -15084,7 +15148,7 @@ public final class KioskActivity extends Activity {
      * what tells them apart (2026-09-10: a bare "test.jpg" twice named neither).
      *
      * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
-     * thumbnail ({@link HeldDrag}), the web page's gesture; the new order is part of the draft and
+     * thumbnail ({@link RowDrag}), the web page's gesture; the new order is part of the draft and
      * reaches disk with Save, like every other change on this page. The name, when its box lets
      * go of the focus, and the eye are stored at once instead, because they belong to the picture
      * and not to this playlist. No
@@ -15179,7 +15243,7 @@ public final class KioskActivity extends Activity {
             if (grip != null) {
                 // The grip is what says a row moves; the thumbnail beside it moves it too, since
                 // that is where a finger lands first. A screen reader hears the grip alone.
-                HeldDrag drag = new HeldDrag(screen, list, entry, uri);
+                RowDrag drag = new RowDrag(theme, list, entry, to -> moveHeld(screen, uri, to));
                 grip.setOnTouchListener(drag);
                 thumb.setOnTouchListener(drag);
                 grip.setContentDescription("Move " + shown);
@@ -15272,22 +15336,23 @@ public final class KioskActivity extends Activity {
     }
 
     /**
-     * A held picture dragged by its thumbnail to a new place in the list (2026-09-25), the
-     * web page's gesture on the glass.
+     * A row dragged by its handle to a new place in its list, the web page's gesture on the
+     * glass: a held picture by its grip or thumbnail (2026-09-25), a group by its grip
+     * (2026-10-29). The list holds the rows alone.
      *
-     * <p>The thumbnail claims the touch the moment it lands, because the page scrolls and the
+     * <p>The handle claims the touch the moment it lands, because the page scrolls and the
      * scroll view would otherwise take any vertical movement for itself; a swipe that starts on
-     * a thumbnail therefore moves the picture, and one that starts anywhere else scrolls. The row
+     * a handle therefore moves the row, and one that starts anywhere else scrolls. The row
      * follows the finger and its neighbours slide aside to show where it will land; nothing moves
-     * in the draft until the finger lifts, and a cancelled gesture puts everything back. Near the
-     * top or bottom of the screen the page scrolls by itself, so a long playlist can be crossed
-     * in one drag.
+     * until the finger lifts, when {@code drop} gets the new place, and a cancelled gesture puts
+     * everything back. Near the top or bottom of the screen the page scrolls by itself, so a long
+     * list can be crossed in one drag.
      */
-    private final class HeldDrag implements View.OnTouchListener {
-        private final PlaylistPage screen;
+    private final class RowDrag implements View.OnTouchListener {
+        private final KioskTheme theme;
         private final LinearLayout list;
         private final View entry;
-        private final String uri;
+        private final java.util.function.IntConsumer drop;
         private final int slop;
         private final Runnable edgeScroll = this::scrollAtEdge;
         private float startY;
@@ -15299,12 +15364,14 @@ public final class KioskActivity extends Activity {
         private int[] tops = new int[0];
         private int[] heights = new int[0];
         private ScrollView scroller;
+        private android.graphics.drawable.Drawable background;
 
-        HeldDrag(PlaylistPage screen, LinearLayout list, View entry, String uri) {
-            this.screen = screen;
+        RowDrag(KioskTheme theme, LinearLayout list, View entry,
+                java.util.function.IntConsumer drop) {
+            this.theme = theme;
             this.list = list;
             this.entry = entry;
-            this.uri = uri;
+            this.drop = drop;
             slop = android.view.ViewConfiguration.get(KioskActivity.this).getScaledTouchSlop();
         }
 
@@ -15350,12 +15417,13 @@ public final class KioskActivity extends Activity {
             int count = list.getChildCount();
             tops = new int[count];
             heights = new int[count];
+            background = entry.getBackground();
             for (int i = 0; i < count; i++) {
                 View child = list.getChildAt(i);
                 tops[i] = child.getTop();
                 heights[i] = child.getHeight();
             }
-            entry.setBackground(screen.theme.panel(screen.theme.cardHigh, dp(8)));
+            entry.setBackground(theme.panel(theme.cardHigh, dp(8)));
             entry.setTranslationZ(dp(6));
             scroller = null;
             for (android.view.ViewParent up = list.getParent(); up != null; up = up.getParent()) {
@@ -15452,9 +15520,9 @@ public final class KioskActivity extends Activity {
                 child.setTranslationY(0);
             }
             entry.setTranslationZ(0);
-            entry.setBackground(null);
+            entry.setBackground(background);
             if (!cancelled && to != from) {
-                moveHeld(screen, uri, to);
+                drop.accept(to);
             }
         }
     }

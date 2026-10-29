@@ -8863,6 +8863,24 @@ final class HttpAdminServer {
                 : chips.toString();
     }
 
+    /** Under the groups, on both surfaces: what their order does. */
+    static final String GROUP_ORDER = "A panel in several groups takes each shared setting from"
+            + " the highest group that shares the setting.";
+
+    /**
+     * One of a group's arrows in the Groups tab: to place {@code to}, one up or down, greyed at
+     * an end. admin_fleet.js submits the same form with the place a drag ends at.
+     */
+    private static String moveGroupButton(String id, String name, boolean up, int to,
+            boolean can, FleetView view) {
+        return "<form method=\"post\" action=\"/fleet\">" + hidden("what", "move_group")
+                + hidden("id", id) + hidden("to", Integer.toString(to))
+                + hidden("return", view.address()) + "<button type=\"submit\" class=\"ib\""
+                + (can ? "" : " disabled") + " aria-label=\"Move " + name + (up ? " up" : " down")
+                + "\" title=\"" + (up ? "Move up" : "Move down") + "\">"
+                + glyph(up ? "arrow_up" : "arrow_down") + "</button></form>";
+    }
+
     /** The Groups tab: each group with its panels, its shared settings and Remove, and New group. */
     private String fleetGroupsTab(java.util.Map<String, Object> list, FleetView view, String key) {
         java.util.Map<String, String> groups = FleetDocument.groups(list);
@@ -8873,8 +8891,10 @@ final class HttpAdminServer {
         if (groups.isEmpty()) {
             html.append("<p class=\"hint\">No groups yet.</p>");
         } else {
-            html.append("<ul class=\"list seg\">");
+            html.append("<ul class=\"list seg\" id=\"group-list\">");
+            int place = 0;
             for (java.util.Map.Entry<String, String> group : groups.entrySet()) {
+                place++;
                 StringBuilder names = new StringBuilder();
                 int count = 0;
                 for (java.util.Map<String, Object> member : FleetDocument.members(list)) {
@@ -8885,12 +8905,24 @@ final class HttpAdminServer {
                     }
                 }
                 String name = escapeHtml(group.getValue());
-                html.append("<li class=\"two group\"><span class=\"lead\">").append(glyph("fleet"))
+                // With more than one group the leading glyph is the grip a row is dragged by
+                // to a new place (admin_fleet.js); the arrows do the same without a pointer.
+                html.append("<li class=\"two group\" data-id=\"").append(escapeHtml(group.getKey()))
+                        .append("\"><span class=\"lead").append(groups.size() > 1 ? " grab\""
+                                + " title=\"Drag to move\" aria-hidden=\"true\">" + glyph("drag")
+                                : "\">" + glyph("fleet"))
                         .append("</span><span class=\"text\"><span class=\"h\">").append(name)
                         .append("</span><span class=\"s\">")
                         .append(count == 1 ? "1 panel" : count + " panels")
                         .append("</span><span class=\"chips\">").append(names)
-                        .append("</span></span><span class=\"trail\"><a class=\"ib\" href=\"/fleet"
+                        .append("</span></span><span class=\"trail\">")
+                        // The order, highest first: for a panel in several groups, the higher
+                        // group's shared settings win (2026-10-28).
+                        .append(moveGroupButton(group.getKey(), name, true, place - 2,
+                                place > 1, view))
+                        .append(moveGroupButton(group.getKey(), name, false, place,
+                                place < groups.size(), view))
+                        .append("<a class=\"ib\" href=\"/fleet"
                                 + "?tab=shared&amp;scope=").append(escapeHtml(urlEncode(group.getKey())))
                         .append("\" aria-label=\"Shared settings of ").append(name)
                         .append("\" title=\"Shared settings\">").append(glyph("open"))
@@ -8905,7 +8937,7 @@ final class HttpAdminServer {
                                 + " settings."))
                         .append("\">").append(glyph("trash")).append("</button></form></span></li>");
             }
-            html.append("</ul>");
+            html.append("</ul><p class=\"hint\">").append(escapeHtml(GROUP_ORDER)).append("</p>");
         }
         html.append("</div>");
         StringBuilder suggestions = new StringBuilder();
@@ -9150,7 +9182,8 @@ final class HttpAdminServer {
             String text = FleetProfile.shown(value);
             String id = prefix + "-" + field.key;
             if (field.key.equals("alert_mqtt_topic")) {
-                html.append("</div><p class=\"label\">").append(escapeHtml(ALERTS_ALSO))
+                // The same size as the line over the alerts, "Shared with every panel of …".
+                html.append("</div><p class=\"hint\">").append(escapeHtml(ALERTS_ALSO))
                         .append("</p><div class=\"switches\">");
             }
             switch (field.type) {
@@ -9332,6 +9365,17 @@ final class HttpAdminServer {
                 refused = FleetServer.createGroup(context, form.getOrDefault("name", ""),
                         new String[1]);
                 break;
+            case "move_group": {
+                int to;
+                try {
+                    to = Integer.parseInt(form.getOrDefault("to", "").trim());
+                } catch (NumberFormatException notANumber) {
+                    refused = "the place to move the group to is missing";
+                    break;
+                }
+                refused = FleetServer.moveGroup(context, form.getOrDefault("id", ""), to);
+                break;
+            }
             case "remove_group":
                 refused = FleetServer.removeGroup(context, form.getOrDefault("id", ""));
                 break;
