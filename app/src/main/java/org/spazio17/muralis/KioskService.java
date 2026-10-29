@@ -531,13 +531,15 @@ public final class KioskService extends Service implements KioskCommandDispatche
         String id = KioskConfig.deviceIdOf(context);
         java.util.Map<String, Object> self = FleetDocument.memberByKey(
                 KioskConfig.fleetDocumentOf(context), KioskRuntimeState.fleetKey());
-        java.util.List<String> told = sendAlert(context, settings, fleet, new FleetAlerts.Alert(
-                FleetAlerts.TEST, id, self == null ? id : TinyJson.string(self,
-                        FleetDocument.NAME, id), true, ""));
+        FleetAlerts.Alert test = new FleetAlerts.Alert(FleetAlerts.TEST, id,
+                self == null ? id : TinyJson.string(self, FleetDocument.NAME, id), true, "");
+        java.util.List<String> told = sendAlert(context, settings, fleet, test);
         if (told.isEmpty()) {
             return "No address to send to: set ntfy, a chat, an MQTT topic or a web address,"
                     + " then Save.";
         }
+        // In Lately too, so the list shows what a test reached (QA, 2026-10-29).
+        remember(test, told);
         return "Test sent: " + String.join(", ", told) + ".";
     }
 
