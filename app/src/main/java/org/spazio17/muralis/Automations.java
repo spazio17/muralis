@@ -107,8 +107,8 @@ final class Automations {
         map.put("proximity", Arrays.asList(
                 // Android's own words for the sensor (SensorManager: "near/far"); MQTT discovery
                 // has no binary class for it, its nearest, occupancy, is about a room.
-                new Event("near", "Near", null, false, false).withState("Something near"),
-                new Event("far", "Far", null, false, false).withState("Nothing near")));
+                new Event("near", "Something near", null, false, false).withState("Something near"),
+                new Event("far", "Nothing near", null, false, false).withState("Nothing near")));
         map.put("illuminance", Arrays.asList(
                 new Event("darker", "Darker than", "lx", true, false),
                 new Event("brighter", "Brighter than", "lx", false, false)));
@@ -1166,7 +1166,7 @@ final class Automations {
         }
     }
 
-    /** "Near, then Display on": the row under a rule's name. */
+    /** "Something near, then Display on": the row under a rule's name. */
     static String sentence(Rule rule) {
         return sentence(rule, Collections.<String, String>emptyMap());
     }

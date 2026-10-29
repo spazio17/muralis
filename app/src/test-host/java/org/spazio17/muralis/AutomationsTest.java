@@ -873,7 +873,7 @@ public final class AutomationsTest {
         require(rig.steps.equals(java.util.Arrays.asList("r1:display_on", "r1:display_off",
                 "r1:reload")), "far runs When 2's actions in order: " + rig.steps);
         require(Automations.sentence(both).equals(
-                "Near, then Display on; Far, then Display off and 1 more"),
+                "Something near, then Display on; Nothing near, then Display off and 1 more"),
                 Automations.sentence(both));
         require(both.sensors().size() == 1, "one sensor, named once");
     }
