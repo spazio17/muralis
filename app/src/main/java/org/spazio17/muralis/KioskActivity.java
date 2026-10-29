@@ -4195,7 +4195,7 @@ public final class KioskActivity extends Activity {
         // it at the first press of Open dashboard and showed an error page for a host that does
         // not exist. See KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL for the two reasons.
         EditText urlInput = themedInput(theme, config.dashboardUrl, false);
-        urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
+        urlInput.setHint("For example " + KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
         urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         if (showsPage) {
@@ -4254,6 +4254,12 @@ public final class KioskActivity extends Activity {
             dashboardCard.addView(buttonRow(appLockMore), matchWrap());
         } else if (showsPage) {
             dashboardCard.addView(buttonRow(openOnce), matchWrap());
+            // What Open once does beside Save, which a tester could not tell (QA 2026-10-29).
+            TextView openOnceMeaning = new FlushText(this);
+            openOnceMeaning.setTextSize(13);
+            openOnceMeaning.setTextColor(theme.subtext);
+            openOnceMeaning.setText(HttpAdminServer.OPEN_ONCE_MEANING);
+            dashboardCard.addView(openOnceMeaning, matchWrapClose());
             Button browserMore = textButtonOnward(theme, "Page options");
             browserMore.setOnClickListener(view -> showBrowserOptionsPage());
             dashboardCard.addView(buttonRow(browserMore), matchWrap());
@@ -4305,15 +4311,8 @@ public final class KioskActivity extends Activity {
         });
         paintSave.run();
         dashboardCard.addView(saveRow, matchWrap());
-        String webViewProvider = showsApp ? null : webViewProviderSummary();
-        if (webViewProvider != null) {
-            // Plain subtext, deliberately not a warning: see webViewProviderSummary().
-            TextView engine = new FlushText(this);
-            engine.setTextColor(theme.subtext);
-            engine.setTextSize(13);
-            engine.setText("Rendering engine: " + webViewProvider);
-            dashboardCard.addView(engine, matchWrap());
-        }
+        // The rendering engine's line went to About this panel only: a package name and a
+        // version under the dashboard told a person nothing to act on (QA, 2026-10-29).
 
 
         LinearLayout mqttCard = sectionBody(theme);
@@ -4442,8 +4441,9 @@ public final class KioskActivity extends Activity {
         EditText httpAdminPasswordInput = themedInput(theme, "", true);
         // With none stored there is nothing to keep: the line says so, as the web's does.
         addField(httpCard, theme, "Admin password", httpAdminPasswordInput,
-                config.httpAdminPassword.isEmpty() ? "None set."
-                        : "Blank keeps the current one.");
+                config.httpAdminPassword.isEmpty()
+                        ? "None set. Saved when the keyboard closes."
+                        : "Blank keeps the current one. Saved when the keyboard closes.");
         // Applied on blur, not on the aggregate Save: waiting for "Open dashboard" meant the web
         // admin stayed dark, or kept an old password, until the operator happened to leave the
         // screen for an unrelated reason. Same shape as the auto-brightness switch above: a
@@ -13438,10 +13438,10 @@ public final class KioskActivity extends Activity {
             idleInput = secondsInput(theme, settings.idleSeconds);
             addField(options, theme, "Start after (seconds, 0 = never)", idleInput);
             offInput = secondsInput(theme, settings.offSeconds);
-            addField(options, theme, "Before display off (seconds, 0 = never)",
+            addField(options, theme, "Display off after (seconds of Ambient, 0 = never)",
                     offInput);
             urlInput = themedInput(theme, settings.url, false);
-            urlInput.setHint(KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
+            urlInput.setHint("For example " + KioskCommandDispatcher.EXAMPLE_DASHBOARD_URL);
             urlInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
                     | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
             urlCaption = addField(options, theme, "Web page address", urlInput);
@@ -13458,6 +13458,12 @@ public final class KioskActivity extends Activity {
             for (String[] choice : KioskCommandDispatcher.AMBIENT_ON_WAKE_WORDS) {
                 radioChoice(theme, onWakeInput, choice[1], choice[0]);
             }
+            // Inside the group, so it shows and hides with the choices (QA 2026-10-29).
+            TextView onWakeMeaning = new FlushText(this);
+            onWakeMeaning.setTextSize(13);
+            onWakeMeaning.setTextColor(theme.subtext);
+            onWakeMeaning.setText(HttpAdminServer.ON_WAKE_MEANING);
+            onWakeInput.addView(onWakeMeaning);
             checkRadioIfChanged(onWakeInput, settings.onWake);
             options.addView(onWakeInput, matchWrapClose());
         }
@@ -13515,7 +13521,7 @@ public final class KioskActivity extends Activity {
             onApply(off, () -> {
                 Integer seconds = ScreensaverPolicy.parseSeconds(off.getText().toString());
                 if (seconds == null) {
-                    Toast.makeText(this, "Not saved: Before display off "
+                    Toast.makeText(this, "Not saved: Display off after "
                             + ScreensaverPolicy.SECONDS_RULE + ".", Toast.LENGTH_LONG).show();
                     off.setText(String.valueOf(KioskConfig.screensaverOf(this).offSeconds));
                     return;
@@ -16343,7 +16349,7 @@ public final class KioskActivity extends Activity {
         Button app = tonalButton(theme, KioskCommandDispatcher.wordOf(
                 KioskCommandDispatcher.DASHBOARD_WORDS, KioskCommandDispatcher.DASHBOARD_APP));
         app.setOnClickListener(view -> showAppLockPage());
-        Button later = textButton(theme, "Later");
+        Button later = textButton(theme, "Choose later");
         later.setOnClickListener(view -> showDashboard(KioskConfig.load(this).dashboardUrl));
         page.addView(fittingButtonRow(web, app, later), matchWrap());
         TextView hint = new FlushText(this);
@@ -16431,7 +16437,8 @@ public final class KioskActivity extends Activity {
         panel.addView(hint, matchWrap());
 
         recorderReadout = new FlushText(this);
-        recorderReadout.setTextColor(theme.ok);
+        // The readout in the text colour: green read as done while nothing was (QA 2026-10-29).
+        recorderReadout.setTextColor(theme.text);
         recorderReadout.setTextSize(18);
         recorderReadout.setGravity(Gravity.CENTER);
         recorderReadout.setText("nothing recorded yet");
@@ -16671,8 +16678,12 @@ public final class KioskActivity extends Activity {
         }
         config.saveEscapeSequences(this);
         recorderVisible = false;
-        Toast.makeText(this, "Saved: " + EscapeSequence.describe(recordedZones),
-                Toast.LENGTH_LONG).show();
+        if (!recordingForWizard) {
+            // Not in the first run, where the toast lay over the next step's Back (QA,
+            // 2026-10-29) and the last step repeats both combinations anyway.
+            Toast.makeText(this, "Saved: " + EscapeSequence.describe(recordedZones),
+                    Toast.LENGTH_LONG).show();
+        }
         if (recordingForWizard) {
             if (recordingForLauncher) {
                 // Both combinations exist now; the wizard is done and the pin may engage.
@@ -17408,38 +17419,6 @@ public final class KioskActivity extends Activity {
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0);
         return resolved == null || resolved.activityInfo == null
                 ? null : resolved.activityInfo.packageName;
-    }
-
-    /**
-     * Which package is rendering the dashboard, and its version, for display.
-     *
-     * <p>Reported, never judged, and this is now a settled decision with three attempts behind
-     * it, so do not add a warning here in any form. A hardcoded version floor was removed on
-     * 2026-08-19 as an invented number. On 2026-08-24 a floor with measured evidence, and then a
-     * runtime feature probe (CSS.supports checks run inside the engine itself), were both built
-     * and both removed the same day, at the user's direction: the probe only worked by knowing
-     * which features "the dashboard" needs, and Muralis is dashboard-agnostic, it shows whatever
-     * URL the operator configures, so any such list is an assumption about somebody else's page.
-     * Keeping the system's browser engine updated is the operator's responsibility; Muralis's
-     * whole job here is to state which engine is in use so a person diagnosing a strange-looking
-     * page can see it.
-     *
-     * <p>{@code WebView.getCurrentWebViewPackage()} is API 26, exactly this app's minSdk, so no
-     * fallback branch is needed. The package name matters as well as the version: the provider can be
-     * Chrome rather than the standalone WebView package, which is the case on this hardware and is
-     * surprising enough to be worth showing.
-     */
-    private String webViewProviderSummary() {
-        try {
-            android.content.pm.PackageInfo provider = WebView.getCurrentWebViewPackage();
-            if (provider == null) {
-                return null;
-            }
-            return provider.packageName + " " + provider.versionName;
-        } catch (RuntimeException unavailable) {
-            Log.w(TAG, "Could not read the WebView provider version", unavailable);
-            return null;
-        }
     }
 
     /** True when Muralis holds device-owner status. Never throws; false when it cannot be determined. */

@@ -845,7 +845,7 @@ final class KioskCommandDispatcher {
             {DisplayOffPolicy.FILM, "Black film"}};
     static final String[][] AMBIENT_MODE_WORDS = {
             {ScreensaverPolicy.OFF, "Off"}, {ScreensaverPolicy.DIM, "Dimmed page"},
-            {ScreensaverPolicy.FILM, "Black film"}, {ScreensaverPolicy.URL, "Web page"},
+            {ScreensaverPolicy.FILM, "Black screen"}, {ScreensaverPolicy.URL, "Web page"},
             {ScreensaverPolicy.PICTURES, "Pictures"}};
     static final String[][] AMBIENT_ON_WAKE_WORDS = {
             {ScreensaverPolicy.WAKE_SCREENSAVER, "Ambient first"},

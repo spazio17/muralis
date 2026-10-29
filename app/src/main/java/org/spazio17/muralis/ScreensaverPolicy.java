@@ -275,7 +275,7 @@ final class ScreensaverPolicy {
             case DIM:
                 return "Dimmed page";
             case FILM:
-                return "Black film";
+                return "Black screen";
             case URL:
                 return "Web page";
             case PICTURES:
@@ -328,7 +328,7 @@ final class ScreensaverPolicy {
         }
         if (settings.offSeconds > 0) {
             text.append(", display off ").append(describeDuration(settings.offSeconds))
-                    .append(" later.");
+                    .append(" after Ambient starts.");
         } else {
             text.append(", the display stays on.");
         }

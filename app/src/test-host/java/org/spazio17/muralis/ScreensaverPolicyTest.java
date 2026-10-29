@@ -170,7 +170,7 @@ public final class ScreensaverPolicyTest {
         require(ScreensaverPolicy.describe(settings("off", 120, 900), false)
                 .equals("Ambient off."), "off reads as off");
         String dim = ScreensaverPolicy.describe(settings("dim", 120, 900), false);
-        require(dim.equals("Dimmed page after 2 min, display off 15 min later."),
+        require(dim.equals("Dimmed page after 2 min, display off 15 min after Ambient starts."),
                 "the whole rule in one sentence: " + dim);
         String showing = ScreensaverPolicy.describe(settings("url", 0, 0), true);
         require(showing.equals("Web page, only when asked for, the display stays on. Showing now."),
