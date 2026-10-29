@@ -6323,6 +6323,11 @@ final class HttpAdminServer {
 
     /** The one hint that left a label's brackets for the field's own slot under the box. */
     private static final String BLANK_KEEPS = "Blank keeps the current one.";
+    /** What Automatic means and where the time is set, under the choice on both surfaces. */
+    static final String DISPLAY_OFF_MEANING = "Automatic turns the screen off if this device"
+            + " wakes reliably, else shows the black film. A screen turned off wakes with the"
+            + " power key or Display on, not a touch. The timing is set in Ambient.";
+
     /** The Alerts form's two parts and the line while nothing is set, on both surfaces. */
     static final String ALERTS_SEND_TO = "Send alerts to";
     static final String ALERTS_READY = "Ready-made alerts";
@@ -9861,7 +9866,8 @@ final class HttpAdminServer {
                     DisplayOffPolicy.FILM));
         }
         return selectField("display-off-method", null, "Display off method",
-                deviceOwner ? "display_off_method" : null, options.toString(), null, !deviceOwner)
+                deviceOwner ? "display_off_method" : null, options.toString(),
+                deviceOwner ? DISPLAY_OFF_MEANING : null, !deviceOwner)
                 + "<p class=\"hint bad\" id=\"display-off-note\""
                 + (KioskService.displayOffWarning(context) ? "" : " hidden") + ">"
                 + (KioskService.displayOffWarning(context)

@@ -183,7 +183,9 @@ final class Automations {
             new Action("brightness", "Set brightness", "Percent"),
             new Action("ambient_mode", "Ambient mode", "Mode"),
             new Action("mqtt_publish", "Publish an MQTT message", "Topic and message"),
-            new Action("call_url", "Call an address", "Address"),
+            // The method in the box's name: a receiver that takes only POST answered 501 and
+            // nothing on the page said why (QA, 2026-10-29).
+            new Action("call_url", "Call an address", "Address, called with GET"),
             new Action("alert", "Send an alert", "Alert"),
             new Action("popup", "Show a pop-up", "Message"),
             new Action("camera", "Show a camera", "Camera or group"),
