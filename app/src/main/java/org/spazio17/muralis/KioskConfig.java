@@ -270,7 +270,7 @@ final class KioskConfig {
             // the id being reported did not match, and every restart created a fresh smart-home
             // device. commit() rather than apply() because MqttController reads it back
             // immediately to build its topic prefix.
-            config.deviceId = "kiosk-" + UUID.randomUUID().toString().substring(0, 8);
+            config.deviceId = "panel-" + UUID.randomUUID().toString().substring(0, 8);
             preferences.edit().putString(DEVICE_ID, config.deviceId).commit();
         }
         config.mqttHost = preferences.getString(MQTT_HOST, "").trim();

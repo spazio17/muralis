@@ -3043,11 +3043,12 @@ final class HttpAdminServer {
             }
             // Ids pass Automations.ID_SHAPE on the way in; escaped here all the same.
             String id = escapeHtml(rule.id);
-            rows.append(navRow(listRow("automations", rule.name,
-                    null, Automations.sentence(rule), null,
+            // A link to the rule, as on the Automations page and on the panel.
+            rows.append(navRow(linkRow("/automation?id=" + urlEncode(rule.id), "automations",
+                    rule.name, Automations.sentence(rule), null,
                     "<input type=\"checkbox\" class=\"sw\" id=\"automation-" + id
                             + "-home\" data-setting=\"automation_" + id + "\" aria-label=\""
-                            + escapeHtml(rule.name) + "\" checked>", false,
+                            + escapeHtml(rule.name) + "\" checked>",
                     stopsMarkAny(rule.sensors())),
                     rule.id, false));
         }
@@ -3699,7 +3700,7 @@ final class HttpAdminServer {
             // On an "or" line after the last When, so it reads as one more When, not as the If
             // card's below it.
             html.append("<div class=\"or more\">or")
-                    .append(addButton("add_when", "w" + whens.size() + data.sfx, "Add a When", "text"))
+                    .append(addButton("add_when", "w" + whens.size() + data.sfx, "Add a When"))
                     .append("</div>");
         }
         html.append(ifCard(rule, data))
@@ -3736,8 +3737,9 @@ final class HttpAdminServer {
     }
 
     /** A section's Add: the word on the button, what it adds in its spoken name. */
-    private static String addButton(String op, String anchor, String spoken, String classes) {
-        return opButton(op, anchor, classes, spoken, glyph("plus") + "Add", false);
+    /** An Add with its words in full, "Add a When", so it says what it adds (QA 2026-10-29). */
+    private static String addButton(String op, String anchor, String words) {
+        return opButton(op, anchor, "text", words, glyph("plus") + escapeHtml(words), false);
     }
 
     /**
@@ -3774,7 +3776,7 @@ final class HttpAdminServer {
         if (then.size() < Automations.MAX_STEPS_PER_WHEN && steps < Automations.MAX_STEPS) {
             card.append("<div class=\"actions tight\">")
                     .append(addButton("add_action:" + index,
-                            prefix + "-a" + then.size() + data.sfx, "Add an action", "text"))
+                            prefix + "-a" + then.size() + data.sfx, "Add an action"))
                     .append("</div>");
         }
         return card.append("</section>").toString();
@@ -4063,8 +4065,8 @@ final class HttpAdminServer {
         }
         if (count < Automations.MAX_CONDITIONS) {
             card.append("<div class=\"actions tight\">")
-                    .append(addButton("add_condition", "c" + count + data.sfx, "Add a condition",
-                            "text"))
+                    .append(addButton("add_condition", "c" + count + data.sfx,
+                            "Add a condition"))
                     .append("</div>");
         }
         return card.append("</section>").toString();

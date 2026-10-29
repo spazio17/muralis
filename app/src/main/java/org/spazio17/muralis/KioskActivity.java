@@ -4849,7 +4849,17 @@ public final class KioskActivity extends Activity {
         for (Automations.Rule rule : KioskConfig.automationsOf(this)) {
             if (rule.enabled) {
                 CompoundButton toggle = automationSwitch(theme, rule, this::redrawSettingsSoon);
-                addListRow(automationsCard, theme, automationRow(theme, rule, toggle, null, true),
+                // The row opens its rule, as on the Automations page (QA 2026-10-29: the
+                // chevron promised a page and a tap did nothing).
+                Runnable open = () -> {
+                    selectedAutomation = rule.id;
+                    if (widthClass() == 2) {
+                        showAutomationsPage();
+                    } else {
+                        openAutomationEditor(rule);
+                    }
+                };
+                addListRow(automationsCard, theme, automationRow(theme, rule, toggle, open, true),
                         automationsCard.getChildCount() == 0);
             }
         }
@@ -10915,8 +10925,8 @@ public final class KioskActivity extends Activity {
             more.setOrientation(LinearLayout.HORIZONTAL);
             more.setGravity(Gravity.CENTER);
             more.addView(orWord(theme));
-            Button addWhen = withPlus(textButton(theme, "Add"));
-            addWhen.setContentDescription("Add a When");
+            // The words in full, so the line says what it adds (QA 2026-10-29).
+            Button addWhen = withPlus(textButton(theme, "Add a When"));
             addWhen.setOnClickListener(view -> data.change.accept("add_when"));
             LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -11321,8 +11331,7 @@ public final class KioskActivity extends Activity {
                     stepParams);
         }
         if (when.then.size() < Automations.MAX_STEPS_PER_WHEN && steps < Automations.MAX_STEPS) {
-            Button addAction = withPlus(textButton(theme, "Add"));
-            addAction.setContentDescription("Add an action");
+            Button addAction = withPlus(textButton(theme, "Add an action"));
             addAction.setOnClickListener(view -> data.change.accept("add_action:" + index));
             whenCard.addView(buttonRow(addAction), matchWrapClose());
         }
@@ -11525,8 +11534,7 @@ public final class KioskActivity extends Activity {
             ifCard.addView(conditionRow(data, index, draft.conditions.get(index)), rowParams);
         }
         if (count < Automations.MAX_CONDITIONS) {
-            Button addCondition = withPlus(textButton(theme, "Add"));
-            addCondition.setContentDescription("Add a condition");
+            Button addCondition = withPlus(textButton(theme, "Add a condition"));
             addCondition.setOnClickListener(view -> data.change.accept("add_condition"));
             ifCard.addView(buttonRow(addCondition), matchWrapClose());
         }
@@ -12562,7 +12570,13 @@ public final class KioskActivity extends Activity {
         boolean permitted = checkSelfPermission(android.Manifest.permission.CAMERA)
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
         allow.setVisibility(permitted ? View.GONE : View.VISIBLE);
-        box.addView(buttonRow(cancel, switchLens, allow), matchWrapClose());
+        // The typed route beside the camera, for a black or missing one (QA 2026-10-29).
+        Button byCode = textButton(theme, "Add by code");
+        byCode.setOnClickListener(view -> {
+            stopScanner();
+            showAddByCode();
+        });
+        box.addView(buttonRow(cancel, byCode, switchLens, allow), matchWrapClose());
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.addView(box, matchWrap());
@@ -15481,8 +15495,8 @@ public final class KioskActivity extends Activity {
      * from two folders sit next to each other, and one folder cannot hold both, so the folder is
      * what tells them apart (2026-09-10: a bare "test.jpg" twice named neither).
      *
-     * <p>A picture is dragged by the grip beside it, the six dots every list app uses, or by its
-     * thumbnail ({@link RowDrag}), the web page's gesture; the new order is part of the draft and
+     * <p>A picture is dragged by the grip beside it, the six dots every list app uses
+     * ({@link RowDrag}); the new order is part of the draft and
      * reaches disk with Save, like every other change on this page. The name, when its box lets
      * go of the focus, and the eye are stored at once instead, because they belong to the picture
      * and not to this playlist. No
@@ -15575,11 +15589,10 @@ public final class KioskActivity extends Activity {
             column.addView(path, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             if (grip != null) {
-                // The grip is what says a row moves; the thumbnail beside it moves it too, since
-                // that is where a finger lands first. A screen reader hears the grip alone.
-                RowDrag drag = new RowDrag(theme, list, entry, to -> moveHeld(screen, uri, to));
-                grip.setOnTouchListener(drag);
-                thumb.setOnTouchListener(drag);
+                // Only the grip moves a row: a swipe over the thumbnail, meant to scroll, moved
+                // pictures unnoticed (QA 2026-10-29).
+                grip.setOnTouchListener(
+                        new RowDrag(theme, list, entry, to -> moveHeld(screen, uri, to)));
                 grip.setContentDescription("Move " + shown);
                 grip.setAccessibilityDelegate(new HeldMoveActions(screen, uri));
             }
