@@ -1311,10 +1311,10 @@ public final class KioskCommandDispatcherTest {
         }
 
         @Override
-        public boolean setAutoBrightness(boolean enabled) {
+        public String setAutoBrightness(boolean enabled) {
             calls.add("setAutoBrightness");
             lastAutoBrightness = enabled;
-            return lightSensorPresent;
+            return lightSensorPresent ? null : "this device has no ambient light sensor";
         }
 
         boolean accelerometerPresent = true;

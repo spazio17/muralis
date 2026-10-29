@@ -69,6 +69,25 @@ public final class FleetHealthTest {
         require(!before.equals(FleetHealth.listKey(5, all, true)), "a reason does not move the key");
         require(!FleetHealth.listKey(5, all, true).equals(FleetHealth.listKey(6, all, true)),
                 "the list's version does not move the key");
+        // Who has a shared section: refused, waiting for an older list, or applied.
+        FleetHealth.Member door = new FleetHealth.Member();
+        door.online = true;
+        door.listVersion = 12;
+        require(FleetHealth.sharedState(door, "dashboard", 12).equals(FleetHealth.APPLIED),
+                "a panel holding the version applied it");
+        require(FleetHealth.sharedState(door, "dashboard", 13).equals(FleetHealth.WAITING),
+                "a panel on an older list is waiting");
+        door.listVersion = -1;
+        require(FleetHealth.sharedState(door, "dashboard", 1).equals(FleetHealth.WAITING),
+                "a panel that never said what it holds is waiting");
+        door.listVersion = 20;
+        door.refused.put("mqtt", "the port is taken");
+        require(FleetHealth.sharedStateWords(door, "mqtt", 12)
+                .equals("Refused: the port is taken"), "a refusal with its reason");
+        FleetHealth.Member here = new FleetHealth.Member();
+        here.self = true;
+        require(FleetHealth.sharedState(here, "dashboard", 99).equals(FleetHealth.APPLIED),
+                "this panel holds what it shows");
         System.out.println("FleetHealthTest passed");
     }
 
