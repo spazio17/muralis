@@ -5870,6 +5870,8 @@ public final class KioskActivity extends Activity {
         countParams.leftMargin = dp(4);
         selection.addView(selected, countParams);
         View sayAction = iconButton(theme, R.drawable.ic_sensor_audio, "Announce");
+        // The icon's name on a long press, as Material's icon buttons have it (QA 2026-10-29).
+        sayAction.setTooltipText("Announce");
         sayAction.setOnClickListener(view -> {
             speakersTicked.clear();
             for (String spki : fleetTicked) {
@@ -5888,8 +5890,10 @@ public final class KioskActivity extends Activity {
             }
         };
         View reloadAction = iconButton(theme, R.drawable.ic_reload, "Reload");
+        reloadAction.setTooltipText("Reload");
         reloadAction.setOnClickListener(view -> onTicked.accept(FleetServer.RELOAD));
         ImageButton moreAction = iconButton(theme, R.drawable.ic_more_vert, "More");
+        moreAction.setTooltipText("More");
         // System stats says what a choice does: Hide when every ticked panel shows them.
         java.util.Set<String> statsShown = new java.util.HashSet<>();
         for (FleetHealth.Member member : sorted) {
@@ -5902,6 +5906,7 @@ public final class KioskActivity extends Activity {
             for (String spki : fleetTicked) {
                 hide &= statsShown.contains(keys.get(spki));
             }
+            boolean hiding = hide;
             String stats = hide ? FleetServer.STATS_OFF : FleetServer.STATS_ON;
             showMenu(theme, moreAction,
                 new String[] {"Open dashboard", "Open settings", "Display on", "Display off",
@@ -5911,7 +5916,18 @@ public final class KioskActivity extends Activity {
                     () -> onTicked.accept(FleetServer.SETTINGS),
                     () -> onTicked.accept(FleetServer.DISPLAY_ON),
                     () -> onTicked.accept(FleetServer.DISPLAY_OFF),
-                    () -> onTicked.accept(stats),
+                    () -> {
+                        onTicked.accept(stats);
+                        // The next opening says the new state at once, before the panels'
+                        // check-ins redraw the page (the first tap seemed lost, QA 2026-10-29).
+                        for (String spki : fleetTicked) {
+                            if (hiding) {
+                                statsShown.remove(keys.get(spki));
+                            } else {
+                                statsShown.add(keys.get(spki));
+                            }
+                        }
+                    },
                     () -> onTicked.accept(FleetServer.RESTART),
                     () -> {
                         int count = fleetTicked.size();
@@ -20322,6 +20338,12 @@ public final class KioskActivity extends Activity {
             public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 // The page's engine died: built again with the dashboard, as the cameras are.
                 if (view == clockDashboard) {
+                    // The clock is the dashboard: its engine's death is the overlay's "WEB
+                    // deaths" as a page's is (it read 0 after one, QA 2026-10-29).
+                    KioskRuntimeState.recordRendererDeath();
+                    KioskService.publishTelemetrySoon(KioskActivity.this);
+                    Log.w(TAG, "Clock renderer gone, crashed=" + detail.didCrash()
+                            + " deaths=" + KioskRuntimeState.rendererDeaths());
                     clockDashboard = null;
                     if (!configurationVisible) {
                         mainHandler.post(() -> showDashboard(KioskConfig.load(

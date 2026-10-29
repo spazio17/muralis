@@ -430,10 +430,35 @@ final class Beacons implements Sensors.Reading {
         return ScanSettings.SCAN_MODE_LOW_POWER;
     }
 
+    /**
+     * Asks Android to switch the radio on. Reached only up to Android 11, where BLUETOOTH_ADMIN
+     * (declared up to API 30) is what enable() needs; lint asks for the later BLUETOOTH_CONNECT,
+     * which this path never runs under.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    private void switchRadioOn(BluetoothAdapter adapter) {
+        try {
+            adapter.enable();
+            // The radio takes a moment to come up; the scan starts on the retry.
+            main.removeCallbacks(retry);
+            main.postDelayed(retry, 3_000);
+        } catch (SecurityException refused) {
+            Log.w(TAG, "Bluetooth could not be switched on: " + refused.getMessage());
+        }
+    }
+
     /** Starts or stops the scan to match the sensor's switch, in the mode wanted now. */
     synchronized void refresh(boolean sensorOn) {
+        boolean switchedOn = sensorOn && !sensorOnLast;
         sensorOnLast = sensorOn;
         BluetoothAdapter adapter = adapter();
+        if (switchedOn && adapter != null && !adapter.isEnabled()
+                && android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.R) {
+            // The sensor switched on with the radio off: turned on here, once per switching
+            // on, since a locked panel has no other way to it (QA, 2026-10-29). Up to Android
+            // 11 only, where an app may still ask; newer Android leaves the row's line to say so.
+            switchRadioOn(adapter);
+        }
         if (adapter == null || !adapter.isEnabled() || locationOff()) {
             // Location switched off in Android stops a scan that is not declared "never for
             // location" from hearing anything, so it is stopped and the row says why.

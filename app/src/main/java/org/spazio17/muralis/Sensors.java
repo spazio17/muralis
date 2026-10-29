@@ -1316,7 +1316,8 @@ final class Sensors implements SensorEventListener {
             return (Boolean) value ? "On" : "Off";
         }
         if (def == SCREENSAVER) {
-            return (Boolean) value ? "Showing" : "Off";
+            // "Off" read as the sensor switched off (QA, 2026-10-29).
+            return (Boolean) value ? "Showing" : "Not showing";
         }
         if (def == CAMERA) {
             return (Boolean) value ? "Motion" : "Nothing moving";
