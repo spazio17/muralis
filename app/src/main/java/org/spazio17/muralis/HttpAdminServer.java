@@ -6292,8 +6292,8 @@ final class HttpAdminServer {
         // Greyed without Pro rather than refused after the search, with the Pro line in place
         // of the hint to say why.
         boolean pro = FleetServer.proStatus(context).pro;
-        return "<p class=\"hint\">" + (pro ? (founding ? "Create a fleet" : "Add a panel")
-                + " by its code" : escapeHtml(FleetServer.proLine(context))) + "</p>"
+        return "<p class=\"hint\">" + (pro ? "Add a panel by the code under the panel's Join QR"
+                : escapeHtml(FleetServer.proLine(context))) + "</p>"
                 + sectionFormStart("adopt", notice, noticeSection)
                         .replace(settingsAt("adopt"), "/adopt")
                 + (pro ? "" : "<fieldset disabled style=\"border:0;margin:0;padding:0\">")
@@ -6343,6 +6343,20 @@ final class HttpAdminServer {
     static final String DISPLAY_OFF_MEANING = "Automatic turns the screen off if this device"
             + " wakes reliably, else shows the black film. A screen turned off wakes with the"
             + " power key or Display on, not a touch. The timing is set in Ambient.";
+
+    /**
+     * What Remove does, on both surfaces: that the groups go too, which the dialog did not say
+     * (QA, 2026-10-29).
+     */
+    /** Whether another panel follows the shared settings, and where that is set. */
+    static String followsLine(java.util.Map<String, Object> entry) {
+        return (FleetDocument.followsFleet(entry) ? "Follows" : "Does not follow")
+                + " the fleet's shared settings; set on that panel, in All panels.";
+    }
+
+    static final String REMOVE_CONSEQUENCE = "The panel is taken off the fleet's list on every"
+            + " panel and no longer trusted. Joining again takes a new code, and the panel then"
+            + " belongs to no group.";
 
     /** The Alerts form's two parts and the line while nothing is set, on both surfaces. */
     static final String ALERTS_SEND_TO = "Send alerts to";
@@ -8929,6 +8943,10 @@ final class HttpAdminServer {
             html.append("<div class=\"switches\">").append(switchRow("fleet-follows",
                     "Follow the fleet's shared settings", " data-follow",
                     FleetDocument.followsFleet(entry))).append("</div>");
+        } else {
+            // Another panel's choice, read here and set on that panel (QA, 2026-10-29).
+            html.append("<p class=\"hint\">").append(escapeHtml(followsLine(entry)))
+                    .append("</p>");
         }
         html.append("<div class=\"actions\"><button type=\"button\" class=\"text\" data-identify=\"")
                 .append(id).append("\">Identify</button>")
@@ -8957,9 +8975,7 @@ final class HttpAdminServer {
                     .append(hidden("spki", TinyJson.string(entry, FleetDocument.SPKI, "")))
                     .append(hidden("return", "/fleet"))
                     .append("<button type=\"submit\" class=\"text danger\" data-confirm=\"")
-                    .append(escapeHtml("Remove " + member.name + "?\n\nIt is taken off the fleet's"
-                            + " list on every panel and its key is no longer trusted. It can join"
-                            + " again with a new code."))
+                    .append(escapeHtml("Remove " + member.name + "?\n\n" + REMOVE_CONSEQUENCE))
                     .append("\">Remove</button></form>");
         }
         return html.append("</div><p class=\"hint\" data-identified hidden></p></section>")
@@ -9139,9 +9155,8 @@ final class HttpAdminServer {
                         winners.add(group.getValue());
                     }
                 }
-                if (!winners.isEmpty()) {
-                    summary += winners.size() == 1 ? " · " + winners.get(0) + " wins"
-                            : " · " + winners.size() + " groups win";
+                if (values != null && !winners.isEmpty()) {
+                    summary += " · not for " + String.join(", ", winners);
                 }
             }
             nav.append(navRow("<li class=\"two\"><a class=\"rowlink plain\" href=\"" + base
@@ -9539,7 +9554,7 @@ final class HttpAdminServer {
                 + "<a class=\"ib\" href=\"#\" data-close aria-label=\"Close\" title=\"Close\">"
                 + glyph("close") + "</a></div>"
                 + "<div class=\"segmented\" role=\"group\" aria-label=\"How\">"
-                + "<button type=\"button\" data-way=\"code\" aria-pressed=\"true\">By its code"
+                + "<button type=\"button\" data-way=\"code\" aria-pressed=\"true\">By the panel's code"
                 + "</button><button type=\"button\" data-way=\"invite\" aria-pressed=\"false\">"
                 + "Invitation QR</button></div>"
                 + "<div data-way-pane=\"code\">" + byCode + "</div>"

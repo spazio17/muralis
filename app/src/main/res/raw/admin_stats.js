@@ -66,7 +66,7 @@ document.getElementById('fleet-join-open').addEventListener('click',function(){f
 document.getElementById('fleet-join-new').addEventListener('click',function(){fleetJoinPost('/api/fleet/code');});
 document.getElementById('fleet-join-close').addEventListener('click',function(){fleetJoinShown=false;fleetJoinPost('/api/fleet/code/close');});
 if(document.getElementById('fleet-leave'))document.getElementById('fleet-leave').addEventListener('click',function(){
-if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps its own settings. It can join again with a new code.')){return;}
+if(!window.confirm('Leave the fleet '+fleetName+'?\n\nThis panel stops trusting the fleet\'s panels and keeps the settings it has. Joining again takes a new code, and the panel then belongs to no group.')){return;}
 fleetJoinPost('/api/fleet/leave');});}
 function render(data){
 var sys=data.system||{},run=data.runtime||{},bat=data.battery||{},net=data.network||{},mem=data.memory||{},cfg=data.config||{};

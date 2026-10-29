@@ -878,7 +878,8 @@ final class FleetProfile {
                 } catch (IllegalArgumentException unreadable) {
                     count = 0;
                 }
-                return count == 1 ? "1 integration" : count + " integrations";
+                return count == 0 ? "No integrations"
+                        : count == 1 ? "1 integration" : count + " integrations";
             }
             case "alerts": {
                 long minutes = values.get("alert_offline_minutes") instanceof Number

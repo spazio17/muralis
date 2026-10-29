@@ -2788,6 +2788,19 @@ final class FleetServer {
                 "Restored the earlier fleet settings");
     }
 
+    /** A change's line, opened by the restore it was when it was one. */
+    private static java.util.List<String> restoreLine(java.util.Map<String, Object> entry,
+            java.util.List<String> changes) {
+        String from = TinyJson.string(entry, FleetDocument.RESTORED_FROM, "");
+        if (from.isEmpty()) {
+            return changes;
+        }
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        lines.add("Restored to " + readableTime(from));
+        lines.addAll(changes);
+        return lines;
+    }
+
     /** How many changes the history shows before "Older changes". */
     static final int HISTORY_SHOWN = 5;
 
@@ -2895,7 +2908,7 @@ final class FleetServer {
             history.add(new HistoryEntry(FleetDocument.version(entry),
                     name == null || name.isEmpty() ? author : name,
                     TinyJson.string(entry, "updated", ""),
-                    FleetDocument.describeChange(before, entry),
+                    restoreLine(entry, FleetDocument.describeChange(before, entry)),
                     // The newest kept is the one held (the store writes it first); two panels
                     // that changed the fleet apart leave two entries of one version number.
                     held != null && i == 0

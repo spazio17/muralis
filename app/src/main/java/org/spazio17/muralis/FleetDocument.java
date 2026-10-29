@@ -482,6 +482,8 @@ final class FleetDocument {
             String updated) {
         Map<String, Object> next = new LinkedHashMap<>(held);
         next.remove("signature");
+        // Said of the version that restored, never of the ones after it.
+        next.remove(RESTORED_FROM);
         long version = version(held) + 1;
         next.put("version", version);
         next.put("base_version", version - 1);
@@ -1098,6 +1100,9 @@ final class FleetDocument {
         return names;
     }
 
+    /** The time of the version a restore went back to, on the version the restore made. */
+    static final String RESTORED_FROM = "restored_from";
+
     /**
      * Restore as new: the next document after {@code held}, by {@code author}, with the fleet
      * name, the groups and the shared settings of the older version {@code old}, written as a
@@ -1110,6 +1115,8 @@ final class FleetDocument {
     static Map<String, Object> restored(Map<String, Object> old, Map<String, Object> held,
             String author, String updated) {
         Map<String, Object> next = bumped(held, author, updated);
+        // When the restored version was made, so History names the restore (QA 2026-10-29).
+        next.put(RESTORED_FROM, TinyJson.string(old, "updated", ""));
         long at = version(next);
         Map<String, Object> fleet = new LinkedHashMap<>(fleet(held));
         fleet.put(NAME, fleetName(old));
