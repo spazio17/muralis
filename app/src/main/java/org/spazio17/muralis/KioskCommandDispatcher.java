@@ -120,10 +120,11 @@ final class KioskCommandDispatcher {
         /**
          * Hands the panel's brightness to the ambient-light sensor, or takes it back.
          *
-         * @return false when this device has no light sensor, so the caller can say so rather than
-         *         report success for something that cannot happen
+         * @return null when done, else why not (no light sensor, or the brightness grant
+         *         missing), so the caller says the real reason rather than report success for
+         *         something that did not happen
          */
-        boolean setAutoBrightness(boolean enabled);
+        String setAutoBrightness(boolean enabled);
 
         /**
          * Mounts the dashboard: "landscape", "portrait", or "auto", which follows the
@@ -398,10 +399,8 @@ final class KioskCommandDispatcher {
                 if (args.enabled == null) {
                     return rejected("enabled must be true or false");
                 }
-                if (!executor.setAutoBrightness(args.enabled)) {
-                    return rejected("this device has no ambient light sensor");
-                }
-                return accepted();
+                String noAuto = executor.setAutoBrightness(args.enabled);
+                return noAuto == null ? accepted() : rejected(noAuto);
             // There is deliberately no "kiosk.auto_recycle" and no "kiosk.recycle_time". The
             // dashboard recycle is a recovery mechanism, not a preference: nobody has a reason to
             // turn a panel's self-healing off, and the schedule is derived per device rather than

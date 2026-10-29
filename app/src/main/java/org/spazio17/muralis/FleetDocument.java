@@ -265,20 +265,36 @@ final class FleetDocument {
 
     /** The groups a person made, by id: name and at; removed ones left out. */
     static Map<String, String> groups(Map<String, Object> document) {
-        Map<String, String> groups = new LinkedHashMap<>();
+        // In their order, the highest first (Juri, 2026-10-28: "order the groups, the higher
+        // one wins"): by rank, and a group without one after the ranked, as stored.
+        List<Map.Entry<String, Map<String, Object>>> live = new ArrayList<>();
         Object all = document == null ? null : document.get("groups");
         if (all instanceof Map) {
             for (Map.Entry<String, Object> entry : TinyJson.object(all).entrySet()) {
                 if (entry.getValue() instanceof Map) {
                     Map<String, Object> group = TinyJson.object(entry.getValue());
                     if (!group.containsKey("removed")) {
-                        groups.put(entry.getKey(), TinyJson.string(group, NAME, entry.getKey()));
+                        live.add(new java.util.AbstractMap.SimpleEntry<>(entry.getKey(), group));
                     }
                 }
             }
         }
+        java.util.Collections.sort(live, (a, b) -> Double.compare(rankOf(a.getValue()),
+                rankOf(b.getValue())));
+        Map<String, String> groups = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, Object>> entry : live) {
+            groups.put(entry.getKey(), TinyJson.string(entry.getValue(), NAME, entry.getKey()));
+        }
         return groups;
     }
+
+    /** A group's place in the order, the smallest highest; a group without one comes last. */
+    private static double rankOf(Map<String, Object> group) {
+        Object rank = group.get(RANK);
+        return rank instanceof Number ? ((Number) rank).doubleValue() : Double.MAX_VALUE;
+    }
+
+    private static final String RANK = "rank";
 
     /** A group's name, Everyone's for its id, the id itself for one no longer known. */
     static String groupName(Map<String, Object> document, String id) {
@@ -304,12 +320,42 @@ final class FleetDocument {
     /** The next document with group {@code id} named {@code name}, made or renamed. */
     static Map<String, Object> withGroup(Map<String, Object> held, String author, String id,
             String name, String updated) {
-        Map<String, Object> next = bumped(held, author, updated);
+        Object old = groupEntries(held).get(id);
+        boolean renamed = old instanceof Map && !TinyJson.object(old).containsKey("removed");
+        // A new group comes last, the lowest: the groups there are first take ranks in their
+        // present order, since one made before ranks existed would otherwise sort after it
+        // (review, 2026-10-28). A renamed group keeps its place.
+        List<String> order = new ArrayList<>(groups(held).keySet());
+        Map<String, Object> next = renamed ? bumped(held, author, updated)
+                : withGroupOrder(held, author, order, updated);
         Map<String, Object> groups = groupEntries(next);
         Map<String, Object> group = new LinkedHashMap<>();
         group.put(NAME, name.trim());
         group.put(AT, version(next));
+        group.put(RANK, renamed && TinyJson.object(old).get(RANK) instanceof Number
+                ? TinyJson.object(old).get(RANK) : (long) order.size());
         groups.put(id, group);
+        next.put("groups", groups);
+        return next;
+    }
+
+    /**
+     * The next document with the groups in {@code order}, the first the highest: each group's
+     * rank set, and its entry stamped at this version so a merge keeps the new order.
+     */
+    static Map<String, Object> withGroupOrder(Map<String, Object> held, String author,
+            List<String> order, String updated) {
+        Map<String, Object> next = bumped(held, author, updated);
+        Map<String, Object> groups = groupEntries(next);
+        for (int rank = 0; rank < order.size(); rank++) {
+            Object entry = groups.get(order.get(rank));
+            if (entry instanceof Map) {
+                Map<String, Object> group = new LinkedHashMap<>(TinyJson.object(entry));
+                group.put(RANK, (long) rank);
+                group.put(AT, version(next));
+                groups.put(order.get(rank), group);
+            }
+        }
         next.put("groups", groups);
         return next;
     }
@@ -389,36 +435,6 @@ final class FleetDocument {
                 }
                 member.put("groups", own);
                 member.put(AT, version(next));
-            }
-            members.add(member);
-        }
-        next.put("members", members);
-        return next;
-    }
-
-    /**
-     * The next document with the members of key hashes {@code spkis} also in {@code group},
-     * their other groups kept: the Fleet page's Add to group for several panels, one version.
-     */
-    static Map<String, Object> withMembersInGroup(Map<String, Object> held, String author,
-            List<String> spkis, String group, String updated) {
-        Map<String, Object> next = bumped(held, author, updated);
-        List<Object> members = new ArrayList<>();
-        for (Map<String, Object> member : members(held)) {
-            if (spkis.contains(TinyJson.string(member, SPKI, ""))) {
-                List<String> groups = memberGroups(member);
-                if (!groups.contains(group)) {
-                    member = new LinkedHashMap<>(member);
-                    List<Object> own = new ArrayList<>();
-                    for (String one : groups) {
-                        if (!EVERYONE.equals(one)) {
-                            own.add(one);
-                        }
-                    }
-                    own.add(group);
-                    member.put("groups", own);
-                    member.put(AT, version(next));
-                }
             }
             members.add(member);
         }
@@ -515,27 +531,23 @@ final class FleetDocument {
     }
 
     /**
-     * The group whose values of {@code section} apply on {@code member}: the latest of its own
-     * groups that shares it, else the whole fleet while the member follows it and it shares the
-     * section; null when none does. Every panel works it out the same way for any member.
+     * The group whose values of {@code section} apply on {@code member}: the highest of its own
+     * groups, in the groups' order, that shares it, else the whole fleet while the member
+     * follows it and it shares the section; null when none does. Every panel works it out the
+     * same way for any member.
      */
     static String sourceGroup(Map<String, Object> document, Map<String, Object> member,
             String section) {
         Map<String, Long> by = sharedBy(document, section);
-        List<String> groups = memberGroups(document, member);
-        String group = null;
-        long at = 0;
-        for (Map.Entry<String, Long> candidate : by.entrySet()) {
-            if (!EVERYONE.equals(candidate.getKey()) && groups.contains(candidate.getKey())
-                    && candidate.getValue() > at) {
-                group = candidate.getKey();
-                at = candidate.getValue();
+        List<String> mine = memberGroups(document, member);
+        // The highest of the panel's groups that shares the section (the groups' order,
+        // 2026-10-28); the whole fleet only when none does and the panel follows it.
+        for (String group : groups(document).keySet()) {
+            if (mine.contains(group) && by.containsKey(group)) {
+                return group;
             }
         }
-        if (group == null && followsFleet(member) && by.containsKey(EVERYONE)) {
-            group = EVERYONE;
-        }
-        return group;
+        return followsFleet(member) && by.containsKey(EVERYONE) ? EVERYONE : null;
     }
 
     /**
@@ -1023,6 +1035,18 @@ final class FleetDocument {
             if (!groupsAfter.containsKey(group.getKey())) {
                 lines.add("group " + group.getValue() + " removed");
             }
+        }
+        // The order: which groups win over which, for a panel in several.
+        List<String> orderBefore = new ArrayList<>(groupsBefore.keySet());
+        orderBefore.retainAll(groupsAfter.keySet());
+        List<String> orderAfter = new ArrayList<>(groupsAfter.keySet());
+        orderAfter.retainAll(groupsBefore.keySet());
+        if (!orderBefore.equals(orderAfter)) {
+            List<String> names = new ArrayList<>();
+            for (String id : groupsAfter.keySet()) {
+                names.add(groupsAfter.get(id));
+            }
+            lines.add("groups ordered " + String.join(", ", names));
         }
         Set<String> scopes = new java.util.LinkedHashSet<>(profileGroups(after));
         scopes.addAll(profileGroups(before));
